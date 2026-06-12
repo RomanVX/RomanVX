@@ -1,4 +1,5 @@
 """Async client for Wildberries Statistics API."""
+import logging
 from datetime import datetime, timedelta
 
 import httpx
@@ -6,13 +7,20 @@ import httpx
 from config import WB_API_KEY, USE_MOCK
 import mock_data
 
+_log = logging.getLogger(__name__)
+
 STATS_BASE = "https://statistics-api.wildberries.ru/api/v1"
-HEADERS = {"Authorization": WB_API_KEY}
+
+
+def _headers() -> dict:
+    return {"Authorization": WB_API_KEY}
 
 
 async def _get(url: str, params: dict) -> list[dict]:
     async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.get(url, headers=HEADERS, params=params)
+        resp = await client.get(url, headers=_headers(), params=params)
+        if not resp.is_success:
+            _log.error("WB API %s -> %s: %s", url, resp.status_code, resp.text[:200])
         resp.raise_for_status()
         return resp.json()
 
