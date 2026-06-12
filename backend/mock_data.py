@@ -62,7 +62,9 @@ STOCKS = {nm_id: random.randint(0, 300) for nm_id, _ in PRODUCTS}
 
 
 def _base_demand(nm_id: int) -> float:
+    """Returns average daily orders for an SKU."""
     rank = PRODUCTS.index(next(p for p in PRODUCTS if p[0] == nm_id))
+    # Pareto-like: top products sell much more
     return max(0.3, 20 * (0.85 ** rank) + random.uniform(-0.5, 0.5))
 
 
@@ -72,6 +74,7 @@ def generate_sales(date_from: datetime, date_to: datetime) -> list[dict]:
     while current <= date_to:
         for nm_id, name in PRODUCTS:
             demand = _base_demand(nm_id)
+            # Add weekly seasonality (weekends +30%)
             weekday_factor = 1.3 if current.weekday() >= 5 else 1.0
             qty = max(0, int(random.gauss(demand * weekday_factor, demand * 0.4)))
             if qty == 0:
@@ -106,7 +109,7 @@ def generate_orders(date_from: datetime, date_to: datetime) -> list[dict]:
     current = date_from
     while current <= date_to:
         for nm_id, name in PRODUCTS:
-            demand = _base_demand(nm_id) * 1.1
+            demand = _base_demand(nm_id) * 1.1  # orders slightly higher than sales
             weekday_factor = 1.3 if current.weekday() >= 5 else 1.0
             qty = max(0, int(random.gauss(demand * weekday_factor, demand * 0.4)))
             if qty == 0:

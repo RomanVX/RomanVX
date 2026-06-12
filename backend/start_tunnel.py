@@ -2,10 +2,10 @@
 import sys
 import os
 import threading
-import time
 import uvicorn
 from pyngrok import ngrok, conf
 
+# Authtoken: pass as argument or set NGROK_AUTHTOKEN env var
 token = sys.argv[1] if len(sys.argv) > 1 else os.getenv("NGROK_AUTHTOKEN", "")
 if token:
     conf.get_default().auth_token = token
@@ -15,6 +15,9 @@ def run_server():
 
 thread = threading.Thread(target=run_server, daemon=True)
 thread.start()
+
+# Give server a moment to start
+import time
 time.sleep(1)
 
 tunnel = ngrok.connect(8000, "http")

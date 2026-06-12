@@ -4,7 +4,7 @@ from collections import defaultdict
 from typing import Any
 
 
-# ─── helpers ─────────────────────────────────────────────────────────────────────
+# ─── helpers ────────────────────────────────────────────────────────────────
 
 def _parse_date(s: str) -> str:
     """Return YYYY-MM-DD from an ISO datetime string."""
@@ -40,7 +40,7 @@ def _group_stocks(stocks: list[dict]) -> dict[int, dict]:
             for nm, v in agg.items()}
 
 
-# ─── KPI summary ──────────────────────────────────────────────────────────────
+# ─── KPI summary ────────────────────────────────────────────────────────────
 
 def kpi_summary(sales: list[dict], orders: list[dict], stocks: list[dict]) -> dict[str, Any]:
     total_revenue = sum(r.get("forPay", 0) for r in sales)
@@ -84,7 +84,7 @@ def sales_dynamics(sales: list[dict], orders: list[dict]) -> list[dict]:
     ]
 
 
-# ─── Average daily sales per SKU ───────────────────────────────────────────────────
+# ─── Average daily sales per SKU ─────────────────────────────────────────────
 
 def calc_daily_sales(sales: list[dict], days: int) -> list[dict]:
     agg = _group_sales(sales)
@@ -100,7 +100,7 @@ def calc_daily_sales(sales: list[dict], days: int) -> list[dict]:
     return result
 
 
-# ─── ABC by revenue ──────────────────────────────────────────────────────────────
+# ─── ABC by revenue ──────────────────────────────────────────────────────────
 
 def abc_by_revenue(sales: list[dict], days: int) -> list[dict]:
     rows = calc_daily_sales(sales, days)
@@ -127,7 +127,7 @@ def abc_by_revenue(sales: list[dict], days: int) -> list[dict]:
     return result
 
 
-# ─── ABC by turnover (coverage days) ──────────────────────────────────────────
+# ─── ABC by turnover (coverage days) ────────────────────────────────────────
 
 def abc_by_turnover(sales: list[dict], stocks: list[dict], days: int) -> list[dict]:
     daily = {r["nmId"]: r for r in calc_daily_sales(sales, days)}
@@ -160,7 +160,7 @@ def abc_by_turnover(sales: list[dict], stocks: list[dict], days: int) -> list[di
     return result
 
 
-# ─── Reorder forecast ──────────────────────────────────────────────────────────────
+# ─── Reorder forecast ────────────────────────────────────────────────────────
 
 def reorder_forecast(sales: list[dict], stocks: list[dict], days: int) -> list[dict]:
     daily = calc_daily_sales(sales, days)
@@ -183,7 +183,7 @@ def reorder_forecast(sales: list[dict], stocks: list[dict], days: int) -> list[d
     return result
 
 
-# ─── Top SKUs ──────────────────────────────────────────────────────────────────────
+# ─── Top SKUs ────────────────────────────────────────────────────────────────
 
 def top_skus(sales: list[dict], days: int, n: int = 20) -> list[dict]:
     rows = calc_daily_sales(sales, days)

@@ -1,8 +1,12 @@
 'use strict';
 
-const API = '';
+const API = '';  // same origin; change to 'http://localhost:8000' for dev without serving static
+
 let charts = {};
-let sortState = {};
+let refreshTimer = null;
+let sortState = {};  // tableId -> { col, asc }
+
+// ─── Fetch helpers ───────────────────────────────────────────────────────────
 
 async function fetchJSON(path) {
   const days = document.getElementById('daysSelect').value;
@@ -15,7 +19,12 @@ function fmt(n, decimals = 0) {
   if (n == null) return '—';
   return Number(n).toLocaleString('ru-RU', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
 }
-function fmtRub(n) { return fmt(n) + ' ₽'; }
+
+function fmtRub(n) {
+  return fmt(n) + ' ₽';
+}
+
+// ─── KPI ─────────────────────────────────────────────────────────────────────
 
 async function loadKPI() {
   try {
@@ -25,22 +34,45 @@ async function loadKPI() {
     document.getElementById('kpi-buyout').textContent = `выкуп: ${d.buyout_rate}%`;
     document.getElementById('kpi-sales').textContent = fmt(d.total_sales);
     document.getElementById('kpi-stock').textContent = fmtRub(d.stock_value);
-  } catch (e) { console.error('KPI error', e); }
+  } catch (e) {
+    console.error('KPI error', e);
+  }
 }
+
+// ─── Sales dynamics chart ────────────────────────────────────────────────────
 
 async function loadSalesChart() {
   try {
     const data = await fetchJSON('/api/dashboard/sales-dynamics');
+    const labels = data.map(r => r.date);
+    const revenue = data.map(r => r.revenue);
+    const orders = data.map(r => r.orders_count);
+
     const ctx = document.getElementById('salesChart').getContext('2d');
     if (charts.sales) charts.sales.destroy();
     charts.sales = new Chart(ctx, {
       data: {
-        labels: data.map(r => r.date),
+        labels,
         datasets: [
-          { type: 'bar', label: 'Выручка ₽', data: data.map(r => r.revenue),
-            backgroundColor: 'rgba(168,85,247,0.5)', borderColor: 'rgba(168,85,247,0.9)', borderWidth: 1, yAxisID: 'y' },
-          { type: 'line', label: 'Заказы', data: data.map(r => r.orders_count),
-            borderColor: '#38bdf8', backgroundColor: 'rgba(56,189,248,0.1)', pointRadius: 3, tension: 0.4, yAxisID: 'y1' },
+          {
+            type: 'bar',
+            label: 'Выручка ₽',
+            data: revenue,
+            backgroundColor: 'rgba(168,85,247,0.5)',
+            borderColor: 'rgba(168,85,247,0.9)',
+            borderWidth: 1,
+            yAxisID: 'y',
+          },
+          {
+            type: 'line',
+            label: 'Заказы',
+            data: orders,
+            borderColor: '#38bdf8',
+            backgroundColor: 'rgba(56,189,248,0.1)',
+            pointRadius: 3,
+            tension: 0.4,
+            yAxisID: 'y1',
+          },
         ],
       },
       options: {
@@ -49,28 +81,48 @@ async function loadSalesChart() {
         plugins: { legend: { labels: { color: '#94a3b8' } } },
         scales: {
           x: { ticks: { color: '#64748b', maxRotation: 45 }, grid: { color: '#1e2235' } },
-          y: { position: 'left', ticks: { color: '#94a3b8', callback: v => fmt(v) + ' ₽' }, grid: { color: '#1e2235' } },
-          y1: { position: 'right', ticks: { color: '#38bdf8' }, grid: { drawOnChartArea: false } },
+          y: {
+            position: 'left',
+            ticks: { color: '#94a3b8', callback: v => fmt(v) + ' ₽' },
+            grid: { color: '#1e2235' },
+          },
+          y1: {
+            position: 'right',
+            ticks: { color: '#38bdf8' },
+            grid: { drawOnChartArea: false },
+          },
         },
       },
     });
-  } catch (e) { console.error('salesChart error', e); }
+  } catch (e) {
+    console.error('salesChart error', e);
+  }
 }
+
+// ─── Top SKU bar chart ───────────────────────────────────────────────────────
 
 async function loadTopSkuChart() {
   try {
-    const data = (await fetchJSON('/api/dashboard/top-skus')).slice(0, 10);
+    const data = await fetchJSON('/api/dashboard/top-skus');
+    const top10 = data.slice(0, 10);
+    const labels = top10.map(r => r.subject.length > 22 ? r.subject.slice(0, 22) + '…' : r.subject);
+    const values = top10.map(r => r.total_revenue);
+
     const ctx = document.getElementById('topSkuChart').getContext('2d');
     if (charts.topSku) charts.topSku.destroy();
     charts.topSku = new Chart(ctx, {
       type: 'bar',
       data: {
-        labels: data.map(r => r.subject.length > 22 ? r.subject.slice(0, 22) + '…' : r.subject),
-        datasets: [{ label: 'Выручка ₽', data: data.map(r => r.total_revenue),
-          backgroundColor: data.map((_, i) => `hsl(${260 + i * 10},70%,${60 - i * 3}%)`) }],
+        labels,
+        datasets: [{
+          label: 'Выручка ₽',
+          data: values,
+          backgroundColor: values.map((_, i) => `hsl(${260 + i * 10},70%,${60 - i * 3}%)`),
+        }],
       },
       options: {
-        indexAxis: 'y', responsive: true,
+        indexAxis: 'y',
+        responsive: true,
         plugins: { legend: { display: false } },
         scales: {
           x: { ticks: { color: '#64748b', callback: v => fmt(v) }, grid: { color: '#1e2235' } },
@@ -78,29 +130,54 @@ async function loadTopSkuChart() {
         },
       },
     });
-  } catch (e) { console.error('topSkuChart error', e); }
+  } catch (e) {
+    console.error('topSkuChart error', e);
+  }
 }
+
+// ─── ABC revenue ─────────────────────────────────────────────────────────────
 
 async function loadAbcRevenue() {
   try {
     const data = await fetchJSON('/api/dashboard/abc-revenue');
+
+    // Pie chart
     const groups = { A: 0, B: 0, C: 0 };
     data.forEach(r => { groups[r.abc_category] = (groups[r.abc_category] || 0) + r.total_revenue; });
     const ctx = document.getElementById('abcRevPie').getContext('2d');
     if (charts.abcPie) charts.abcPie.destroy();
     charts.abcPie = new Chart(ctx, {
       type: 'doughnut',
-      data: { labels: ['A', 'B', 'C'], datasets: [{ data: [groups.A, groups.B, groups.C],
-        backgroundColor: ['#16a34a', '#2563eb', '#64748b'] }] },
-      options: { plugins: { legend: { labels: { color: '#e2e8f0' } },
-        tooltip: { callbacks: { label: ctx => ` ${ctx.label}: ${fmtRub(ctx.raw)}` } } } },
+      data: {
+        labels: ['A', 'B', 'C'],
+        datasets: [{
+          data: [groups.A, groups.B, groups.C],
+          backgroundColor: ['#16a34a', '#2563eb', '#64748b'],
+        }],
+      },
+      options: {
+        plugins: {
+          legend: { labels: { color: '#e2e8f0' } },
+          tooltip: { callbacks: { label: ctx => ` ${ctx.label}: ${fmtRub(ctx.raw)}` } },
+        },
+      },
     });
+
+    // Table
     renderTable('abcRevBody', data, row => `
-      <td>${row.nmId}</td><td>${row.subject}</td><td>${fmtRub(row.total_revenue)}</td>
-      <td>${fmt(row.revenue_share, 2)}%</td><td>${fmt(row.cumulative_share, 2)}%</td>
-      <td><span class="badge badge-${row.abc_category}">${row.abc_category}</span></td>`);
-  } catch (e) { console.error('abcRevenue error', e); }
+      <td>${row.nmId}</td>
+      <td>${row.subject}</td>
+      <td>${fmtRub(row.total_revenue)}</td>
+      <td>${fmt(row.revenue_share, 2)}%</td>
+      <td>${fmt(row.cumulative_share, 2)}%</td>
+      <td><span class="badge badge-${row.abc_category}">${row.abc_category}</span></td>
+    `);
+  } catch (e) {
+    console.error('abcRevenue error', e);
+  }
 }
+
+// ─── ABC turnover ─────────────────────────────────────────────────────────────
 
 async function loadAbcTurnover() {
   try {
@@ -108,29 +185,50 @@ async function loadAbcTurnover() {
     renderTable('abcTurnBody', data, row => {
       const cls = row.coverage_days < 14 ? 'coverage-low' : row.coverage_days < 30 ? 'coverage-med' : 'coverage-ok';
       const cov = row.coverage_days >= 999 ? '∞' : fmt(row.coverage_days, 1);
-      return `<td>${row.nmId}</td><td>${row.subject}</td><td>${fmt(row.stock_qty)}</td>
-        <td>${fmt(row.avg_daily_sales, 2)}</td><td class="${cls}">${cov}</td>
-        <td><span class="badge badge-${row.abc_category}">${row.abc_category}</span></td>`;
+      return `
+        <td>${row.nmId}</td>
+        <td>${row.subject}</td>
+        <td>${fmt(row.stock_qty)}</td>
+        <td>${fmt(row.avg_daily_sales, 2)}</td>
+        <td class="${cls}">${cov}</td>
+        <td><span class="badge badge-${row.abc_category}">${row.abc_category}</span></td>
+      `;
     });
-  } catch (e) { console.error('abcTurnover error', e); }
+  } catch (e) {
+    console.error('abcTurnover error', e);
+  }
 }
+
+// ─── Reorder forecast ─────────────────────────────────────────────────────────
 
 async function loadReorder() {
   try {
     const data = await fetchJSON('/api/dashboard/reorder');
     renderTable('reorderBody', data, row => {
-      const b = v => v > 0 ? `<span class="need-badge">${fmt(v)}</span>` : `<span class="text-secondary">0</span>`;
-      return `<td>${row.nmId}</td><td>${row.subject}</td><td>${fmt(row.stock_qty)}</td>
-        <td>${fmt(row.avg_daily_sales, 2)}</td><td>${b(row.need_30d)}</td><td>${b(row.need_60d)}</td><td>${b(row.need_90d)}</td>`;
+      const n30 = row.need_30d > 0 ? `<span class="need-badge">${fmt(row.need_30d)}</span>` : `<span class="text-secondary">0</span>`;
+      const n60 = row.need_60d > 0 ? `<span class="need-badge">${fmt(row.need_60d)}</span>` : `<span class="text-secondary">0</span>`;
+      const n90 = row.need_90d > 0 ? `<span class="need-badge">${fmt(row.need_90d)}</span>` : `<span class="text-secondary">0</span>`;
+      return `
+        <td>${row.nmId}</td>
+        <td>${row.subject}</td>
+        <td>${fmt(row.stock_qty)}</td>
+        <td>${fmt(row.avg_daily_sales, 2)}</td>
+        <td>${n30}</td>
+        <td>${n60}</td>
+        <td>${n90}</td>
+      `;
     });
-  } catch (e) { console.error('reorder error', e); }
+  } catch (e) {
+    console.error('reorder error', e);
+  }
 }
 
-function renderTable(tbodyId, data, rowFn) {
+// ─── Generic sortable table renderer ─────────────────────────────────────────
+
+function renderTable(tbodyId, data, rowFn, extraClass = '') {
   const tbody = document.getElementById(tbodyId);
   if (!tbody) return;
   tbody._data = data;
-  tbody._rowFn = rowFn;
   tbody.innerHTML = data.map(r => `<tr>${rowFn(r)}</tr>`).join('');
 }
 
@@ -138,32 +236,61 @@ function initSortable(tableEl) {
   tableEl.querySelectorAll('thead th[data-col]').forEach(th => {
     th.addEventListener('click', () => {
       const col = th.dataset.col;
-      const tbody = tableEl.querySelector('tbody');
+      const tbodyId = tableEl.querySelector('tbody').id;
+      const tbody = document.getElementById(tbodyId);
       if (!tbody || !tbody._data) return;
-      const key = tbody.id + col;
+
+      const key = tbodyId + col;
       const asc = sortState[key] === false;
       sortState[key] = asc;
+
       const sorted = [...tbody._data].sort((a, b) => {
         const va = a[col], vb = b[col];
         if (typeof va === 'number') return asc ? va - vb : vb - va;
         return asc ? String(va).localeCompare(String(vb), 'ru') : String(vb).localeCompare(String(va), 'ru');
       });
+
+      // Re-render using the same rowFn stored on tbody
       tbody._data = sorted;
       tbody.innerHTML = sorted.map(r => `<tr>${tbody._rowFn(r)}</tr>`).join('');
     });
   });
 }
 
+// Patch renderTable to store rowFn on tbody
+const _origRenderTable = renderTable;
+window.renderTable = function(tbodyId, data, rowFn) {
+  _origRenderTable(tbodyId, data, rowFn);
+  const tbody = document.getElementById(tbodyId);
+  if (tbody) tbody._rowFn = rowFn;
+};
+
+// ─── Load all ────────────────────────────────────────────────────────────────
+
 async function loadAll() {
   document.getElementById('lastUpdated').textContent = 'Загрузка…';
-  await Promise.all([loadKPI(), loadSalesChart(), loadTopSkuChart(), loadAbcRevenue(), loadAbcTurnover(), loadReorder()]);
+  await Promise.all([
+    loadKPI(),
+    loadSalesChart(),
+    loadTopSkuChart(),
+    loadAbcRevenue(),
+    loadAbcTurnover(),
+    loadReorder(),
+  ]);
   document.getElementById('lastUpdated').textContent = 'Обновлено: ' + new Date().toLocaleTimeString('ru-RU');
 }
 
+// ─── Init ─────────────────────────────────────────────────────────────────────
+
 document.addEventListener('DOMContentLoaded', () => {
+  // Init sortable tables
   document.querySelectorAll('.sortable-table').forEach(initSortable);
+
   document.getElementById('refreshBtn').addEventListener('click', loadAll);
   document.getElementById('daysSelect').addEventListener('change', loadAll);
+
   loadAll();
-  setInterval(loadAll, 5 * 60 * 1000);
+
+  // Auto-refresh every 5 minutes
+  refreshTimer = setInterval(loadAll, 5 * 60 * 1000);
 });
