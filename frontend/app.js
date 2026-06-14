@@ -3,6 +3,9 @@
 const API = '';
 let charts = {};
 let sortState = {};
+const dirty = { finance: true, products: true, stocks: true, supplies: true };
+let currentTab = 'finance';
+let prodAllData = [];
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
@@ -12,7 +15,7 @@ function showOverlay(name) {
   document.getElementById('loginOverlay').style.display   = name === 'login'   ? 'flex' : 'none';
   document.getElementById('cabinetOverlay').style.display = name === 'cabinet' ? 'flex' : 'none';
   const showApp = name === 'app';
-  document.getElementById('mainNav').style.display     = showApp ? 'flex' : 'none';
+  document.getElementById('mainNav').style.display     = showApp ? 'flex'  : 'none';
   document.getElementById('mainContent').style.display = showApp ? 'block' : 'none';
 }
 
@@ -47,7 +50,7 @@ function initDates(daysBack = 30) {
   const to = new Date();
   const from = new Date(to);
   from.setDate(from.getDate() - daysBack);
-  document.getElementById('dateTo').value = toISO(to);
+  document.getElementById('dateTo').value   = toISO(to);
   document.getElementById('dateFrom').value = toISO(from);
 }
 
@@ -57,32 +60,151 @@ function getDateParams() {
   return from && to ? `date_from=${from}&date_to=${to}` : `days=30`;
 }
 
+function getParams() {
+  let p = getDateParams();
+  const brand = document.getElementById('brandFilter').value;
+  const cat   = document.getElementById('catFilter').value;
+  if (brand) p += `&brand=${encodeURIComponent(brand)}`;
+  if (cat)   p += `&category=${encodeURIComponent(cat)}`;
+  return p;
+}
+
 // ── Fetch ─────────────────────────────────────────────────────────────────────
 
 async function fetchJSON(path) {
-  const params = getDateParams();
-  const r = await fetch(`${API}${path}?${params}`);
+  const r = await fetch(`${API}${path}?${getParams()}`);
   if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
   return r.json();
 }
 
-function fmt(n, decimals = 0) {
+function fmt(n, dec = 0) {
   if (n == null) return '—';
-  return Number(n).toLocaleString('ru-RU', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+  return Number(n).toLocaleString('ru-RU', { minimumFractionDigits: dec, maximumFractionDigits: dec });
 }
 function fmtRub(n) { return fmt(n) + ' ₽'; }
 
-// ── KPI ───────────────────────────────────────────────────────────────────────
+// ── Tab switching ─────────────────────────────────────────────────────────────
 
-async function loadKPI() {
+function switchTab(name, linkEl) {
+  document.querySelectorAll('#mainTabs .nav-link').forEach(a => a.classList.remove('active'));
+  if (linkEl) linkEl.classList.add('active');
+  ['finance', 'products', 'stocks', 'supplies'].forEach(t => {
+    document.getElementById('pane-' + t).style.display = t === name ? 'block' : 'none';
+  });
+  currentTab = name;
+  if (dirty[name]) {
+    dirty[name] = false;
+    ({ finance: loadFinance, products: loadProducts, stocks: loadStocks, supplies: loadSupplies })[name]();
+  }
+}
+
+function markAllDirty() {
+  Object.keys(dirty).forEach(k => dirty[k] = true);
+}
+
+function loadAll() {
+  document.getElementById('lastUpdated').textContent = 'Загрузка…';
+  markAllDirty();
+  switchTab(currentTab);
+}
+
+// ── Filters ───────────────────────────────────────────────────────────────────
+
+async function loadFilters() {
   try {
-    const d = await fetchJSON('/api/dashboard/kpi');
-    document.getElementById('kpi-revenue').textContent = fmtRub(d.total_revenue);
-    document.getElementById('kpi-orders').textContent = fmt(d.total_orders);
-    document.getElementById('kpi-buyout').textContent = `выкуп: ${d.buyout_rate}%`;
-    document.getElementById('kpi-sales').textContent = fmt(d.total_sales);
-    document.getElementById('kpi-stock').textContent = fmtRub(d.stock_value);
-  } catch (e) { console.error('KPI error', e); }
+    const d = await fetchJSON('/api/dashboard/filters');
+    const bSel = document.getElementById('brandFilter');
+    const cSel = document.getElementById('catFilter');
+    const bVal = bSel.value, cVal = cSel.value;
+    bSel.innerHTML = '<option value="">Все бренды</option>' +
+      d.brands.map(b => `<option${b === bVal ? ' selected' : ''}>${b}</option>`).join('');
+    cSel.innerHTML = '<option value="">Все категории</option>' +
+      d.categories.map(c => `<option${c === cVal ? ' selected' : ''}>${c}</option>`).join('');
+  } catch (e) { console.warn('filters', e); }
+}
+
+// ── Finance / Dashboard ───────────────────────────────────────────────────────
+
+async function loadFinance() {
+  try {
+    const d = await fetchJSON('/api/dashboard/finance');
+    renderCards(d.cards);
+    renderStructure(d.structure);
+    renderTop5(d.top_skus);
+    await loadSalesChart();
+    document.getElementById('lastUpdated').textContent = 'Обновлено: ' + new Date().toLocaleTimeString('ru-RU');
+  } catch (e) {
+    console.error('finance', e);
+    document.getElementById('cardsGrid').innerHTML =
+      `<div class="col-12 text-danger text-center py-3">Ошибка загрузки: ${e.message}</div>`;
+  }
+}
+
+function renderCards(cards) {
+  const grid = document.getElementById('cardsGrid');
+  grid.innerHTML = cards.map(c => {
+    const up = c.delta >= 0;
+    const colorCls = c.invert ? (up ? 'down' : 'up') : (up ? 'up' : 'down');
+    const arrow = up ? '↑' : '↓';
+    const valStr  = c.unit === '%' ? fmt(c.value, 1)  + '%' : fmtRub(c.value);
+    const prevStr = c.unit === '%' ? fmt(c.prev, 1)   + '%' : fmtRub(c.prev);
+    const dAbs = Math.abs(c.delta);
+    const deltaStr = c.unit === '%' ? fmt(dAbs, 1) + '%' : fmtRub(dAbs);
+    return `<div class="col-6 col-md-4 col-xl-3">
+      <div class="metric-card">
+        <div class="mc-head">${c.icon} ${c.title}</div>
+        <div class="mc-val">${valStr}</div>
+        <div class="d-flex justify-content-between align-items-end mt-1 gap-1">
+          <span class="mc-prev">${prevStr}</span>
+          <span class="mc-delta ${colorCls}">${arrow} ${deltaStr}&nbsp;(${fmt(Math.abs(c.delta_pct), 1)}%)</span>
+        </div>
+        ${c.secondary ? `<div class="mc-sub">${c.secondary}</div>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderStructure(rows) {
+  const ctx = document.getElementById('structureChart').getContext('2d');
+  if (charts.structure) charts.structure.destroy();
+  charts.structure = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: rows.map(r => r.label),
+      datasets: [{ data: rows.map(r => Math.abs(r.value)), backgroundColor: rows.map(r => r.color), borderRadius: 4 }],
+    },
+    options: {
+      indexAxis: 'y', responsive: true,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: ctx => ' ' + fmtRub(ctx.raw) } },
+      },
+      scales: {
+        x: { ticks: { color: '#64748b', callback: v => fmt(v) }, grid: { color: '#1e2235' } },
+        y: { ticks: { color: '#94a3b8', font: { size: 11 } } },
+      },
+    },
+  });
+}
+
+function renderTop5(items) {
+  const el = document.getElementById('top5List');
+  if (!items || !items.length) { el.innerHTML = '<p class="text-secondary text-center py-3">Нет данных</p>'; return; }
+  const max = items[0].total_revenue || 1;
+  el.innerHTML = items.map((r, i) => {
+    const pct  = Math.round(r.total_revenue / max * 100);
+    const art  = r.supplierArticle || r.nmId;
+    const name = (r.subject || String(art)).slice(0, 24);
+    return `<div class="mb-3">
+      <div class="d-flex justify-content-between mb-1">
+        <span style="font-size:12px;color:#e2e8f0">${i + 1}. ${name}</span>
+        <span style="font-size:12px;color:#c9a84c;white-space:nowrap">${fmtRub(r.total_revenue)}</span>
+      </div>
+      <div class="progress" style="height:4px">
+        <div class="progress-bar" style="width:${pct}%;background:#c9a84c"></div>
+      </div>
+    </div>`;
+  }).join('');
 }
 
 // ── Sales chart ───────────────────────────────────────────────────────────────
@@ -97,34 +219,19 @@ async function loadSalesChart() {
         labels: data.map(r => r.date),
         datasets: [
           {
-            type: 'bar',
-            label: 'Выручка ₽',
-            data: data.map(r => r.revenue),
-            backgroundColor: 'rgba(201,168,76,0.45)',
-            borderColor: 'rgba(201,168,76,0.9)',
-            borderWidth: 1,
-            yAxisID: 'y',
+            type: 'bar', label: 'Выручка ₽', data: data.map(r => r.revenue),
+            backgroundColor: 'rgba(201,168,76,0.45)', borderColor: 'rgba(201,168,76,0.9)',
+            borderWidth: 1, yAxisID: 'y',
           },
           {
-            type: 'line',
-            label: 'Заказы',
-            data: data.map(r => r.orders_count),
-            borderColor: '#38bdf8',
-            backgroundColor: 'rgba(56,189,248,0.1)',
-            pointRadius: 2,
-            tension: 0.4,
-            yAxisID: 'y1',
+            type: 'line', label: 'Заказы', data: data.map(r => r.orders_count),
+            borderColor: '#38bdf8', backgroundColor: 'rgba(56,189,248,0.1)',
+            pointRadius: 2, tension: 0.4, yAxisID: 'y1',
           },
           {
-            type: 'line',
-            label: 'Продажи, шт',
-            data: data.map(r => r.sales_count),
-            borderColor: '#4ade80',
-            backgroundColor: 'rgba(74,222,128,0.1)',
-            pointRadius: 2,
-            tension: 0.4,
-            borderDash: [4, 3],
-            yAxisID: 'y1',
+            type: 'line', label: 'Продажи, шт', data: data.map(r => r.sales_count),
+            borderColor: '#4ade80', backgroundColor: 'rgba(74,222,128,0.1)',
+            pointRadius: 2, tension: 0.4, borderDash: [4, 3], yAxisID: 'y1',
           },
         ],
       },
@@ -133,133 +240,186 @@ async function loadSalesChart() {
         interaction: { mode: 'index', intersect: false },
         plugins: { legend: { labels: { color: '#94a3b8' } } },
         scales: {
-          x: { ticks: { color: '#64748b', maxRotation: 45 }, grid: { color: '#1e2235' } },
-          y: { position: 'left', ticks: { color: '#94a3b8', callback: v => fmt(v) + ' ₽' }, grid: { color: '#1e2235' } },
+          x:  { ticks: { color: '#64748b', maxRotation: 45 }, grid: { color: '#1e2235' } },
+          y:  { position: 'left',  ticks: { color: '#94a3b8', callback: v => fmt(v) + ' ₽' }, grid: { color: '#1e2235' } },
           y1: { position: 'right', ticks: { color: '#38bdf8' }, grid: { drawOnChartArea: false } },
         },
       },
     });
-  } catch (e) { console.error('salesChart error', e); }
+  } catch (e) { console.error('salesChart', e); }
 }
 
-// ── Top SKU chart ─────────────────────────────────────────────────────────────
+// ── Products ──────────────────────────────────────────────────────────────────
 
-async function loadTopSkuChart() {
+async function loadProducts() {
+  const tbody = document.getElementById('prodBody');
+  tbody.innerHTML = '<tr><td colspan="15" class="text-center text-secondary py-4"><span class="spinner-border spinner-border-sm"></span></td></tr>';
   try {
-    const data = (await fetchJSON('/api/dashboard/top-skus')).slice(0, 10);
-    const ctx = document.getElementById('topSkuChart').getContext('2d');
-    if (charts.topSku) charts.topSku.destroy();
-    const labels = data.map(r => {
-      const art = r.supplierArticle || r.nmId;
-      const name = r.subject.length > 16 ? r.subject.slice(0, 16) + '…' : r.subject;
-      return `${art} · ${name}`;
-    });
-    charts.topSku = new Chart(ctx, {
-      type: 'bar',
+    prodAllData = await fetchJSON('/api/dashboard/products');
+    renderProdTable(prodAllData);
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="15" class="text-danger text-center py-3">Ошибка: ${e.message}</td></tr>`;
+  }
+}
+
+function abcBadge(v) {
+  const cls = { A: 'badge-abc-A', B: 'badge-abc-B', C: 'badge-abc-C' }[v] || '';
+  return `<span class="badge ${cls}">${v}</span>`;
+}
+
+function prodRowFn(r) {
+  const mc = r.margin < 0 ? 'text-danger' : r.margin > 20 ? 'text-success' : '';
+  const rc = r.roi < 0 ? 'text-danger' : r.roi > 50 ? 'text-success' : '';
+  const bc = r.buyout < 40 ? 'text-danger' : r.buyout > 70 ? 'text-success' : '';
+  return `
+    <td>${r.supplierArticle || r.nmId}</td>
+    <td class="text-truncate" style="max-width:180px" title="${r.subject}">${r.subject}</td>
+    <td>${fmtRub(r.realization)}</td>
+    <td>${fmtRub(r.sales_after_spp)}</td>
+    <td>${fmtRub(r.for_pay)}</td>
+    <td>${fmtRub(r.profit)}</td>
+    <td class="${mc}">${fmt(r.margin, 1)}%</td>
+    <td class="${rc}">${fmt(r.roi, 1)}%</td>
+    <td>${fmt(r.drr, 1)}%</td>
+    <td class="${bc}">${fmt(r.buyout, 1)}%</td>
+    <td>${fmt(r.orders)}</td>
+    <td>${fmt(r.sold)}</td>
+    <td>${fmt(r.returns)}</td>
+    <td>${abcBadge(r.abc_rev)}</td>
+    <td>${abcBadge(r.abc_profit)}</td>`;
+}
+
+function renderProdTable(data) {
+  const tbody = document.getElementById('prodBody');
+  tbody._data  = data;
+  tbody._rowFn = prodRowFn;
+  tbody.innerHTML = data.length
+    ? data.map(r => `<tr>${prodRowFn(r)}</tr>`).join('')
+    : '<tr><td colspan="15" class="text-secondary text-center py-3">Нет данных</td></tr>';
+  initSortable(document.getElementById('prodTable'));
+}
+
+// ── Stocks / Warehouses ───────────────────────────────────────────────────────
+
+async function loadStocks() {
+  const grid = document.getElementById('whGrid');
+  grid.innerHTML = '<div class="col-12 text-center text-secondary py-4"><span class="spinner-border"></span></div>';
+  try {
+    const data = await fetchJSON('/api/dashboard/warehouses');
+    renderWhGrid(data);
+  } catch (e) {
+    grid.innerHTML = `<div class="col-12 text-danger text-center py-3">Ошибка: ${e.message}</div>`;
+  }
+}
+
+function renderWhGrid(data) {
+  const grid = document.getElementById('whGrid');
+  if (!data.length) {
+    grid.innerHTML = '<div class="col-12 text-secondary text-center py-4">Нет данных</div>';
+    return;
+  }
+  grid.innerHTML = data.map(wh => {
+    const covCls = wh.coverage_days < 14 ? 'text-danger' : wh.coverage_days < 30 ? 'text-warning' : 'text-success';
+    const cov    = wh.coverage_days >= 999 ? '∞' : fmt(wh.coverage_days, 1);
+    const sid    = 'spark_' + wh.warehouse.replace(/[^a-zA-Z0-9]/g, '_');
+    return `<div class="col-12 col-sm-6 col-xl-4">
+      <div class="wh-card ${wh.status_ok ? 'wh-ok' : 'wh-low'}">
+        <div class="d-flex justify-content-between align-items-start">
+          <div>
+            <div class="wh-name">${wh.warehouse}</div>
+            <div class="wh-meta">
+              <span class="me-2">📦 ${fmt(wh.stock_qty)} шт</span>
+              <span>📈 ${fmt(wh.per_day, 1)}/день</span>
+            </div>
+          </div>
+          <div class="text-end">
+            <div class="wm ${covCls}">Покрытие: ${cov} д</div>
+            <div class="wm text-secondary">Выкуп: ${fmt(wh.buyout, 1)}%</div>
+            <div class="wm text-secondary">Возвраты: ${fmt(wh.returns_pct, 1)}%</div>
+          </div>
+        </div>
+        <canvas id="${sid}" class="spark" height="40"></canvas>
+      </div>
+    </div>`;
+  }).join('');
+
+  data.forEach(wh => {
+    const sid = 'spark_' + wh.warehouse.replace(/[^a-zA-Z0-9]/g, '_');
+    const canvas = document.getElementById(sid);
+    if (!canvas) return;
+    new Chart(canvas.getContext('2d'), {
+      type: 'line',
       data: {
-        labels,
+        labels: wh.trend.map((_, i) => i),
         datasets: [{
-          label: 'Выручка ₽',
-          data: data.map(r => r.total_revenue),
-          backgroundColor: data.map((_, i) => `hsl(${42 + i * 8},70%,${58 - i * 2}%)`),
+          data: wh.trend,
+          borderColor: wh.status_ok ? '#4ade80' : '#f87171',
+          backgroundColor: wh.status_ok ? 'rgba(74,222,128,0.12)' : 'rgba(248,113,113,0.12)',
+          borderWidth: 2, pointRadius: 0, tension: 0.3, fill: true,
         }],
       },
       options: {
-        indexAxis: 'y',
-        responsive: true,
-        plugins: { legend: { display: false } },
-        scales: {
-          x: { ticks: { color: '#64748b', callback: v => fmt(v) }, grid: { color: '#1e2235' } },
-          y: { ticks: { color: '#94a3b8', font: { size: 11 } } },
-        },
+        responsive: false, animation: false,
+        plugins: { legend: { display: false }, tooltip: { enabled: false } },
+        scales: { x: { display: false }, y: { display: false } },
       },
     });
-  } catch (e) { console.error('topSkuChart error', e); }
+  });
 }
 
-// ── ABC revenue ───────────────────────────────────────────────────────────────
+// ── Supplies ──────────────────────────────────────────────────────────────────
 
-async function loadAbcRevenue() {
+async function loadSupplies() {
+  const tbody = document.getElementById('supBody');
+  tbody.innerHTML = '<tr><td colspan="9" class="text-center text-secondary py-4"><span class="spinner-border spinner-border-sm"></span></td></tr>';
   try {
-    const data = await fetchJSON('/api/dashboard/abc-revenue');
-    const groups = { A: 0, B: 0, C: 0 };
-    data.forEach(r => { groups[r.abc_category] = (groups[r.abc_category] || 0) + r.total_revenue; });
-    const ctx = document.getElementById('abcRevPie').getContext('2d');
-    if (charts.abcPie) charts.abcPie.destroy();
-    charts.abcPie = new Chart(ctx, {
-      type: 'doughnut',
-      data: {
-        labels: ['A', 'B', 'C'],
-        datasets: [{ data: [groups.A, groups.B, groups.C], backgroundColor: ['#16a34a', '#2563eb', '#64748b'] }],
-      },
-      options: { plugins: {
-        legend: { labels: { color: '#e2e8f0' } },
-        tooltip: { callbacks: { label: ctx => ` ${ctx.label}: ${fmtRub(ctx.raw)}` } },
-      }},
-    });
-    renderTable('abcRevBody', data, row => `
-      <td>${row.nmId}</td>
-      <td>${row.supplierArticle || row.nmId}</td>
-      <td>${row.subject}</td>
-      <td>${fmtRub(row.total_revenue)}</td>
-      <td>${fmt(row.revenue_share, 2)}%</td>
-      <td>${fmt(row.cumulative_share, 2)}%</td>
-      <td><span class="badge badge-${row.abc_category}">${row.abc_category}</span></td>`);
-  } catch (e) { console.error('abcRevenue error', e); }
+    const data = await fetchJSON('/api/dashboard/supplies');
+    renderSupTable(data);
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="9" class="text-danger text-center py-3">Ошибка: ${e.message}</td></tr>`;
+  }
 }
 
-// ── ABC turnover ──────────────────────────────────────────────────────────────
-
-async function loadAbcTurnover() {
-  try {
-    const data = await fetchJSON('/api/dashboard/abc-turnover');
-    renderTable('abcTurnBody', data, row => {
-      const cls = row.coverage_days < 14 ? 'coverage-low' : row.coverage_days < 30 ? 'coverage-med' : 'coverage-ok';
-      const cov = row.coverage_days >= 999 ? '∞' : fmt(row.coverage_days, 1);
-      return `
-        <td>${row.nmId}</td>
-        <td>${row.supplierArticle || row.nmId}</td>
-        <td>${row.subject}</td>
-        <td>${fmt(row.stock_qty)}</td>
-        <td>${fmt(row.avg_daily_sales, 2)}</td>
-        <td class="${cls}">${cov}</td>
-        <td><span class="badge badge-${row.abc_category}">${row.abc_category}</span></td>`;
-    });
-  } catch (e) { console.error('abcTurnover error', e); }
+function prioBadge(p) {
+  return {
+    urgent:  '<span class="prio-urgent">🔴 срочно</span>',
+    planned: '<span class="prio-planned">🟡 плановый</span>',
+    ok:      '<span class="prio-ok">🟢 ок</span>',
+  }[p] || p;
 }
 
-// ── Reorder ───────────────────────────────────────────────────────────────────
+function supRowFn(r) {
+  const need = v => v > 0 ? `<span class="need-badge">${fmt(v)}</span>` : `<span class="text-secondary">0</span>`;
+  const covCls = r.coverage_days < 14 ? 'coverage-low' : r.coverage_days < 30 ? 'coverage-med' : 'coverage-ok';
+  const cov    = r.coverage_days >= 999 ? '∞' : fmt(r.coverage_days, 1);
+  return `
+    <td>${r.supplierArticle || r.nmId}</td>
+    <td class="text-truncate" style="max-width:200px" title="${r.subject}">${r.subject}</td>
+    <td>${fmt(r.stock_qty)}</td>
+    <td>${fmt(r.avg_daily_sales, 2)}</td>
+    <td class="${covCls}">${cov}</td>
+    <td>${need(r.need_30d)}</td>
+    <td>${need(r.need_60d)}</td>
+    <td>${need(r.need_90d)}</td>
+    <td>${prioBadge(r.priority)}</td>`;
+}
 
-async function loadReorder() {
-  try {
-    const data = await fetchJSON('/api/dashboard/reorder');
-    renderTable('reorderBody', data, row => {
-      const b = v => v > 0 ? `<span class="need-badge">${fmt(v)}</span>` : `<span class="text-secondary">0</span>`;
-      return `
-        <td>${row.nmId}</td>
-        <td>${row.supplierArticle || row.nmId}</td>
-        <td>${row.subject}</td>
-        <td>${fmt(row.stock_qty)}</td>
-        <td>${fmt(row.avg_daily_sales, 2)}</td>
-        <td>${b(row.need_30d)}</td>
-        <td>${b(row.need_60d)}</td>
-        <td>${b(row.need_90d)}</td>`;
-    });
-  } catch (e) { console.error('reorder error', e); }
+function renderSupTable(data) {
+  const tbody = document.getElementById('supBody');
+  tbody._data  = data;
+  tbody._rowFn = supRowFn;
+  tbody.innerHTML = data.length
+    ? data.map(r => `<tr>${supRowFn(r)}</tr>`).join('')
+    : '<tr><td colspan="9" class="text-secondary text-center py-3">Нет данных</td></tr>';
+  initSortable(document.getElementById('supTable'));
 }
 
 // ── Table helpers ─────────────────────────────────────────────────────────────
 
-function renderTable(tbodyId, data, rowFn) {
-  const tbody = document.getElementById(tbodyId);
-  if (!tbody) return;
-  tbody._data = data;
-  tbody._rowFn = rowFn;
-  tbody.innerHTML = data.map(r => `<tr>${rowFn(r)}</tr>`).join('');
-}
-
 function initSortable(tableEl) {
+  if (!tableEl) return;
   tableEl.querySelectorAll('thead th[data-col]').forEach(th => {
+    th.style.cursor = 'pointer';
     th.addEventListener('click', () => {
       const col = th.dataset.col;
       const tbody = tableEl.querySelector('tbody');
@@ -278,17 +438,10 @@ function initSortable(tableEl) {
   });
 }
 
-// ── Load dashboard ────────────────────────────────────────────────────────────
-
-async function loadAll() {
-  document.getElementById('lastUpdated').textContent = 'Загрузка…';
-  await Promise.all([loadKPI(), loadSalesChart(), loadTopSkuChart(), loadAbcRevenue(), loadAbcTurnover(), loadReorder()]);
-  document.getElementById('lastUpdated').textContent = 'Обновлено: ' + new Date().toLocaleTimeString('ru-RU');
-}
+// ── Init ──────────────────────────────────────────────────────────────────────
 
 function initDashboard() {
   initDates(30);
-  document.querySelectorAll('.sortable-table').forEach(initSortable);
 
   document.getElementById('daysSelect').addEventListener('change', e => {
     initDates(parseInt(e.target.value, 10));
@@ -302,24 +455,29 @@ function initDashboard() {
     });
   });
 
-  document.getElementById('refreshBtn').addEventListener('click', loadAll);
+  document.getElementById('brandFilter').addEventListener('change', () => { markAllDirty(); switchTab(currentTab); });
+  document.getElementById('catFilter').addEventListener('change',   () => { markAllDirty(); switchTab(currentTab); });
 
-  loadAll();
-  setInterval(loadAll, 5 * 60 * 1000);
+  document.getElementById('prodSearch').addEventListener('input', e => {
+    const q = e.target.value.trim().toLowerCase();
+    const filtered = q
+      ? prodAllData.filter(r =>
+          (r.supplierArticle || '').toLowerCase().includes(q) ||
+          (r.subject || '').toLowerCase().includes(q))
+      : prodAllData;
+    renderProdTable(filtered);
+  });
+
+  loadFilters();
+  switchTab('finance', document.querySelector('#mainTabs .nav-link'));
+  setInterval(() => { markAllDirty(); switchTab(currentTab); }, 5 * 60 * 1000);
 }
 
-// ── Init ──────────────────────────────────────────────────────────────────────
-
 document.addEventListener('DOMContentLoaded', () => {
-  // Auth events
-  document.getElementById('loginBtn').addEventListener('click', doLogin);
-  ['loginUser', 'loginPass'].forEach(id => {
-    document.getElementById(id).addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
-  });
-  document.getElementById('cabBiomed').addEventListener('click', enterCabinet);
-  document.getElementById('changeCabBtn').addEventListener('click', changeCabinet);
+  ['loginUser', 'loginPass'].forEach(id =>
+    document.getElementById(id).addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); })
+  );
 
-  // Restore session
   if (localStorage.getItem('mp_auth') === '1') {
     if (localStorage.getItem('mp_cabinet')) {
       showOverlay('app');

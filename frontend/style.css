@@ -197,3 +197,55 @@ body {
   border-color: #c9a84c;
   box-shadow: 0 10px 34px rgba(201,168,76,.25);
 }
+
+/* ══ Metric cards (P&L grid) ══ */
+.metric-card {
+  background: #1a1d27;
+  border: 1px solid #2d3148;
+  border-radius: 14px;
+  padding: 14px 16px;
+  height: 100%;
+  transition: border-color .2s;
+}
+.metric-card:hover { border-color: rgba(201,168,76,.3); }
+
+.mc-head {
+  font-size: 11px;
+  color: #64748b;
+  margin-bottom: 4px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mc-val  { font-size: 19px; font-weight: 700; color: #f1f5f9; line-height: 1.2; }
+.mc-prev { font-size: 11px; color: #475569; white-space: nowrap; }
+.mc-delta { font-size: 11px; font-weight: 600; white-space: nowrap; }
+.mc-delta.up   { color: #4ade80; }
+.mc-delta.down { color: #f87171; }
+.mc-sub { font-size: 10px; color: #475569; margin-top: 4px; }
+
+/* ══ ABC badges (products table) ══ */
+.badge-abc-A { background: #16a34a; color: #fff; }
+.badge-abc-B { background: #d97706; color: #fff; }
+.badge-abc-C { background: #dc2626; color: #fff; }
+
+/* ══ Warehouse cards ══ */
+.wh-card {
+  background: #1a1d27;
+  border: 1px solid #2d3148;
+  border-radius: 14px;
+  padding: 16px;
+  height: 100%;
+}
+.wh-card.wh-low { border-left: 3px solid #f87171; }
+.wh-card.wh-ok  { border-left: 3px solid #4ade80; }
+.wh-name { font-size: 14px; font-weight: 600; color: #e2e8f0; margin-bottom: 4px; }
+.wh-meta { font-size: 12px; color: #64748b; margin-bottom: 8px; }
+.wm      { font-size: 12px; margin-bottom: 2px; }
+.spark   { width: 100% !important; display: block; margin-top: 10px; }
+
+/* ══ Supply priority ══ */
+.prio-urgent  { color: #f87171; font-weight: 600; }
+.prio-planned { color: #fbbf24; font-weight: 600; }
+.prio-ok      { color: #4ade80; }
