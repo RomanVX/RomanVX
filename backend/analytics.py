@@ -15,6 +15,16 @@ OTHER_RATE      = 0.01
 def _date(s: str) -> str:
     return s[:10]
 
+def _is_sale(r: dict) -> bool:
+    """saleID starts with 'S' = real sale. Missing saleID = treat as sale."""
+    sid = r.get("saleID", "")
+    return (not sid) or sid.startswith("S")
+
+def _is_return_storno(r: dict) -> bool:
+    """saleID starts with 'A' = сторно возврата, not a sale."""
+    sid = r.get("saleID", "")
+    return bool(sid) and sid.startswith("A")
+
 def _gross(r: dict) -> float:
     """Price the buyer actually paid — matches WB 'Продажи' column.
     WB Statistics API returns finishedPrice (after SPP discount) on sales records."""
@@ -76,13 +86,14 @@ def available_filters(stocks: list[dict], sales: list[dict]) -> dict:
 
 
 def finance_aggregate(sales: list[dict], orders: list[dict]) -> dict[str, float]:
-    realization = sum(_forpay(r) for r in sales)
-    sales_after_spp = sum(_gross(r) for r in sales)
-    sales_qty = len(sales)
-    commission = sum(_commission(r) for r in sales)
-    logistics = sum(_delivery(r) for r in sales)
-    storage = sum(_storage(r) for r in sales)
-    cost = sum(_cost(r) for r in sales)
+    real_sales = [r for r in sales if _is_sale(r)]
+    realization = sum(_forpay(r) for r in real_sales)
+    sales_after_spp = sum(_gross(r) for r in real_sales)
+    sales_qty = len(real_sales)
+    commission = sum(_commission(r) for r in real_sales)
+    logistics = sum(_delivery(r) for r in real_sales)
+    storage = sum(_storage(r) for r in real_sales)
+    cost = sum(_cost(r) for r in real_sales)
     orders_rub = sum(_gross(r) for r in orders)
     orders_qty = len(orders)
     buyout_rate = (sales_qty / orders_qty * 100) if orders_qty else 0.0
@@ -174,7 +185,7 @@ def revenue_structure(agg: dict) -> list[dict]:
 def kpi_summary(sales: list[dict], orders: list[dict], stocks: list[dict]) -> dict[str, Any]:
     agg = finance_aggregate(sales, orders)
     stock_value = sum(
-        (r.get("quantity", r.get("quantityFull", 0)) * r.get("Price", 0)) for r in stocks
+        (r.get("quantityFull", r.get("quantity", 0)) * r.get("Price", 0)) for r in stocks
     )
     return {
         "total_revenue": agg["realization"],
@@ -212,6 +223,8 @@ def _by_sku(sales: list[dict], days: int) -> dict[int, dict]:
                 "cost": 0.0, "commission": 0.0, "logistics": 0.0, "storage": 0.0,
             }
         a = agg[nm]
+        if _is_return_storno(r):
+            continue
         a["realization"] += _forpay(r)
         a["sales_after_spp"] += _gross(r)
         a["sold"] += 1
@@ -304,7 +317,8 @@ def abc_by_revenue(sales: list[dict], days: int) -> list[dict]:
 def warehouses(sales: list[dict], orders: list[dict], stocks: list[dict], days: int) -> list[dict]:
     sold_wh: dict[str, int] = defaultdict(int)
     for r in sales:
-        sold_wh[r.get("warehouseName", "—")] += 1
+        if _is_sale(r):
+            sold_wh[r.get("warehouseName", "—")] += 1
     ord_wh: dict[str, int] = defaultdict(int)
     ret_wh: dict[str, int] = defaultdict(int)
     for r in orders:
@@ -314,7 +328,7 @@ def warehouses(sales: list[dict], orders: list[dict], stocks: list[dict], days: 
             ret_wh[wh] += 1
     stock_wh: dict[str, int] = defaultdict(int)
     for r in stocks:
-        stock_wh[r.get("warehouseName", "—")] += r.get("quantity", r.get("quantityFull", 0))
+        stock_wh[r.get("warehouseName", "—")] += r.get("quantityFull", r.get("quantity", 0))
     out = []
     for wh in sorted(set(stock_wh) | set(sold_wh)):
         stock = stock_wh.get(wh, 0)
@@ -339,7 +353,7 @@ def supplies(sales: list[dict], stocks: list[dict], days: int) -> list[dict]:
     daily = {r["nmId"]: r for r in calc_daily_sales(sales, days)}
     stock_qty: dict[int, int] = defaultdict(int)
     for r in stocks:
-        stock_qty[r["nmId"]] += r.get("quantity", r.get("quantityFull", 0))
+        stock_qty[r["nmId"]] += r.get("quantityFull", r.get("quantity", 0))
     rows = []
     for nm, d in daily.items():
         avg = d["avg_daily_sales"]
