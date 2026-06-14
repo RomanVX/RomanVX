@@ -8,11 +8,7 @@ import cache
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
 
-def _parse_range(
-    date_from: Optional[str],
-    date_to: Optional[str],
-    days: int,
-) -> tuple[datetime, datetime]:
+def _parse_range(date_from, date_to, days):
     dt_to = datetime.utcnow()
     if date_to:
         dt_to = datetime.fromisoformat(date_to)
@@ -22,15 +18,11 @@ def _parse_range(
     return dt_from, dt_to
 
 
-def _days_between(dt_from: datetime, dt_to: datetime) -> int:
+def _days_between(dt_from, dt_to):
     return max(1, (dt_to - dt_from).days)
 
 
-async def _data(
-    date_from: Optional[str],
-    date_to: Optional[str],
-    days: int,
-) -> tuple[list, list, list, int]:
+async def _data(date_from, date_to, days):
     dt_from, dt_to = _parse_range(date_from, date_to, days)
     effective_days = _days_between(dt_from, dt_to)
     try:
@@ -40,9 +32,9 @@ async def _data(
     return sales, orders, stocks, effective_days
 
 
-_DATE_FROM = Query(None, description="Date from (YYYY-MM-DD).")
-_DATE_TO   = Query(None, description="Date to (YYYY-MM-DD).")
-_DAYS      = Query(30, ge=1, le=365)
+_DATE_FROM = Query(description="Date from (YYYY-MM-DD).")
+_DATE_TO   = Query(description="Date to (YYYY-MM-DD).")
+_DAYS      = Query(ge=1, le=365)
 
 
 @router.get("/kpi")
