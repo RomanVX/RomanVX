@@ -15,8 +15,9 @@
   <span class="navbar-brand fw-bold fs-5">
     <i class="bi bi-bar-chart-fill text-danger me-2"></i>WB Analytics
   </span>
-  <div class="d-flex align-items-center gap-3">
-    <div class="input-group input-group-sm" style="width:120px">
+  <div class="d-flex align-items-center gap-2 flex-wrap">
+    <!-- Quick preset -->
+    <div class="input-group input-group-sm" style="width:110px">
       <span class="input-group-text bg-secondary border-0 text-white">Дней</span>
       <select id="daysSelect" class="form-select form-select-sm bg-secondary border-0 text-white">
         <option value="7">7</option>
@@ -25,6 +26,13 @@
         <option value="60">60</option>
         <option value="90">90</option>
       </select>
+    </div>
+    <!-- Date range -->
+    <div class="input-group input-group-sm" style="width:auto">
+      <span class="input-group-text bg-secondary border-0 text-white">с</span>
+      <input type="date" id="dateFrom" class="form-control form-control-sm bg-secondary border-0 text-white" style="width:130px" />
+      <span class="input-group-text bg-secondary border-0 text-white">по</span>
+      <input type="date" id="dateTo" class="form-control form-control-sm bg-secondary border-0 text-white" style="width:130px" />
     </div>
     <button id="refreshBtn" class="btn btn-sm btn-outline-light">
       <i class="bi bi-arrow-clockwise"></i> Обновить
@@ -127,6 +135,7 @@
                   <thead class="sticky-top">
                     <tr>
                       <th data-col="nmId">nmId <i class="bi bi-arrow-down-up text-secondary small"></i></th>
+                      <th data-col="supplierArticle">Артикул <i class="bi bi-arrow-down-up text-secondary small"></i></th>
                       <th data-col="subject">Наименование <i class="bi bi-arrow-down-up text-secondary small"></i></th>
                       <th data-col="total_revenue">Выручка ₽ <i class="bi bi-arrow-down-up text-secondary small"></i></th>
                       <th data-col="revenue_share">Доля % <i class="bi bi-arrow-down-up text-secondary small"></i></th>
@@ -153,6 +162,7 @@
               <thead class="sticky-top">
                 <tr>
                   <th data-col="nmId">nmId <i class="bi bi-arrow-down-up text-secondary small"></i></th>
+                  <th data-col="supplierArticle">Артикул <i class="bi bi-arrow-down-up text-secondary small"></i></th>
                   <th data-col="subject">Наименование <i class="bi bi-arrow-down-up text-secondary small"></i></th>
                   <th data-col="stock_qty">Остаток <i class="bi bi-arrow-down-up text-secondary small"></i></th>
                   <th data-col="avg_daily_sales">Ср. продаж/день <i class="bi bi-arrow-down-up text-secondary small"></i></th>
@@ -180,6 +190,7 @@
               <thead class="sticky-top">
                 <tr>
                   <th data-col="nmId">nmId <i class="bi bi-arrow-down-up text-secondary small"></i></th>
+                  <th data-col="supplierArticle">Артикул <i class="bi bi-arrow-down-up text-secondary small"></i></th>
                   <th data-col="subject">Наименование <i class="bi bi-arrow-down-up text-secondary small"></i></th>
                   <th data-col="stock_qty">Остаток <i class="bi bi-arrow-down-up text-secondary small"></i></th>
                   <th data-col="avg_daily_sales">Ср. продаж/день <i class="bi bi-arrow-down-up text-secondary small"></i></th>
