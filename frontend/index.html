@@ -101,6 +101,7 @@
     <li class="nav-item"><a class="nav-link" href="#" onclick="switchTab('stocks',this);return false">Остатки</a></li>
     <li class="nav-item"><a class="nav-link" href="#" onclick="switchTab('supplies',this);return false">Поставки</a></li>
     <li class="nav-item"><a class="nav-link" href="#" onclick="switchTab('unitec',this);return false">Юнит-эк.</a></li>
+    <li class="nav-item"><a class="nav-link" href="#" onclick="switchTab('advert',this);return false">Продвижение</a></li>
   </ul>
 
   <!-- ── Дашборд ── -->
@@ -260,11 +261,72 @@
     </div>
   </div><!-- /pane-unitec -->
 
+  <!-- ── Продвижение ── -->
+  <div id="pane-advert" style="display:none">
+
+    <!-- Summary cards -->
+    <div class="row g-2 mb-3" id="advertCards">
+      <div class="col-12 text-center text-secondary py-4"><span class="spinner-border"></span></div>
+    </div>
+
+    <!-- Campaigns table -->
+    <div class="card border-0 bg-card">
+      <div class="card-header bg-transparent border-0 d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <span class="fw-semibold">Рекламные кампании</span>
+        <div class="d-flex gap-2 align-items-center">
+          <select id="advertStatusFilter" class="form-select form-select-sm bg-secondary border-0 text-white" style="width:160px" onchange="filterAdvertTable()">
+            <option value="">Все статусы</option>
+            <option value="Активна">Активна</option>
+            <option value="Пауза">Пауза</option>
+            <option value="Готова">Готова</option>
+            <option value="Завершена">Завершена</option>
+          </select>
+          <select id="advertTypeFilter" class="form-select form-select-sm bg-secondary border-0 text-white" style="width:180px" onchange="filterAdvertTable()">
+            <option value="">Все типы</option>
+            <option value="Автокампания">Автокампания</option>
+            <option value="Поиск">Поиск</option>
+            <option value="Каталог">Каталог</option>
+          </select>
+          <input id="advertSearch" type="search" class="form-control form-control-sm bg-secondary border-0 text-white"
+                 placeholder="Поиск по названию..." style="width:220px" oninput="filterAdvertTable()" />
+        </div>
+      </div>
+      <div class="card-body p-0">
+        <div class="table-responsive">
+          <table class="table table-hover table-sm align-middle mb-0" id="advertTable">
+            <thead class="sticky-top">
+              <tr>
+                <th data-col="name">Название <i class="bi bi-arrow-down-up text-secondary small"></i></th>
+                <th data-col="type">Тип <i class="bi bi-arrow-down-up text-secondary small"></i></th>
+                <th data-col="status">Статус <i class="bi bi-arrow-down-up text-secondary small"></i></th>
+                <th data-col="views">Показы <i class="bi bi-arrow-down-up text-secondary small"></i></th>
+                <th data-col="clicks">Клики <i class="bi bi-arrow-down-up text-secondary small"></i></th>
+                <th data-col="ctr">CTR% <i class="bi bi-arrow-down-up text-secondary small"></i></th>
+                <th data-col="cpc">CPC ₽ <i class="bi bi-arrow-down-up text-secondary small"></i></th>
+                <th data-col="spend">Расход ₽ <i class="bi bi-arrow-down-up text-secondary small"></i></th>
+                <th data-col="orders">Заказы <i class="bi bi-arrow-down-up text-secondary small"></i></th>
+                <th data-col="revenue">Выручка ₽ <i class="bi bi-arrow-down-up text-secondary small"></i></th>
+                <th data-col="cr">CR% <i class="bi bi-arrow-down-up text-secondary small"></i></th>
+                <th data-col="cpo">CPO ₽ <i class="bi bi-arrow-down-up text-secondary small"></i></th>
+                <th data-col="drr">ДРР% <i class="bi bi-arrow-down-up text-secondary small"></i></th>
+              </tr>
+            </thead>
+            <tbody id="advertBody">
+              <tr><td colspan="13" class="text-center text-secondary py-4">
+                <span class="spinner-border spinner-border-sm"></span>
+              </td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div><!-- /pane-advert -->
+
 </div>
 </div><!-- /mainContent -->
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
-<script src="app.js?v=5"></script>
+<script src="app.js?v=6"></script>
 </body>
 </html>

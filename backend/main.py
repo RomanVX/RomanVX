@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
-from routers import dashboard, upload
+from routers import dashboard, upload, advert
 
 app = FastAPI(title="WB Analytics Dashboard", version="1.0.0")
 
@@ -19,6 +19,7 @@ app.add_middleware(
 
 app.include_router(dashboard.router)
 app.include_router(upload.router)
+app.include_router(advert.router)
 
 FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
 

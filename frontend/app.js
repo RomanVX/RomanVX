@@ -3,7 +3,8 @@
 const API = '';
 let charts = {};
 let sortState = {};
-const dirty = { finance: true, products: true, stocks: true, supplies: true, unitec: true };
+const dirty = { finance: true, products: true, stocks: true, supplies: true, unitec: true, advert: true };
+let _advertData = [];
 let currentTab = 'finance';
 let prodAllData = [];
 
@@ -92,14 +93,14 @@ function fmtRub(n) { return fmt(n) + ' ₽'; }
 function switchTab(name, linkEl) {
   document.querySelectorAll('#mainTabs .nav-link').forEach(a => a.classList.remove('active'));
   if (linkEl) linkEl.classList.add('active');
-  ['finance', 'products', 'stocks', 'supplies', 'unitec'].forEach(t => {
+  ['finance', 'products', 'stocks', 'supplies', 'unitec', 'advert'].forEach(t => {
     document.getElementById('pane-' + t).style.display = t === name ? 'block' : 'none';
   });
   currentTab = name;
   if (dirty[name]) {
     dirty[name] = false;
     ({ finance: loadFinance, products: loadProducts, stocks: loadStocks,
-       supplies: loadSupplies, unitec: loadUnitEc })[name]();
+       supplies: loadSupplies, unitec: loadUnitEc, advert: loadAdvert })[name]();
   }
 }
 
@@ -504,6 +505,123 @@ async function uploadCosts(input) {
     status.style.color = '#f87171';
   }
   input.value = '';
+}
+
+// ── Продвижение (Advert) ──────────────────────────────────────────────────────
+
+async function loadAdvert() {
+  document.getElementById('advertCards').innerHTML =
+    '<div class="col-12 text-center text-secondary py-4"><span class="spinner-border"></span></div>';
+  document.getElementById('advertBody').innerHTML =
+    '<tr><td colspan="13" class="text-center text-secondary py-4"><span class="spinner-border spinner-border-sm"></span></td></tr>';
+  try {
+    const d = await fetchJSON('/api/advert/campaigns');
+    if (d.mock) {
+      document.getElementById('advertCards').innerHTML =
+        '<div class="col-12 text-warning text-center py-3"><i class="bi bi-exclamation-circle"></i> Mock-режим: реальный ключ WB не задан. Данные недоступны.</div>';
+      document.getElementById('advertBody').innerHTML =
+        '<tr><td colspan="13" class="text-secondary text-center py-3">—</td></tr>';
+      return;
+    }
+    _advertData = d.campaigns || [];
+    renderAdvertSummary(_advertData);
+    renderAdvertTable(_advertData);
+  } catch (e) {
+    document.getElementById('advertCards').innerHTML =
+      `<div class="col-12 text-danger text-center py-3">Ошибка загрузки: ${e.message}</div>`;
+    document.getElementById('advertBody').innerHTML =
+      `<tr><td colspan="13" class="text-danger text-center py-3">—</td></tr>`;
+  }
+}
+
+function renderAdvertSummary(data) {
+  const active  = data.filter(c => c.status_code === 7);
+  const totViews  = data.reduce((s, c) => s + c.views,  0);
+  const totClicks = data.reduce((s, c) => s + c.clicks, 0);
+  const totSpend  = data.reduce((s, c) => s + c.spend,  0);
+  const totOrders = data.reduce((s, c) => s + c.orders, 0);
+  const totRev    = data.reduce((s, c) => s + c.revenue,0);
+  const avgCtr    = totViews  ? totClicks / totViews  * 100 : 0;
+  const avgCpc    = totClicks ? totSpend  / totClicks        : 0;
+  const avgCpo    = totOrders ? totSpend  / totOrders        : 0;
+  const avgDrr    = totRev    ? totSpend  / totRev    * 100  : 0;
+
+  const cards = [
+    { icon: '📢', title: 'Активных кампаний', value: active.length,  unit: 'шт', prev: data.length,  prevLabel: 'всего' },
+    { icon: '👁', title: 'Показы',             value: totViews,       unit: 'шт' },
+    { icon: '🖱', title: 'Клики',              value: totClicks,      unit: 'шт' },
+    { icon: '📊', title: 'CTR',                value: avgCtr,         unit: '%',  dec: 2 },
+    { icon: '💰', title: 'Расход',             value: totSpend,       unit: '₽' },
+    { icon: '🛒', title: 'Заказы с рекламы',   value: totOrders,      unit: 'шт' },
+    { icon: '📦', title: 'Выручка с рекламы',  value: totRev,         unit: '₽' },
+    { icon: '🎯', title: 'ДРР',                value: avgDrr,         unit: '%',  dec: 1 },
+    { icon: '💳', title: 'CPC (ср.)',           value: avgCpc,         unit: '₽',  dec: 2 },
+    { icon: '📬', title: 'CPO (ср.)',           value: avgCpo,         unit: '₽',  dec: 0 },
+  ];
+
+  document.getElementById('advertCards').innerHTML = cards.map(c => {
+    const val = c.unit === '₽' ? fmtRub(c.value)
+              : c.unit === '%'  ? fmt(c.value, c.dec ?? 1) + '%'
+              : fmt(c.value);
+    const sub = c.prevLabel ? `<div class="mc-sub">${fmt(c.prev)} ${c.prevLabel}</div>` : '';
+    return `<div class="col-6 col-md-4 col-xl-2">
+      <div class="metric-card">
+        <div class="mc-head">${c.icon} ${c.title}</div>
+        <div class="mc-val">${val}</div>
+        ${sub}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function advertStatusBadge(status, code) {
+  const cls = code === 7 ? 'success' : code === 8 ? 'warning' : code === 9 ? 'secondary' : 'info';
+  return `<span class="badge bg-${cls}">${status}</span>`;
+}
+
+function advertTypeBadge(type) {
+  const cls = type === 'Автокампания' ? 'primary' : type.includes('Поиск') ? 'info' : 'secondary';
+  return `<span class="badge bg-${cls} text-dark">${type}</span>`;
+}
+
+function advertRowFn(r) {
+  const drrCls = r.drr > 20 ? 'text-danger' : r.drr > 10 ? 'text-warning' : r.drr > 0 ? 'text-success' : '';
+  return `
+    <td class="text-truncate" style="max-width:200px" title="${r.name}">${r.name}</td>
+    <td>${advertTypeBadge(r.type)}</td>
+    <td>${advertStatusBadge(r.status, r.status_code)}</td>
+    <td>${fmt(r.views)}</td>
+    <td>${fmt(r.clicks)}</td>
+    <td>${fmt(r.ctr, 2)}%</td>
+    <td>${fmtRub(r.cpc)}</td>
+    <td class="fw-bold">${fmtRub(r.spend)}</td>
+    <td>${fmt(r.orders)}</td>
+    <td>${fmtRub(r.revenue)}</td>
+    <td>${fmt(r.cr, 2)}%</td>
+    <td>${r.cpo ? fmtRub(r.cpo) : '—'}</td>
+    <td class="${drrCls}">${r.drr ? fmt(r.drr, 1) + '%' : '—'}</td>`;
+}
+
+function renderAdvertTable(data) {
+  const tbody = document.getElementById('advertBody');
+  tbody._data  = data;
+  tbody._rowFn = advertRowFn;
+  tbody.innerHTML = data.length
+    ? data.map(r => `<tr>${advertRowFn(r)}</tr>`).join('')
+    : '<tr><td colspan="13" class="text-secondary text-center py-3">Нет рекламных кампаний</td></tr>';
+  initSortable(document.getElementById('advertTable'));
+}
+
+function filterAdvertTable() {
+  const status = document.getElementById('advertStatusFilter').value;
+  const type   = document.getElementById('advertTypeFilter').value;
+  const q      = document.getElementById('advertSearch').value.trim().toLowerCase();
+  const filtered = _advertData.filter(c =>
+    (!status || c.status === status) &&
+    (!type   || c.type === type) &&
+    (!q      || c.name.toLowerCase().includes(q))
+  );
+  renderAdvertTable(filtered);
 }
 
 // ── Table helpers ─────────────────────────────────────────────────────────────
