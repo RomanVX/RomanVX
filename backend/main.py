@@ -22,4 +22,11 @@ app.include_router(dashboard.router)
 FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
 
 if FRONTEND_DIR.exists():
+    @app.get("/", include_in_schema=False)
+    async def root():
+        return FileResponse(
+            str(FRONTEND_DIR / "index.html"),
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+        )
+
     app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="static")
