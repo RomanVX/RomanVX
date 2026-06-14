@@ -4,7 +4,7 @@
 const CREDS = { user: 'admin', pass: 'admin' };
 
 const $ = id => document.getElementById(id);
-const screens = { login: $('loginScreen'), cabinet: $('cabinetScreen'), app: $('appScreen') };
+let screens = {};
 
 function show(name) {
   Object.entries(screens).forEach(([k, el]) => el.classList.toggle('hidden', k !== name));
@@ -293,6 +293,8 @@ function initApp() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+  screens = { login: $('loginScreen'), cabinet: $('cabinetScreen'), app: $('appScreen') };
+
   // login
   $('loginBtn').addEventListener('click', doLogin);
   [$('loginUser'), $('loginPass')].forEach(el =>
