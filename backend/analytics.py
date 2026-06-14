@@ -16,26 +16,40 @@ def _date(s: str) -> str:
     return s[:10]
 
 def _gross(r: dict) -> float:
+    """Price the buyer actually paid — matches WB 'Продажи' column.
+    WB Statistics API returns finishedPrice (after SPP discount) on sales records."""
+    fp = r.get("finishedPrice")
+    if fp:
+        return fp
     if "priceWithDisc" in r:
         return r["priceWithDisc"]
     return r.get("totalPrice", 0) * (1 - r.get("discountPercent", 0) / 100)
 
+def _forpay(r: dict) -> float:
+    """Net payout to seller after WB commission + logistics."""
+    fp = r.get("forPay")
+    if fp is not None:
+        return fp
+    return _gross(r) - _commission(r) - _delivery(r)
+
 def _commission(r: dict) -> float:
-    return r.get("commissionRub", round(_gross(r) * COMMISSION_RATE))
+    cr = r.get("commissionRub")
+    if cr is not None:
+        return cr
+    # Derive from finishedPrice - forPay - delivery when possible
+    if "forPay" in r and "deliveryRub" in r:
+        return max(0, _gross(r) - r["forPay"] - r.get("deliveryRub", 0))
+    return round(_gross(r) * COMMISSION_RATE)
 
 def _delivery(r: dict) -> float:
     return r.get("deliveryRub", r.get("deliveryAmount", 0)) or 0
 
 def _storage(r: dict) -> float:
-    return r.get("storageRub", round(_gross(r) * STORAGE_RATE))
+    # storageFee per record if present (rare in /supplier/sales), else estimate
+    return r.get("storageFee", r.get("storageRub", round(_gross(r) * STORAGE_RATE)))
 
 def _cost(r: dict) -> float:
     return r.get("costRub", round(r.get("totalPrice", _gross(r)) * COST_RATE))
-
-def _forpay(r: dict) -> float:
-    if "forPay" in r:
-        return r["forPay"]
-    return _gross(r) - _commission(r) - _delivery(r) - _storage(r)
 
 
 def filter_records(records: list[dict], brand: str | None, category: str | None) -> list[dict]:

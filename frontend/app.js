@@ -87,6 +87,10 @@ function fmt(n, dec = 0) {
   return Number(n).toLocaleString('ru-RU', { minimumFractionDigits: dec, maximumFractionDigits: dec });
 }
 function fmtRub(n) { return fmt(n) + ' ₽'; }
+function skuName(r) {
+  const art = r.supplierArticle || r.nmId;
+  return r.subject && r.subject !== art ? `${art} <span class="text-secondary small">${r.subject}</span>` : String(art);
+}
 
 // ── Tab switching ─────────────────────────────────────────────────────────────
 
@@ -279,7 +283,7 @@ function prodRowFn(r) {
   const bc = r.buyout < 40 ? 'text-danger' : r.buyout > 70 ? 'text-success' : '';
   return `
     <td>${r.supplierArticle || r.nmId}</td>
-    <td class="text-truncate" style="max-width:180px" title="${r.subject}">${r.subject}</td>
+    <td class="text-truncate" style="max-width:180px" title="${r.subject || ''}">${r.subject || '—'}</td>
     <td>${fmtRub(r.realization)}</td>
     <td>${fmtRub(r.sales_after_spp)}</td>
     <td>${fmtRub(r.for_pay)}</td>
@@ -517,8 +521,16 @@ async function loadAdvert() {
   try {
     const d = await fetchJSON('/api/advert/campaigns');
     if (d.mock) {
+      const hint = d.hint || 'Задайте WB_ADVERT_KEY в переменных окружения Render';
       document.getElementById('advertCards').innerHTML =
-        '<div class="col-12 text-warning text-center py-3"><i class="bi bi-exclamation-circle"></i> Mock-режим: реальный ключ WB не задан. Данные недоступны.</div>';
+        `<div class="col-12 py-3">
+          <div class="alert alert-warning mb-0">
+            <i class="bi bi-key-fill me-2"></i><strong>Нет ключа для Advert API.</strong><br>
+            Для доступа к рекламным кампаниям нужен отдельный токен WB.<br>
+            Добавьте переменную <code>WB_ADVERT_KEY</code> в Render → Environment Variables.<br>
+            <small class="text-muted">Получить токен: WB личный кабинет → Настройки → Доступ к API → Реклама</small>
+          </div>
+        </div>`;
       document.getElementById('advertBody').innerHTML =
         '<tr><td colspan="13" class="text-secondary text-center py-3">—</td></tr>';
       return;

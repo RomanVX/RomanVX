@@ -4,7 +4,7 @@ from typing import Annotated, Optional
 from fastapi import APIRouter, Query, HTTPException
 
 import advert_client
-from config import USE_MOCK
+from config import USE_MOCK, USE_ADVERT_MOCK
 
 router = APIRouter(prefix="/api/advert", tags=["advert"])
 
@@ -44,8 +44,9 @@ async def get_campaigns(
     date_to:   Annotated[Optional[str], _DATE_TO]   = None,
     days:      Annotated[int, _DAYS]                = 30,
 ):
-    if USE_MOCK:
-        return {"campaigns": [], "mock": True}
+    if USE_ADVERT_MOCK:
+        return {"campaigns": [], "mock": True,
+                "hint": "Задайте WB_ADVERT_KEY в переменных окружения (Render → Environment)"}
 
     dt_from, dt_to = _range(date_from, date_to, days)
 
