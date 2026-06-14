@@ -36,34 +36,39 @@ def _headers() -> dict:
 async def _get(path: str, params: dict | None = None) -> list | dict:
     last_exc = None
     for base in _BASES:
+        url = f"{base}{path}"
         try:
             async with httpx.AsyncClient(timeout=30) as c:
-                r = await c.get(f"{base}{path}", headers=_headers(), params=params or {})
+                r = await c.get(url, headers=_headers(), params=params or {})
+                _log.info("[ADVERT] GET %s params=%s → %s body[:200]=%s",
+                          url, params, r.status_code, r.text[:200])
                 if r.status_code == 204:
                     return []
-                _log.debug("GET %s%s → %s", base, path, r.status_code)
                 r.raise_for_status()
                 return r.json()
         except Exception as e:
             last_exc = e
-            _log.warning("GET %s%s failed: %s", base, path, e)
+            _log.warning("[ADVERT] GET %s FAILED: %s", url, e)
     raise last_exc
 
 
 async def _post(path: str, body) -> list | dict:
     last_exc = None
     for base in _BASES:
+        url = f"{base}{path}"
         try:
             async with httpx.AsyncClient(timeout=60) as c:
-                r = await c.post(f"{base}{path}", headers=_headers(), json=body)
+                r = await c.post(url, headers=_headers(), json=body)
+                _log.info("[ADVERT] POST %s payload_len=%d → %s body[:200]=%s",
+                          url, len(body) if isinstance(body, list) else 1,
+                          r.status_code, r.text[:200])
                 if r.status_code == 204:
                     return []
-                _log.debug("POST %s%s → %s", base, path, r.status_code)
                 r.raise_for_status()
                 return r.json()
         except Exception as e:
             last_exc = e
-            _log.warning("POST %s%s failed: %s", base, path, e)
+            _log.warning("[ADVERT] POST %s FAILED: %s", url, e)
     raise last_exc
 
 
@@ -87,9 +92,13 @@ async def _ids_for_status(status: int) -> list[int]:
     try:
         data = await _get("/adv/v1/promotion/adverts",
                           {"status": status, "limit": 100, "offset": 0})
-        return _extract_ids(data)
+        _log.info("[ADVERT] status=%d raw type=%s raw[:3]=%s",
+                  status, type(data).__name__, str(data)[:300])
+        ids = _extract_ids(data)
+        _log.info("[ADVERT] status=%d → %d IDs extracted", status, len(ids))
+        return ids
     except Exception as e:
-        _log.warning("ids_for_status(%s): %s", status, e)
+        _log.warning("[ADVERT] ids_for_status(%s): %s", status, e)
         return []
 
 
@@ -106,6 +115,7 @@ async def get_all_campaign_ids() -> list[int]:
             if i not in seen:
                 seen.add(i)
                 ids.append(i)
+    _log.info("[ADVERT] get_all_campaign_ids → %d IDs: %s", len(ids), ids[:10])
     return ids
 
 
@@ -131,9 +141,14 @@ async def get_fullstats(ids: list[int], date_from: datetime, date_to: datetime) 
         cur += timedelta(days=1)
 
     payload = [{"id": i, "dates": dates} for i in ids[:100]]
+    _log.info("[ADVERT] fullstats payload preview (first 3): %s", payload[:3])
     try:
         result = await _post("/adv/v2/fullstats", payload)
+        _log.info("[ADVERT] fullstats result type=%s len=%s preview=%s",
+                  type(result).__name__,
+                  len(result) if isinstance(result, list) else "n/a",
+                  str(result)[:300])
         return result if isinstance(result, list) else []
     except Exception as e:
-        _log.warning("fullstats error: %s", e)
+        _log.warning("[ADVERT] fullstats error: %s", e)
         return []
