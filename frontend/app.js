@@ -3,7 +3,7 @@
 const API = '';
 let charts = {};
 let sortState = {};
-const dirty = { finance: true, products: true, stocks: true, supplies: true };
+const dirty = { finance: true, products: true, stocks: true, supplies: true, unitec: true };
 let currentTab = 'finance';
 let prodAllData = [];
 
@@ -92,13 +92,14 @@ function fmtRub(n) { return fmt(n) + ' ₽'; }
 function switchTab(name, linkEl) {
   document.querySelectorAll('#mainTabs .nav-link').forEach(a => a.classList.remove('active'));
   if (linkEl) linkEl.classList.add('active');
-  ['finance', 'products', 'stocks', 'supplies'].forEach(t => {
+  ['finance', 'products', 'stocks', 'supplies', 'unitec'].forEach(t => {
     document.getElementById('pane-' + t).style.display = t === name ? 'block' : 'none';
   });
   currentTab = name;
   if (dirty[name]) {
     dirty[name] = false;
-    ({ finance: loadFinance, products: loadProducts, stocks: loadStocks, supplies: loadSupplies })[name]();
+    ({ finance: loadFinance, products: loadProducts, stocks: loadStocks,
+       supplies: loadSupplies, unitec: loadUnitEc })[name]();
   }
 }
 
@@ -316,7 +317,15 @@ async function loadStocks() {
   }
 }
 
+let _sparkCharts = {};
+
+function _destroySparks() {
+  Object.values(_sparkCharts).forEach(c => { try { c.destroy(); } catch {} });
+  _sparkCharts = {};
+}
+
 function renderWhGrid(data) {
+  _destroySparks();
   const grid = document.getElementById('whGrid');
   if (!data.length) {
     grid.innerHTML = '<div class="col-12 text-secondary text-center py-4">Нет данных</div>';
@@ -351,7 +360,9 @@ function renderWhGrid(data) {
     const sid = 'spark_' + wh.warehouse.replace(/[^a-zA-Z0-9]/g, '_');
     const canvas = document.getElementById(sid);
     if (!canvas) return;
-    new Chart(canvas.getContext('2d'), {
+    const existing = Chart.getChart(canvas);
+    if (existing) existing.destroy();
+    _sparkCharts[sid] = new Chart(canvas.getContext('2d'), {
       type: 'line',
       data: {
         labels: wh.trend.map((_, i) => i),
@@ -416,6 +427,83 @@ function renderSupTable(data) {
     ? data.map(r => `<tr>${supRowFn(r)}</tr>`).join('')
     : '<tr><td colspan="9" class="text-secondary text-center py-3">Нет данных</td></tr>';
   initSortable(document.getElementById('supTable'));
+}
+
+// ── Unit economics ────────────────────────────────────────────────────────────
+
+async function loadUnitEc() {
+  const tbody = document.getElementById('unitecBody');
+  tbody.innerHTML = '<tr><td colspan="13" class="text-center text-secondary py-4"><span class="spinner-border spinner-border-sm"></span></td></tr>';
+  try {
+    const d = await fetchJSON('/api/dashboard/unit-economics');
+    document.getElementById('unitecCostBadge').textContent =
+      d.costs_loaded ? `✓ себестоимость из файла (${d.costs_loaded} арт.)` : 'себестоимость оценочная';
+    renderUnitecTable(d.rows);
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="13" class="text-danger text-center py-3">Ошибка: ${e.message}</td></tr>`;
+  }
+}
+
+function unitecRowFn(r) {
+  const pc = r.profit_per < 0 ? 'text-danger' : r.profit_per > 0 ? 'text-success' : '';
+  const mc = r.margin < 0 ? 'text-danger' : r.margin > 20 ? 'text-success' : '';
+  const rc = r.roi < 0 ? 'text-danger' : r.roi > 50 ? 'text-success' : '';
+  const src = r.cost_source === 'file'
+    ? '<i class="bi bi-file-earmark-check text-success" title="Из файла"></i>'
+    : '<i class="bi bi-calculator text-secondary" title="Оценочно"></i>';
+  return `
+    <td>${r.supplierArticle || r.nmId}</td>
+    <td class="text-truncate" style="max-width:160px" title="${r.subject}">${r.subject}</td>
+    <td>${fmt(r.sold)}</td>
+    <td>${fmtRub(r.avg_price)}</td>
+    <td>${fmtRub(r.cost_per_unit)} ${src}</td>
+    <td>${fmtRub(r.commission_per)}</td>
+    <td>${fmtRub(r.logistics_per)}</td>
+    <td>${fmtRub(r.storage_per)}</td>
+    <td>${fmtRub(r.ad_per)}</td>
+    <td>${fmtRub(r.tax_per)}</td>
+    <td class="${pc} fw-bold">${fmtRub(r.profit_per)}</td>
+    <td class="${mc}">${fmt(r.margin, 1)}%</td>
+    <td class="${rc}">${fmt(r.roi, 1)}%</td>`;
+}
+
+function renderUnitecTable(data) {
+  const tbody = document.getElementById('unitecBody');
+  tbody._data  = data;
+  tbody._rowFn = unitecRowFn;
+  tbody.innerHTML = data.length
+    ? data.map(r => `<tr>${unitecRowFn(r)}</tr>`).join('')
+    : '<tr><td colspan="13" class="text-secondary text-center py-3">Нет данных</td></tr>';
+  initSortable(document.getElementById('unitecTable'));
+}
+
+// ── Cost file upload ──────────────────────────────────────────────────────────
+
+async function uploadCosts(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const status = document.getElementById('costStatus');
+  status.textContent = 'Загрузка…';
+  status.style.color = '#94a3b8';
+  const fd = new FormData();
+  fd.append('file', file);
+  try {
+    const r = await fetch('/api/upload/costs', { method: 'POST', body: fd });
+    if (!r.ok) {
+      const err = await r.json();
+      throw new Error(err.detail || r.status);
+    }
+    const d = await r.json();
+    status.textContent = `✓ Загружено ${d.loaded} артикулов`;
+    status.style.color = '#4ade80';
+    // mark unit-ec dirty so it reloads with new costs
+    dirty.unitec = true;
+    if (currentTab === 'unitec') { dirty.unitec = false; loadUnitEc(); }
+  } catch (e) {
+    status.textContent = `Ошибка: ${e.message}`;
+    status.style.color = '#f87171';
+  }
+  input.value = '';
 }
 
 // ── Table helpers ─────────────────────────────────────────────────────────────

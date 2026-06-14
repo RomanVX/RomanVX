@@ -4,6 +4,7 @@ from typing import Annotated, Optional
 from fastapi import APIRouter, Query, HTTPException
 import analytics
 import cache
+import cost_store
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
@@ -178,6 +179,23 @@ async def get_reorder(
     dt_from, dt_to = _range(date_from, date_to, days)
     sales, _, stocks = await _fetch(dt_from, dt_to, None, None)
     return analytics.reorder_forecast(sales, stocks, _days(dt_from, dt_to))
+
+
+@router.get("/unit-economics")
+async def get_unit_economics(
+    date_from: Annotated[Optional[str], _DATE_FROM] = None,
+    date_to:   Annotated[Optional[str], _DATE_TO]   = None,
+    days:      Annotated[int, _DAYS]                = 30,
+    brand:     Annotated[Optional[str], _BRAND]     = None,
+    category:  Annotated[Optional[str], _CATEGORY]  = None,
+):
+    dt_from, dt_to = _range(date_from, date_to, days)
+    sales, orders, _ = await _fetch(dt_from, dt_to, brand, category)
+    costs = cost_store.get_costs()
+    return {
+        "rows": analytics.unit_economics(sales, orders, _days(dt_from, dt_to), costs or None),
+        "costs_loaded": cost_store.count(),
+    }
 
 
 @router.post("/cache/invalidate", include_in_schema=False)

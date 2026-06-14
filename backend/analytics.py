@@ -195,7 +195,7 @@ def _by_sku(sales: list[dict], days: int) -> dict[int, dict]:
                 "supplierArticle": r.get("supplierArticle", str(nm)),
                 "brand": r.get("brand", ""), "category": r.get("category", ""),
                 "realization": 0.0, "sales_after_spp": 0.0, "sold": 0,
-                "cost": 0.0, "commission": 0.0, "logistics": 0.0,
+                "cost": 0.0, "commission": 0.0, "logistics": 0.0, "storage": 0.0,
             }
         a = agg[nm]
         a["realization"] += _forpay(r)
@@ -204,6 +204,7 @@ def _by_sku(sales: list[dict], days: int) -> dict[int, dict]:
         a["cost"] += _cost(r)
         a["commission"] += _commission(r)
         a["logistics"] += _delivery(r)
+        a["storage"] += _storage(r)
     return agg
 
 
@@ -356,3 +357,62 @@ def abc_by_turnover(sales: list[dict], stocks: list[dict], days: int) -> list[di
 
 def reorder_forecast(sales: list[dict], stocks: list[dict], days: int) -> list[dict]:
     return supplies(sales, stocks, days)
+
+
+def unit_economics(sales: list[dict], orders: list[dict], days: int,
+                   costs: dict[str, float] | None = None) -> list[dict]:
+    """Per-SKU unit economics. costs = {supplierArticle: cost_per_unit}."""
+    skus = _by_sku(sales, days)
+    ord_qty: dict[int, int] = defaultdict(int)
+    for r in orders:
+        ord_qty[r["nmId"]] += 1
+
+    rows = []
+    for nm, a in skus.items():
+        n = a["sold"]
+        if n == 0:
+            continue
+
+        avg_price         = a["sales_after_spp"] / n
+        revenue_per_unit  = a["realization"] / n
+
+        art = a["supplierArticle"]
+        if costs and art in costs:
+            cost_per_unit = costs[art]
+            cost_source   = "file"
+        else:
+            cost_per_unit = a["cost"] / n
+            cost_source   = "estimated"
+
+        commission_per = a["commission"] / n
+        logistics_per  = a["logistics"] / n
+        storage_per    = a["storage"] / n
+        ad_per         = a["realization"] * AD_RATE / n
+        tax_per        = a["sales_after_spp"] * TAX_RATE / n
+
+        profit_per = (revenue_per_unit - cost_per_unit - commission_per
+                      - logistics_per - storage_per - ad_per - tax_per)
+        margin = (profit_per / avg_price * 100) if avg_price else 0.0
+        roi    = (profit_per / cost_per_unit * 100) if cost_per_unit else 0.0
+
+        rows.append({
+            "nmId": nm,
+            "supplierArticle": art,
+            "subject": a["subject"],
+            "sold": n,
+            "avg_price":        round(avg_price),
+            "revenue_per_unit": round(revenue_per_unit),
+            "cost_per_unit":    round(cost_per_unit),
+            "cost_source":      cost_source,
+            "commission_per":   round(commission_per),
+            "logistics_per":    round(logistics_per),
+            "storage_per":      round(storage_per),
+            "ad_per":           round(ad_per),
+            "tax_per":          round(tax_per),
+            "profit_per":       round(profit_per),
+            "margin":           round(margin, 1),
+            "roi":              round(roi, 1),
+        })
+
+    rows.sort(key=lambda r: r["profit_per"], reverse=True)
+    return rows
