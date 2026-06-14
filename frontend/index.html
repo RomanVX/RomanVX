@@ -1,215 +1,137 @@
 <!DOCTYPE html>
-<html lang="ru" data-bs-theme="dark">
+<html lang="ru">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>WB Analytics Dashboard</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" />
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" />
+  <title>Market Partners — WB Analytics</title>
+  <link rel="icon" href="/static/lion_logo.svg" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
 
-<!-- Navbar -->
-<nav class="navbar navbar-dark bg-dark border-bottom border-secondary px-3">
-  <span class="navbar-brand fw-bold fs-5">
-    <i class="bi bi-bar-chart-fill text-danger me-2"></i>WB Analytics
-  </span>
-  <div class="d-flex align-items-center gap-2 flex-wrap">
-    <!-- Quick preset -->
-    <div class="input-group input-group-sm" style="width:110px">
-      <span class="input-group-text bg-secondary border-0 text-white">Дней</span>
-      <select id="daysSelect" class="form-select form-select-sm bg-secondary border-0 text-white">
-        <option value="7">7</option>
-        <option value="14">14</option>
-        <option value="30" selected>30</option>
-        <option value="60">60</option>
-        <option value="90">90</option>
-      </select>
-    </div>
-    <!-- Date range -->
-    <div class="input-group input-group-sm" style="width:auto">
-      <span class="input-group-text bg-secondary border-0 text-white">с</span>
-      <input type="date" id="dateFrom" class="form-control form-control-sm bg-secondary border-0 text-white" style="width:130px" />
-      <span class="input-group-text bg-secondary border-0 text-white">по</span>
-      <input type="date" id="dateTo" class="form-control form-control-sm bg-secondary border-0 text-white" style="width:130px" />
-    </div>
-    <button id="refreshBtn" class="btn btn-sm btn-outline-light">
-      <i class="bi bi-arrow-clockwise"></i> Обновить
-    </button>
-    <small class="text-secondary" id="lastUpdated">—</small>
+<!-- ══════════ LOGIN ══════════ -->
+<section id="loginScreen" class="fullscreen">
+  <div class="login-box">
+    <img class="brand" src="/static/mp_logo.svg" alt="Market Partners" />
+    <h2>Вход в систему</h2>
+    <div class="field"><input id="loginUser" type="text" placeholder="Логин" autocomplete="username" /></div>
+    <div class="field"><input id="loginPass" type="password" placeholder="Пароль" autocomplete="current-password" /></div>
+    <button id="loginBtn" class="btn-gold">Войти</button>
+    <div id="loginError" class="login-error"></div>
   </div>
-</nav>
+</section>
 
-<div class="container-fluid py-3">
-
-  <!-- KPI cards -->
-  <div class="row g-3 mb-3" id="kpiRow">
-    <div class="col-6 col-md-3">
-      <div class="card h-100 border-0 bg-card">
-        <div class="card-body">
-          <p class="text-secondary small mb-1"><i class="bi bi-currency-exchange text-success me-1"></i>Выручка</p>
-          <h4 class="fw-bold mb-0" id="kpi-revenue"><span class="spinner-border spinner-border-sm"></span></h4>
-          <small class="text-secondary">за период</small>
-        </div>
-      </div>
-    </div>
-    <div class="col-6 col-md-3">
-      <div class="card h-100 border-0 bg-card">
-        <div class="card-body">
-          <p class="text-secondary small mb-1"><i class="bi bi-cart-check text-primary me-1"></i>Заказы</p>
-          <h4 class="fw-bold mb-0" id="kpi-orders"><span class="spinner-border spinner-border-sm"></span></h4>
-          <small class="text-secondary" id="kpi-buyout">выкуп: —</small>
-        </div>
-      </div>
-    </div>
-    <div class="col-6 col-md-3">
-      <div class="card h-100 border-0 bg-card">
-        <div class="card-body">
-          <p class="text-secondary small mb-1"><i class="bi bi-bag-check text-warning me-1"></i>Продажи</p>
-          <h4 class="fw-bold mb-0" id="kpi-sales"><span class="spinner-border spinner-border-sm"></span></h4>
-          <small class="text-secondary">выкупленных</small>
-        </div>
-      </div>
-    </div>
-    <div class="col-6 col-md-3">
-      <div class="card h-100 border-0 bg-card">
-        <div class="card-body">
-          <p class="text-secondary small mb-1"><i class="bi bi-boxes text-info me-1"></i>Стоимость остатков</p>
-          <h4 class="fw-bold mb-0" id="kpi-stock"><span class="spinner-border spinner-border-sm"></span></h4>
-          <small class="text-secondary">на складах</small>
-        </div>
+<!-- ══════════ CABINET SELECT ══════════ -->
+<section id="cabinetScreen" class="fullscreen hidden">
+  <div class="cab-wrap fade">
+    <h1>Выберите кабинет</h1>
+    <div class="cab-grid">
+      <div class="cab-card" id="cabBiomed">
+        <img src="/static/lion_logo.svg" alt="Biomed Nutrition" />
+        <span>Biomed Nutrition</span>
       </div>
     </div>
   </div>
+</section>
 
-  <!-- Tabs -->
-  <ul class="nav nav-tabs mb-3" id="mainTabs">
-    <li class="nav-item"><a class="nav-link active" data-bs-toggle="tab" href="#tab-overview">Обзор</a></li>
-    <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-abc-rev">ABC (выручка)</a></li>
-    <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-abc-turn">ABC (оборачиваемость)</a></li>
-    <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-reorder">Прогноз дозаказа</a></li>
-  </ul>
+<!-- ══════════ APP ══════════ -->
+<section id="appScreen" class="hidden">
+  <header class="topbar">
+    <div class="brand-left">
+      <img src="/static/lion_logo.svg" alt="" />
+      <b>Biomed Nutrition</b>
+    </div>
+    <nav class="tabs">
+      <button data-view="dashboard" class="active">Дашборд</button>
+      <button data-view="products">Товары</button>
+      <button data-view="stocks">Остатки</button>
+      <button data-view="supplies">Поставки</button>
+    </nav>
+    <button id="changeCab" class="btn-ghost">Сменить кабинет</button>
+  </header>
 
-  <div class="tab-content">
+  <main>
+    <!-- Filters -->
+    <div class="filters">
+      <label>С<input type="date" id="dateFrom" /></label>
+      <label>По<input type="date" id="dateTo" /></label>
+      <label>Бренд<select id="brandSel"><option value="">Все бренды</option></select></label>
+      <label>Категория<select id="catSel"><option value="">Все категории</option></select></label>
+      <div class="apply"><button id="applyBtn" class="btn-apply">Применить</button></div>
+      <span class="updated" id="updated">—</span>
+    </div>
 
-    <!-- ── Обзор ── -->
-    <div class="tab-pane fade show active" id="tab-overview">
-      <div class="row g-3">
-        <div class="col-12 col-xl-8">
-          <div class="card border-0 bg-card">
-            <div class="card-header bg-transparent border-0 fw-semibold">Динамика продаж</div>
-            <div class="card-body">
-              <canvas id="salesChart" height="100"></canvas>
-            </div>
-          </div>
+    <!-- ─── Dashboard view ─── -->
+    <div id="view-dashboard">
+      <div class="cards-grid" id="cardsGrid"></div>
+      <div class="row2">
+        <div class="panel">
+          <h3>Структура выручки</h3>
+          <canvas id="structChart" height="240"></canvas>
         </div>
-        <div class="col-12 col-xl-4">
-          <div class="card border-0 bg-card">
-            <div class="card-header bg-transparent border-0 fw-semibold">Топ-10 SKU по выручке</div>
-            <div class="card-body">
-              <canvas id="topSkuChart" height="220"></canvas>
-            </div>
-          </div>
+        <div class="panel">
+          <h3>Топ-5 SKU по выручке</h3>
+          <div class="top5" id="top5"></div>
         </div>
       </div>
     </div>
 
-    <!-- ── ABC выручка ── -->
-    <div class="tab-pane fade" id="tab-abc-rev">
-      <div class="row g-3">
-        <div class="col-12 col-md-4">
-          <div class="card border-0 bg-card h-100">
-            <div class="card-header bg-transparent border-0 fw-semibold">Доля выручки по категориям</div>
-            <div class="card-body d-flex align-items-center justify-content-center">
-              <canvas id="abcRevPie" style="max-width:280px;max-height:280px"></canvas>
-            </div>
-          </div>
-        </div>
-        <div class="col-12 col-md-8">
-          <div class="card border-0 bg-card">
-            <div class="card-header bg-transparent border-0 fw-semibold">ABC-анализ по выручке</div>
-            <div class="card-body p-0">
-              <div class="table-responsive" style="max-height:420px;overflow-y:auto">
-                <table class="table table-hover table-sm align-middle mb-0 sortable-table" id="abcRevTable">
-                  <thead class="sticky-top">
-                    <tr>
-                      <th data-col="nmId">nmId <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                      <th data-col="supplierArticle">Артикул <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                      <th data-col="subject">Наименование <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                      <th data-col="total_revenue">Выручка ₽ <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                      <th data-col="revenue_share">Доля % <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                      <th data-col="cumulative_share">Накопл. % <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                      <th data-col="abc_category">ABC <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                    </tr>
-                  </thead>
-                  <tbody id="abcRevBody"></tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-        </div>
+    <!-- ─── Products view ─── -->
+    <div id="view-products" class="hidden">
+      <div class="table-tools">
+        <input class="search" id="prodSearch" placeholder="Поиск по артикулу или названию…" />
+      </div>
+      <div class="tbl-wrap">
+        <table id="prodTable">
+          <thead><tr>
+            <th data-col="subject">Товар</th>
+            <th data-col="realization">Реализация</th>
+            <th data-col="sales_after_spp">Продажи</th>
+            <th data-col="for_pay">К перечислению</th>
+            <th data-col="profit">Прибыль</th>
+            <th data-col="margin">Маржа %</th>
+            <th data-col="roi">ROI</th>
+            <th data-col="drr">ДРР %</th>
+            <th data-col="buyout">Выкуп %</th>
+            <th data-col="orders">Заказы</th>
+            <th data-col="sold">Продано</th>
+            <th data-col="returns">Возвраты</th>
+            <th data-col="abc_rev">ABC выр.</th>
+            <th data-col="abc_profit">ABC приб.</th>
+          </tr></thead>
+          <tbody id="prodBody"></tbody>
+        </table>
       </div>
     </div>
 
-    <!-- ── ABC оборачиваемость ── -->
-    <div class="tab-pane fade" id="tab-abc-turn">
-      <div class="card border-0 bg-card">
-        <div class="card-header bg-transparent border-0 fw-semibold">ABC-анализ по оборачиваемости (дней покрытия)</div>
-        <div class="card-body p-0">
-          <div class="table-responsive" style="max-height:520px;overflow-y:auto">
-            <table class="table table-hover table-sm align-middle mb-0 sortable-table" id="abcTurnTable">
-              <thead class="sticky-top">
-                <tr>
-                  <th data-col="nmId">nmId <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                  <th data-col="supplierArticle">Артикул <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                  <th data-col="subject">Наименование <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                  <th data-col="stock_qty">Остаток <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                  <th data-col="avg_daily_sales">Ср. продаж/день <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                  <th data-col="coverage_days">Покрытие (дней) <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                  <th data-col="abc_category">ABC <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                </tr>
-              </thead>
-              <tbody id="abcTurnBody"></tbody>
-            </table>
-          </div>
-        </div>
-      </div>
+    <!-- ─── Stocks view ─── -->
+    <div id="view-stocks" class="hidden">
+      <h2 class="section-title">Остатки по складам</h2>
+      <div class="wh-grid" id="whGrid"></div>
     </div>
 
-    <!-- ── Прогноз дозаказа ── -->
-    <div class="tab-pane fade" id="tab-reorder">
-      <div class="card border-0 bg-card">
-        <div class="card-header bg-transparent border-0 d-flex justify-content-between align-items-center">
-          <span class="fw-semibold">Прогноз потребности в товаре</span>
-          <small class="text-secondary">Выделены позиции с дефицитом</small>
-        </div>
-        <div class="card-body p-0">
-          <div class="table-responsive" style="max-height:520px;overflow-y:auto">
-            <table class="table table-hover table-sm align-middle mb-0 sortable-table" id="reorderTable">
-              <thead class="sticky-top">
-                <tr>
-                  <th data-col="nmId">nmId <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                  <th data-col="supplierArticle">Артикул <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                  <th data-col="subject">Наименование <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                  <th data-col="stock_qty">Остаток <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                  <th data-col="avg_daily_sales">Ср. продаж/день <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                  <th data-col="need_30d">Нужно на 30д <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                  <th data-col="need_60d">Нужно на 60д <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                  <th data-col="need_90d">Нужно на 90д <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                </tr>
-              </thead>
-              <tbody id="reorderBody"></tbody>
-            </table>
-          </div>
-        </div>
+    <!-- ─── Supplies view ─── -->
+    <div id="view-supplies" class="hidden">
+      <h2 class="section-title">Планирование поставок</h2>
+      <div class="tbl-wrap">
+        <table id="supTable">
+          <thead><tr>
+            <th data-col="subject">SKU / Артикул</th>
+            <th data-col="stock_qty">Остаток</th>
+            <th data-col="avg_daily_sales">Продаж/день</th>
+            <th data-col="coverage_days">Cover (дней)</th>
+            <th data-col="need_30d">Заказ 30д</th>
+            <th data-col="need_60d">Заказ 60д</th>
+            <th data-col="need_90d">Заказ 90д</th>
+            <th data-col="priority">Приоритет</th>
+          </tr></thead>
+          <tbody id="supBody"></tbody>
+        </table>
       </div>
     </div>
+  </main>
+</section>
 
-  </div><!-- /tab-content -->
-</div><!-- /container -->
-
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 <script src="app.js"></script>
 </body>

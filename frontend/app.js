@@ -1,279 +1,322 @@
 'use strict';
 
-const API = '';
-let charts = {};
-let sortState = {};
+/* ════════ Auth (hardcoded, no backend) ════════ */
+const CREDS = { user: 'admin', pass: 'admin' };
 
-// ─── Date helpers ─────────────────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+const screens = { login: $('loginScreen'), cabinet: $('cabinetScreen'), app: $('appScreen') };
 
+function show(name) {
+  Object.entries(screens).forEach(([k, el]) => el.classList.toggle('hidden', k !== name));
+}
+
+function doLogin() {
+  const u = $('loginUser').value.trim();
+  const p = $('loginPass').value;
+  if (u === CREDS.user && p === CREDS.pass) {
+    localStorage.setItem('mp_auth', '1');
+    $('loginError').textContent = '';
+    show('cabinet');
+  } else {
+    $('loginError').textContent = 'Неверный логин или пароль';
+  }
+}
+
+function enterCabinet() {
+  localStorage.setItem('mp_cabinet', 'biomed');
+  show('app');
+  initApp();
+}
+
+function logoutCabinet() {
+  localStorage.removeItem('mp_cabinet');
+  show('cabinet');
+}
+
+/* ════════ Formatting ════════ */
+const fmt = (n, d = 0) => n == null ? '—'
+  : Number(n).toLocaleString('ru-RU', { minimumFractionDigits: d, maximumFractionDigits: d });
+const rub = n => fmt(Math.round(n)) + ' ₽';
+const signed = n => (n >= 0 ? '+' : '') + fmt(Math.round(n));
+
+/* ════════ Filters / params ════════ */
 function toISO(d) { return d.toISOString().slice(0, 10); }
-
-function initDates(daysBack = 30) {
-  const to = new Date();
-  const from = new Date(to);
-  from.setDate(from.getDate() - daysBack);
-  document.getElementById('dateTo').value = toISO(to);
-  document.getElementById('dateFrom').value = toISO(from);
+function initDates() {
+  const to = new Date(), from = new Date();
+  from.setDate(from.getDate() - 30);
+  $('dateTo').value = toISO(to);
+  $('dateFrom').value = toISO(from);
 }
-
-function getDateParams() {
-  const from = document.getElementById('dateFrom').value;
-  const to   = document.getElementById('dateTo').value;
-  return from && to ? `date_from=${from}&date_to=${to}` : `days=30`;
+function params() {
+  const p = new URLSearchParams();
+  const f = $('dateFrom').value, t = $('dateTo').value;
+  if (f && t) { p.set('date_from', f); p.set('date_to', t); } else { p.set('days', '30'); }
+  if ($('brandSel').value) p.set('brand', $('brandSel').value);
+  if ($('catSel').value) p.set('category', $('catSel').value);
+  return p.toString();
 }
-
-// ─── Fetch ───────────────────────────────────────────────────────────────────
-
-async function fetchJSON(path) {
-  const params = getDateParams();
-  const r = await fetch(`${API}${path}?${params}`);
-  if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+async function api(path) {
+  const r = await fetch('/api/dashboard' + path + '?' + params());
+  if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
   return r.json();
 }
 
-function fmt(n, decimals = 0) {
-  if (n == null) return '—';
-  return Number(n).toLocaleString('ru-RU', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
-}
-function fmtRub(n) { return fmt(n) + ' ₽'; }
-
-// ─── KPI ─────────────────────────────────────────────────────────────────────
-
-async function loadKPI() {
+async function loadFilters() {
   try {
-    const d = await fetchJSON('/api/dashboard/kpi');
-    document.getElementById('kpi-revenue').textContent = fmtRub(d.total_revenue);
-    document.getElementById('kpi-orders').textContent = fmt(d.total_orders);
-    document.getElementById('kpi-buyout').textContent = `выкуп: ${d.buyout_rate}%`;
-    document.getElementById('kpi-sales').textContent = fmt(d.total_sales);
-    document.getElementById('kpi-stock').textContent = fmtRub(d.stock_value);
-  } catch (e) { console.error('KPI error', e); }
+    const f = await api('/filters');
+    const bs = $('brandSel'), cs = $('catSel');
+    bs.innerHTML = '<option value="">Все бренды</option>' +
+      f.brands.map(b => `<option>${b}</option>`).join('');
+    cs.innerHTML = '<option value="">Все категории</option>' +
+      f.categories.map(c => `<option>${c}</option>`).join('');
+  } catch (e) { console.error('filters', e); }
 }
 
-// ─── Sales dynamics chart ─────────────────────────────────────────────────────
+/* ════════ Views state ════════ */
+const dirty = { dashboard: true, products: true, stocks: true, supplies: true };
+let current = 'dashboard';
+let charts = {};
+let sparks = [];
 
-async function loadSalesChart() {
+function switchView(name) {
+  current = name;
+  document.querySelectorAll('nav.tabs button').forEach(b =>
+    b.classList.toggle('active', b.dataset.view === name));
+  ['dashboard', 'products', 'stocks', 'supplies'].forEach(v =>
+    $('view-' + v).classList.toggle('hidden', v !== name));
+  if (dirty[name]) loadView(name);
+}
+
+function loadView(name) {
+  const fn = { dashboard: loadDashboard, products: loadProducts, stocks: loadStocks, supplies: loadSupplies }[name];
+  fn();
+}
+
+function applyFilters() {
+  Object.keys(dirty).forEach(k => dirty[k] = true);
+  loadView(current);
+  $('updated').textContent = 'Обновлено: ' + new Date().toLocaleTimeString('ru-RU');
+}
+
+/* ════════ Dashboard ════════ */
+async function loadDashboard() {
+  dirty.dashboard = false;
   try {
-    const data = await fetchJSON('/api/dashboard/sales-dynamics');
-    const ctx = document.getElementById('salesChart').getContext('2d');
-    if (charts.sales) charts.sales.destroy();
-    charts.sales = new Chart(ctx, {
-      data: {
-        labels: data.map(r => r.date),
-        datasets: [
-          {
-            type: 'bar',
-            label: 'Выручка ₽',
-            data: data.map(r => r.revenue),
-            backgroundColor: 'rgba(168,85,247,0.5)',
-            borderColor: 'rgba(168,85,247,0.9)',
-            borderWidth: 1,
-            yAxisID: 'y',
-          },
-          {
-            type: 'line',
-            label: 'Заказы',
-            data: data.map(r => r.orders_count),
-            borderColor: '#38bdf8',
-            backgroundColor: 'rgba(56,189,248,0.1)',
-            pointRadius: 2,
-            tension: 0.4,
-            yAxisID: 'y1',
-          },
-          {
-            type: 'line',
-            label: 'Продажи, шт',
-            data: data.map(r => r.sales_count),
-            borderColor: '#4ade80',
-            backgroundColor: 'rgba(74,222,128,0.1)',
-            pointRadius: 2,
-            tension: 0.4,
-            borderDash: [4, 3],
-            yAxisID: 'y1',
-          },
-        ],
+    const d = await api('/finance');
+    renderCards(d.cards);
+    renderStructure(d.structure);
+    renderTop5(d.top_skus);
+  } catch (e) { console.error('finance', e); }
+}
+
+function renderCards(cards) {
+  $('cardsGrid').innerHTML = cards.map(c => {
+    const up = c.delta >= 0;
+    const good = c.invert ? !up : up;
+    const arrow = up ? '↑' : '↓';
+    const valStr = c.unit === '%' ? fmt(c.value, 1) + '%' : (c.unit === '₽' ? rub(c.value) : fmt(c.value));
+    const prevStr = c.unit === '%' ? fmt(c.prev, 1) + '%' : (c.unit === '₽' ? rub(c.prev) : fmt(c.prev));
+    return `
+      <div class="metric">
+        <div class="m-head"><span class="ic">${c.icon}</span>${c.title}</div>
+        <div class="m-val">${valStr}</div>
+        <div class="m-sec">${c.secondary}</div>
+        <div class="m-foot">
+          <span class="m-prev">было: ${prevStr}</span>
+          <span class="delta ${good ? 'up' : 'down'}">${arrow} ${signed(c.delta)} (${fmt(Math.abs(c.delta_pct),1)}%)</span>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function renderStructure(rows) {
+  const ctx = $('structChart').getContext('2d');
+  if (charts.struct) charts.struct.destroy();
+  charts.struct = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: rows.map(r => r.label),
+      datasets: [{
+        data: rows.map(r => r.value),
+        backgroundColor: rows.map(r => r.color),
+        borderRadius: 6,
+      }],
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: c => ' ' + rub(c.raw) } },
       },
-      options: {
-        responsive: true,
-        interaction: { mode: 'index', intersect: false },
-        plugins: { legend: { labels: { color: '#94a3b8' } } },
-        scales: {
-          x: { ticks: { color: '#64748b', maxRotation: 45 }, grid: { color: '#1e2235' } },
-          y: { position: 'left', ticks: { color: '#94a3b8', callback: v => fmt(v) + ' ₽' }, grid: { color: '#1e2235' } },
-          y1: { position: 'right', ticks: { color: '#38bdf8' }, grid: { drawOnChartArea: false } },
-        },
+      scales: {
+        x: { ticks: { color: '#888', callback: v => fmt(v / 1000) + 'k' }, grid: { color: '#1e1e1e' } },
+        y: { ticks: { color: '#bbb', font: { size: 11 } }, grid: { display: false } },
       },
-    });
-  } catch (e) { console.error('salesChart error', e); }
-}
-
-// ─── Top SKU chart ────────────────────────────────────────────────────────────
-
-async function loadTopSkuChart() {
-  try {
-    const data = (await fetchJSON('/api/dashboard/top-skus')).slice(0, 10);
-    const ctx = document.getElementById('topSkuChart').getContext('2d');
-    if (charts.topSku) charts.topSku.destroy();
-
-    const labels = data.map(r => {
-      const art = r.supplierArticle || r.nmId;
-      const name = r.subject.length > 16 ? r.subject.slice(0, 16) + '…' : r.subject;
-      return `${art} · ${name}`;
-    });
-
-    charts.topSku = new Chart(ctx, {
-      type: 'bar',
-      data: {
-        labels,
-        datasets: [{
-          label: 'Выручка ₽',
-          data: data.map(r => r.total_revenue),
-          backgroundColor: data.map((_, i) => `hsl(${260 + i * 10},70%,${60 - i * 3}%)`),
-        }],
-      },
-      options: {
-        indexAxis: 'y',
-        responsive: true,
-        plugins: { legend: { display: false } },
-        scales: {
-          x: { ticks: { color: '#64748b', callback: v => fmt(v) }, grid: { color: '#1e2235' } },
-          y: { ticks: { color: '#94a3b8', font: { size: 11 } } },
-        },
-      },
-    });
-  } catch (e) { console.error('topSkuChart error', e); }
-}
-
-// ─── ABC revenue ─────────────────────────────────────────────────────────────
-
-async function loadAbcRevenue() {
-  try {
-    const data = await fetchJSON('/api/dashboard/abc-revenue');
-    const groups = { A: 0, B: 0, C: 0 };
-    data.forEach(r => { groups[r.abc_category] = (groups[r.abc_category] || 0) + r.total_revenue; });
-    const ctx = document.getElementById('abcRevPie').getContext('2d');
-    if (charts.abcPie) charts.abcPie.destroy();
-    charts.abcPie = new Chart(ctx, {
-      type: 'doughnut',
-      data: {
-        labels: ['A', 'B', 'C'],
-        datasets: [{ data: [groups.A, groups.B, groups.C], backgroundColor: ['#16a34a', '#2563eb', '#64748b'] }],
-      },
-      options: { plugins: {
-        legend: { labels: { color: '#e2e8f0' } },
-        tooltip: { callbacks: { label: ctx => ` ${ctx.label}: ${fmtRub(ctx.raw)}` } },
-      }},
-    });
-    renderTable('abcRevBody', data, row => `
-      <td>${row.nmId}</td>
-      <td>${row.supplierArticle || row.nmId}</td>
-      <td>${row.subject}</td>
-      <td>${fmtRub(row.total_revenue)}</td>
-      <td>${fmt(row.revenue_share, 2)}%</td>
-      <td>${fmt(row.cumulative_share, 2)}%</td>
-      <td><span class="badge badge-${row.abc_category}">${row.abc_category}</span></td>`);
-  } catch (e) { console.error('abcRevenue error', e); }
-}
-
-// ─── ABC turnover ─────────────────────────────────────────────────────────────
-
-async function loadAbcTurnover() {
-  try {
-    const data = await fetchJSON('/api/dashboard/abc-turnover');
-    renderTable('abcTurnBody', data, row => {
-      const cls = row.coverage_days < 14 ? 'coverage-low' : row.coverage_days < 30 ? 'coverage-med' : 'coverage-ok';
-      const cov = row.coverage_days >= 999 ? '∞' : fmt(row.coverage_days, 1);
-      return `
-        <td>${row.nmId}</td>
-        <td>${row.supplierArticle || row.nmId}</td>
-        <td>${row.subject}</td>
-        <td>${fmt(row.stock_qty)}</td>
-        <td>${fmt(row.avg_daily_sales, 2)}</td>
-        <td class="${cls}">${cov}</td>
-        <td><span class="badge badge-${row.abc_category}">${row.abc_category}</span></td>`;
-    });
-  } catch (e) { console.error('abcTurnover error', e); }
-}
-
-// ─── Reorder forecast ─────────────────────────────────────────────────────────
-
-async function loadReorder() {
-  try {
-    const data = await fetchJSON('/api/dashboard/reorder');
-    renderTable('reorderBody', data, row => {
-      const b = v => v > 0 ? `<span class="need-badge">${fmt(v)}</span>` : `<span class="text-secondary">0</span>`;
-      return `
-        <td>${row.nmId}</td>
-        <td>${row.supplierArticle || row.nmId}</td>
-        <td>${row.subject}</td>
-        <td>${fmt(row.stock_qty)}</td>
-        <td>${fmt(row.avg_daily_sales, 2)}</td>
-        <td>${b(row.need_30d)}</td>
-        <td>${b(row.need_60d)}</td>
-        <td>${b(row.need_90d)}</td>`;
-    });
-  } catch (e) { console.error('reorder error', e); }
-}
-
-// ─── Table helpers ────────────────────────────────────────────────────────────
-
-function renderTable(tbodyId, data, rowFn) {
-  const tbody = document.getElementById(tbodyId);
-  if (!tbody) return;
-  tbody._data = data;
-  tbody._rowFn = rowFn;
-  tbody.innerHTML = data.map(r => `<tr>${rowFn(r)}</tr>`).join('');
-}
-
-function initSortable(tableEl) {
-  tableEl.querySelectorAll('thead th[data-col]').forEach(th => {
-    th.addEventListener('click', () => {
-      const col = th.dataset.col;
-      const tbody = tableEl.querySelector('tbody');
-      if (!tbody || !tbody._data) return;
-      const key = tbody.id + col;
-      const asc = sortState[key] === false;
-      sortState[key] = asc;
-      const sorted = [...tbody._data].sort((a, b) => {
-        const va = a[col], vb = b[col];
-        if (typeof va === 'number') return asc ? va - vb : vb - va;
-        return asc ? String(va).localeCompare(String(vb), 'ru') : String(vb).localeCompare(String(va), 'ru');
-      });
-      tbody._data = sorted;
-      tbody.innerHTML = sorted.map(r => `<tr>${tbody._rowFn(r)}</tr>`).join('');
-    });
+    },
   });
 }
 
-// ─── Load all ─────────────────────────────────────────────────────────────────
-
-async function loadAll() {
-  document.getElementById('lastUpdated').textContent = 'Загрузка…';
-  await Promise.all([loadKPI(), loadSalesChart(), loadTopSkuChart(), loadAbcRevenue(), loadAbcTurnover(), loadReorder()]);
-  document.getElementById('lastUpdated').textContent = 'Обновлено: ' + new Date().toLocaleTimeString('ru-RU');
+function renderTop5(rows) {
+  $('top5').innerHTML = rows.map(r => `
+    <div class="t5-row">
+      <div>
+        <div class="t5-art">${r.supplierArticle || r.nmId}</div>
+        <div class="t5-name">${r.subject}</div>
+      </div>
+      <div class="t5-val">${rub(r.total_revenue)}</div>
+    </div>`).join('') || '<div class="t5-name">Нет данных</div>';
 }
 
-// ─── Init ─────────────────────────────────────────────────────────────────────
+/* ════════ Products ════════ */
+let prodData = [], prodSort = {};
+async function loadProducts() {
+  dirty.products = false;
+  try {
+    prodData = await api('/products');
+    renderProducts(prodData);
+  } catch (e) { console.error('products', e); }
+}
+function abcBadge(v) { return `<span class="badge abc-${v}">${v}</span>`; }
+function renderProducts(rows) {
+  $('prodBody').innerHTML = rows.map(r => `
+    <tr>
+      <td><div class="prod-cell">
+        <div class="prod-thumb">${(r.subject || '?').slice(0,2).toUpperCase()}</div>
+        <div class="prod-meta"><b title="${r.subject}">${r.subject}</b><span>${r.supplierArticle}</span></div>
+      </div></td>
+      <td>${rub(r.realization)}</td>
+      <td>${rub(r.sales_after_spp)}</td>
+      <td>${rub(r.for_pay)}</td>
+      <td class="${r.profit >= 0 ? 'pos' : 'neg'}">${rub(r.profit)}</td>
+      <td class="${r.margin >= 0 ? 'pos' : 'neg'}">${fmt(r.margin,1)}%</td>
+      <td>${fmt(r.roi,1)}%</td>
+      <td>${fmt(r.drr,1)}%</td>
+      <td>${fmt(r.buyout,1)}%</td>
+      <td>${fmt(r.orders)}</td>
+      <td>${fmt(r.sold)}</td>
+      <td>${fmt(r.returns)}</td>
+      <td>${abcBadge(r.abc_rev)}</td>
+      <td>${abcBadge(r.abc_profit)}</td>
+    </tr>`).join('');
+}
+function sortProducts(col) {
+  const asc = prodSort[col] = !prodSort[col];
+  const sorted = [...prodData].sort((a, b) => {
+    const va = a[col], vb = b[col];
+    if (typeof va === 'number') return asc ? va - vb : vb - va;
+    return asc ? String(va).localeCompare(String(vb), 'ru') : String(vb).localeCompare(String(va), 'ru');
+  });
+  renderProducts(sorted);
+}
+function searchProducts(q) {
+  q = q.trim().toLowerCase();
+  renderProducts(prodData.filter(r =>
+    !q || String(r.supplierArticle).toLowerCase().includes(q) || (r.subject || '').toLowerCase().includes(q)));
+}
+
+/* ════════ Stocks / warehouses ════════ */
+async function loadStocks() {
+  dirty.stocks = false;
+  try {
+    const whs = await api('/warehouses');
+    sparks.forEach(c => c.destroy()); sparks = [];
+    $('whGrid').innerHTML = whs.map((w, i) => `
+      <div class="wh-card">
+        <div class="wh-top">
+          <span class="wh-name">${w.warehouse}</span>
+          <span class="wh-status ${w.status_ok ? 'ok' : 'bad'}">${w.status_ok ? 'Всё хорошо' : 'Срочно — пополнить'}</span>
+        </div>
+        <div class="wh-metrics">
+          <div class="wm"><small>Продаж/день</small><b>${fmt(w.per_day,1)}</b></div>
+          <div class="wm"><small>Остаток, шт</small><b>${fmt(w.stock_qty)}</b></div>
+          <div class="wm"><small>Покрытие, дней</small><b>${w.coverage_days >= 999 ? '∞' : fmt(w.coverage_days,1)}</b></div>
+          <div class="wm"><small>Выкуп / Возвраты</small><b>${fmt(w.buyout,0)}% / ${fmt(w.returns_pct,1)}%</b></div>
+        </div>
+        <canvas class="spark" id="spark${i}"></canvas>
+      </div>`).join('');
+    whs.forEach((w, i) => {
+      const ctx = $('spark' + i).getContext('2d');
+      sparks.push(new Chart(ctx, {
+        type: 'line',
+        data: { labels: w.trend.map((_, k) => k), datasets: [{
+          data: w.trend, borderColor: w.status_ok ? '#2ecc71' : '#e74c3c',
+          backgroundColor: 'transparent', pointRadius: 0, borderWidth: 2, tension: .4 }] },
+        options: { plugins: { legend: { display: false } },
+          scales: { x: { display: false }, y: { display: false } } },
+      }));
+    });
+  } catch (e) { console.error('warehouses', e); }
+}
+
+/* ════════ Supplies ════════ */
+let supData = [], supSort = {};
+const PRIO = { urgent: '🔴 срочно', planned: '🟡 плановый', ok: '🟢 ок' };
+async function loadSupplies() {
+  dirty.supplies = false;
+  try {
+    supData = await api('/supplies');
+    renderSupplies(supData);
+  } catch (e) { console.error('supplies', e); }
+}
+function renderSupplies(rows) {
+  $('supBody').innerHTML = rows.map(r => `
+    <tr>
+      <td><div class="prod-cell">
+        <div class="prod-thumb">${(r.subject || '?').slice(0,2).toUpperCase()}</div>
+        <div class="prod-meta"><b title="${r.subject}">${r.subject}</b><span>${r.supplierArticle}</span></div>
+      </div></td>
+      <td>${fmt(r.stock_qty)}</td>
+      <td>${fmt(r.avg_daily_sales,2)}</td>
+      <td>${r.coverage_days >= 999 ? '∞' : fmt(r.coverage_days,1)}</td>
+      <td class="${r.need_30d>0?'need-hi':''}">${fmt(r.need_30d)}</td>
+      <td>${fmt(r.need_60d)}</td>
+      <td>${fmt(r.need_90d)}</td>
+      <td class="prio ${r.priority}">${PRIO[r.priority]}</td>
+    </tr>`).join('');
+}
+function sortSupplies(col) {
+  const asc = supSort[col] = !supSort[col];
+  const sorted = [...supData].sort((a, b) => {
+    const va = a[col], vb = b[col];
+    if (typeof va === 'number') return asc ? va - vb : vb - va;
+    return asc ? String(va).localeCompare(String(vb)) : String(vb).localeCompare(String(va));
+  });
+  renderSupplies(sorted);
+}
+
+/* ════════ Init ════════ */
+function initApp() {
+  initDates();
+  loadFilters();
+  switchView('dashboard');
+}
 
 document.addEventListener('DOMContentLoaded', () => {
-  initDates(30);
+  // login
+  $('loginBtn').addEventListener('click', doLogin);
+  [$('loginUser'), $('loginPass')].forEach(el =>
+    el.addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); }));
+  $('cabBiomed').addEventListener('click', enterCabinet);
+  $('changeCab').addEventListener('click', logoutCabinet);
 
-  document.querySelectorAll('.sortable-table').forEach(initSortable);
+  // nav + filters
+  document.querySelectorAll('nav.tabs button').forEach(b =>
+    b.addEventListener('click', () => switchView(b.dataset.view)));
+  $('applyBtn').addEventListener('click', applyFilters);
 
-  document.getElementById('daysSelect').addEventListener('change', e => {
-    initDates(parseInt(e.target.value, 10));
-    loadAll();
-  });
+  // table sorting
+  document.querySelectorAll('#prodTable thead th').forEach(th =>
+    th.addEventListener('click', () => sortProducts(th.dataset.col)));
+  document.querySelectorAll('#supTable thead th').forEach(th =>
+    th.addEventListener('click', () => sortSupplies(th.dataset.col)));
+  $('prodSearch').addEventListener('input', e => searchProducts(e.target.value));
 
-  ['dateFrom', 'dateTo'].forEach(id => {
-    document.getElementById(id).addEventListener('change', () => {
-      document.getElementById('daysSelect').value = '';
-      loadAll();
-    });
-  });
-
-  document.getElementById('refreshBtn').addEventListener('click', loadAll);
-
-  loadAll();
-  setInterval(loadAll, 5 * 60 * 1000);
+  // restore session
+  if (localStorage.getItem('mp_auth') === '1') {
+    if (localStorage.getItem('mp_cabinet')) { show('app'); initApp(); }
+    else show('cabinet');
+  } else {
+    show('login');
+  }
 });

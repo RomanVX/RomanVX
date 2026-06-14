@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <defs>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#e8d28a"/>
+      <stop offset="0.5" stop-color="#c9a84c"/>
+      <stop offset="1" stop-color="#9c7b2e"/>
+    </linearGradient>
+  </defs>
+  <circle cx="100" cy="100" r="94" fill="#0d0d0d" stroke="url(#gold)" stroke-width="4"/>
+  <g fill="url(#gold)">
+    <!-- mane -->
+    <path d="M100 28
+      c14 0 18 10 26 8 c8-2 10-12 18-9 c7 3 3 14 9 18 c6 4 16-1 19 7 c3 8-8 12-7 20 c1 8 12 11 10 19 c-2 8-13 5-18 12 c-5 6 1 16-7 20 c-7 4-14-5-22-3 c-8 2-12 13-20 13 c-8 0-12-11-20-13 c-8-2-15 7-22 3 c-8-4-2-14-7-20 c-5-7-16-4-18-12 c-2-8 9-11 10-19 c1-8-10-12-7-20 c3-8 13-3 19-7 c6-4 2-15 9-18 c8-3 10 7 18 9 c8 2 12-8 26-8 z"/>
+  </g>
+  <!-- face -->
+  <ellipse cx="100" cy="104" rx="40" ry="38" fill="#141414"/>
+  <g fill="url(#gold)">
+    <circle cx="84" cy="96" r="6"/>
+    <circle cx="116" cy="96" r="6"/>
+    <path d="M100 108 l10 10 c0 8-20 8-20 0 z"/>
+    <path d="M88 124 c6 6 18 6 24 0 c-4 9-20 9-24 0z"/>
+  </g>
+  <path d="M100 118 v6" stroke="url(#gold)" stroke-width="3" stroke-linecap="round"/>
+</svg>
