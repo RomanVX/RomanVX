@@ -73,7 +73,11 @@ function getParams() {
 
 async function fetchJSON(path) {
   const r = await fetch(`${API}${path}?${getParams()}`);
-  if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+  if (!r.ok) {
+    let detail = `${r.status}`;
+    try { const body = await r.json(); detail = body.detail || detail; } catch {}
+    throw new Error(detail);
+  }
   return r.json();
 }
 

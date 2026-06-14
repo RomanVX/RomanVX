@@ -20,46 +20,34 @@ async def _get(url: str, params: dict) -> list[dict]:
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.get(url, headers=_headers(), params=params)
         if not resp.is_success:
-            _log.error("WB API %s -> %s: %s", url, resp.status_code, resp.text[:200])
-        resp.raise_for_status()
+            _log.error("WB API %s → %s %s", url, resp.status_code, resp.text[:300])
+            resp.raise_for_status()
         return resp.json()
 
 
 async def get_sales(date_from: datetime, date_to: datetime) -> list[dict]:
     if USE_MOCK:
         return mock_data.generate_sales(date_from, date_to)
-    try:
-        return await _get(
-            f"{STATS_BASE}/supplier/sales",
-            {"dateFrom": date_from.strftime("%Y-%m-%dT00:00:00"), "flag": 0},
-        )
-    except Exception as exc:
-        _log.warning("WB sales API failed (%s), falling back to mock", exc)
-        return mock_data.generate_sales(date_from, date_to)
+    return await _get(
+        f"{STATS_BASE}/supplier/sales",
+        {"dateFrom": date_from.strftime("%Y-%m-%dT00:00:00"), "flag": 0},
+    )
 
 
 async def get_orders(date_from: datetime, date_to: datetime) -> list[dict]:
     if USE_MOCK:
         return mock_data.generate_orders(date_from, date_to)
-    try:
-        return await _get(
-            f"{STATS_BASE}/supplier/orders",
-            {"dateFrom": date_from.strftime("%Y-%m-%dT00:00:00"), "flag": 0},
-        )
-    except Exception as exc:
-        _log.warning("WB orders API failed (%s), falling back to mock", exc)
-        return mock_data.generate_orders(date_from, date_to)
+    return await _get(
+        f"{STATS_BASE}/supplier/orders",
+        {"dateFrom": date_from.strftime("%Y-%m-%dT00:00:00"), "flag": 0},
+    )
 
 
 async def get_stocks() -> list[dict]:
     if USE_MOCK:
         return mock_data.generate_stocks()
     date_from = (datetime.utcnow() - timedelta(days=1)).strftime("%Y-%m-%dT00:00:00")
-    try:
-        return await _get(
-            f"{STATS_BASE}/supplier/stocks",
-            {"dateFrom": date_from},
-        )
-    except Exception as exc:
-        _log.warning("WB stocks API failed (%s), falling back to mock", exc)
-        return mock_data.generate_stocks()
+    return await _get(
+        f"{STATS_BASE}/supplier/stocks",
+        {"dateFrom": date_from},
+    )
