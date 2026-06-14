@@ -1,4 +1,4 @@
-"""File upload endpoints — currently: unit cost table (xlsx/csv)."""
+"""File upload endpoints — unit cost + product name table (xlsx/csv)."""
 import io
 import logging
 
@@ -9,51 +9,60 @@ router = APIRouter(prefix="/api/upload", tags=["upload"])
 _log = logging.getLogger(__name__)
 
 
-def _parse_xlsx(content: bytes) -> dict[str, float]:
+def _parse_xlsx(content: bytes) -> tuple[dict[str, float], dict[str, str]]:
     import openpyxl
     wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
     ws = wb.active
 
-    art_col: int | None = None
+    art_col: int | None  = None
     cost_col: int | None = None
+    name_col: int | None = None
     mapping: dict[str, float] = {}
+    names:   dict[str, str]   = {}
 
     for row in ws.iter_rows(values_only=True):
         if row is None:
             continue
-        # Detect header row by looking for "Артикул продавца"
+        # Detect header row
         if art_col is None:
             for i, cell in enumerate(row):
-                s = str(cell or "").lower()
+                s = str(cell or "").lower().strip()
                 if "артикул продавца" in s:
                     art_col = i
                 if "себестоимость ед" in s:
                     cost_col = i
-            continue  # skip header row
+                if s == "название":
+                    name_col = i
+            continue  # skip header row itself
 
         if art_col is None:
-            continue  # still searching for header
+            continue
         if cost_col is None:
-            cost_col = 4  # fallback: column E
+            cost_col = 4  # fallback column E
 
         try:
             article = str(row[art_col] or "").strip()
-            raw = row[cost_col]
             if not article or article in ("None", ""):
                 continue
+            raw = row[cost_col]
             cost = float(str(raw).replace(",", ".").replace(" ", "").replace("\xa0", ""))
             if cost > 0:
                 mapping[article] = cost
+            if name_col is not None and name_col < len(row):
+                n = str(row[name_col] or "").strip()
+                if n and n != "None":
+                    names[article] = n
         except (ValueError, TypeError, IndexError):
             pass
 
     wb.close()
-    return mapping
+    return mapping, names
 
 
-def _parse_csv(content: bytes) -> dict[str, float]:
+def _parse_csv(content: bytes) -> tuple[dict[str, float], dict[str, str]]:
     import csv
     mapping: dict[str, float] = {}
+    names:   dict[str, str]   = {}
     text = content.decode("utf-8-sig", errors="replace")
     reader = csv.reader(io.StringIO(text))
     header_skipped = False
@@ -70,19 +79,18 @@ def _parse_csv(content: bytes) -> dict[str, float]:
                 mapping[article] = cost
         except (ValueError, IndexError):
             pass
-    return mapping
+    return mapping, names
 
 
 @router.post("/costs")
 async def upload_costs(file: UploadFile = File(...)):
-    """Upload an xlsx or csv file with columns: supplier_article, cost_per_unit."""
     name = (file.filename or "").lower()
     content = await file.read()
 
     if name.endswith(".xlsx") or name.endswith(".xls"):
-        mapping = _parse_xlsx(content)
+        mapping, names = _parse_xlsx(content)
     elif name.endswith(".csv"):
-        mapping = _parse_csv(content)
+        mapping, names = _parse_csv(content)
     else:
         raise HTTPException(400, "Формат не поддерживается. Загрузите .xlsx или .csv")
 
@@ -91,9 +99,10 @@ async def upload_costs(file: UploadFile = File(...)):
                                  "Убедитесь, что файл содержит колонки "
                                  "'Артикул продавца' и 'Себестоимость ед.'")
 
-    cost_store.set_costs(mapping)
-    _log.info("Costs loaded: %d articles", len(mapping))
-    return {"loaded": len(mapping), "sample": dict(list(mapping.items())[:3])}
+    cost_store.set_costs(mapping, names)
+    _log.info("Costs loaded: %d articles, %d names", len(mapping), len(names))
+    return {"loaded": len(mapping), "names_loaded": len(names),
+            "sample": dict(list(mapping.items())[:3])}
 
 
 @router.get("/costs/status")

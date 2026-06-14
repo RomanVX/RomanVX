@@ -430,3 +430,220 @@ def unit_economics(sales: list[dict], orders: list[dict], days: int,
 
     rows.sort(key=lambda r: r["profit_per"], reverse=True)
     return rows
+
+
+# ── Real unit economics from reportDetailByPeriod ─────────────────────────────
+
+ACQUIRING_RATE = 0.027   # ~2.7% WB payment processing fee
+USN_RATE       = 0.06    # УСН 6% of revenue (configurable)
+
+
+def unit_economics_real(
+    report: list[dict],
+    days: int,
+    costs: dict[str, float] | None = None,
+    names: dict[str, str]   | None = None,
+    usn_rate: float = USN_RATE,
+) -> list[dict]:
+    """Per-article unit economics from reportDetailByPeriod (real WB data).
+
+    Key report fields:
+      sa_name          — supplier article
+      nm_id            — WB article ID
+      subject_name     — product category
+      brand_name       — brand
+      doc_type_name    — "Продажа" / "Возврат" / "Хранение" / "Штраф" etc.
+      retail_amount    — gross revenue (Выкупы ₽)
+      commission_percent — WB commission %
+      delivery_rub     — logistics cost ₽
+      ppvz_vw          — WB total remuneration ₽ (commission incl.)
+      storage_fee      — storage ₽
+      penalty          — fines ₽
+      deduction        — deductions (losses, defects etc.) ₽
+      acceptance       — acceptance fee ₽
+      additional_payment — bonuses from WB ₽
+      for_pay          — net payout to seller ₽
+    """
+    agg: dict[str, dict] = {}
+
+    for r in report:
+        art = str(r.get("sa_name") or r.get("nm_id") or "")
+        if not art:
+            continue
+        if art not in agg:
+            agg[art] = {
+                "nm_id": r.get("nm_id"),
+                "subject": "", "brand": "",
+                "sale_qty": 0, "return_qty": 0,
+                "sale_rub": 0.0, "return_rub": 0.0,
+                "logistics": 0.0, "commission": 0.0,
+                "storage": 0.0, "penalty": 0.0, "deduction": 0.0,
+                "acceptance": 0.0, "additional": 0.0, "for_pay": 0.0,
+            }
+        a = agg[art]
+        if r.get("subject_name"):
+            a["subject"] = r["subject_name"]
+        if r.get("brand_name"):
+            a["brand"] = r["brand_name"]
+
+        doc    = r.get("doc_type_name", "")
+        qty    = r.get("quantity", 0) or 0
+        retail = r.get("retail_amount", 0.0) or 0.0
+        comm_pct = r.get("commission_percent", 0.0) or 0.0
+
+        if doc == "Продажа":
+            a["sale_qty"] += qty
+            a["sale_rub"] += retail
+        elif doc == "Возврат":
+            a["return_qty"] += qty
+            a["return_rub"] += retail
+
+        a["logistics"]   += abs(r.get("delivery_rub",        0.0) or 0.0)
+        a["commission"]  += abs(retail * comm_pct / 100)
+        a["storage"]     += abs(r.get("storage_fee",         0.0) or 0.0)
+        a["penalty"]     += abs(r.get("penalty",             0.0) or 0.0)
+        a["deduction"]   += abs(r.get("deduction",           0.0) or 0.0)
+        a["acceptance"]  += abs(r.get("acceptance",          0.0) or 0.0)
+        a["additional"]  +=    (r.get("additional_payment",  0.0) or 0.0)
+        a["for_pay"]     +=    (r.get("for_pay",             0.0) or 0.0)
+
+    rows = []
+    for art, a in agg.items():
+        net_qty = a["sale_qty"] - a["return_qty"]
+        if net_qty <= 0:
+            continue
+
+        buy_rub   = a["sale_rub"] - a["return_rub"]
+        acquiring = round(buy_rub * ACQUIRING_RATE, 2)
+        tax       = round(buy_rub * usn_rate, 2)
+        for_pay   = a["for_pay"]
+
+        if costs and art in costs:
+            cost_per    = costs[art]
+            cost_source = "file"
+        else:
+            cost_per    = 0.0
+            cost_source = "missing"
+        cost_total = cost_per * net_qty
+
+        name = (names or {}).get(art) or a["subject"]
+        profit = round(for_pay - cost_total - acquiring - tax - a["penalty"] - a["deduction"])
+
+        avg_price = buy_rub / net_qty if net_qty else 0
+        margin    = round(profit / buy_rub * 100, 1)  if buy_rub     else 0.0
+        roi       = round(profit / cost_total * 100, 1) if cost_total else 0.0
+
+        rows.append({
+            "supplierArticle": art,
+            "nmId":            a["nm_id"],
+            "name":            name,
+            "subject":         a["subject"],
+            "brand":           a["brand"],
+            "sale_qty":        a["sale_qty"],
+            "return_qty":      a["return_qty"],
+            "sold":            net_qty,
+            "buy_rub":         round(buy_rub),
+            "avg_price":       round(avg_price),
+            "cost_per_unit":   round(cost_per, 2),
+            "cost_total":      round(cost_total),
+            "cost_source":     cost_source,
+            "logistics":       round(a["logistics"]),
+            "commission":      round(a["commission"]),
+            "acquiring":       round(acquiring),
+            "storage":         round(a["storage"]),
+            "penalty":         round(a["penalty"]),
+            "deduction":       round(a["deduction"]),
+            "acceptance":      round(a["acceptance"]),
+            "additional":      round(a["additional"]),
+            "for_pay":         round(for_pay),
+            "tax":             round(tax),
+            "profit":          profit,
+            "margin":          margin,
+            "roi":             roi,
+        })
+
+    rows.sort(key=lambda r: r["profit"], reverse=True)
+    return rows
+
+
+def monthly_pivot(report: list[dict], usn_rate: float = USN_RATE) -> list[dict]:
+    """Aggregate reportDetailByPeriod records by calendar month."""
+    from datetime import datetime as _dt
+
+    RU_MONTHS = {1:"янв",2:"фев",3:"мар",4:"апр",5:"май",6:"июн",
+                 7:"июл",8:"авг",9:"сен",10:"окт",11:"ноя",12:"дек"}
+
+    by_month: dict[str, dict] = {}
+
+    for r in report:
+        raw_dt = (r.get("sale_dt") or r.get("rr_dt") or r.get("order_dt") or "")
+        month  = raw_dt[:7]
+        if not month or len(month) < 7:
+            continue
+        if month not in by_month:
+            by_month[month] = {
+                "sale_qty": 0, "return_qty": 0,
+                "sale_rub": 0.0, "return_rub": 0.0,
+                "logistics": 0.0, "commission": 0.0,
+                "storage": 0.0, "penalty": 0.0, "deduction": 0.0,
+                "acceptance": 0.0, "additional": 0.0, "for_pay": 0.0,
+            }
+        m   = by_month[month]
+        doc = r.get("doc_type_name", "")
+        qty = r.get("quantity", 0) or 0
+        retail   = r.get("retail_amount", 0.0) or 0.0
+        comm_pct = r.get("commission_percent", 0.0) or 0.0
+
+        if doc == "Продажа":
+            m["sale_qty"] += qty
+            m["sale_rub"] += retail
+        elif doc == "Возврат":
+            m["return_qty"] += qty
+            m["return_rub"] += retail
+
+        m["logistics"]  += abs(r.get("delivery_rub",       0.0) or 0.0)
+        m["commission"] += abs(retail * comm_pct / 100)
+        m["storage"]    += abs(r.get("storage_fee",        0.0) or 0.0)
+        m["penalty"]    += abs(r.get("penalty",            0.0) or 0.0)
+        m["deduction"]  += abs(r.get("deduction",          0.0) or 0.0)
+        m["acceptance"] += abs(r.get("acceptance",         0.0) or 0.0)
+        m["additional"] +=    (r.get("additional_payment", 0.0) or 0.0)
+        m["for_pay"]    +=    (r.get("for_pay",            0.0) or 0.0)
+
+    rows = []
+    for month, m in sorted(by_month.items()):
+        net_qty   = m["sale_qty"] - m["return_qty"]
+        buy_rub   = m["sale_rub"] - m["return_rub"]
+        acquiring = round(buy_rub * ACQUIRING_RATE)
+        tax       = round(buy_rub * usn_rate)
+        profit    = round(m["for_pay"] - acquiring - tax - m["penalty"] - m["deduction"])
+        margin    = round(profit / buy_rub * 100, 1) if buy_rub else 0.0
+
+        try:
+            mo    = _dt.strptime(month, "%Y-%m")
+            label = f"{RU_MONTHS[mo.month]} {mo.year}"
+        except Exception:
+            label = month
+
+        rows.append({
+            "month":      month,
+            "label":      label,
+            "sale_qty":   m["sale_qty"],
+            "return_qty": m["return_qty"],
+            "net_qty":    net_qty,
+            "buy_rub":    round(buy_rub),
+            "logistics":  round(m["logistics"]),
+            "commission": round(m["commission"]),
+            "acquiring":  acquiring,
+            "storage":    round(m["storage"]),
+            "penalty":    round(m["penalty"]),
+            "deduction":  round(m["deduction"]),
+            "acceptance": round(m["acceptance"]),
+            "additional": round(m["additional"]),
+            "for_pay":    round(m["for_pay"]),
+            "tax":        tax,
+            "profit":     profit,
+            "margin":     margin,
+        })
+
+    return rows

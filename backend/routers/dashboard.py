@@ -190,15 +190,50 @@ async def get_unit_economics(
     category:  Annotated[Optional[str], _CATEGORY]  = None,
 ):
     dt_from, dt_to = _range(date_from, date_to, days)
-    sales, orders, _ = await _fetch(dt_from, dt_to, brand, category)
     costs = cost_store.get_costs()
+    names = cost_store.get_names()
+
+    # Try real reportDetailByPeriod first
+    try:
+        report = await cache.get_report_data(dt_from, dt_to)
+        if report:
+            if brand or category:
+                report = [r for r in report
+                          if (not brand    or r.get("brand_name") == brand)
+                          and (not category or r.get("subject_name") == category)]
+            rows = analytics.unit_economics_real(
+                report, _days(dt_from, dt_to), costs or None, names or None)
+            return {"rows": rows, "costs_loaded": cost_store.count(), "source": "report"}
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning("report API failed, falling back: %s", exc)
+
+    # Fallback: estimated from sales/orders
+    sales, orders, _ = await _fetch(dt_from, dt_to, brand, category)
     return {
         "rows": analytics.unit_economics(sales, orders, _days(dt_from, dt_to), costs or None),
         "costs_loaded": cost_store.count(),
+        "source": "estimated",
     }
+
+
+@router.get("/monthly-pivot")
+async def get_monthly_pivot(
+    date_from: Annotated[Optional[str], _DATE_FROM] = None,
+    date_to:   Annotated[Optional[str], _DATE_TO]   = None,
+    days:      Annotated[int, _DAYS]                = 30,
+):
+    dt_from, dt_to = _range(date_from, date_to, days)
+    try:
+        report = await cache.get_report_data(dt_from, dt_to)
+        rows = analytics.monthly_pivot(report)
+        return {"rows": rows}
+    except Exception as exc:
+        raise HTTPException(502, f"Report API: {exc}")
 
 
 @router.post("/cache/invalidate", include_in_schema=False)
 async def invalidate_cache():
     cache.invalidate()
+    cache.invalidate_report()
     return {"status": "ok"}

@@ -438,38 +438,89 @@ function renderSupTable(data) {
 
 async function loadUnitEc() {
   const tbody = document.getElementById('unitecBody');
-  tbody.innerHTML = '<tr><td colspan="13" class="text-center text-secondary py-4"><span class="spinner-border spinner-border-sm"></span></td></tr>';
+  tbody.innerHTML = '<tr><td colspan="16" class="text-center text-secondary py-4"><span class="spinner-border spinner-border-sm"></span></td></tr>';
   try {
     const d = await fetchJSON('/api/dashboard/unit-economics');
-    document.getElementById('unitecCostBadge').textContent =
-      d.costs_loaded ? `✓ себестоимость из файла (${d.costs_loaded} арт.)` : 'себестоимость оценочная';
+    const costBadge = document.getElementById('unitecCostBadge');
+    const srcBadge  = document.getElementById('unitecSourceBadge');
+    costBadge.textContent = d.costs_loaded
+      ? `✓ себестоимость из файла (${d.costs_loaded} арт.)`
+      : 'себестоимость не загружена';
+    if (d.source === 'report') {
+      srcBadge.textContent = 'данные из финотчёта WB';
+      srcBadge.style.display = '';
+    } else {
+      srcBadge.style.display = 'none';
+    }
     renderUnitecTable(d.rows);
+    loadMonthlyPivot();
   } catch (e) {
-    tbody.innerHTML = `<tr><td colspan="13" class="text-danger text-center py-3">Ошибка: ${e.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="16" class="text-danger text-center py-3">Ошибка: ${e.message}</td></tr>`;
   }
 }
 
 function unitecRowFn(r) {
-  const pc = r.profit_per < 0 ? 'text-danger' : r.profit_per > 0 ? 'text-success' : '';
-  const mc = r.margin < 0 ? 'text-danger' : r.margin > 20 ? 'text-success' : '';
-  const rc = r.roi < 0 ? 'text-danger' : r.roi > 50 ? 'text-success' : '';
-  const src = r.cost_source === 'file'
-    ? '<i class="bi bi-file-earmark-check text-success" title="Из файла"></i>'
-    : '<i class="bi bi-calculator text-secondary" title="Оценочно"></i>';
-  return `
-    <td>${r.supplierArticle || r.nmId}</td>
-    <td class="text-truncate" style="max-width:160px" title="${r.subject}">${r.subject}</td>
-    <td>${fmt(r.sold)}</td>
-    <td>${fmtRub(r.avg_price)}</td>
-    <td>${fmtRub(r.cost_per_unit)} ${src}</td>
-    <td>${fmtRub(r.commission_per)}</td>
-    <td>${fmtRub(r.logistics_per)}</td>
-    <td>${fmtRub(r.storage_per)}</td>
-    <td>${fmtRub(r.ad_per)}</td>
-    <td>${fmtRub(r.tax_per)}</td>
-    <td class="${pc} fw-bold">${fmtRub(r.profit_per)}</td>
-    <td class="${mc}">${fmt(r.margin, 1)}%</td>
-    <td class="${rc}">${fmt(r.roi, 1)}%</td>`;
+  // supports both real report rows and estimated rows
+  const profit  = r.profit  ?? r.profit_per  ?? 0;
+  const margin  = r.margin  ?? 0;
+  const roi     = r.roi     ?? 0;
+  const pc = profit < 0 ? 'text-danger fw-bold' : profit > 0 ? 'text-success fw-bold' : 'fw-bold';
+  const mc = margin < 0 ? 'text-danger' : margin > 20 ? 'text-success' : '';
+  const rc = roi < 0 ? 'text-danger' : roi > 50 ? 'text-success' : '';
+
+  // cost source icon
+  let costCell;
+  if (r.cost_source === 'file') {
+    costCell = `${fmtRub(r.cost_per_unit)} <i class="bi bi-file-earmark-check text-success" title="Из файла"></i>`;
+  } else if (r.cost_source === 'missing') {
+    costCell = `<span class="text-danger">— нет</span>`;
+  } else {
+    costCell = `${fmtRub(r.cost_per_unit)} <i class="bi bi-calculator text-secondary" title="Оценочно"></i>`;
+  }
+
+  const name = r.name || r.subject || '—';
+  const qty  = r.sale_qty ?? r.sold ?? 0;
+  const buyRub = r.buy_rub ?? 0;
+
+  if (r.buy_rub !== undefined) {
+    // Real report row
+    return `
+      <td>${r.supplierArticle}</td>
+      <td class="text-truncate" style="max-width:200px" title="${name}">${name}</td>
+      <td>${fmt(qty)}<small class="text-secondary"> (-${fmt(r.return_qty??0)})</small></td>
+      <td>${fmtRub(buyRub)}</td>
+      <td>${costCell}</td>
+      <td>${fmtRub(r.cost_total)}</td>
+      <td>${fmtRub(r.logistics)}</td>
+      <td>${fmtRub(r.commission)}</td>
+      <td>${fmtRub(r.acquiring)}</td>
+      <td>${fmtRub(r.storage)}</td>
+      <td>${r.penalty ? fmtRub(r.penalty) : '—'}</td>
+      <td>${r.deduction ? fmtRub(r.deduction) : '—'}</td>
+      <td>${fmtRub(r.tax)}</td>
+      <td class="${pc}">${fmtRub(profit)}</td>
+      <td class="${mc}">${fmt(margin, 1)}%</td>
+      <td class="${rc}">${r.cost_total ? fmt(roi, 1) + '%' : '—'}</td>`;
+  } else {
+    // Estimated (fallback) row
+    return `
+      <td>${r.supplierArticle || r.nmId}</td>
+      <td class="text-truncate" style="max-width:200px" title="${r.subject||''}">${r.subject||'—'}</td>
+      <td>${fmt(r.sold)}</td>
+      <td>${fmtRub(r.avg_price)}</td>
+      <td>${costCell}</td>
+      <td>—</td>
+      <td>${fmtRub(r.logistics_per)}</td>
+      <td>${fmtRub(r.commission_per)}</td>
+      <td>—</td>
+      <td>${fmtRub(r.storage_per)}</td>
+      <td>—</td>
+      <td>—</td>
+      <td>${fmtRub(r.tax_per)}</td>
+      <td class="${pc}">${fmtRub(r.profit_per)}</td>
+      <td class="${mc}">${fmt(margin, 1)}%</td>
+      <td class="${rc}">${fmt(roi, 1)}%</td>`;
+  }
 }
 
 function renderUnitecTable(data) {
@@ -478,8 +529,62 @@ function renderUnitecTable(data) {
   tbody._rowFn = unitecRowFn;
   tbody.innerHTML = data.length
     ? data.map(r => `<tr>${unitecRowFn(r)}</tr>`).join('')
-    : '<tr><td colspan="13" class="text-secondary text-center py-3">Нет данных</td></tr>';
+    : '<tr><td colspan="16" class="text-secondary text-center py-3">Нет данных</td></tr>';
   initSortable(document.getElementById('unitecTable'));
+}
+
+async function loadMonthlyPivot() {
+  const tbody = document.getElementById('pivotBody');
+  if (!tbody) return;
+  try {
+    const d = await fetchJSON('/api/dashboard/monthly-pivot');
+    renderMonthlyPivot(d.rows);
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="14" class="text-danger text-center py-3">Ошибка свода: ${e.message}</td></tr>`;
+  }
+}
+
+function pivotRowFn(r) {
+  const pc = r.profit < 0 ? 'text-danger fw-bold' : 'text-success fw-bold';
+  const mc = r.margin < 0 ? 'text-danger' : r.margin > 20 ? 'text-success' : '';
+  return `
+    <td class="fw-semibold">${r.label}</td>
+    <td>${fmt(r.sale_qty)}</td>
+    <td class="text-secondary">${fmt(r.return_qty)}</td>
+    <td>${fmtRub(r.buy_rub)}</td>
+    <td class="text-secondary">${fmtRub(r.logistics)}</td>
+    <td class="text-secondary">${fmtRub(r.commission)}</td>
+    <td class="text-secondary">${fmtRub(r.acquiring)}</td>
+    <td class="text-secondary">${fmtRub(r.storage)}</td>
+    <td class="text-secondary">${r.penalty ? fmtRub(r.penalty) : '—'}</td>
+    <td class="text-secondary">${r.deduction ? fmtRub(r.deduction) : '—'}</td>
+    <td>${fmtRub(r.for_pay)}</td>
+    <td class="text-secondary">${fmtRub(r.tax)}</td>
+    <td class="${pc}">${fmtRub(r.profit)}</td>
+    <td class="${mc}">${fmt(r.margin, 1)}%</td>`;
+}
+
+function renderMonthlyPivot(data) {
+  const tbody = document.getElementById('pivotBody');
+  if (!tbody) return;
+  tbody._data  = data;
+  tbody._rowFn = pivotRowFn;
+  if (!data.length) {
+    tbody.innerHTML = '<tr><td colspan="14" class="text-secondary text-center py-3">Нет данных за период</td></tr>';
+    return;
+  }
+  // Add totals row
+  const totals = data.reduce((t, r) => {
+    ['sale_qty','return_qty','buy_rub','logistics','commission','acquiring',
+     'storage','penalty','deduction','for_pay','tax','profit'].forEach(k => t[k] = (t[k]||0) + (r[k]||0));
+    return t;
+  }, {});
+  totals.label = 'ИТОГО';
+  totals.margin = totals.buy_rub ? Math.round(totals.profit / totals.buy_rub * 1000) / 10 : 0;
+
+  tbody.innerHTML = data.map(r => `<tr>${pivotRowFn(r)}</tr>`).join('') +
+    `<tr class="table-active fw-bold">${pivotRowFn(totals)}</tr>`;
+  initSortable(document.getElementById('pivotTable'));
 }
 
 // ── Cost file upload ──────────────────────────────────────────────────────────
