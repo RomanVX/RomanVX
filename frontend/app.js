@@ -309,82 +309,105 @@ function renderProdTable(data) {
   initSortable(document.getElementById('prodTable'));
 }
 
-// ── Stocks / Warehouses ───────────────────────────────────────────────────────
+// ── Stocks table ─────────────────────────────────────────────────────────────
+
+let _stocksData = [];
+let _stocksSortCol = 'days_to_oos';
+let _stocksSortAsc = true;
 
 async function loadStocks() {
-  const grid = document.getElementById('whGrid');
-  grid.innerHTML = '<div class="col-12 text-center text-secondary py-4"><span class="spinner-border"></span></div>';
+  const wrap = document.getElementById('stocksTableWrap');
+  wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border"></span></div>';
   try {
-    const data = await fetchJSON('/api/dashboard/warehouses');
-    renderWhGrid(data);
+    _stocksData = await fetchJSON('/api/dashboard/stocks_table');
+    renderStocksTable();
   } catch (e) {
-    grid.innerHTML = `<div class="col-12 text-danger text-center py-3">Ошибка: ${e.message}</div>`;
+    wrap.innerHTML = `<div class="text-danger text-center py-3">Ошибка: ${e.message}</div>`;
   }
 }
 
-let _sparkCharts = {};
-
-function _destroySparks() {
-  Object.values(_sparkCharts).forEach(c => { try { c.destroy(); } catch {} });
-  _sparkCharts = {};
+function _stocksSort(col) {
+  if (_stocksSortCol === col) {
+    _stocksSortAsc = !_stocksSortAsc;
+  } else {
+    _stocksSortCol = col;
+    _stocksSortAsc = (col === 'days_to_oos' || col === 'supplierArticle' || col === 'subject');
+  }
+  renderStocksTable();
 }
 
-function renderWhGrid(data) {
-  _destroySparks();
-  const grid = document.getElementById('whGrid');
-  if (!data.length) {
-    grid.innerHTML = '<div class="col-12 text-secondary text-center py-4">Нет данных</div>';
+function renderStocksTable() {
+  const wrap = document.getElementById('stocksTableWrap');
+  if (!_stocksData.length) {
+    wrap.innerHTML = '<div class="text-secondary text-center py-4">Нет данных</div>';
     return;
   }
-  grid.innerHTML = data.map(wh => {
-    const covCls = wh.coverage_days < 14 ? 'text-danger' : wh.coverage_days < 30 ? 'text-warning' : 'text-success';
-    const cov    = wh.coverage_days >= 999 ? '∞' : fmt(wh.coverage_days, 1);
-    const sid    = 'spark_' + wh.warehouse.replace(/[^a-zA-Z0-9]/g, '_');
-    return `<div class="col-12 col-sm-6 col-xl-4">
-      <div class="wh-card ${wh.status_ok ? 'wh-ok' : 'wh-low'}">
-        <div class="d-flex justify-content-between align-items-start">
-          <div>
-            <div class="wh-name">${wh.warehouse}</div>
-            <div class="wh-meta">
-              <span class="me-2">📦 ${fmt(wh.stock_qty)} шт</span>
-              <span>📈 ${fmt(wh.per_day, 1)}/день</span>
-            </div>
-          </div>
-          <div class="text-end">
-            <div class="wm ${covCls}">Покрытие: ${cov} д</div>
-            <div class="wm text-secondary">Выкуп: ${fmt(wh.buyout, 1)}%</div>
-            <div class="wm text-secondary">Возвраты: ${fmt(wh.returns_pct, 1)}%</div>
-          </div>
-        </div>
-        <canvas id="${sid}" class="spark" height="40"></canvas>
-      </div>
-    </div>`;
+
+  const STATUS_ORD = { red: 0, yellow: 1, green: 2 };
+  const col = _stocksSortCol;
+  const asc = _stocksSortAsc;
+
+  const sorted = [..._stocksData].sort((a, b) => {
+    if (col === 'status') {
+      const d = STATUS_ORD[a.status] - STATUS_ORD[b.status];
+      return asc ? d : -d;
+    }
+    const av = a[col] ?? '', bv = b[col] ?? '';
+    const d = typeof av === 'number' ? av - bv : String(av).localeCompare(String(bv), 'ru');
+    return asc ? d : -d;
+  });
+
+  // Group by category
+  const groups = {};
+  sorted.forEach(r => {
+    const g = r.category || r.brand || r.subject || '—';
+    (groups[g] = groups[g] || []).push(r);
+  });
+
+  const STATUS_ICON = { red: '🔴', yellow: '🟡', green: '🟢' };
+  const STATUS_CLS  = { red: 'text-danger', yellow: 'text-warning', green: 'text-success' };
+
+  function thSort(col, label) {
+    const active = _stocksSortCol === col;
+    const arrow  = active ? (_stocksSortAsc ? ' ↑' : ' ↓') : '';
+    return `<th style="cursor:pointer;white-space:nowrap" onclick="_stocksSort('${col}')">${label}${arrow}</th>`;
+  }
+
+  const header = `<thead class="table-dark sticky-top">
+    <tr>
+      ${thSort('supplierArticle','Артикул')}
+      ${thSort('subject','Название')}
+      ${thSort('quantityFull','Остаток')}
+      ${thSort('per_day','Продаж/день')}
+      ${thSort('days_to_oos','Дней до OOS')}
+      ${thSort('status','Статус')}
+    </tr>
+  </thead>`;
+
+  const bodyRows = Object.entries(groups).map(([grp, rows]) => {
+    const grpRow = `<tr class="table-secondary">
+      <td colspan="6"><strong>${grp}</strong> <span class="text-secondary small">(${rows.length} арт.)</span></td>
+    </tr>`;
+    const itemRows = rows.map(r => {
+      const oos = r.days_to_oos >= 999 ? '∞' : r.days_to_oos;
+      return `<tr>
+        <td><code>${r.supplierArticle}</code></td>
+        <td>${r.subject || '—'}</td>
+        <td class="text-end">${fmt(r.quantityFull)}</td>
+        <td class="text-end">${fmt(r.per_day, 2)}</td>
+        <td class="text-end ${STATUS_CLS[r.status]}">${oos}</td>
+        <td>${STATUS_ICON[r.status]}</td>
+      </tr>`;
+    }).join('');
+    return grpRow + itemRows;
   }).join('');
 
-  data.forEach(wh => {
-    const sid = 'spark_' + wh.warehouse.replace(/[^a-zA-Z0-9]/g, '_');
-    const canvas = document.getElementById(sid);
-    if (!canvas) return;
-    const existing = Chart.getChart(canvas);
-    if (existing) existing.destroy();
-    _sparkCharts[sid] = new Chart(canvas.getContext('2d'), {
-      type: 'line',
-      data: {
-        labels: wh.trend.map((_, i) => i),
-        datasets: [{
-          data: wh.trend,
-          borderColor: wh.status_ok ? '#4ade80' : '#f87171',
-          backgroundColor: wh.status_ok ? 'rgba(74,222,128,0.12)' : 'rgba(248,113,113,0.12)',
-          borderWidth: 2, pointRadius: 0, tension: 0.3, fill: true,
-        }],
-      },
-      options: {
-        responsive: false, animation: false,
-        plugins: { legend: { display: false }, tooltip: { enabled: false } },
-        scales: { x: { display: false }, y: { display: false } },
-      },
-    });
-  });
+  wrap.innerHTML = `<div class="table-responsive">
+    <table class="table table-sm table-hover align-middle mb-0">
+      ${header}
+      <tbody>${bodyRows}</tbody>
+    </table>
+  </div>`;
 }
 
 // ── Supplies ──────────────────────────────────────────────────────────────────

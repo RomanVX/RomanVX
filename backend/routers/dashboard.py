@@ -108,6 +108,15 @@ async def get_warehouses(
     return analytics.warehouses(sales, orders, stocks, _days(dt_from, dt_to))
 
 
+@router.get("/stocks_table")
+async def get_stocks_table():
+    """Per-SKU stock status table using 28-day real sales velocity."""
+    dt_to   = datetime.utcnow()
+    dt_from = dt_to - timedelta(days=28)
+    sales, _, stocks = await _fetch(dt_from, dt_to, None, None)
+    return analytics.stocks_table(sales, stocks, days=28)
+
+
 @router.get("/supplies")
 async def get_supplies(
     date_from: Annotated[Optional[str], _DATE_FROM] = None,

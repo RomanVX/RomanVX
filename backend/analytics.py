@@ -374,6 +374,55 @@ def supplies(sales: list[dict], stocks: list[dict], days: int) -> list[dict]:
     return rows
 
 
+def stocks_table(sales: list[dict], stocks: list[dict], days: int = 28) -> list[dict]:
+    """Per-SKU stock status: quantityFull, real sales velocity, days-to-OOS."""
+    stock_by_art: dict[str, dict] = {}
+    for r in stocks:
+        art = str(r.get("supplierArticle") or r.get("nmId") or "")
+        if not art:
+            continue
+        if art not in stock_by_art:
+            stock_by_art[art] = {
+                "supplierArticle": art,
+                "nmId": r.get("nmId"),
+                "subject": r.get("subject", ""),
+                "brand": r.get("brand", ""),
+                "category": r.get("category") or r.get("subject") or r.get("brand") or "—",
+                "quantityFull": 0,
+            }
+        stock_by_art[art]["quantityFull"] += r.get("quantityFull", r.get("quantity", 0))
+
+    sold_by_art: dict[str, int] = defaultdict(int)
+    for r in sales:
+        if not _is_sale(r):
+            continue
+        art = str(r.get("supplierArticle") or r.get("nmId") or "")
+        if art:
+            sold_by_art[art] += 1
+
+    rows = []
+    for art, s in stock_by_art.items():
+        qty = s["quantityFull"]
+        per_day = round(sold_by_art.get(art, 0) / days, 2)
+        days_to_oos = int(qty / per_day) if per_day > 0 else 999
+        status = "red" if days_to_oos <= 20 else "yellow" if days_to_oos <= 45 else "green"
+        rows.append({
+            "supplierArticle": art,
+            "nmId": s["nmId"],
+            "subject": s["subject"],
+            "brand": s["brand"],
+            "category": s["category"],
+            "quantityFull": qty,
+            "per_day": per_day,
+            "days_to_oos": days_to_oos,
+            "status": status,
+        })
+
+    _ord = {"red": 0, "yellow": 1, "green": 2}
+    rows.sort(key=lambda r: (_ord[r["status"]], r["days_to_oos"]))
+    return rows
+
+
 def abc_by_turnover(sales: list[dict], stocks: list[dict], days: int) -> list[dict]:
     rows = sorted(supplies(sales, stocks, days), key=lambda r: r["coverage_days"])
     n = len(rows) or 1
