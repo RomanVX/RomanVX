@@ -21,9 +21,12 @@ def _date(s: str) -> str:
     return s[:10]
 
 def _is_sale(r: dict) -> bool:
-    """saleID starts with 'S' = real sale (buyout). Returns, storno, etc. excluded."""
+    """Real buyout: saleID starts with 'S' AND finishedPrice > 0.
+    Returns/storno come as negative finishedPrice (even with S-prefix)."""
     sid = r.get("saleID", "")
-    return bool(sid) and sid.startswith("S")
+    if not sid or not sid.startswith("S"):
+        return False
+    return (r.get("finishedPrice") or 0) > 0
 
 def _is_return_storno(r: dict) -> bool:
     """saleID starts with 'A' = сторно возврата, not a sale."""
