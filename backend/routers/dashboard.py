@@ -141,6 +141,95 @@ async def get_stocks_table():
     )
 
 
+import time as _time
+_reco_cache: dict = {}
+_reco_cache_ts: float = 0.0
+_RECO_TTL = 3600  # 1 час
+
+
+@router.get("/supply-recommendations")
+async def get_supply_recommendations():
+    """Анализ остатков через Claude — рекомендации к поставке."""
+    from config import ANTHROPIC_API_KEY
+    if not ANTHROPIC_API_KEY:
+        raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY не настроен")
+
+    global _reco_cache, _reco_cache_ts
+    if _reco_cache and _time.monotonic() - _reco_cache_ts < _RECO_TTL:
+        return _reco_cache
+
+    # Собираем данные остатков
+    dt_to   = datetime.utcnow()
+    dt_from = dt_to - timedelta(days=28)
+    (wb_sales, _, wb_stocks), oz_stocks, oz_sales, ym_stocks, ym_sales = await asyncio.gather(
+        _fetch(dt_from, dt_to, None, None),
+        ozon_client.get_stocks(),
+        ozon_client.get_sales_28d(),
+        ym_client.get_stocks(),
+        ym_client.get_sales_28d(),
+    )
+    names = cost_store.get_names()
+    rows = analytics.stocks_table_multi(
+        wb_sales=wb_sales, wb_stocks=wb_stocks,
+        oz_stocks=oz_stocks, oz_sales=oz_sales,
+        ym_stocks=ym_stocks, ym_sales=ym_sales,
+        names=names, days=28,
+    )
+
+    # Формируем таблицу для промпта
+    lines = ["Артикул | Название | WB_ост | WB_дней | OZ_ост | OZ_дней | YM_ост | YM_дней | Статус"]
+    for r in rows:
+        lines.append(
+            f"{r.get('supplierArticle','')} | {r.get('name','')} | "
+            f"{r.get('wb_qty',0)} | {r.get('wb_days_to_oos','—')} | "
+            f"{r.get('oz_qty',0)} | {r.get('oz_days_to_oos','—')} | "
+            f"{r.get('ym_qty',0)} | {r.get('ym_days_to_oos','—')} | "
+            f"{r.get('status','')}"
+        )
+    table_text = "\n".join(lines)
+
+    prompt = f"""Ты аналитик маркетплейсов. Проанализируй остатки товаров по трём площадкам (WB, OZON, YM) и дай рекомендации к поставке.
+
+Данные на сегодня (период продаж 28 дней):
+{table_text}
+
+Статусы: red = менее 20 дней до OOS, yellow = 21-45 дней, green = более 45 дней, — = нет продаж/остатков.
+
+Сформируй структурированный отчёт:
+
+1. **СРОЧНО (red)** — артикулы с критически низким запасом хотя бы на одной площадке. Укажи конкретно на каком MP и сколько дней осталось.
+
+2. **ПЛАНОВАЯ ПОСТАВКА (yellow)** — артикулы которые нужно заказать в ближайший месяц.
+
+3. **ДИСБАЛАНС МЕЖДУ ПЛОЩАДКАМИ** — товары где есть остаток на одной площадке, но нет на другой. Рекомендуй перераспределение.
+
+4. **ПРИОРИТЕТЫ** — топ-5 артикулов которые нужно поставить в первую очередь (по критичности и объёму продаж).
+
+Отвечай на русском языке, кратко и по делу. Используй эмодзи для наглядности."""
+
+    import anthropic as _anthropic
+    client = _anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
+    message = await client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=1500,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    text = message.content[0].text
+
+    result = {"text": text, "generated_at": dt_to.strftime("%d.%m.%Y %H:%M UTC")}
+    _reco_cache = result
+    _reco_cache_ts = _time.monotonic()
+    return result
+
+
+@router.post("/supply-recommendations/invalidate", include_in_schema=False)
+async def invalidate_reco_cache():
+    global _reco_cache, _reco_cache_ts
+    _reco_cache = {}
+    _reco_cache_ts = 0.0
+    return {"status": "ok"}
+
+
 @router.get("/supplies")
 async def get_supplies(
     date_from: Annotated[Optional[str], _DATE_FROM] = None,

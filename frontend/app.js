@@ -315,6 +315,30 @@ let _stocksData = [];
 let _stocksSortCol = 'days_to_oos';
 let _stocksSortAsc = true;
 
+async function loadRecommendations(forceRefresh = false) {
+  const modal = new bootstrap.Modal(document.getElementById('recoModal'));
+  const body = document.getElementById('recoModalBody');
+  const ts = document.getElementById('recoGeneratedAt');
+  body.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border"></span><p class="mt-2 small">Анализирую данные...</p></div>';
+  ts.textContent = '';
+  modal.show();
+  try {
+    const url = '/api/dashboard/supply-recommendations' + (forceRefresh ? '?refresh=1' : '');
+    if (forceRefresh) await fetchJSON('/api/dashboard/supply-recommendations/invalidate', {method:'POST'}).catch(()=>{});
+    const data = await fetchJSON(url);
+    // Простое markdown → HTML: **bold**, заголовки, переносы
+    const html = (data.text || '')
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
+      .replace(/^#{1,3} (.+)$/gm,'<strong style="font-size:15px">$1</strong>')
+      .replace(/\n/g,'<br>');
+    body.innerHTML = html;
+    ts.textContent = data.generated_at ? `Сформировано: ${data.generated_at}` : '';
+  } catch (e) {
+    body.innerHTML = `<div class="text-danger">Ошибка: ${e.message}</div>`;
+  }
+}
+
 async function loadStocks() {
   const wrap = document.getElementById('stocksTableWrap');
   wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border"></span></div>';

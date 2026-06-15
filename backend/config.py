@@ -14,6 +14,8 @@ YM_API_KEY: str      = os.getenv("YM_API_KEY", "").strip()
 YM_CAMPAIGN_ID: str  = os.getenv("YM_CAMPAIGN_ID", "").strip()
 YM_BUSINESS_ID: str  = os.getenv("YM_BUSINESS_ID", "").strip()
 
+ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "").strip()
+
 USE_MOCK: bool = not WB_API_KEY or WB_API_KEY == "your_wildberries_api_key_here"
 USE_ADVERT_MOCK: bool = not WB_ADVERT_KEY or WB_ADVERT_KEY == "your_wildberries_api_key_here"
 
