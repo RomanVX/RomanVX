@@ -291,8 +291,20 @@ async def get_sales_analytics(
     date_data: dict = {d: {"wb_qty": 0, "wb_rev": 0.0, "oz_qty": 0, "oz_rev": 0.0, "ym_qty": 0, "ym_rev": 0.0}
                        for d in all_dates}
 
+    import logging as _logging
+    _salog = _logging.getLogger("sales_analytics")
+    _wb_sales_filtered = [s for s in wb_sales if analytics._is_sale(s)]
+    if _wb_sales_filtered:
+        s0 = _wb_sales_filtered[0]
+        _salog.info(
+            "WB sale sample: saleID=%s finishedPrice=%s forPay=%s priceWithDisc=%s totalPrice=%s discountPercent=%s",
+            s0.get("saleID"), s0.get("finishedPrice"), s0.get("forPay"),
+            s0.get("priceWithDisc"), s0.get("totalPrice"), s0.get("discountPercent"),
+        )
+    _salog.info("WB sales total=%d after _is_sale filter=%d", len(wb_sales), len(_wb_sales_filtered))
+
     if marketplace in ("wb", "all"):
-        for s in wb_sales:
+        for s in _wb_sales_filtered:
             art  = s.get("supplierArticle", "")
             date = (s.get("date") or "")[:10]
             rev  = float(s.get("finishedPrice") or 0)
