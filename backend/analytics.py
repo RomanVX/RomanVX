@@ -400,13 +400,22 @@ def stocks_table_multi(
             continue
         wb_qty[art] += qty
 
-    # Diagnostic: log raw rows for BMN-0028
-    debug_art = "BMN-0028"
-    debug_rows = [r for r in wb_stocks if str(r.get("supplierArticle") or "") == debug_art]
-    _log.info("[STOCKS] %s: %d raw rows, quantities=%s, total=%d",
-              debug_art, len(debug_rows),
-              [r.get("quantity") for r in debug_rows],
-              wb_qty.get(debug_art, 0))
+    # Diagnostic: log raw rows for key articles
+    for debug_art in ("BMN-0028", "BMN-0013", "AL-01"):
+        debug_rows = [r for r in wb_stocks if str(r.get("supplierArticle") or "") == debug_art]
+        for row in debug_rows:
+            _log.info(
+                "[STOCKS_RAW] %s | wh=%-20s | quantity=%s | quantityFull=%s | "
+                "inWayToClient=%s | inWayFromClient=%s",
+                debug_art,
+                row.get("warehouseName", "?"),
+                row.get("quantity"),
+                row.get("quantityFull"),
+                row.get("inWayToClient"),
+                row.get("inWayFromClient"),
+            )
+        _log.info("[STOCKS_SUM] %s: %d rows → quantity_sum=%d (excl. zeros)",
+                  debug_art, len(debug_rows), wb_qty.get(debug_art, 0))
 
     wb_sold: dict[str, int] = defaultdict(int)
     for r in wb_sales:
