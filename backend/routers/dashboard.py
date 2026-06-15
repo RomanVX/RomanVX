@@ -516,3 +516,43 @@ async def invalidate_cache():
     cache.invalidate()
     cache.invalidate_report()
     return {"status": "ok"}
+
+
+@router.get("/wb-sales-debug", include_in_schema=False)
+async def wb_sales_debug(
+    date_from: Annotated[Optional[str], _DATE_FROM] = None,
+    date_to:   Annotated[Optional[str], _DATE_TO]   = None,
+    days:      Annotated[int, _DAYS]                = 30,
+):
+    """Debug: show first 10 WB sale records with key fields."""
+    dt_from, dt_to = _range(date_from, date_to, days)
+    sales, _, _ = await cache.get_raw_data(dt_from, dt_to)
+    sample = []
+    for r in sales[:20]:
+        sample.append({
+            "saleID":        r.get("saleID"),
+            "date":          r.get("date", "")[:10],
+            "finishedPrice": r.get("finishedPrice"),
+            "forPay":        r.get("forPay"),
+            "quantity":      r.get("quantity"),
+            "totalPrice":    r.get("totalPrice"),
+            "discountPercent": r.get("discountPercent"),
+            "supplierArticle": r.get("supplierArticle"),
+        })
+    by_prefix: dict = {}
+    for r in sales:
+        sid = r.get("saleID", "") or ""
+        p = sid[:1] if sid else "(empty)"
+        by_prefix[p] = by_prefix.get(p, 0) + 1
+    fp_negative = sum(1 for r in sales if (r.get("finishedPrice") or 0) < 0)
+    fp_zero     = sum(1 for r in sales if (r.get("finishedPrice") or 0) == 0)
+    fp_positive = sum(1 for r in sales if (r.get("finishedPrice") or 0) > 0)
+    qty_neg     = sum(1 for r in sales if (r.get("quantity") or 0) < 0)
+    qty_pos     = sum(1 for r in sales if (r.get("quantity") or 0) > 0)
+    return {
+        "total": len(sales),
+        "by_saleID_prefix": by_prefix,
+        "finishedPrice": {"negative": fp_negative, "zero": fp_zero, "positive": fp_positive},
+        "quantity": {"negative": qty_neg, "positive": qty_pos},
+        "sample": sample,
+    }
