@@ -46,46 +46,57 @@ async def _get(path: str, params: dict) -> dict:
         return r.json()
 
 
-async def _try_stats_orders(date_from: str, date_to: str) -> dict[str, int]:
-    """GET /campaigns/{id}/stats/orders — lightweight stats endpoint."""
+async def _try_stats_orders_post(date_from: str, date_to: str) -> dict[str, int]:
+    """POST /campaigns/{id}/stats/orders — lightweight stats endpoint."""
     try:
-        data = await _get(
+        data = await _post(
             f"/campaigns/{YM_CAMPAIGN_ID}/stats/orders",
             {"dateFrom": date_from, "dateTo": date_to, "groupBy": "DAY"},
         )
         totals: dict[str, int] = {}
-        # Expected: {"result": {"orders": [{"items": [{"offerId": ..., "initialCount": ...}]}]}}
         for order in (data.get("result") or {}).get("orders") or []:
             for item in order.get("initialItems") or order.get("items") or []:
-                oid = item.get("offerId") or item.get("offer", {}).get("shopSku", "")
+                oid = item.get("offerId") or (item.get("offer") or {}).get("shopSku", "")
                 qty = item.get("initialCount") or item.get("count") or 0
                 if oid and qty:
                     totals[oid] = totals.get(oid, 0) + qty
-        _log.info("[YM] stats/orders → %d articles", len(totals))
+        _log.info("[YM] POST stats/orders → %d articles", len(totals))
         return totals
     except Exception as e:
-        _log.warning("[YM] stats/orders failed: %s", e)
+        _log.warning("[YM] POST stats/orders failed: %s", e)
         return {}
 
 
-async def _try_orders_stats_v2(date_from: str, date_to: str) -> dict[str, int]:
-    """GET /v2/campaigns/{id}/orders/stats — alternative stats endpoint."""
+async def _try_business_orders(date_from: str, date_to: str) -> dict[str, int]:
+    """GET /v1/businesses/{id}/orders — paginated, cached so rate limit OK."""
     try:
-        data = await _get(
-            f"/v2/campaigns/{YM_CAMPAIGN_ID}/orders/stats",
-            {"dateFrom": date_from, "dateTo": date_to},
-        )
         totals: dict[str, int] = {}
-        for order in (data.get("result") or {}).get("orders") or []:
-            for item in order.get("items") or []:
-                oid = item.get("offerId") or (item.get("offer") or {}).get("offerId", "")
-                qty = item.get("initialCount") or item.get("count") or 0
-                if oid and qty:
-                    totals[oid] = totals.get(oid, 0) + qty
-        _log.info("[YM] v2/orders/stats → %d articles", len(totals))
+        page_token: str | None = None
+        while True:
+            params: dict = {
+                "dateFrom": date_from,
+                "dateTo": date_to,
+                "status": "DELIVERED",
+                "limit": 50,
+            }
+            if page_token:
+                params["page_token"] = page_token
+            data = await _get(f"/businesses/{YM_BUSINESS_ID}/orders", params)
+            orders = (data.get("result") or {}).get("orders") or []
+            for order in orders:
+                for item in order.get("items") or []:
+                    oid = item.get("offerId") or (item.get("offer") or {}).get("offerId", "")
+                    qty = item.get("initialCount") or item.get("count") or 0
+                    if oid and qty:
+                        totals[oid] = totals.get(oid, 0) + qty
+            paging = (data.get("result") or {}).get("paging") or {}
+            page_token = paging.get("nextPageToken")
+            if not orders or not page_token:
+                break
+        _log.info("[YM] business/orders → %d articles", len(totals))
         return totals
     except Exception as e:
-        _log.warning("[YM] v2/orders/stats failed: %s", e)
+        _log.warning("[YM] business/orders failed: %s", e)
         return {}
 
 
@@ -142,11 +153,11 @@ async def get_sales_28d() -> dict[str, float]:
 
             totals: dict[str, int] = {}
 
-            # Try GET /campaigns/{id}/stats/orders (cheaper on rate limit)
-            totals = await _try_stats_orders(date_from, date_to)
+            # Try POST /campaigns/{id}/stats/orders (cheapest on rate limit)
+            totals = await _try_stats_orders_post(date_from, date_to)
             if not totals:
-                # Fallback: GET /v2/campaigns/{id}/orders/stats
-                totals = await _try_orders_stats_v2(date_from, date_to)
+                # Fallback: paginated /businesses/{id}/orders (1 call/hr due to cache)
+                totals = await _try_business_orders(date_from, date_to)
 
             _sales_cache = {k: round(v / 28, 2) for k, v in totals.items()}
             _sales_ts = time.monotonic()
