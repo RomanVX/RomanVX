@@ -861,6 +861,13 @@ let _saSearch = '';
 let _saChartDyn = null;
 let _saChartTop = null;
 
+async function refreshSaData() {
+  try {
+    await fetch(`${API}/api/dashboard/cache/invalidate`, { method: 'POST' });
+  } catch(e) { console.warn('cache invalidate:', e); }
+  await loadSalesAnalytics();
+}
+
 function setSaMP(mp, el) {
   _saMP = mp;
   document.querySelectorAll('#saMPGroup button').forEach(b => b.classList.remove('active'));

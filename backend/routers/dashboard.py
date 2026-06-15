@@ -5,6 +5,7 @@ from typing import Annotated, Optional
 from fastapi import APIRouter, Query, HTTPException
 import analytics
 import cache
+import catalog as _catalog
 import cost_store
 import ozon_client
 import ym_client
@@ -256,23 +257,42 @@ async def get_sales_analytics(
         ym_client.get_sales_detail(df_str, dt_str),
     )
 
-    # Brand map from WB (used to filter Ozon/YM)
+    # Brand/name map: WB sales → catalog → cost_store
+    uploaded_names = cost_store.get_names()
+
+    def _art_brand(art: str, wb_brand: str = "") -> str:
+        if wb_brand:
+            return wb_brand
+        cat = _catalog.CATALOG.get(art)
+        if cat:
+            return cat["brand"]
+        return uploaded_names.get(art, "")
+
+    def _art_name(art: str) -> str:
+        if art in uploaded_names:
+            return uploaded_names[art]
+        cat = _catalog.CATALOG.get(art)
+        if cat:
+            return cat["name"]
+        return ""
+
     brand_map: dict[str, str] = {}
     for s in wb_sales_all:
         art = s.get("supplierArticle", "")
-        br = s.get("brand", "")
-        if art and br:
-            brand_map[art] = br
+        if art and art not in brand_map:
+            brand_map[art] = _art_brand(art, s.get("brand", ""))
+    # Fill from catalog for arts not in WB sales
+    for art, info in _catalog.CATALOG.items():
+        if art not in brand_map:
+            brand_map[art] = info["brand"]
 
     brand_filter = brand if brand != "all" else None
     if brand_filter:
-        wb_sales = [s for s in wb_sales_all if s.get("brand") == brand_filter]
+        wb_sales = [s for s in wb_sales_all if _art_brand(s.get("supplierArticle", ""), s.get("brand", "")) == brand_filter]
         oz_rows  = [r for r in oz_rows if brand_map.get(r["offer_id"]) == brand_filter]
         ym_rows  = [r for r in ym_rows if brand_map.get(r["shop_sku"]) == brand_filter]
     else:
         wb_sales = wb_sales_all
-
-    names = cost_store.get_names()
 
     # Date list for dynamics
     all_dates: list[str] = []
@@ -340,7 +360,7 @@ async def get_sales_analytics(
             continue
         table.append({
             "article": art,
-            "name": names.get(art, ""),
+            "name": _art_name(art),
             "brand": brand_map.get(art, ""),
             "wb_qty": d["wb_qty"], "wb_rev": round(d["wb_rev"], 2),
             "oz_qty": d["oz_qty"], "oz_rev": round(d["oz_rev"], 2),
