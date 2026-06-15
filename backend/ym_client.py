@@ -78,8 +78,9 @@ async def get_sales_28d() -> dict[str, float]:
                 f"/v1/businesses/{YM_BUSINESS_ID}/orders",
                 body,
             )
-            orders = (data.get("result") or {}).get("orders") or []
-            _log.info("[YM] orders page: got %d orders (offset=%d)", len(orders), offset if 'offset' in dir() else 0)
+            # Response structure: {"orders": [...], "paging": {"nextPageToken": "..."}}
+            orders = data.get("orders") or []
+            _log.info("[YM] orders page: got %d orders", len(orders))
             if not orders:
                 break
             for order in orders:
@@ -88,7 +89,7 @@ async def get_sales_28d() -> dict[str, float]:
                     qty = item.get("count") or 0
                     if oid:
                         totals[oid] = totals.get(oid, 0) + qty
-            next_page_token = (data.get("result") or {}).get("pager", {}).get("nextPageToken")
+            next_page_token = (data.get("paging") or {}).get("nextPageToken")
             if not next_page_token or len(orders) < 50:
                 break
 
