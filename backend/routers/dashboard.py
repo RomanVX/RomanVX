@@ -111,6 +111,10 @@ async def get_warehouses(
     return analytics.warehouses(sales, orders, stocks, _days(dt_from, dt_to))
 
 
+import logging as _logging
+_slog = _logging.getLogger("stocks_table")
+
+
 @router.get("/stocks_table")
 async def get_stocks_table():
     """Multi-marketplace stock status: WB + Ozon + YM per SKU."""
@@ -124,6 +128,9 @@ async def get_stocks_table():
         ym_client.get_stocks(),
         ym_client.get_sales_28d(),
     )
+
+    _slog.info("stocks_table: wb_sales=%d wb_stocks=%d oz_stocks=%d oz_sales=%d ym_stocks=%d ym_sales=%d",
+               len(wb_sales), len(wb_stocks), len(oz_stocks), len(oz_sales), len(ym_stocks), len(ym_sales))
 
     names = cost_store.get_names()
     return analytics.stocks_table_multi(
