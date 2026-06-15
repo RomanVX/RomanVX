@@ -53,6 +53,8 @@ async def _try_stats_orders_post(date_from: str, date_to: str) -> dict[str, int]
             f"/campaigns/{YM_CAMPAIGN_ID}/stats/orders",
             {"dateFrom": date_from, "dateTo": date_to, "groupBy": "DAY"},
         )
+        import json as _json
+        _log.info("[YM] stats/orders raw: %s", _json.dumps(data)[:800])
         totals: dict[str, int] = {}
         for order in (data.get("result") or {}).get("orders") or []:
             for item in order.get("initialItems") or order.get("items") or []:
@@ -67,21 +69,44 @@ async def _try_stats_orders_post(date_from: str, date_to: str) -> dict[str, int]
         return {}
 
 
-async def _try_business_orders(date_from: str, date_to: str) -> dict[str, int]:
-    """GET /v1/businesses/{id}/orders — paginated, cached so rate limit OK."""
+async def _try_campaign_orders_stats(date_from: str, date_to: str) -> dict[str, int]:
+    """GET /campaigns/{id}/orders/stats — order statistics by period."""
+    try:
+        data = await _get(
+            f"/campaigns/{YM_CAMPAIGN_ID}/orders/stats",
+            {"dateFrom": date_from, "dateTo": date_to, "groupBy": "DAY"},
+        )
+        import json as _json
+        _log.info("[YM] campaign/orders/stats raw: %s", _json.dumps(data)[:800])
+        totals: dict[str, int] = {}
+        for order in (data.get("result") or {}).get("orders") or []:
+            for item in order.get("initialItems") or order.get("items") or []:
+                oid = item.get("offerId") or (item.get("offer") or {}).get("shopSku", "")
+                qty = item.get("initialCount") or item.get("count") or 0
+                if oid and qty:
+                    totals[oid] = totals.get(oid, 0) + qty
+        _log.info("[YM] campaign/orders/stats → %d articles", len(totals))
+        return totals
+    except Exception as e:
+        _log.warning("[YM] campaign/orders/stats failed: %s", e)
+        return {}
+
+
+async def _try_business_orders_post(date_from: str, date_to: str) -> dict[str, int]:
+    """POST /businesses/{id}/orders — paginated, cached so rate limit OK."""
     try:
         totals: dict[str, int] = {}
         page_token: str | None = None
         while True:
-            params: dict = {
+            body: dict = {
                 "dateFrom": date_from,
                 "dateTo": date_to,
-                "status": "DELIVERED",
+                "status": ["DELIVERED"],
                 "limit": 50,
             }
             if page_token:
-                params["page_token"] = page_token
-            data = await _get(f"/businesses/{YM_BUSINESS_ID}/orders", params)
+                body["pageToken"] = page_token
+            data = await _post(f"/businesses/{YM_BUSINESS_ID}/orders", body)
             orders = (data.get("result") or {}).get("orders") or []
             for order in orders:
                 for item in order.get("items") or []:
@@ -93,10 +118,10 @@ async def _try_business_orders(date_from: str, date_to: str) -> dict[str, int]:
             page_token = paging.get("nextPageToken")
             if not orders or not page_token:
                 break
-        _log.info("[YM] business/orders → %d articles", len(totals))
+        _log.info("[YM] POST business/orders → %d articles", len(totals))
         return totals
     except Exception as e:
-        _log.warning("[YM] business/orders failed: %s", e)
+        _log.warning("[YM] POST business/orders failed: %s", e)
         return {}
 
 
@@ -156,8 +181,11 @@ async def get_sales_28d() -> dict[str, float]:
             # Try POST /campaigns/{id}/stats/orders (cheapest on rate limit)
             totals = await _try_stats_orders_post(date_from, date_to)
             if not totals:
-                # Fallback: paginated /businesses/{id}/orders (1 call/hr due to cache)
-                totals = await _try_business_orders(date_from, date_to)
+                # Try GET /campaigns/{id}/orders/stats
+                totals = await _try_campaign_orders_stats(date_from, date_to)
+            if not totals:
+                # Fallback: POST /businesses/{id}/orders paginated
+                totals = await _try_business_orders_post(date_from, date_to)
 
             _sales_cache = {k: round(v / 28, 2) for k, v in totals.items()}
             _sales_ts = time.monotonic()
