@@ -343,9 +343,11 @@ function renderStocksTable() {
     return;
   }
 
-  const STATUS_ORD = { red: 0, yellow: 1, green: 2 };
+  const STATUS_ORD  = { red: 0, yellow: 1, green: 2 };
   const STATUS_ICON = { red: '🔴', yellow: '🟡', green: '🟢' };
-  const STATUS_CLS  = { red: 'text-danger', yellow: 'text-warning', green: 'text-success' };
+  const STATUS_CLS  = { red: 'text-danger fw-bold', yellow: 'text-warning', green: 'text-success' };
+  const BRAND_ORDER = ['Джага', 'Satisfucktion', 'Aloe'];
+
   const col = _stocksSortCol;
   const asc = _stocksSortAsc;
 
@@ -359,23 +361,29 @@ function renderStocksTable() {
     return asc ? d : -d;
   });
 
-  // Group by category
-  const groups = {};
+  // Group by brand — preserve BRAND_ORDER, unknown → "Прочее"
+  const groupMap = {};
   sorted.forEach(r => {
-    const g = r.category || r.brand || '—';
-    (groups[g] = groups[g] || []).push(r);
+    const g = BRAND_ORDER.includes(r.brand) ? r.brand : 'Прочее';
+    (groupMap[g] = groupMap[g] || []).push(r);
   });
+  const orderedGroups = [...BRAND_ORDER, 'Прочее']
+    .filter(g => groupMap[g])
+    .map(g => [g, groupMap[g]]);
 
-  function thSort(c, label, title) {
+  function thSort(c, label, tip) {
     const active = _stocksSortCol === c;
     const arrow  = active ? (_stocksSortAsc ? ' ↑' : ' ↓') : '';
-    const tip    = title ? ` title="${title}"` : '';
-    return `<th style="cursor:pointer;white-space:nowrap"${tip} onclick="_stocksSort('${c}')">${label}${arrow}</th>`;
+    const t      = tip ? ` title="${tip}"` : '';
+    return `<th style="cursor:pointer;white-space:nowrap"${t} onclick="_stocksSort('${c}')">${label}${arrow}</th>`;
   }
 
-  function oosCell(days, status) {
-    const v = days >= 999 ? '∞' : days;
-    return `<td class="text-end ${STATUS_CLS[status]}">${v}</td>`;
+  function cell(qty, perDay, days) {
+    const st  = days <= 20 ? 'red' : days <= 45 ? 'yellow' : 'green';
+    const oos = days >= 999 ? '<span class="text-secondary">∞</span>' : `<span class="${STATUS_CLS[st]}">${days}</span>`;
+    const q   = qty > 0 ? fmt(qty) : '<span class="text-secondary">—</span>';
+    const v   = perDay > 0 ? fmt(perDay, 1) : '<span class="text-secondary">—</span>';
+    return `<td class="text-end">${q}</td><td class="text-end text-secondary small">${v}</td><td class="text-end">${oos}</td>`;
   }
 
   const header = `<thead class="table-dark sticky-top">
@@ -383,43 +391,39 @@ function renderStocksTable() {
       ${thSort('supplierArticle','Артикул')}
       ${thSort('name','Название')}
       ${thSort('brand','Бренд')}
-      <th class="text-end" title="Остаток WB (quantityFull)">Ост WB</th>
-      <th class="text-end" title="Продаж/день WB (28 дн)">Прод/д WB</th>
-      <th class="text-end" title="Дней до OOS на WB">Дней WB</th>
-      <th class="text-end" title="Остаток Ozon">Ост Ozon</th>
-      <th class="text-end" title="Продаж/день Ozon (28 дн)">Прод/д Ozon</th>
-      <th class="text-end" title="Дней до OOS на Ozon">Дней Ozon</th>
-      <th class="text-end" title="Остаток Яндекс Маркет">Ост YM</th>
-      <th class="text-end" title="Продаж/день YM (28 дн)">Прод/д YM</th>
-      <th class="text-end" title="Дней до OOS на YM">Дней YM</th>
+      <th class="text-end border-start" colspan="3" style="background:#1a3a5c">WB</th>
+      <th class="text-end border-start" colspan="3" style="background:#1a3d2f">Ozon</th>
+      <th class="text-end border-start" colspan="3" style="background:#3a1a1a">YM</th>
       ${thSort('status','Статус')}
+    </tr>
+    <tr class="small">
+      <th></th><th></th><th></th>
+      <th class="text-end border-start" title="Остаток WB (quantity)">Ост</th>
+      <th class="text-end" title="Продаж/день WB">Пр/д</th>
+      <th class="text-end" title="Дней до OOS">Дней</th>
+      <th class="text-end border-start" title="Остаток Ozon">Ост</th>
+      <th class="text-end" title="Продаж/день Ozon">Пр/д</th>
+      <th class="text-end" title="Дней до OOS">Дней</th>
+      <th class="text-end border-start" title="Остаток YM">Ост</th>
+      <th class="text-end" title="Продаж/день YM">Пр/д</th>
+      <th class="text-end" title="Дней до OOS">Дней</th>
+      <th></th>
     </tr>
   </thead>`;
 
-  const bodyRows = Object.entries(groups).map(([grp, rows]) => {
+  const bodyRows = orderedGroups.map(([grp, rows]) => {
     const grpRow = `<tr class="table-secondary">
       <td colspan="13"><strong>${grp}</strong> <span class="text-secondary small">(${rows.length} арт.)</span></td>
     </tr>`;
-    const itemRows = rows.map(r => {
-      const wbSt  = r.wb_days  <= 20 ? 'red' : r.wb_days  <= 45 ? 'yellow' : 'green';
-      const ozSt  = r.oz_days  <= 20 ? 'red' : r.oz_days  <= 45 ? 'yellow' : 'green';
-      const ymSt  = r.ym_days  <= 20 ? 'red' : r.ym_days  <= 45 ? 'yellow' : 'green';
-      return `<tr>
-        <td><code>${r.supplierArticle}</code></td>
-        <td>${r.name || '—'}</td>
-        <td class="text-secondary small">${r.brand || '—'}</td>
-        <td class="text-end">${r.wb_qty > 0 ? fmt(r.wb_qty) : '<span class="text-secondary">—</span>'}</td>
-        <td class="text-end text-secondary small">${r.wb_per_day > 0 ? fmt(r.wb_per_day, 1) : '—'}</td>
-        ${oosCell(r.wb_days, wbSt)}
-        <td class="text-end">${r.oz_qty > 0 ? fmt(r.oz_qty) : '<span class="text-secondary">—</span>'}</td>
-        <td class="text-end text-secondary small">${r.oz_per_day > 0 ? fmt(r.oz_per_day, 1) : '—'}</td>
-        ${oosCell(r.oz_days, ozSt)}
-        <td class="text-end">${r.ym_qty > 0 ? fmt(r.ym_qty) : '<span class="text-secondary">—</span>'}</td>
-        <td class="text-end text-secondary small">${r.ym_per_day > 0 ? fmt(r.ym_per_day, 1) : '—'}</td>
-        ${oosCell(r.ym_days, ymSt)}
-        <td>${STATUS_ICON[r.status]}</td>
-      </tr>`;
-    }).join('');
+    const itemRows = rows.map(r => `<tr>
+      <td><code class="small">${r.supplierArticle}</code></td>
+      <td>${r.name}</td>
+      <td class="text-secondary small">${r.brand}</td>
+      ${cell(r.wb_qty, r.wb_per_day, r.wb_days)}
+      ${cell(r.oz_qty, r.oz_per_day, r.oz_days)}
+      ${cell(r.ym_qty, r.ym_per_day, r.ym_days)}
+      <td>${STATUS_ICON[r.status]}</td>
+    </tr>`).join('');
     return grpRow + itemRows;
   }).join('');
 

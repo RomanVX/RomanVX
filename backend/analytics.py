@@ -1,7 +1,12 @@
 """Core analytics for the WB seller dashboard. Pure Python, no pandas."""
 from __future__ import annotations
+import logging
 from collections import defaultdict
 from typing import Any
+
+import catalog as _catalog
+
+_log = logging.getLogger(__name__)
 
 COMMISSION_RATE = 0.15
 STORAGE_RATE    = 0.015
@@ -386,20 +391,22 @@ def stocks_table_multi(
 ) -> list[dict]:
     """Multi-marketplace per-SKU stock table (WB + Ozon + YM)."""
 
-    # ── WB: aggregate by supplierArticle ──────────────────────────────────────
+    # ── WB: aggregate by supplierArticle, skip rows where quantity=0 ──────────
     wb_qty: dict[str, int] = defaultdict(int)
-    wb_meta: dict[str, dict] = {}
     for r in wb_stocks:
         art = str(r.get("supplierArticle") or r.get("nmId") or "")
-        if not art:
+        qty = r.get("quantity", 0) or 0   # use quantity as per WB docs/Power Query
+        if not art or qty == 0:
             continue
-        wb_qty[art] += r.get("quantityFull", r.get("quantity", 0))
-        if art not in wb_meta:
-            wb_meta[art] = {
-                "subject": r.get("subject", ""),
-                "brand": r.get("brand", ""),
-                "category": r.get("category") or r.get("subject") or r.get("brand") or "—",
-            }
+        wb_qty[art] += qty
+
+    # Diagnostic: log raw rows for BMN-0028
+    debug_art = "BMN-0028"
+    debug_rows = [r for r in wb_stocks if str(r.get("supplierArticle") or "") == debug_art]
+    _log.info("[STOCKS] %s: %d raw rows, quantities=%s, total=%d",
+              debug_art, len(debug_rows),
+              [r.get("quantity") for r in debug_rows],
+              wb_qty.get(debug_art, 0))
 
     wb_sold: dict[str, int] = defaultdict(int)
     for r in wb_sales:
@@ -420,40 +427,45 @@ def stocks_table_multi(
 
     rows = []
     for art in all_arts:
-        meta = wb_meta.get(art, {})
-        name = (names or {}).get(art) or meta.get("subject") or ""
+        cat_info = _catalog.lookup(art)
+        # Uploaded names override catalog; catalog overrides WB subject
+        name  = (names or {}).get(art) or cat_info["name"]
+        brand = cat_info["brand"]
 
-        wb_q   = wb_qty.get(art, 0)
-        wb_pd  = round(wb_sold.get(art, 0) / days, 2)
-        wb_d   = _oos(wb_q, wb_pd)
+        wb_q  = wb_qty.get(art, 0)
+        wb_pd = round(wb_sold.get(art, 0) / days, 2)
+        wb_d  = _oos(wb_q, wb_pd)
 
-        oz_q   = oz_stocks.get(art, 0)
-        oz_pd  = oz_sales.get(art, 0.0)
-        oz_d   = _oos(oz_q, oz_pd)
+        oz_q  = oz_stocks.get(art, 0)
+        oz_pd = oz_sales.get(art, 0.0)
+        oz_d  = _oos(oz_q, oz_pd)
 
-        ym_q   = ym_stocks.get(art, 0)
-        ym_pd  = ym_sales.get(art, 0.0)
-        ym_d   = _oos(ym_q, ym_pd)
+        ym_q  = ym_stocks.get(art, 0)
+        ym_pd = ym_sales.get(art, 0.0)
+        ym_d  = _oos(ym_q, ym_pd)
 
-        # Overall status = worst of the active marketplaces
         active_days = [d for q, d in [(wb_q, wb_d), (oz_q, oz_d), (ym_q, ym_d)] if q > 0]
         min_days = min(active_days) if active_days else 999
         status = _status(min_days)
 
         rows.append({
             "supplierArticle": art,
-            "name":     name,
-            "brand":    meta.get("brand", ""),
-            "category": meta.get("category", "—"),
-            "wb_qty":   wb_q,   "wb_per_day":  wb_pd,  "wb_days":  wb_d,
-            "oz_qty":   oz_q,   "oz_per_day":  oz_pd,  "oz_days":  oz_d,
-            "ym_qty":   ym_q,   "ym_per_day":  ym_pd,  "ym_days":  ym_d,
+            "name":    name,
+            "brand":   brand,
+            "wb_qty":  wb_q,  "wb_per_day": wb_pd, "wb_days": wb_d,
+            "oz_qty":  oz_q,  "oz_per_day": oz_pd, "oz_days": oz_d,
+            "ym_qty":  ym_q,  "ym_per_day": ym_pd, "ym_days": ym_d,
             "min_days": min_days,
             "status":   status,
         })
 
+    brand_order = {b: i for i, b in enumerate(_catalog.BRAND_ORDER)}
     _ord = {"red": 0, "yellow": 1, "green": 2}
-    rows.sort(key=lambda r: (_ord[r["status"]], r["min_days"]))
+    rows.sort(key=lambda r: (
+        brand_order.get(r["brand"], len(_catalog.BRAND_ORDER)),
+        _ord[r["status"]],
+        r["min_days"],
+    ))
     return rows
 
 
