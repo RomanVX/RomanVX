@@ -1,5 +1,7 @@
 """Async client for Ozon Seller API — stocks and FBO sales."""
+import asyncio
 import logging
+import time
 from datetime import datetime, timedelta
 
 import httpx
@@ -8,6 +10,14 @@ from config import OZON_CLIENT_ID, OZON_API_KEY
 
 _log = logging.getLogger(__name__)
 _BASE = "https://api-seller.ozon.ru"
+
+_CACHE_TTL = 3600  # 1 hour
+
+_stocks_cache: dict[str, int] = {}
+_stocks_ts: float = 0.0
+_sales_cache: dict[str, float] = {}
+_sales_ts: float = 0.0
+_lock = asyncio.Lock()
 
 
 def _headers() -> dict:
@@ -51,64 +61,81 @@ async def _get_all_skus() -> list[dict]:
 
 
 async def get_stocks() -> dict[str, int]:
-    """Return {offer_id: available_stock_count} — all articles."""
+    """Return {offer_id: available_stock_count} — cached 1 hour."""
+    global _stocks_cache, _stocks_ts
     if not OZON_CLIENT_ID or not OZON_API_KEY:
         return {}
-    try:
-        skus_info = await _get_all_skus()
-        sku_list = [s["sku"] for s in skus_info if s["sku"]]
-        sku_to_offer = {s["sku"]: s["offer_id"] for s in skus_info}
+    if time.monotonic() - _stocks_ts < _CACHE_TTL and _stocks_cache:
+        _log.info("OZON stocks: cache hit (%d articles)", len(_stocks_cache))
+        return dict(_stocks_cache)
+    async with _lock:
+        if time.monotonic() - _stocks_ts < _CACHE_TTL and _stocks_cache:
+            return dict(_stocks_cache)
+        try:
+            skus_info = await _get_all_skus()
+            sku_list = [s["sku"] for s in skus_info if s["sku"]]
+            sku_to_offer = {s["sku"]: s["offer_id"] for s in skus_info}
 
-        result: dict[str, int] = {}
-        # Batch by 100
-        for i in range(0, len(sku_list), 100):
-            batch = sku_list[i:i + 100]
-            data = await _post("/v1/analytics/stocks", {"skus": batch})
-            for item in data.get("items") or []:
-                offer_id = sku_to_offer.get(str(item.get("sku", "")))
-                if offer_id:
-                    result[offer_id] = result.get(offer_id, 0) + (item.get("available_stock_count") or 0)
-        _log.info("OZON stocks: %d articles", len(result))
-        return result
-    except Exception as e:
-        _log.warning("OZON get_stocks error: %s", e)
-        return {}
+            result: dict[str, int] = {}
+            for i in range(0, len(sku_list), 100):
+                batch = sku_list[i:i + 100]
+                data = await _post("/v1/analytics/stocks", {"skus": batch})
+                for item in data.get("items") or []:
+                    offer_id = sku_to_offer.get(str(item.get("sku", "")))
+                    if offer_id:
+                        result[offer_id] = result.get(offer_id, 0) + (item.get("available_stock_count") or 0)
+            _stocks_cache = result
+            _stocks_ts = time.monotonic()
+            _log.info("OZON stocks: %d articles (cached)", len(result))
+            return dict(result)
+        except Exception as e:
+            _log.warning("OZON get_stocks error: %s — returning stale cache (%d)", e, len(_stocks_cache))
+            return dict(_stocks_cache)
 
 
 async def get_sales_28d() -> dict[str, float]:
-    """Return {offer_id: avg_daily_qty} over last 28 days via FBO postings."""
+    """Return {offer_id: avg_daily_qty} — cached 1 hour."""
+    global _sales_cache, _sales_ts
     if not OZON_CLIENT_ID or not OZON_API_KEY:
         return {}
-    try:
-        dt_to   = datetime.utcnow()
-        dt_from = dt_to - timedelta(days=28)
-        since = dt_from.strftime("%Y-%m-%dT00:00:00.000Z")
-        to    = dt_to.strftime("%Y-%m-%dT23:59:59.000Z")
+    if time.monotonic() - _sales_ts < _CACHE_TTL and _sales_cache:
+        _log.info("OZON sales: cache hit (%d articles)", len(_sales_cache))
+        return dict(_sales_cache)
+    async with _lock:
+        if time.monotonic() - _sales_ts < _CACHE_TTL and _sales_cache:
+            return dict(_sales_cache)
+        try:
+            dt_to   = datetime.utcnow()
+            dt_from = dt_to - timedelta(days=28)
+            since = dt_from.strftime("%Y-%m-%dT00:00:00.000Z")
+            to    = dt_to.strftime("%Y-%m-%dT23:59:59.000Z")
 
-        totals: dict[str, int] = {}
-        offset = 0
-        while True:
-            data = await _post("/v2/posting/fbo/list", {
-                "dir": "ASC",
-                "filter": {"since": since, "to": to, "status": ""},
-                "limit": 1000,
-                "offset": offset,
-            })
-            result = data.get("result") or []
-            if not result:
-                break
-            for posting in result:
-                for prod in posting.get("products") or []:
-                    oid = prod.get("offer_id", "")
-                    qty = prod.get("quantity") or 0
-                    if oid:
-                        totals[oid] = totals.get(oid, 0) + qty
-            offset += len(result)
-            if len(result) < 1000:
-                break
+            totals: dict[str, int] = {}
+            offset = 0
+            while True:
+                data = await _post("/v2/posting/fbo/list", {
+                    "dir": "ASC",
+                    "filter": {"since": since, "to": to, "status": ""},
+                    "limit": 1000,
+                    "offset": offset,
+                })
+                result = data.get("result") or []
+                if not result:
+                    break
+                for posting in result:
+                    for prod in posting.get("products") or []:
+                        oid = prod.get("offer_id", "")
+                        qty = prod.get("quantity") or 0
+                        if oid:
+                            totals[oid] = totals.get(oid, 0) + qty
+                offset += len(result)
+                if len(result) < 1000:
+                    break
 
-        _log.info("OZON sales 28d: %d articles", len(totals))
-        return {k: round(v / 28, 2) for k, v in totals.items()}
-    except Exception as e:
-        _log.warning("OZON get_sales_28d error: %s", e)
-        return {}
+            _sales_cache = {k: round(v / 28, 2) for k, v in totals.items()}
+            _sales_ts = time.monotonic()
+            _log.info("OZON sales 28d: %d articles (cached)", len(_sales_cache))
+            return dict(_sales_cache)
+        except Exception as e:
+            _log.warning("OZON get_sales_28d error: %s — returning stale cache (%d)", e, len(_sales_cache))
+            return dict(_sales_cache)
