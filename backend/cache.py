@@ -56,14 +56,24 @@ async def _refresh() -> None:
     fetch_from = datetime.utcnow() - timedelta(days=MAX_DAYS)
     fetch_to   = datetime.utcnow()
     _log.info("Fetching WB API: last %d days", MAX_DAYS)
-    sales  = await wb_client.get_sales(fetch_from, fetch_to)
-    orders = await wb_client.get_orders(fetch_from, fetch_to)
-    stocks = await wb_client.get_stocks()
-    _store.sales      = sales
-    _store.orders     = orders
-    _store.stocks     = stocks
-    _store.fetched_at = time.monotonic()
-    _log.info("Cache refreshed: %d sales, %d orders, %d stocks", len(sales), len(orders), len(stocks))
+    try:
+        sales  = await wb_client.get_sales(fetch_from, fetch_to)
+        orders = await wb_client.get_orders(fetch_from, fetch_to)
+        stocks = await wb_client.get_stocks()
+        _store.sales      = sales
+        _store.orders     = orders
+        _store.stocks     = stocks
+        _store.fetched_at = time.monotonic()
+        _log.info("Cache refreshed: %d sales, %d orders, %d stocks", len(sales), len(orders), len(stocks))
+    except Exception as exc:
+        stale = bool(_store.sales or _store.orders)
+        _log.warning("WB API refresh failed (%s) — %s", exc,
+                     "using stale cache" if stale else "no stale data")
+        if stale:
+            # Keep stale data but reset timer so we retry in TTL seconds
+            _store.fetched_at = time.monotonic()
+        else:
+            raise
 
 
 def invalidate() -> None:

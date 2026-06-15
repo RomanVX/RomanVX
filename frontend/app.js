@@ -862,9 +862,7 @@ let _saChartDyn = null;
 let _saChartTop = null;
 
 async function refreshSaData() {
-  try {
-    await fetch(`${API}/api/dashboard/cache/invalidate`, { method: 'POST' });
-  } catch(e) { console.warn('cache invalidate:', e); }
+  dirty.salesan = true;
   await loadSalesAnalytics();
 }
 
