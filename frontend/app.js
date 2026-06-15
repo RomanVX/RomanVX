@@ -362,10 +362,18 @@ function renderStocksTable() {
   });
 
   // Group by brand — preserve BRAND_ORDER, unknown → "Прочее"
+  // Within each group: sort by wb_per_day desc, fallback oz_per_day desc
   const groupMap = {};
   sorted.forEach(r => {
     const g = BRAND_ORDER.includes(r.brand) ? r.brand : 'Прочее';
     (groupMap[g] = groupMap[g] || []).push(r);
+  });
+  Object.values(groupMap).forEach(rows => {
+    rows.sort((a, b) => {
+      const av = a.wb_per_day || a.oz_per_day || 0;
+      const bv = b.wb_per_day || b.oz_per_day || 0;
+      return bv - av;
+    });
   });
   const orderedGroups = [...BRAND_ORDER, 'Прочее']
     .filter(g => groupMap[g])
@@ -380,10 +388,16 @@ function renderStocksTable() {
 
   function cell(qty, perDay, days) {
     const st  = days <= 20 ? 'red' : days <= 45 ? 'yellow' : 'green';
-    const oos = days >= 999 ? '<span class="text-secondary">∞</span>' : `<span class="${STATUS_CLS[st]}">${days}</span>`;
-    const q   = qty > 0 ? fmt(qty) : '<span class="text-secondary">—</span>';
-    const v   = perDay > 0 ? fmt(perDay, 1) : '<span class="text-secondary">—</span>';
-    return `<td class="text-end">${q}</td><td class="text-end text-secondary small">${v}</td><td class="text-end">${oos}</td>`;
+    const oos = days >= 999
+      ? '<span class="text-secondary">∞</span>'
+      : `<span class="${STATUS_CLS[st]}">${days}</span>`;
+    const q = qty > 0
+      ? `<span style="color:#fff;font-weight:600">${fmt(qty)}</span>`
+      : '<span class="text-secondary">—</span>';
+    const v = perDay > 0
+      ? `<span style="color:#fff;font-weight:600">${fmt(perDay, 1)}</span>`
+      : '<span class="text-secondary">—</span>';
+    return `<td class="text-end">${q}</td><td class="text-end">${v}</td><td class="text-end">${oos}</td>`;
   }
 
   const header = `<thead class="table-dark sticky-top">
@@ -415,9 +429,9 @@ function renderStocksTable() {
     const grpRow = `<tr class="table-secondary">
       <td colspan="13"><strong>${grp}</strong> <span class="text-secondary small">(${rows.length} арт.)</span></td>
     </tr>`;
-    const itemRows = rows.map(r => `<tr>
-      <td><code class="small">${r.supplierArticle}</code></td>
-      <td>${r.name}</td>
+    const itemRows = rows.map(r => `<tr style="font-size:14px">
+      <td><code style="color:#e2e8f0">${r.supplierArticle}</code></td>
+      <td style="color:#fff">${r.name}</td>
       <td class="text-secondary small">${r.brand}</td>
       ${cell(r.wb_qty, r.wb_per_day, r.wb_days)}
       ${cell(r.oz_qty, r.oz_per_day, r.oz_days)}

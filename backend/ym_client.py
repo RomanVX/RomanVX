@@ -20,8 +20,9 @@ def _headers() -> dict:
 async def _post(path: str, body: dict) -> dict:
     async with httpx.AsyncClient(timeout=60) as c:
         r = await c.post(f"{_BASE}{path}", headers=_headers(), json=body)
-        _log.info("[YM] POST %s → %s | body[:200]=%s | resp[:500]=%s",
-                  path, r.status_code, str(body)[:200], r.text[:500])
+        top_keys = list(r.json().keys()) if r.is_success else []
+        _log.info("[YM] POST %s → %s | top_keys=%s | resp[:500]=%s",
+                  path, r.status_code, top_keys, r.text[:500])
         if not r.is_success:
             r.raise_for_status()
         return r.json()
@@ -78,6 +79,7 @@ async def get_sales_28d() -> dict[str, float]:
                 body,
             )
             orders = (data.get("result") or {}).get("orders") or []
+            _log.info("[YM] orders page: got %d orders (offset=%d)", len(orders), offset if 'offset' in dir() else 0)
             if not orders:
                 break
             for order in orders:
