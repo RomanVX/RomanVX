@@ -208,12 +208,18 @@ async def get_supply_recommendations():
 Отвечай на русском языке, кратко и по делу. Используй эмодзи для наглядности."""
 
     import anthropic as _anthropic
-    client = _anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
-    message = await client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=1500,
-        messages=[{"role": "user", "content": prompt}],
-    )
+    import logging as _logging
+    _log = _logging.getLogger(__name__)
+    try:
+        client = _anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
+        message = await client.messages.create(
+            model="claude-haiku-4-5",
+            max_tokens=1500,
+            messages=[{"role": "user", "content": prompt}],
+        )
+    except Exception as exc:
+        _log.error("Claude API error: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Claude API error: {exc}")
     text = message.content[0].text
 
     result = {"text": text, "generated_at": dt_to.strftime("%d.%m.%Y %H:%M UTC")}
