@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timedelta
 from typing import Annotated, Optional
 
@@ -5,6 +6,8 @@ from fastapi import APIRouter, Query, HTTPException
 import analytics
 import cache
 import cost_store
+import ozon_client
+import ym_client
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
@@ -110,11 +113,25 @@ async def get_warehouses(
 
 @router.get("/stocks_table")
 async def get_stocks_table():
-    """Per-SKU stock status table using 28-day real sales velocity."""
+    """Multi-marketplace stock status: WB + Ozon + YM per SKU."""
     dt_to   = datetime.utcnow()
     dt_from = dt_to - timedelta(days=28)
-    sales, _, stocks = await _fetch(dt_from, dt_to, None, None)
-    return analytics.stocks_table(sales, stocks, days=28)
+
+    (wb_sales, _, wb_stocks), oz_stocks, oz_sales, ym_stocks, ym_sales = await asyncio.gather(
+        _fetch(dt_from, dt_to, None, None),
+        ozon_client.get_stocks(),
+        ozon_client.get_sales_28d(),
+        ym_client.get_stocks(),
+        ym_client.get_sales_28d(),
+    )
+
+    names = cost_store.get_names()
+    return analytics.stocks_table_multi(
+        wb_sales=wb_sales, wb_stocks=wb_stocks,
+        oz_stocks=oz_stocks, oz_sales=oz_sales,
+        ym_stocks=ym_stocks, ym_sales=ym_sales,
+        names=names, days=28,
+    )
 
 
 @router.get("/supplies")

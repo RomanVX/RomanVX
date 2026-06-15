@@ -344,6 +344,8 @@ function renderStocksTable() {
   }
 
   const STATUS_ORD = { red: 0, yellow: 1, green: 2 };
+  const STATUS_ICON = { red: '🔴', yellow: '🟡', green: '🟢' };
+  const STATUS_CLS  = { red: 'text-danger', yellow: 'text-warning', green: 'text-success' };
   const col = _stocksSortCol;
   const asc = _stocksSortAsc;
 
@@ -360,42 +362,61 @@ function renderStocksTable() {
   // Group by category
   const groups = {};
   sorted.forEach(r => {
-    const g = r.category || r.brand || r.subject || '—';
+    const g = r.category || r.brand || '—';
     (groups[g] = groups[g] || []).push(r);
   });
 
-  const STATUS_ICON = { red: '🔴', yellow: '🟡', green: '🟢' };
-  const STATUS_CLS  = { red: 'text-danger', yellow: 'text-warning', green: 'text-success' };
-
-  function thSort(col, label) {
-    const active = _stocksSortCol === col;
+  function thSort(c, label, title) {
+    const active = _stocksSortCol === c;
     const arrow  = active ? (_stocksSortAsc ? ' ↑' : ' ↓') : '';
-    return `<th style="cursor:pointer;white-space:nowrap" onclick="_stocksSort('${col}')">${label}${arrow}</th>`;
+    const tip    = title ? ` title="${title}"` : '';
+    return `<th style="cursor:pointer;white-space:nowrap"${tip} onclick="_stocksSort('${c}')">${label}${arrow}</th>`;
+  }
+
+  function oosCell(days, status) {
+    const v = days >= 999 ? '∞' : days;
+    return `<td class="text-end ${STATUS_CLS[status]}">${v}</td>`;
   }
 
   const header = `<thead class="table-dark sticky-top">
     <tr>
       ${thSort('supplierArticle','Артикул')}
-      ${thSort('subject','Название')}
-      ${thSort('quantityFull','Остаток')}
-      ${thSort('per_day','Продаж/день')}
-      ${thSort('days_to_oos','Дней до OOS')}
+      ${thSort('name','Название')}
+      ${thSort('brand','Бренд')}
+      <th class="text-end" title="Остаток WB (quantityFull)">Ост WB</th>
+      <th class="text-end" title="Продаж/день WB (28 дн)">Прод/д WB</th>
+      <th class="text-end" title="Дней до OOS на WB">Дней WB</th>
+      <th class="text-end" title="Остаток Ozon">Ост Ozon</th>
+      <th class="text-end" title="Продаж/день Ozon (28 дн)">Прод/д Ozon</th>
+      <th class="text-end" title="Дней до OOS на Ozon">Дней Ozon</th>
+      <th class="text-end" title="Остаток Яндекс Маркет">Ост YM</th>
+      <th class="text-end" title="Продаж/день YM (28 дн)">Прод/д YM</th>
+      <th class="text-end" title="Дней до OOS на YM">Дней YM</th>
       ${thSort('status','Статус')}
     </tr>
   </thead>`;
 
   const bodyRows = Object.entries(groups).map(([grp, rows]) => {
     const grpRow = `<tr class="table-secondary">
-      <td colspan="6"><strong>${grp}</strong> <span class="text-secondary small">(${rows.length} арт.)</span></td>
+      <td colspan="13"><strong>${grp}</strong> <span class="text-secondary small">(${rows.length} арт.)</span></td>
     </tr>`;
     const itemRows = rows.map(r => {
-      const oos = r.days_to_oos >= 999 ? '∞' : r.days_to_oos;
+      const wbSt  = r.wb_days  <= 20 ? 'red' : r.wb_days  <= 45 ? 'yellow' : 'green';
+      const ozSt  = r.oz_days  <= 20 ? 'red' : r.oz_days  <= 45 ? 'yellow' : 'green';
+      const ymSt  = r.ym_days  <= 20 ? 'red' : r.ym_days  <= 45 ? 'yellow' : 'green';
       return `<tr>
         <td><code>${r.supplierArticle}</code></td>
-        <td>${r.subject || '—'}</td>
-        <td class="text-end">${fmt(r.quantityFull)}</td>
-        <td class="text-end">${fmt(r.per_day, 2)}</td>
-        <td class="text-end ${STATUS_CLS[r.status]}">${oos}</td>
+        <td>${r.name || '—'}</td>
+        <td class="text-secondary small">${r.brand || '—'}</td>
+        <td class="text-end">${r.wb_qty > 0 ? fmt(r.wb_qty) : '<span class="text-secondary">—</span>'}</td>
+        <td class="text-end text-secondary small">${r.wb_per_day > 0 ? fmt(r.wb_per_day, 1) : '—'}</td>
+        ${oosCell(r.wb_days, wbSt)}
+        <td class="text-end">${r.oz_qty > 0 ? fmt(r.oz_qty) : '<span class="text-secondary">—</span>'}</td>
+        <td class="text-end text-secondary small">${r.oz_per_day > 0 ? fmt(r.oz_per_day, 1) : '—'}</td>
+        ${oosCell(r.oz_days, ozSt)}
+        <td class="text-end">${r.ym_qty > 0 ? fmt(r.ym_qty) : '<span class="text-secondary">—</span>'}</td>
+        <td class="text-end text-secondary small">${r.ym_per_day > 0 ? fmt(r.ym_per_day, 1) : '—'}</td>
+        ${oosCell(r.ym_days, ymSt)}
         <td>${STATUS_ICON[r.status]}</td>
       </tr>`;
     }).join('');

@@ -374,6 +374,89 @@ def supplies(sales: list[dict], stocks: list[dict], days: int) -> list[dict]:
     return rows
 
 
+def stocks_table_multi(
+    wb_sales: list[dict],
+    wb_stocks: list[dict],
+    oz_stocks: dict[str, int],
+    oz_sales: dict[str, float],
+    ym_stocks: dict[str, int],
+    ym_sales: dict[str, float],
+    names: dict[str, str] | None = None,
+    days: int = 28,
+) -> list[dict]:
+    """Multi-marketplace per-SKU stock table (WB + Ozon + YM)."""
+
+    # ── WB: aggregate by supplierArticle ──────────────────────────────────────
+    wb_qty: dict[str, int] = defaultdict(int)
+    wb_meta: dict[str, dict] = {}
+    for r in wb_stocks:
+        art = str(r.get("supplierArticle") or r.get("nmId") or "")
+        if not art:
+            continue
+        wb_qty[art] += r.get("quantityFull", r.get("quantity", 0))
+        if art not in wb_meta:
+            wb_meta[art] = {
+                "subject": r.get("subject", ""),
+                "brand": r.get("brand", ""),
+                "category": r.get("category") or r.get("subject") or r.get("brand") or "—",
+            }
+
+    wb_sold: dict[str, int] = defaultdict(int)
+    for r in wb_sales:
+        if not _is_sale(r):
+            continue
+        art = str(r.get("supplierArticle") or r.get("nmId") or "")
+        if art:
+            wb_sold[art] += 1
+
+    # ── Collect all articles from all sources ─────────────────────────────────
+    all_arts = set(wb_qty) | set(oz_stocks) | set(ym_stocks)
+
+    def _oos(qty: int, per_day: float) -> int:
+        return int(qty / per_day) if per_day > 0 else 999
+
+    def _status(days_val: int) -> str:
+        return "red" if days_val <= 20 else "yellow" if days_val <= 45 else "green"
+
+    rows = []
+    for art in all_arts:
+        meta = wb_meta.get(art, {})
+        name = (names or {}).get(art) or meta.get("subject") or ""
+
+        wb_q   = wb_qty.get(art, 0)
+        wb_pd  = round(wb_sold.get(art, 0) / days, 2)
+        wb_d   = _oos(wb_q, wb_pd)
+
+        oz_q   = oz_stocks.get(art, 0)
+        oz_pd  = oz_sales.get(art, 0.0)
+        oz_d   = _oos(oz_q, oz_pd)
+
+        ym_q   = ym_stocks.get(art, 0)
+        ym_pd  = ym_sales.get(art, 0.0)
+        ym_d   = _oos(ym_q, ym_pd)
+
+        # Overall status = worst of the active marketplaces
+        active_days = [d for q, d in [(wb_q, wb_d), (oz_q, oz_d), (ym_q, ym_d)] if q > 0]
+        min_days = min(active_days) if active_days else 999
+        status = _status(min_days)
+
+        rows.append({
+            "supplierArticle": art,
+            "name":     name,
+            "brand":    meta.get("brand", ""),
+            "category": meta.get("category", "—"),
+            "wb_qty":   wb_q,   "wb_per_day":  wb_pd,  "wb_days":  wb_d,
+            "oz_qty":   oz_q,   "oz_per_day":  oz_pd,  "oz_days":  oz_d,
+            "ym_qty":   ym_q,   "ym_per_day":  ym_pd,  "ym_days":  ym_d,
+            "min_days": min_days,
+            "status":   status,
+        })
+
+    _ord = {"red": 0, "yellow": 1, "green": 2}
+    rows.sort(key=lambda r: (_ord[r["status"]], r["min_days"]))
+    return rows
+
+
 def stocks_table(sales: list[dict], stocks: list[dict], days: int = 28) -> list[dict]:
     """Per-SKU stock status: quantityFull, real sales velocity, days-to-OOS."""
     stock_by_art: dict[str, dict] = {}
