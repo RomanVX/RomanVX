@@ -60,34 +60,29 @@ async def _get_all_skus() -> list[dict]:
     return items
 
 
-async def _get_stocks_v3() -> dict[str, int]:
-    """Paginate /v3/product/info/stocks → {offer_id: fbo_present}."""
+async def _get_stocks_warehouses() -> dict[str, int]:
+    """Paginate /v2/analytics/stock_on_warehouses → {offer_id: free_to_sell_amount}."""
     result: dict[str, int] = {}
-    last_id = ""
+    offset = 0
     while True:
-        data = await _post("/v3/product/info/stocks", {
-            "filter": {"offer_id": [], "product_id": [], "visibility": "ALL"},
-            "last_id": last_id,
+        data = await _post("/v2/analytics/stock_on_warehouses", {
             "limit": 1000,
+            "offset": offset,
+            "warehouse_type": "ALL",
         })
-        items = (data.get("result") or {}).get("items") or []
-        if not items:
+        rows = data.get("result", {}).get("rows") or []
+        if not rows:
             break
-        for item in items:
-            oid = item.get("offer_id", "")
+        for row in rows:
+            oid = row.get("offer_id", "")
             if not oid:
                 continue
-            fbo = sum(
-                (s.get("present") or 0)
-                for s in (item.get("stocks") or [])
-                if s.get("type") == "fbo"
-            )
-            if fbo:
-                result[oid] = result.get(oid, 0) + fbo
-        last_id = data.get("last_id", "")
-        if not last_id or len(items) < 1000:
+            qty = row.get("free_to_sell_amount") or 0
+            result[oid] = result.get(oid, 0) + qty
+        offset += len(rows)
+        if len(rows) < 1000:
             break
-    _log.info("OZON stocks v3: %d articles", len(result))
+    _log.info("OZON stocks warehouses: %d articles", len(result))
     return result
 
 
@@ -103,7 +98,7 @@ async def get_stocks() -> dict[str, int]:
         if time.monotonic() - _stocks_ts < _CACHE_TTL and _stocks_cache:
             return dict(_stocks_cache)
         try:
-            result = await _get_stocks_v3()
+            result = await _get_stocks_warehouses()
             _stocks_cache = result
             _stocks_ts = time.monotonic()
             _log.info("OZON stocks: %d articles (cached)", len(result))

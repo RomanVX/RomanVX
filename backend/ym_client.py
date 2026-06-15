@@ -53,13 +53,13 @@ async def _try_stats_orders_post(date_from: str, date_to: str) -> dict[str, int]
             f"/campaigns/{YM_CAMPAIGN_ID}/stats/orders",
             {"dateFrom": date_from, "dateTo": date_to, "groupBy": "DAY"},
         )
-        import json as _json
-        _log.info("[YM] stats/orders raw: %s", _json.dumps(data)[:800])
         totals: dict[str, int] = {}
         for order in (data.get("result") or {}).get("orders") or []:
-            for item in order.get("initialItems") or order.get("items") or []:
-                oid = item.get("offerId") or (item.get("offer") or {}).get("shopSku", "")
-                qty = item.get("initialCount") or item.get("count") or 0
+            if (order.get("status") or "") == "CANCELLED":
+                continue
+            for item in order.get("items") or []:
+                oid = item.get("shopSku") or item.get("offerId") or ""
+                qty = item.get("count") or item.get("initialCount") or 0
                 if oid and qty:
                     totals[oid] = totals.get(oid, 0) + qty
         _log.info("[YM] POST stats/orders → %d articles", len(totals))
@@ -76,13 +76,13 @@ async def _try_campaign_orders_stats(date_from: str, date_to: str) -> dict[str, 
             f"/campaigns/{YM_CAMPAIGN_ID}/orders/stats",
             {"dateFrom": date_from, "dateTo": date_to, "groupBy": "DAY"},
         )
-        import json as _json
-        _log.info("[YM] campaign/orders/stats raw: %s", _json.dumps(data)[:800])
         totals: dict[str, int] = {}
         for order in (data.get("result") or {}).get("orders") or []:
-            for item in order.get("initialItems") or order.get("items") or []:
-                oid = item.get("offerId") or (item.get("offer") or {}).get("shopSku", "")
-                qty = item.get("initialCount") or item.get("count") or 0
+            if (order.get("status") or "") == "CANCELLED":
+                continue
+            for item in order.get("items") or []:
+                oid = item.get("shopSku") or item.get("offerId") or ""
+                qty = item.get("count") or item.get("initialCount") or 0
                 if oid and qty:
                     totals[oid] = totals.get(oid, 0) + qty
         _log.info("[YM] campaign/orders/stats → %d articles", len(totals))
