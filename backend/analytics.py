@@ -391,21 +391,20 @@ def stocks_table_multi(
 ) -> list[dict]:
     """Multi-marketplace per-SKU stock table (WB + Ozon + YM)."""
 
-    # ── WB: aggregate by supplierArticle, skip rows where quantity=0 ──────────
+    # ── WB: aggregate by supplierArticle, sum ALL rows (incl. quantity=0) ──────
     wb_qty: dict[str, int] = defaultdict(int)
     for r in wb_stocks:
         art = str(r.get("supplierArticle") or r.get("nmId") or "")
-        qty = r.get("quantity", 0) or 0   # use quantity as per WB docs/Power Query
-        if not art or qty == 0:
+        if not art:
             continue
-        wb_qty[art] += qty
+        wb_qty[art] += r.get("quantity", 0) or 0
 
     # Diagnostic: log raw rows for key articles
     for debug_art in ("BMN-0028", "BMN-0013", "AL-01"):
         debug_rows = [r for r in wb_stocks if str(r.get("supplierArticle") or "") == debug_art]
         for row in debug_rows:
             _log.info(
-                "[STOCKS_RAW] %s | wh=%-20s | quantity=%s | quantityFull=%s | "
+                "[STOCKS_RAW] %s | wh=%-25s | quantity=%s | quantityFull=%s | "
                 "inWayToClient=%s | inWayFromClient=%s",
                 debug_art,
                 row.get("warehouseName", "?"),
@@ -414,8 +413,10 @@ def stocks_table_multi(
                 row.get("inWayToClient"),
                 row.get("inWayFromClient"),
             )
-        _log.info("[STOCKS_SUM] %s: %d rows → quantity_sum=%d (excl. zeros)",
-                  debug_art, len(debug_rows), wb_qty.get(debug_art, 0))
+        _log.info("[STOCKS_SUM] %s: %d rows, %d unique warehouses → quantity_sum=%d",
+                  debug_art, len(debug_rows),
+                  len({r.get("warehouseName") for r in debug_rows}),
+                  wb_qty.get(debug_art, 0))
 
     wb_sold: dict[str, int] = defaultdict(int)
     for r in wb_sales:

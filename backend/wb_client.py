@@ -47,7 +47,7 @@ async def get_orders(date_from: datetime, date_to: datetime) -> list[dict]:
 async def get_stocks() -> list[dict]:
     if USE_MOCK:
         return mock_data.generate_stocks()
-    date_from = (datetime.utcnow() - timedelta(days=1)).strftime("%Y-%m-%dT00:00:00")
+    date_from = (datetime.utcnow() - timedelta(days=30)).strftime("%Y-%m-%d")
     return await _get(
         f"{STATS_BASE}/supplier/stocks",
         {"dateFrom": date_from},

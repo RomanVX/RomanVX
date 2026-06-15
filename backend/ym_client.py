@@ -20,9 +20,9 @@ def _headers() -> dict:
 async def _post(path: str, body: dict) -> dict:
     async with httpx.AsyncClient(timeout=60) as c:
         r = await c.post(f"{_BASE}{path}", headers=_headers(), json=body)
-        _log.debug("YM POST %s → %s", path, r.status_code)
+        _log.info("[YM] POST %s → %s | body[:200]=%s | resp[:500]=%s",
+                  path, r.status_code, str(body)[:200], r.text[:500])
         if not r.is_success:
-            _log.error("YM %s → %s %s", path, r.status_code, r.text[:300])
             r.raise_for_status()
         return r.json()
 
