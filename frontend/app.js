@@ -397,28 +397,28 @@ function renderStocksTable() {
     const v = perDay > 0
       ? `<span style="color:#fff;font-weight:600">${fmt(perDay, 1)}</span>`
       : '<span class="text-secondary">—</span>';
-    return `<td class="text-end">${q}</td><td class="text-end">${v}</td><td class="text-end">${oos}</td>`;
+    return `<td class="text-end" style="border-left:2px solid #2a2a2a">${q}</td><td class="text-end">${v}</td><td class="text-end">${oos}</td>`;
   }
 
-  const header = `<thead class="table-dark sticky-top">
-    <tr>
+  const header = `<thead class="sticky-top">
+    <tr style="background:#111">
       ${thSort('supplierArticle','Артикул')}
       ${thSort('name','Название')}
       ${thSort('brand','Бренд')}
-      <th class="text-end border-start" colspan="3" style="background:#1a3a5c">WB</th>
-      <th class="text-end border-start" colspan="3" style="background:#1a3d2f">Ozon</th>
-      <th class="text-end border-start" colspan="3" style="background:#3a1a1a">YM</th>
+      <th class="text-center" colspan="3" style="background:#6b21a8;color:#fff;border-left:2px solid #2a2a2a">WB</th>
+      <th class="text-center" colspan="3" style="background:#1d4ed8;color:#fff;border-left:2px solid #2a2a2a">OZON</th>
+      <th class="text-center" colspan="3" style="background:#854d0e;color:#fff;border-left:2px solid #2a2a2a">YM</th>
       ${thSort('status','Статус')}
     </tr>
-    <tr class="small">
+    <tr class="small" style="background:#1a1a1a;color:#9ca3af">
       <th></th><th></th><th></th>
-      <th class="text-end border-start" title="Остаток WB (quantity)">Ост</th>
+      <th class="text-end" style="border-left:2px solid #2a2a2a" title="Остаток WB (quantity)">Ост</th>
       <th class="text-end" title="Продаж/день WB">Пр/д</th>
       <th class="text-end" title="Дней до OOS">Дней</th>
-      <th class="text-end border-start" title="Остаток Ozon">Ост</th>
+      <th class="text-end" style="border-left:2px solid #2a2a2a" title="Остаток Ozon">Ост</th>
       <th class="text-end" title="Продаж/день Ozon">Пр/д</th>
       <th class="text-end" title="Дней до OOS">Дней</th>
-      <th class="text-end border-start" title="Остаток YM">Ост</th>
+      <th class="text-end" style="border-left:2px solid #2a2a2a" title="Остаток YM">Ост</th>
       <th class="text-end" title="Продаж/день YM">Пр/д</th>
       <th class="text-end" title="Дней до OOS">Дней</th>
       <th></th>
