@@ -36,6 +36,59 @@ async def _post(path: str, body: dict) -> dict:
         return r.json()
 
 
+async def _get(path: str, params: dict) -> dict:
+    async with httpx.AsyncClient(timeout=60) as c:
+        r = await c.get(f"{_BASE}{path}", headers=_headers(), params=params)
+        _log.info("[YM] GET %s params=%s → %s | resp[:400]=%s",
+                  path, params, r.status_code, r.text[:400])
+        if not r.is_success:
+            r.raise_for_status()
+        return r.json()
+
+
+async def _try_stats_orders(date_from: str, date_to: str) -> dict[str, int]:
+    """GET /campaigns/{id}/stats/orders — lightweight stats endpoint."""
+    try:
+        data = await _get(
+            f"/campaigns/{YM_CAMPAIGN_ID}/stats/orders",
+            {"dateFrom": date_from, "dateTo": date_to, "groupBy": "DAY"},
+        )
+        totals: dict[str, int] = {}
+        # Expected: {"result": {"orders": [{"items": [{"offerId": ..., "initialCount": ...}]}]}}
+        for order in (data.get("result") or {}).get("orders") or []:
+            for item in order.get("initialItems") or order.get("items") or []:
+                oid = item.get("offerId") or item.get("offer", {}).get("shopSku", "")
+                qty = item.get("initialCount") or item.get("count") or 0
+                if oid and qty:
+                    totals[oid] = totals.get(oid, 0) + qty
+        _log.info("[YM] stats/orders → %d articles", len(totals))
+        return totals
+    except Exception as e:
+        _log.warning("[YM] stats/orders failed: %s", e)
+        return {}
+
+
+async def _try_orders_stats_v2(date_from: str, date_to: str) -> dict[str, int]:
+    """GET /v2/campaigns/{id}/orders/stats — alternative stats endpoint."""
+    try:
+        data = await _get(
+            f"/v2/campaigns/{YM_CAMPAIGN_ID}/orders/stats",
+            {"dateFrom": date_from, "dateTo": date_to},
+        )
+        totals: dict[str, int] = {}
+        for order in (data.get("result") or {}).get("orders") or []:
+            for item in order.get("items") or []:
+                oid = item.get("offerId") or (item.get("offer") or {}).get("offerId", "")
+                qty = item.get("initialCount") or item.get("count") or 0
+                if oid and qty:
+                    totals[oid] = totals.get(oid, 0) + qty
+        _log.info("[YM] v2/orders/stats → %d articles", len(totals))
+        return totals
+    except Exception as e:
+        _log.warning("[YM] v2/orders/stats failed: %s", e)
+        return {}
+
+
 async def get_stocks() -> dict[str, int]:
     """Return {offer_id: FIT count} — cached 1 hour."""
     global _stocks_cache, _stocks_ts
@@ -63,7 +116,7 @@ async def get_stocks() -> dict[str, int]:
                             result[offer_id] = result.get(offer_id, 0) + (stock.get("count") or 0)
             _stocks_cache = result
             _stocks_ts = time.monotonic()
-            _log.info("YM stocks: %d articles (cached)", len(result))
+            _log.info("YM stocks: %d articles (cached): %s", len(result), sorted(result.keys()))
             return dict(result)
         except Exception as e:
             _log.warning("YM get_stocks error: %s — returning stale cache (%d)", e, len(_stocks_cache))
@@ -84,34 +137,16 @@ async def get_sales_28d() -> dict[str, float]:
         try:
             dt_to   = datetime.utcnow()
             dt_from = dt_to - timedelta(days=28)
-            from_date = dt_from.strftime("%d-%m-%Y")
-            to_date   = dt_to.strftime("%d-%m-%Y")
+            date_from = dt_from.strftime("%Y-%m-%d")
+            date_to   = dt_to.strftime("%Y-%m-%d")
 
             totals: dict[str, int] = {}
-            next_page_token = None
 
-            while True:
-                body: dict = {
-                    "filter": {"fromDate": from_date, "toDate": to_date},
-                    "limit": 50,
-                }
-                if next_page_token:
-                    body["pageToken"] = next_page_token
-
-                data = await _post(f"/v1/businesses/{YM_BUSINESS_ID}/orders", body)
-                orders = data.get("orders") or []
-                _log.info("[YM] orders page: got %d orders", len(orders))
-                if not orders:
-                    break
-                for order in orders:
-                    for item in order.get("items") or []:
-                        oid = item.get("offerId", "")
-                        qty = item.get("count") or 0
-                        if oid:
-                            totals[oid] = totals.get(oid, 0) + qty
-                next_page_token = (data.get("paging") or {}).get("nextPageToken")
-                if not next_page_token or len(orders) < 50:
-                    break
+            # Try GET /campaigns/{id}/stats/orders (cheaper on rate limit)
+            totals = await _try_stats_orders(date_from, date_to)
+            if not totals:
+                # Fallback: GET /v2/campaigns/{id}/orders/stats
+                totals = await _try_orders_stats_v2(date_from, date_to)
 
             _sales_cache = {k: round(v / 28, 2) for k, v in totals.items()}
             _sales_ts = time.monotonic()
