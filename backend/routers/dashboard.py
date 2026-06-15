@@ -236,6 +236,125 @@ async def invalidate_reco_cache():
     return {"status": "ok"}
 
 
+@router.get("/sales_analytics")
+async def get_sales_analytics(
+    date_from:   Annotated[Optional[str], _DATE_FROM] = None,
+    date_to:     Annotated[Optional[str], _DATE_TO]   = None,
+    days:        Annotated[int, _DAYS]                = 30,
+    marketplace: str = "all",   # wb / ozon / ym / all
+    brand:       str = "all",   # all / Джага / Satisfucktion / Aloe
+):
+    from collections import defaultdict
+
+    dt_from, dt_to = _range(date_from, date_to, days)
+    df_str = dt_from.strftime("%Y-%m-%d")
+    dt_str = dt_to.strftime("%Y-%m-%d")
+
+    (wb_sales_all, _, _), oz_rows, ym_rows = await asyncio.gather(
+        _fetch(dt_from, dt_to, None, None),
+        ozon_client.get_sales_detail(df_str, dt_str),
+        ym_client.get_sales_detail(df_str, dt_str),
+    )
+
+    # Brand map from WB (used to filter Ozon/YM)
+    brand_map: dict[str, str] = {}
+    for s in wb_sales_all:
+        art = s.get("supplierArticle", "")
+        br = s.get("brand", "")
+        if art and br:
+            brand_map[art] = br
+
+    brand_filter = brand if brand != "all" else None
+    if brand_filter:
+        wb_sales = [s for s in wb_sales_all if s.get("brand") == brand_filter]
+        oz_rows  = [r for r in oz_rows if brand_map.get(r["offer_id"]) == brand_filter]
+        ym_rows  = [r for r in ym_rows if brand_map.get(r["shop_sku"]) == brand_filter]
+    else:
+        wb_sales = wb_sales_all
+
+    names = cost_store.get_names()
+
+    # Date list for dynamics
+    all_dates: list[str] = []
+    cur = dt_from.date()
+    end = dt_to.date()
+    while cur <= end:
+        all_dates.append(str(cur))
+        from datetime import date as _date
+        cur = (datetime.combine(cur, datetime.min.time()) + timedelta(days=1)).date()
+
+    art_data: dict = defaultdict(lambda: {
+        "wb_qty": 0, "wb_rev": 0.0,
+        "oz_qty": 0, "oz_rev": 0.0,
+        "ym_qty": 0, "ym_rev": 0.0,
+    })
+    date_data: dict = {d: {"wb_qty": 0, "wb_rev": 0.0, "oz_qty": 0, "oz_rev": 0.0, "ym_qty": 0, "ym_rev": 0.0}
+                       for d in all_dates}
+
+    if marketplace in ("wb", "all"):
+        for s in wb_sales:
+            art  = s.get("supplierArticle", "")
+            date = (s.get("date") or "")[:10]
+            rev  = float(s.get("finishedPrice") or 0)
+            art_data[art]["wb_qty"] += 1
+            art_data[art]["wb_rev"] += rev
+            if date in date_data:
+                date_data[date]["wb_qty"] += 1
+                date_data[date]["wb_rev"] += rev
+
+    if marketplace in ("ozon", "all"):
+        for r in oz_rows:
+            art = r["offer_id"]
+            art_data[art]["oz_qty"] += r["qty"]
+            art_data[art]["oz_rev"] += r["revenue"]
+            if r["date"] in date_data:
+                date_data[r["date"]]["oz_qty"] += r["qty"]
+                date_data[r["date"]]["oz_rev"] += r["revenue"]
+
+    if marketplace in ("ym", "all"):
+        for r in ym_rows:
+            art = r["shop_sku"]
+            art_data[art]["ym_qty"] += r["qty"]
+            art_data[art]["ym_rev"] += r["revenue"]
+            if r["date"] in date_data:
+                date_data[r["date"]]["ym_qty"] += r["qty"]
+                date_data[r["date"]]["ym_rev"] += r["revenue"]
+
+    table = []
+    for art, d in art_data.items():
+        tq = d["wb_qty"] + d["oz_qty"] + d["ym_qty"]
+        tr = d["wb_rev"] + d["oz_rev"] + d["ym_rev"]
+        if tq == 0:
+            continue
+        table.append({
+            "article": art,
+            "name": names.get(art, ""),
+            "brand": brand_map.get(art, ""),
+            "wb_qty": d["wb_qty"], "wb_rev": round(d["wb_rev"], 2),
+            "oz_qty": d["oz_qty"], "oz_rev": round(d["oz_rev"], 2),
+            "ym_qty": d["ym_qty"], "ym_rev": round(d["ym_rev"], 2),
+            "total_qty": tq, "total_rev": round(tr, 2),
+        })
+    table.sort(key=lambda x: x["total_rev"], reverse=True)
+
+    total_qty = sum(r["total_qty"] for r in table)
+    total_rev = sum(r["total_rev"] for r in table)
+    period_days = max(1, _days(dt_from, dt_to))
+    best = table[0] if table else None
+
+    return {
+        "kpi": {
+            "total_qty": total_qty,
+            "total_rev": round(total_rev, 2),
+            "avg_per_day": round(total_qty / period_days, 1),
+            "best": {"article": best["article"], "name": best["name"], "rev": best["total_rev"]} if best else None,
+        },
+        "dynamics": [{"date": d, **v} for d, v in sorted(date_data.items())],
+        "top10": table[:10],
+        "table": table,
+    }
+
+
 @router.get("/supplies")
 async def get_supplies(
     date_from: Annotated[Optional[str], _DATE_FROM] = None,

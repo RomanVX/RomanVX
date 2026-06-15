@@ -139,6 +139,42 @@ async def get_stocks() -> dict[str, int]:
         return dict(_stocks_cache)
 
 
+async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
+    """Return [{date, offer_id, qty, revenue}] for given range — no cache."""
+    if not OZON_CLIENT_ID or not OZON_API_KEY:
+        return []
+    since = f"{date_from}T00:00:00.000Z"
+    to    = f"{date_to}T23:59:59.000Z"
+    rows: list[dict] = []
+    offset = 0
+    try:
+        while True:
+            data = await _post("/v2/posting/fbo/list", {
+                "dir": "ASC",
+                "filter": {"since": since, "to": to, "status": ""},
+                "limit": 1000,
+                "offset": offset,
+            })
+            result = data.get("result") or []
+            if not result:
+                break
+            for posting in result:
+                date = (posting.get("created_at") or "")[:10]
+                for prod in posting.get("products") or []:
+                    oid = prod.get("offer_id", "")
+                    qty = prod.get("quantity") or 0
+                    price = float(prod.get("price") or 0)
+                    if oid and qty:
+                        rows.append({"date": date, "offer_id": oid, "qty": qty, "revenue": price * qty})
+            offset += len(result)
+            if len(result) < 1000:
+                break
+    except Exception as e:
+        _log.warning("OZON get_sales_detail error: %s", e)
+    _log.info("OZON sales_detail: %d rows for %s–%s", len(rows), date_from, date_to)
+    return rows
+
+
 async def get_sales_28d() -> dict[str, float]:
     """Return {offer_id: avg_daily_qty} — cached 1 hour."""
     global _sales_cache, _sales_ts

@@ -98,6 +98,7 @@
   <ul class="nav nav-tabs mb-3" id="mainTabs">
     <li class="nav-item"><a class="nav-link active" href="#" onclick="switchTab('finance',this);return false">Дашборд</a></li>
     <li class="nav-item"><a class="nav-link" href="#" onclick="switchTab('products',this);return false">Товары</a></li>
+    <li class="nav-item"><a class="nav-link" href="#" onclick="switchTab('salesan',this);return false">Аналитика продаж</a></li>
     <li class="nav-item"><a class="nav-link" href="#" onclick="switchTab('stocks',this);return false">Остатки</a></li>
     <li class="nav-item"><a class="nav-link" href="#" onclick="switchTab('supplies',this);return false">Поставки</a></li>
     <li class="nav-item"><a class="nav-link" href="#" onclick="switchTab('unitec',this);return false">Юнит-эк.</a></li>
@@ -184,6 +185,92 @@
       </div>
     </div>
   </div><!-- /pane-products -->
+
+  <!-- ── Аналитика продаж ── -->
+  <div id="pane-salesan" style="display:none">
+
+    <!-- Filters -->
+    <div class="d-flex gap-2 mb-3 flex-wrap align-items-center">
+      <div class="btn-group btn-group-sm" id="saMPGroup">
+        <button class="btn btn-outline-secondary active" onclick="setSaMP('all',this)">Все МП</button>
+        <button class="btn btn-outline-secondary" style="border-color:#6b21a8;color:#a855f7" onclick="setSaMP('wb',this)">WB</button>
+        <button class="btn btn-outline-secondary" style="border-color:#1d4ed8;color:#60a5fa" onclick="setSaMP('ozon',this)">Ozon</button>
+        <button class="btn btn-outline-secondary" style="border-color:#854d0e;color:#fbbf24" onclick="setSaMP('ym',this)">YM</button>
+      </div>
+      <select id="saBrand" class="form-select form-select-sm bg-secondary border-0 text-white" style="width:190px" onchange="loadSalesAnalytics()">
+        <option value="all">Все бренды</option>
+        <option value="Джага">Джага</option>
+        <option value="Satisfucktion">Satisfucktion</option>
+        <option value="Aloe">Aloe</option>
+      </select>
+      <div class="btn-group btn-group-sm ms-auto" id="saModeBtn">
+        <button class="btn btn-outline-secondary active" data-mode="rev" onclick="setSaMode('rev')">Выручка ₽</button>
+        <button class="btn btn-outline-secondary" data-mode="qty" onclick="setSaMode('qty')">Штуки</button>
+      </div>
+    </div>
+
+    <!-- KPI cards -->
+    <div class="row g-2 mb-3" id="saKPI">
+      <div class="col-12 text-center text-secondary py-3"><span class="spinner-border spinner-border-sm"></span></div>
+    </div>
+
+    <!-- Charts -->
+    <div class="row g-3 mb-3">
+      <div class="col-12 col-xl-7">
+        <div class="card border-0 bg-card">
+          <div class="card-header bg-transparent border-0 fw-semibold">Динамика продаж</div>
+          <div class="card-body" style="position:relative;height:300px">
+            <canvas id="saDynChart"></canvas>
+          </div>
+        </div>
+      </div>
+      <div class="col-12 col-xl-5">
+        <div class="card border-0 bg-card">
+          <div class="card-header bg-transparent border-0 fw-semibold">Топ-10 SKU</div>
+          <div class="card-body" style="position:relative;height:300px">
+            <canvas id="saTopChart"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Table -->
+    <div class="card border-0 bg-card">
+      <div class="card-header bg-transparent border-0 d-flex justify-content-between align-items-center gap-2 flex-wrap">
+        <span class="fw-semibold">Детализация по артикулам</span>
+        <input id="saSearch" type="search" class="form-control form-control-sm bg-secondary border-0 text-white"
+               placeholder="Поиск по артикулу / названию..." style="width:260px"
+               oninput="_saSearch=this.value; if(_saData) renderSaTable(_saData.table)" />
+      </div>
+      <div class="card-body p-0">
+        <div class="table-responsive">
+          <table class="table table-hover table-sm align-middle mb-0" id="saTable">
+            <thead class="sticky-top" id="saTableHead">
+              <tr>
+                <th data-sa="article">Артикул <i class="bi bi-arrow-down-up text-secondary small"></i></th>
+                <th data-sa="name">Название <i class="bi bi-arrow-down-up text-secondary small"></i></th>
+                <th data-sa="brand">Бренд <i class="bi bi-arrow-down-up text-secondary small"></i></th>
+                <th data-sa="wb_qty" style="color:#a855f7">WB шт <i class="bi bi-arrow-down-up text-secondary small"></i></th>
+                <th data-sa="wb_rev" style="color:#a855f7">WB выручка ₽ <i class="bi bi-arrow-down-up text-secondary small"></i></th>
+                <th data-sa="oz_qty" style="color:#60a5fa">Ozon шт <i class="bi bi-arrow-down-up text-secondary small"></i></th>
+                <th data-sa="oz_rev" style="color:#60a5fa">Ozon выручка ₽ <i class="bi bi-arrow-down-up text-secondary small"></i></th>
+                <th data-sa="ym_qty" style="color:#fbbf24">YM шт <i class="bi bi-arrow-down-up text-secondary small"></i></th>
+                <th data-sa="ym_rev" style="color:#fbbf24">YM выручка ₽ <i class="bi bi-arrow-down-up text-secondary small"></i></th>
+                <th data-sa="total_qty">Итого шт <i class="bi bi-arrow-down-up text-secondary small"></i></th>
+                <th data-sa="total_rev">Итого ₽ <i class="bi bi-arrow-down-up text-secondary small"></i></th>
+              </tr>
+            </thead>
+            <tbody id="saBody">
+              <tr><td colspan="11" class="text-center text-secondary py-4">
+                <span class="spinner-border spinner-border-sm"></span>
+              </td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /pane-salesan -->
 
   <!-- ── Остатки ── -->
   <div id="pane-stocks" style="display:none">
@@ -400,6 +487,6 @@
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
-<script src="app.js?v=10"></script>
+<script src="app.js?v=11"></script>
 </body>
 </html>

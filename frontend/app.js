@@ -3,7 +3,7 @@
 const API = '';
 let charts = {};
 let sortState = {};
-const dirty = { finance: true, products: true, stocks: true, supplies: true, unitec: true, advert: true };
+const dirty = { finance: true, products: true, salesan: true, stocks: true, supplies: true, unitec: true, advert: true };
 let _advertData = [];
 let currentTab = 'finance';
 let prodAllData = [];
@@ -97,13 +97,13 @@ function skuName(r) {
 function switchTab(name, linkEl) {
   document.querySelectorAll('#mainTabs .nav-link').forEach(a => a.classList.remove('active'));
   if (linkEl) linkEl.classList.add('active');
-  ['finance', 'products', 'stocks', 'supplies', 'unitec', 'advert'].forEach(t => {
+  ['finance', 'products', 'salesan', 'stocks', 'supplies', 'unitec', 'advert'].forEach(t => {
     document.getElementById('pane-' + t).style.display = t === name ? 'block' : 'none';
   });
   currentTab = name;
   if (dirty[name]) {
     dirty[name] = false;
-    ({ finance: loadFinance, products: loadProducts, stocks: loadStocks,
+    ({ finance: loadFinance, products: loadProducts, salesan: loadSalesAnalytics, stocks: loadStocks,
        supplies: loadSupplies, unitec: loadUnitEc, advert: loadAdvert })[name]();
   }
 }
@@ -848,6 +848,187 @@ function initSortable(tableEl) {
       tbody._data = sorted;
       tbody.innerHTML = sorted.map(r => `<tr>${tbody._rowFn(r)}</tr>`).join('');
     });
+  });
+}
+
+// ── Sales Analytics ───────────────────────────────────────────────────────────
+
+let _saData = null;
+let _saMode = 'rev';
+let _saMP   = 'all';
+let _saSort = { col: 'total_rev', asc: false };
+let _saSearch = '';
+let _saChartDyn = null;
+let _saChartTop = null;
+
+function setSaMP(mp, el) {
+  _saMP = mp;
+  document.querySelectorAll('#saMPGroup button').forEach(b => b.classList.remove('active'));
+  el.classList.add('active');
+  loadSalesAnalytics();
+}
+
+function setSaMode(mode) {
+  _saMode = mode;
+  document.querySelectorAll('#saModeBtn button').forEach(b =>
+    b.classList.toggle('active', b.dataset.mode === mode));
+  if (_saData) {
+    renderSaDyn(_saData.dynamics);
+    renderSaTop(_saData.top10);
+  }
+}
+
+async function loadSalesAnalytics() {
+  const brand = (document.getElementById('saBrand') || {}).value || 'all';
+  const p = getDateParams() + `&marketplace=${_saMP}&brand=${encodeURIComponent(brand)}`;
+  document.getElementById('saKPI').innerHTML =
+    '<div class="col-12 text-center text-secondary py-3"><span class="spinner-border spinner-border-sm"></span> Загрузка данных…</div>';
+  document.getElementById('saBody').innerHTML =
+    '<tr><td colspan="11" class="text-center text-secondary py-4"><span class="spinner-border spinner-border-sm"></span></td></tr>';
+  try {
+    const r = await fetch(`${API}/api/dashboard/sales_analytics?${p}`);
+    if (!r.ok) { const b = await r.json().catch(() => ({})); throw new Error(b.detail || r.status); }
+    _saData = await r.json();
+    renderSaKPI(_saData.kpi);
+    renderSaDyn(_saData.dynamics);
+    renderSaTop(_saData.top10);
+    renderSaTable(_saData.table);
+    initSaTableSort();
+  } catch(e) {
+    document.getElementById('saKPI').innerHTML =
+      `<div class="col-12 text-danger text-center py-3">Ошибка: ${e.message}</div>`;
+  }
+}
+
+function renderSaKPI(kpi) {
+  const best = kpi.best;
+  document.getElementById('saKPI').innerHTML = `
+    <div class="col-6 col-md-3">
+      <div class="card border-0 bg-card text-center p-3">
+        <div class="text-secondary small mb-1">Продажи, шт</div>
+        <div class="fs-3 fw-bold">${fmt(kpi.total_qty)}</div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="card border-0 bg-card text-center p-3">
+        <div class="text-secondary small mb-1">Выручка, ₽</div>
+        <div class="fs-3 fw-bold">${fmtRub(kpi.total_rev)}</div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="card border-0 bg-card text-center p-3">
+        <div class="text-secondary small mb-1">Продаж / день</div>
+        <div class="fs-3 fw-bold">${fmt(kpi.avg_per_day, 1)}</div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="card border-0 bg-card text-center p-3">
+        <div class="text-secondary small mb-1">Лучший артикул</div>
+        <div class="fw-bold" style="font-size:15px">${best ? best.article : '—'}</div>
+        <div class="text-secondary" style="font-size:11px">${best ? fmtRub(best.rev) : ''}</div>
+      </div>
+    </div>`;
+}
+
+function renderSaDyn(dynamics) {
+  const m = _saMode;
+  const labels  = dynamics.map(d => d.date.slice(5));
+  const wbData  = dynamics.map(d => m === 'rev' ? d.wb_rev  : d.wb_qty);
+  const ozData  = dynamics.map(d => m === 'rev' ? d.oz_rev  : d.oz_qty);
+  const ymData  = dynamics.map(d => m === 'rev' ? d.ym_rev  : d.ym_qty);
+  if (_saChartDyn) _saChartDyn.destroy();
+  const ctx = document.getElementById('saDynChart').getContext('2d');
+  _saChartDyn = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        { label: 'WB',   data: wbData, borderColor: '#9333ea', backgroundColor: 'rgba(147,51,234,.15)', tension: 0.3, fill: true, pointRadius: 2 },
+        { label: 'Ozon', data: ozData, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,.15)',  tension: 0.3, fill: true, pointRadius: 2 },
+        { label: 'YM',   data: ymData, borderColor: '#eab308', backgroundColor: 'rgba(234,179,8,.15)',   tension: 0.3, fill: true, pointRadius: 2 },
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { labels: { color: '#aaa' } } },
+      scales: {
+        x: { ticks: { color: '#777', maxTicksLimit: 12 }, grid: { color: '#1e1e1e' } },
+        y: { ticks: { color: '#777' }, grid: { color: '#1e1e1e' } },
+      }
+    }
+  });
+}
+
+function renderSaTop(top10) {
+  const m = _saMode;
+  const labels = top10.map(r => r.article);
+  const wbData = top10.map(r => m === 'rev' ? r.wb_rev : r.wb_qty);
+  const ozData = top10.map(r => m === 'rev' ? r.oz_rev : r.oz_qty);
+  const ymData = top10.map(r => m === 'rev' ? r.ym_rev : r.ym_qty);
+  if (_saChartTop) _saChartTop.destroy();
+  const ctx = document.getElementById('saTopChart').getContext('2d');
+  _saChartTop = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label: 'WB',   data: wbData, backgroundColor: '#9333ea' },
+        { label: 'Ozon', data: ozData, backgroundColor: '#3b82f6' },
+        { label: 'YM',   data: ymData, backgroundColor: '#eab308' },
+      ]
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { labels: { color: '#aaa' } } },
+      scales: {
+        x: { stacked: true, ticks: { color: '#777' }, grid: { color: '#1e1e1e' } },
+        y: { stacked: true, ticks: { color: '#ccc', font: { size: 11 } } },
+      }
+    }
+  });
+}
+
+function renderSaTable(rows) {
+  const q = _saSearch.toLowerCase();
+  let data = rows.filter(r =>
+    !q || (r.article || '').toLowerCase().includes(q) || (r.name || '').toLowerCase().includes(q));
+  const { col, asc } = _saSort;
+  data.sort((a, b) => {
+    const av = a[col] ?? '', bv = b[col] ?? '';
+    if (typeof av === 'number') return asc ? av - bv : bv - av;
+    return asc ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av));
+  });
+  const tbody = document.getElementById('saBody');
+  if (!data.length) {
+    tbody.innerHTML = '<tr><td colspan="11" class="text-center text-secondary py-4">Нет данных</td></tr>';
+    return;
+  }
+  tbody.innerHTML = data.map(r => `
+    <tr>
+      <td class="fw-semibold">${r.article}</td>
+      <td class="text-secondary small">${r.name || '—'}</td>
+      <td><span class="badge bg-secondary">${r.brand || '—'}</span></td>
+      <td>${fmt(r.wb_qty)}</td>
+      <td>${r.wb_rev ? fmtRub(r.wb_rev) : '—'}</td>
+      <td>${fmt(r.oz_qty)}</td>
+      <td>${r.oz_rev ? fmtRub(r.oz_rev) : '—'}</td>
+      <td>${fmt(r.ym_qty)}</td>
+      <td>${r.ym_rev ? fmtRub(r.ym_rev) : '—'}</td>
+      <td class="fw-semibold">${fmt(r.total_qty)}</td>
+      <td class="fw-semibold text-warning">${fmtRub(r.total_rev)}</td>
+    </tr>`).join('');
+}
+
+function initSaTableSort() {
+  document.querySelectorAll('#saTableHead th[data-sa]').forEach(th => {
+    th.style.cursor = 'pointer';
+    th.onclick = () => {
+      const col = th.dataset.sa;
+      if (_saSort.col === col) _saSort.asc = !_saSort.asc;
+      else { _saSort.col = col; _saSort.asc = false; }
+      if (_saData) renderSaTable(_saData.table);
+    };
   });
 }
 
