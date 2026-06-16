@@ -157,7 +157,7 @@ async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
         page = 1
         _log.info("[YM] chunk %s – %s", fmt_from, fmt_to)
 
-        while True:
+        while page <= 200:  # safety: 200p × 50 = 10 000 orders per chunk
             params = {"fromDate": fmt_from, "toDate": fmt_to, "limit": 50, "page": page}
             try:
                 data = await _get(f"/campaigns/{YM_CAMPAIGN_ID}/orders", params)

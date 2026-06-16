@@ -539,10 +539,18 @@ async def get_weekly_summary():
 
     date_from_str = weeks[0][0].strftime("%Y-%m-%d")
     date_to_str   = weeks[-1][1].strftime("%Y-%m-%d")
-    oz_rows, ym_rows = await asyncio.gather(
-        ozon_client.get_sales_detail(date_from_str, date_to_str),
-        ym_client.get_sales_detail(date_from_str, date_to_str),
-    )
+    try:
+        oz_rows, ym_rows = await asyncio.wait_for(
+            asyncio.gather(
+                ozon_client.get_sales_detail(date_from_str, date_to_str),
+                ym_client.get_sales_detail(date_from_str, date_to_str),
+            ),
+            timeout=120,
+        )
+    except asyncio.TimeoutError:
+        import logging as _tlog
+        _tlog.getLogger("weekly_summary").warning("[WS] marketplace detail fetch timed out after 120s")
+        oz_rows, ym_rows = [], []
 
     import logging as _wslog
     _ws = _wslog.getLogger("weekly_summary")
