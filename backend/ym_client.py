@@ -157,7 +157,8 @@ async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
         page = 1
         _log.info("[YM] chunk %s – %s", fmt_from, fmt_to)
 
-        while page <= 200:  # safety: 200p × 50 = 10 000 orders per chunk
+        seen_ids: set[int] = set()
+        while page <= 10:  # safety cap; 10p × 50 = 500 orders per chunk
             params = {"fromDate": fmt_from, "toDate": fmt_to, "limit": 50, "page": page}
             try:
                 data = await _get(f"/campaigns/{YM_CAMPAIGN_ID}/orders", params)
@@ -168,6 +169,12 @@ async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
             _log.info("[YM] chunk %s page %d: %d orders", fmt_from, page, len(orders))
             if not orders:
                 break
+            # Detect pagination loop: stop if all order IDs already seen
+            page_ids = {o.get("id") for o in orders if o.get("id")}
+            if page_ids and page_ids.issubset(seen_ids):
+                _log.warning("[YM] chunk %s page %d: duplicate page detected, stopping", fmt_from, page)
+                break
+            seen_ids.update(page_ids)
             for order in orders:
                 status   = order.get("status") or ""
                 raw_date = (order.get("creationDate") or "")[:10]
@@ -193,7 +200,6 @@ async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
                     if oid and qty:
                         rows.append({"date": date_str, "shop_sku": oid, "qty": qty,
                                      "revenue": revenue, "status": status})
-            # Last page when fewer rows than limit returned
             if len(orders) < 50:
                 break
             page += 1
