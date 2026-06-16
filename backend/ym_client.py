@@ -170,12 +170,12 @@ async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
             orders = data.get("orders") or []
             pager  = data.get("pager") or {}
             total_pages = pager.get("pagesCount") or 1
-            _log.info("[YM] chunk %s page %d/%s: %d orders",
-                      _fmt(c_from), page, total_pages, len(orders))
+            _log.info("[YM] chunk %s page %d/%s: %d orders (pager=%s)",
+                      _fmt(c_from), page, total_pages, len(orders), pager)
             if not orders:
                 break
             # Log first raw order on very first page of first chunk
-            if page == 1 and c_from == chunks[0][0] and orders:
+            if page == 1 and c_from == chunks[0][0]:
                 first_order = orders[0]
                 _log.info("[YM] RAW ORDER keys=%s", list(first_order.keys()))
                 _log.info("[YM] RAW ORDER full=%s", first_order)
@@ -206,7 +206,8 @@ async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
                     if oid and qty:
                         rows.append({"date": date_str, "shop_sku": oid, "qty": qty,
                                      "revenue": revenue, "status": status})
-            if page >= total_pages:
+            # Use pagesCount if present; otherwise keep going until orders is empty
+            if pager and page >= total_pages:
                 break
             page += 1
 
