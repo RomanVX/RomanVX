@@ -205,9 +205,26 @@ async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
                     if oid and qty:
                         rows.append({"date": date_str, "shop_sku": oid, "qty": qty,
                                      "revenue": revenue, "status": status})
-            page_token = paging.get("nextPageToken")
-            if not page_token:
+            next_token = paging.get("nextPageToken")
+            # Stop if no token, token unchanged (API loop), or hard limit
+            if not next_token or next_token == page_token or page_num >= 20:
+                if page_num >= 20:
+                    _log.warning("[YM] chunk %s hit 20-page limit, stopping", iso_from[:10])
                 break
+            # Early exit: API returns newest first; if all dates on page are before
+            # our chunk start, we've gone past the relevant window
+            dates_on_page = []
+            for o in orders:
+                rd = (o.get("creationDate") or "")[:10]
+                try:
+                    dates_on_page.append(datetime.strptime(rd, "%d-%m-%Y").date())
+                except ValueError:
+                    pass
+            if dates_on_page and max(dates_on_page) < c_from.date():
+                _log.info("[YM] chunk %s page %d: all orders before chunk start, stopping",
+                          iso_from[:10], page_num)
+                break
+            page_token = next_token
 
     delivered = sum(1 for r in rows if r["status"] == "DELIVERED")
     _log.info("[YM] sales_detail done: chunks=%d rows=%d delivered=%d for %s–%s",
