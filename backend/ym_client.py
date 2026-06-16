@@ -126,34 +126,54 @@ async def _try_business_orders_post(date_from: str, date_to: str) -> dict[str, i
 
 
 async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
-    """Return [{date, shop_sku, qty, revenue}] for given range — no cache."""
-    if not YM_API_KEY or not YM_CAMPAIGN_ID:
+    """Return [{date, shop_sku, qty, revenue, status}] for given range — no cache.
+
+    POST /businesses/{id}/orders, no status filter — caller decides which
+    statuses count as "Продажи" (all) vs "Выкупы" (DELIVERED only).
+    """
+    if not YM_API_KEY or not YM_BUSINESS_ID:
         return []
+    rows: list[dict] = []
     try:
-        data = await _post(
-            f"/campaigns/{YM_CAMPAIGN_ID}/stats/orders",
-            {"dateFrom": date_from, "dateTo": date_to, "groupBy": "DAY"},
-        )
-        rows: list[dict] = []
-        for order in (data.get("result") or {}).get("orders") or []:
-            if (order.get("status") or "") == "CANCELLED":
-                continue
-            date = (order.get("creationDate") or "")[:10]
-            for item in order.get("items") or []:
-                oid = item.get("shopSku") or item.get("offerId") or ""
-                qty = item.get("count") or item.get("initialCount") or 0
-                revenue = 0.0
-                for p in item.get("prices") or []:
-                    if p.get("type") == "BUYER":
-                        revenue = float(p.get("total") or 0)
-                        break
-                if oid and qty:
-                    rows.append({"date": date, "shop_sku": oid, "qty": qty, "revenue": revenue})
+        page_token: str | None = None
+        while True:
+            body: dict = {
+                "dateFrom": date_from,
+                "dateTo": date_to,
+                "limit": 50,
+            }
+            if page_token:
+                body["pageToken"] = page_token
+            data = await _post(f"/businesses/{YM_BUSINESS_ID}/orders", body)
+            orders = (data.get("result") or {}).get("orders") or []
+            for order in orders:
+                status = order.get("status") or ""
+                date = (order.get("creationDate") or "")[:10]
+                for item in order.get("items") or []:
+                    oid = item.get("offerId") or (item.get("offer") or {}).get("offerId", "")
+                    qty = item.get("count") or item.get("initialCount") or 0
+                    revenue = 0.0
+                    for p in item.get("prices") or []:
+                        if p.get("type") == "BUYER":
+                            revenue = float(p.get("total") or 0)
+                            break
+                    if not revenue:
+                        payment = ((item.get("prices") or {}).get("payment")
+                                   if isinstance(item.get("prices"), dict) else None)
+                        if payment:
+                            revenue = float(payment.get("value") or 0) * (qty or 1)
+                    if oid and qty:
+                        rows.append({"date": date, "shop_sku": oid, "qty": qty,
+                                     "revenue": revenue, "status": status})
+            paging = (data.get("result") or {}).get("paging") or {}
+            page_token = paging.get("nextPageToken")
+            if not orders or not page_token:
+                break
         _log.info("[YM] sales_detail: %d rows for %s–%s", len(rows), date_from, date_to)
         return rows
     except Exception as e:
         _log.warning("[YM] get_sales_detail failed: %s", e)
-        return []
+        return rows
 
 
 async def get_stocks() -> dict[str, int]:

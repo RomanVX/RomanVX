@@ -508,3 +508,112 @@ async def invalidate_cache():
     return {"status": "ok"}
 
 
+def _week_ranges(n_weeks: int = 8) -> list[tuple]:
+    """Last n_weeks Mon–Sun ranges (date objects), oldest first, including current week."""
+    today = datetime.utcnow().date()
+    monday_this_week = today - timedelta(days=today.weekday())
+    weeks = []
+    for i in range(n_weeks):
+        start = monday_this_week - timedelta(weeks=(n_weeks - 1 - i))
+        end = start + timedelta(days=6)
+        weeks.append((start, end))
+    return weeks
+
+
+def _week_label(start, end) -> str:
+    return f"{start.strftime('%d.%m')} - {end.strftime('%d.%m')}"
+
+
+@router.get("/weekly_summary")
+async def get_weekly_summary():
+    """Сводка Продажи/Выкупы по неделям (Пн-Вс) за последние 8 недель, все МП."""
+    weeks = _week_ranges(8)
+    n = len(weeks)
+    dt_from = datetime.combine(weeks[0][0], datetime.min.time())
+    dt_to   = datetime.combine(weeks[-1][1], datetime.min.time())
+
+    try:
+        wb_sales, wb_orders, _ = await cache.get_raw_data(dt_from, dt_to)
+    except Exception:
+        wb_sales, wb_orders = [], []
+
+    date_from_str = weeks[0][0].strftime("%Y-%m-%d")
+    date_to_str   = weeks[-1][1].strftime("%Y-%m-%d")
+    oz_rows, ym_rows = await asyncio.gather(
+        ozon_client.get_sales_detail(date_from_str, date_to_str),
+        ym_client.get_sales_detail(date_from_str, date_to_str),
+    )
+
+    def week_index(date_str: str):
+        try:
+            d = datetime.strptime((date_str or "")[:10], "%Y-%m-%d").date()
+        except ValueError:
+            return None
+        for i, (s, e) in enumerate(weeks):
+            if s <= d <= e:
+                return i
+        return None
+
+    rub = {mp: {"sales": [0.0] * n, "buyout": [0.0] * n} for mp in ("WB", "OZON", "YM")}
+    qty = {mp: {"sales": [0] * n, "buyout": [0] * n} for mp in ("WB", "OZON", "YM")}
+
+    # WB Продажи = все записи /supplier/orders, finishedPrice
+    for r in wb_orders:
+        idx = week_index(r.get("date"))
+        if idx is None:
+            continue
+        fp = float(r.get("finishedPrice") or 0)
+        rub["WB"]["sales"][idx] += fp
+        qty["WB"]["sales"][idx] += 1
+
+    # WB Выкупы = /supplier/sales, saleID начинается с "S", finishedPrice
+    for r in wb_sales:
+        sid = r.get("saleID") or ""
+        if not sid.startswith("S"):
+            continue
+        idx = week_index(r.get("date"))
+        if idx is None:
+            continue
+        fp = float(r.get("finishedPrice") or 0)
+        rub["WB"]["buyout"][idx] += fp
+        qty["WB"]["buyout"][idx] += 1
+
+    # Ozon Продажи = все строки FBO; Выкупы = status == delivered
+    for r in oz_rows:
+        idx = week_index(r.get("date"))
+        if idx is None:
+            continue
+        rub["OZON"]["sales"][idx] += r["revenue"]
+        qty["OZON"]["sales"][idx] += r["qty"]
+        if (r.get("status") or "").lower() == "delivered":
+            rub["OZON"]["buyout"][idx] += r["revenue"]
+            qty["OZON"]["buyout"][idx] += r["qty"]
+
+    # YM Продажи = все заказы; Выкупы = status == DELIVERED
+    for r in ym_rows:
+        idx = week_index(r.get("date"))
+        if idx is None:
+            continue
+        rub["YM"]["sales"][idx] += r["revenue"]
+        qty["YM"]["sales"][idx] += r["qty"]
+        if (r.get("status") or "") == "DELIVERED":
+            rub["YM"]["buyout"][idx] += r["revenue"]
+            qty["YM"]["buyout"][idx] += r["qty"]
+
+    def block(d: dict, mp: str) -> dict:
+        return {"sales": [round(v, 2) for v in d[mp]["sales"]],
+                "buyout": [round(v, 2) for v in d[mp]["buyout"]]}
+
+    def total(d: dict) -> dict:
+        return {
+            "sales":  [round(sum(d[mp]["sales"][i]  for mp in ("WB", "OZON", "YM")), 2) for i in range(n)],
+            "buyout": [round(sum(d[mp]["buyout"][i] for mp in ("WB", "OZON", "YM")), 2) for i in range(n)],
+        }
+
+    return {
+        "weeks": [_week_label(s, e) for s, e in weeks],
+        "rub": {"OZON": block(rub, "OZON"), "WB": block(rub, "WB"), "YM": block(rub, "YM"), "total": total(rub)},
+        "qty": {"OZON": block(qty, "OZON"), "WB": block(qty, "WB"), "YM": block(qty, "YM"), "total": total(qty)},
+    }
+
+

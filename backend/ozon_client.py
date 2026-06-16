@@ -140,7 +140,7 @@ async def get_stocks() -> dict[str, int]:
 
 
 async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
-    """Return [{date, offer_id, qty, revenue}] for given range — no cache."""
+    """Return [{date, offer_id, qty, revenue, status}] for given range — no cache."""
     if not OZON_CLIENT_ID or not OZON_API_KEY:
         return []
     since = f"{date_from}T00:00:00.000Z"
@@ -160,12 +160,14 @@ async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
                 break
             for posting in result:
                 date = (posting.get("created_at") or "")[:10]
+                status = posting.get("status", "")
                 for prod in posting.get("products") or []:
                     oid = prod.get("offer_id", "")
                     qty = prod.get("quantity") or 0
                     price = float(prod.get("price") or 0)
                     if oid and qty:
-                        rows.append({"date": date, "offer_id": oid, "qty": qty, "revenue": price * qty})
+                        rows.append({"date": date, "offer_id": oid, "qty": qty,
+                                     "revenue": price * qty, "status": status})
             offset += len(result)
             if len(result) < 1000:
                 break
