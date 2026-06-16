@@ -128,35 +128,40 @@ async def _try_business_orders_post(date_from: str, date_to: str) -> dict[str, i
 async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
     """Return [{date, shop_sku, qty, revenue, status}] for given range — no cache.
 
-    POST /businesses/{id}/orders, no status filter — caller decides which
-    statuses count as "Продажи" (all) vs "Выкупы" (DELIVERED only).
+    GET /campaigns/{id}/orders — paginated by page number (not pageToken).
+    fromDate/toDate in DD-MM-YYYY format.
     revenue = (prices.payment.value + prices.subsidy.value) * count
-    Pagination via body.pageToken from response.paging.nextPageToken.
     """
-    if not YM_API_KEY or not YM_BUSINESS_ID:
+    if not YM_API_KEY or not YM_CAMPAIGN_ID:
         return []
     rows: list[dict] = []
-    iso_from = f"{date_from}T00:00:00Z"
-    iso_to   = f"{date_to}T23:59:59Z"
-    page_num = 0
+
+    def _fmt(d: str) -> str:
+        # d is YYYY-MM-DD → DD-MM-YYYY
+        y, m, day = d.split("-")
+        return f"{day}-{m}-{y}"
+
+    date_from_fmt = _fmt(date_from)
+    date_to_fmt   = _fmt(date_to)
+    page = 1
     logged_sample = False
     try:
-        page_token: str | None = None
         while True:
-            body: dict = {
-                "filter": {"fromDate": iso_from, "toDate": iso_to},
+            params = {
+                "fromDate": date_from_fmt,
+                "toDate":   date_to_fmt,
                 "limit": 50,
+                "page":  page,
             }
-            if page_token:
-                body["pageToken"] = page_token
-            data = await _post(f"/businesses/{YM_BUSINESS_ID}/orders", body)
-            page_num += 1
-            orders = data.get("orders") or []
-            _log.info("[YM] sales_detail page %d: %d orders, paging=%s",
-                      page_num, len(orders), data.get("paging"))
+            data = await _get(f"/campaigns/{YM_CAMPAIGN_ID}/orders", params)
+            _log.info("[YM] sales_detail page %d: status_logged, paging=%s, keys=%s",
+                      page, data.get("pager"), list(data.keys()))
+            orders = (data.get("orders") or [])
+            if not orders:
+                break
             for order in orders:
                 status = order.get("status") or ""
-                date = (order.get("creationDate") or "")[:10]
+                date_str = (order.get("creationDate") or "")[:10]
                 for item in order.get("items") or []:
                     oid = item.get("offerId") or (item.get("offer") or {}).get("offerId", "")
                     qty = item.get("count") or item.get("initialCount") or 0
@@ -172,19 +177,21 @@ async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
                         )
                         logged_sample = True
                     if oid and qty:
-                        rows.append({"date": date, "shop_sku": oid, "qty": qty,
+                        rows.append({"date": date_str, "shop_sku": oid, "qty": qty,
                                      "revenue": revenue, "status": status})
-            paging = data.get("paging") or {}
-            page_token = paging.get("nextPageToken")
-            if not orders or not page_token:
+            pager = data.get("pager") or {}
+            total_pages = pager.get("pagesCount") or 1
+            _log.info("[YM] page %d/%s, orders=%d, rows_so_far=%d",
+                      page, total_pages, len(orders), len(rows))
+            if page >= total_pages:
                 break
-        orders_total = len(rows)
-        buyouts_total = sum(1 for r in rows if r["status"] == "DELIVERED")
+            page += 1
+        delivered = sum(1 for r in rows if r["status"] == "DELIVERED")
         _log.info("[YM] sales_detail done: pages=%d rows=%d delivered=%d for %s–%s",
-                  page_num, orders_total, buyouts_total, date_from, date_to)
+                  page, len(rows), delivered, date_from, date_to)
         return rows
     except Exception as e:
-        _log.warning("[YM] get_sales_detail failed (page %d): %s", page_num, e)
+        _log.warning("[YM] get_sales_detail failed (page %d): %s", page, e)
         return rows
 
 
