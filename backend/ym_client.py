@@ -128,11 +128,13 @@ async def _try_business_orders_post(date_from: str, date_to: str) -> dict[str, i
 async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
     """Return [{date, shop_sku, qty, revenue, status}] for given range — no cache.
 
-    POST /v1/businesses/{id}/orders, paginated via paging.nextPageToken.
-    Body: filter.fromDate/toDate as ISO with Z. Max 28-day chunks (API limit).
-    revenue = (prices.payment.value + prices.subsidy.value) * count
+    GET /campaigns/{id}/orders — respects fromDate/toDate filter.
+    Dates sent as DD-MM-YYYY. Split into ≤28-day chunks (API limit).
+    Paginated by integer page; stop when response < 50 rows (last page).
+    revenue = (prices.payment.value + prices.subsidy.value) * count,
+    with buyerPrice fallback when prices are absent.
     """
-    if not YM_API_KEY or not YM_BUSINESS_ID:
+    if not YM_API_KEY or not YM_CAMPAIGN_ID:
         return []
 
     dt_from = datetime.strptime(date_from, "%Y-%m-%d")
@@ -150,34 +152,22 @@ async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
     logged_sample = False
 
     for c_from, c_to in chunks:
-        iso_from = c_from.strftime("%Y-%m-%dT00:00:00Z")
-        iso_to   = c_to.strftime("%Y-%m-%dT23:59:59Z")
-        page_token: str | None = None
-        page_num = 0
-        _log.info("[YM] chunk %s – %s", iso_from[:10], iso_to[:10])
+        fmt_from = c_from.strftime("%d-%m-%Y")
+        fmt_to   = c_to.strftime("%d-%m-%Y")
+        page = 1
+        _log.info("[YM] chunk %s – %s", fmt_from, fmt_to)
 
         while True:
-            body: dict = {"filter": {"fromDate": iso_from, "toDate": iso_to}, "limit": 50}
-            if page_token:
-                body["pageToken"] = page_token
+            params = {"fromDate": fmt_from, "toDate": fmt_to, "limit": 50, "page": page}
             try:
-                data = await _post(f"/v1/businesses/{YM_BUSINESS_ID}/orders", body)
+                data = await _get(f"/campaigns/{YM_CAMPAIGN_ID}/orders", params)
             except Exception as e:
-                _log.warning("[YM] chunk %s page %d failed: %s", iso_from[:10], page_num, e)
+                _log.warning("[YM] chunk %s page %d failed: %s", fmt_from, page, e)
                 break
-            page_num += 1
             orders = data.get("orders") or []
-            paging = data.get("paging") or {}
-            _log.info("[YM] chunk %s page %d: %d orders, paging=%s",
-                      iso_from[:10], page_num, len(orders), paging)
+            _log.info("[YM] chunk %s page %d: %d orders", fmt_from, page, len(orders))
             if not orders:
                 break
-            if not logged_sample and orders:
-                first = orders[0]
-                first_items = first.get("items") or []
-                _log.info("[YM] RAW ORDER keys=%s", list(first.keys()))
-                if first_items:
-                    _log.info("[YM] RAW ITEM full=%s", first_items[0])
             for order in orders:
                 status   = order.get("status") or ""
                 raw_date = (order.get("creationDate") or "")[:10]
@@ -191,40 +181,22 @@ async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
                     prices      = item.get("prices") or {}
                     payment_val = float((prices.get("payment") or {}).get("value") or 0)
                     subsidy_val = float((prices.get("subsidy") or {}).get("value") or 0)
-                    # buyerPrice fallback if prices structure absent
                     if not payment_val and not subsidy_val:
                         payment_val = float(item.get("buyerPrice") or 0)
                     revenue = (payment_val + subsidy_val) * (qty or 1)
                     if not logged_sample and oid:
-                        _log.info(
-                            "[YM] sample: offerId=%s count=%s payment=%s subsidy=%s "
-                            "revenue=%s status=%s date=%s",
-                            oid, qty, payment_val, subsidy_val, revenue, status, date_str,
-                        )
+                        _log.info("[YM] sample: offerId=%s count=%s payment=%s "
+                                  "subsidy=%s revenue=%s status=%s date=%s",
+                                  oid, qty, payment_val, subsidy_val,
+                                  revenue, status, date_str)
                         logged_sample = True
                     if oid and qty:
                         rows.append({"date": date_str, "shop_sku": oid, "qty": qty,
                                      "revenue": revenue, "status": status})
-            next_token = paging.get("nextPageToken")
-            # Stop if no token, token unchanged (API loop), or hard limit
-            if not next_token or next_token == page_token or page_num >= 20:
-                if page_num >= 20:
-                    _log.warning("[YM] chunk %s hit 20-page limit, stopping", iso_from[:10])
+            # Last page when fewer rows than limit returned
+            if len(orders) < 50:
                 break
-            # Early exit: API returns newest first; if all dates on page are before
-            # our chunk start, we've gone past the relevant window
-            dates_on_page = []
-            for o in orders:
-                rd = (o.get("creationDate") or "")[:10]
-                try:
-                    dates_on_page.append(datetime.strptime(rd, "%d-%m-%Y").date())
-                except ValueError:
-                    pass
-            if dates_on_page and max(dates_on_page) < c_from.date():
-                _log.info("[YM] chunk %s page %d: all orders before chunk start, stopping",
-                          iso_from[:10], page_num)
-                break
-            page_token = next_token
+            page += 1
 
     delivered = sum(1 for r in rows if r["status"] == "DELIVERED")
     _log.info("[YM] sales_detail done: chunks=%d rows=%d delivered=%d for %s–%s",
