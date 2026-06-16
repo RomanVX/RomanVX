@@ -544,6 +544,15 @@ async def get_weekly_summary():
         ym_client.get_sales_detail(date_from_str, date_to_str),
     )
 
+    import logging as _wslog
+    _ws = _wslog.getLogger("weekly_summary")
+    _ws.info("[WS] ym_rows total=%d date_from=%s date_to=%s",
+             len(ym_rows), date_from_str, date_to_str)
+    if ym_rows:
+        r0 = ym_rows[0]
+        _ws.info("[WS] ym_rows[0] keys=%s value=%s", list(r0.keys()), r0)
+    _ws.info("[WS] weeks=%s", [(str(s), str(e)) for s, e in weeks])
+
     def week_index(date_str: str):
         try:
             d = datetime.strptime((date_str or "")[:10], "%Y-%m-%d").date()
@@ -596,15 +605,21 @@ async def get_weekly_summary():
             qty["OZON"]["buyout"][idx] += r["qty"]
 
     # YM Продажи = все заказы; Выкупы = status == DELIVERED
+    ym_matched = 0
     for r in ym_rows:
         idx = week_index(r.get("date"))
         if idx is None:
+            _ws.info("[WS] ym row date=%s — NO WEEK MATCH (shop_sku=%s)",
+                     r.get("date"), r.get("shop_sku"))
             continue
+        ym_matched += 1
         rub["YM"]["sales"][idx] += r["revenue"]
         qty["YM"]["sales"][idx] += r["qty"]
         if (r.get("status") or "") == "DELIVERED":
             rub["YM"]["buyout"][idx] += r["revenue"]
             qty["YM"]["buyout"][idx] += r["qty"]
+    _ws.info("[WS] ym matched_rows=%d / total=%d, sales_rub=%s",
+             ym_matched, len(ym_rows), rub["YM"]["sales"])
 
     def block(d: dict, mp: str) -> dict:
         return {"sales": [round(v, 2) for v in d[mp]["sales"]],

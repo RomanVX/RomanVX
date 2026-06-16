@@ -174,10 +174,19 @@ async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
                       _fmt(c_from), page, total_pages, len(orders))
             if not orders:
                 break
+            # Log first raw order on very first page of first chunk
+            if page == 1 and c_from == chunks[0][0] and orders:
+                first_order = orders[0]
+                _log.info("[YM] RAW ORDER keys=%s", list(first_order.keys()))
+                _log.info("[YM] RAW ORDER full=%s", first_order)
+                first_items = first_order.get("items") or first_order.get("orderItems") or []
+                if first_items:
+                    _log.info("[YM] RAW ITEM keys=%s", list(first_items[0].keys()))
+                    _log.info("[YM] RAW ITEM full=%s", first_items[0])
             for order in orders:
                 status   = order.get("status") or ""
                 date_str = (order.get("creationDate") or "")[:10]
-                for item in order.get("items") or []:
+                for item in order.get("items") or order.get("orderItems") or []:
                     oid = item.get("offerId") or (item.get("offer") or {}).get("offerId", "")
                     qty = item.get("count") or item.get("initialCount") or 0
                     prices      = item.get("prices") or {}
