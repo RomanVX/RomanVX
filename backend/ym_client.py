@@ -184,20 +184,23 @@ async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
                     _log.info("[YM] RAW ITEM keys=%s", list(first_items[0].keys()))
                     _log.info("[YM] RAW ITEM full=%s", first_items[0])
             for order in orders:
-                status   = order.get("status") or ""
-                date_str = (order.get("creationDate") or "")[:10]
+                status = order.get("status") or ""
+                raw_date = (order.get("creationDate") or "")[:10]
+                # YM returns dates as DD-MM-YYYY → convert to YYYY-MM-DD for week matching
+                try:
+                    date_str = datetime.strptime(raw_date, "%d-%m-%Y").strftime("%Y-%m-%d")
+                except ValueError:
+                    date_str = raw_date  # already ISO or empty
                 for item in order.get("items") or order.get("orderItems") or []:
                     oid = item.get("offerId") or (item.get("offer") or {}).get("offerId", "")
                     qty = item.get("count") or item.get("initialCount") or 0
-                    prices      = item.get("prices") or {}
-                    payment_val = float((prices.get("payment") or {}).get("value") or 0)
-                    subsidy_val = float((prices.get("subsidy") or {}).get("value") or 0)
-                    revenue     = (payment_val + subsidy_val) * (qty or 1)
+                    buyer_price = float(item.get("buyerPrice") or 0)
+                    revenue     = buyer_price * (qty or 1)
                     if not logged_sample and oid:
                         _log.info(
-                            "[YM] sample: offerId=%s count=%s payment=%s subsidy=%s "
-                            "revenue=%s status=%s",
-                            oid, qty, payment_val, subsidy_val, revenue, status,
+                            "[YM] sample: offerId=%s count=%s buyerPrice=%s "
+                            "revenue=%s status=%s date_raw=%s date_iso=%s",
+                            oid, qty, buyer_price, revenue, status, raw_date, date_str,
                         )
                         logged_sample = True
                     if oid and qty:
