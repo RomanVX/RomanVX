@@ -206,8 +206,9 @@ async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
                     if oid and qty:
                         rows.append({"date": date_str, "shop_sku": oid, "qty": qty,
                                      "revenue": revenue, "status": status})
-            # Use pagesCount if present; otherwise keep going until orders is empty
-            if pager and page >= total_pages:
+            # pager.pagesCount is unreliable (returns 1 even when more pages exist).
+            # Continue while API returns a full page (== limit); stop when fewer.
+            if len(orders) < 50:
                 break
             page += 1
 
