@@ -557,16 +557,23 @@ async def get_weekly_summary():
     rub = {mp: {"sales": [0.0] * n, "buyout": [0.0] * n} for mp in ("WB", "OZON", "YM")}
     qty = {mp: {"sales": [0] * n, "buyout": [0] * n} for mp in ("WB", "OZON", "YM")}
 
-    # WB Продажи = все записи /supplier/orders, finishedPrice
+    def _wb_price(r: dict) -> float:
+        """priceWithDisc — цена после скидки продавца, ДО скидки СПП (за счёт WB).
+        finishedPrice исключает СПП-скидку WB, поэтому для нашей выручки не подходит."""
+        pwd = r.get("priceWithDisc")
+        if pwd is not None:
+            return float(pwd)
+        return float(r.get("totalPrice") or 0) * (1 - float(r.get("discountPercent") or 0) / 100)
+
+    # WB Продажи = все записи /supplier/orders, priceWithDisc
     for r in wb_orders:
         idx = week_index(r.get("date"))
         if idx is None:
             continue
-        fp = float(r.get("finishedPrice") or 0)
-        rub["WB"]["sales"][idx] += fp
+        rub["WB"]["sales"][idx] += _wb_price(r)
         qty["WB"]["sales"][idx] += 1
 
-    # WB Выкупы = /supplier/sales, saleID начинается с "S", finishedPrice
+    # WB Выкупы = /supplier/sales, saleID начинается с "S", priceWithDisc
     for r in wb_sales:
         sid = r.get("saleID") or ""
         if not sid.startswith("S"):
@@ -574,8 +581,7 @@ async def get_weekly_summary():
         idx = week_index(r.get("date"))
         if idx is None:
             continue
-        fp = float(r.get("finishedPrice") or 0)
-        rub["WB"]["buyout"][idx] += fp
+        rub["WB"]["buyout"][idx] += _wb_price(r)
         qty["WB"]["buyout"][idx] += 1
 
     # Ozon Продажи = все строки FBO; Выкупы = status == delivered

@@ -130,42 +130,41 @@ async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
 
     POST /businesses/{id}/orders, no status filter — caller decides which
     statuses count as "Продажи" (all) vs "Выкупы" (DELIVERED only).
+    Matches the seller's proven Power Query: filter.fromDate/toDate (ISO with Z),
+    response top-level {orders, paging} (not wrapped in "result"),
+    revenue = prices.payment.value + prices.subsidy.value.
     """
     if not YM_API_KEY or not YM_BUSINESS_ID:
         return []
     rows: list[dict] = []
+    iso_from = f"{date_from}T00:00:00Z"
+    iso_to   = f"{date_to}T23:59:59Z"
     try:
         page_token: str | None = None
         while True:
             body: dict = {
-                "dateFrom": date_from,
-                "dateTo": date_to,
+                "filter": {"fromDate": iso_from, "toDate": iso_to},
                 "limit": 50,
             }
             if page_token:
+                body["filter"] = {"fromDate": iso_from, "toDate": iso_to}
                 body["pageToken"] = page_token
             data = await _post(f"/businesses/{YM_BUSINESS_ID}/orders", body)
-            orders = (data.get("result") or {}).get("orders") or []
+            orders = data.get("orders") or []
             for order in orders:
                 status = order.get("status") or ""
                 date = (order.get("creationDate") or "")[:10]
                 for item in order.get("items") or []:
                     oid = item.get("offerId") or (item.get("offer") or {}).get("offerId", "")
                     qty = item.get("count") or item.get("initialCount") or 0
-                    revenue = 0.0
-                    for p in item.get("prices") or []:
-                        if p.get("type") == "BUYER":
-                            revenue = float(p.get("total") or 0)
-                            break
-                    if not revenue:
-                        payment = ((item.get("prices") or {}).get("payment")
-                                   if isinstance(item.get("prices"), dict) else None)
-                        if payment:
-                            revenue = float(payment.get("value") or 0) * (qty or 1)
+                    prices = item.get("prices") or {}
+                    payment = (prices.get("payment") or {}).get("value") or 0
+                    subsidy = (prices.get("subsidy") or {}).get("value") or 0
+                    revenue = float(payment) + float(subsidy)
                     if oid and qty:
                         rows.append({"date": date, "shop_sku": oid, "qty": qty,
                                      "revenue": revenue, "status": status})
-            paging = (data.get("result") or {}).get("paging") or {}
+            paging = data.get("paging") or {}
             page_token = paging.get("nextPageToken")
             if not orders or not page_token:
                 break
