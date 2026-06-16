@@ -130,15 +130,16 @@ async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
 
     POST /businesses/{id}/orders, no status filter — caller decides which
     statuses count as "Продажи" (all) vs "Выкупы" (DELIVERED only).
-    Matches the seller's proven Power Query: filter.fromDate/toDate (ISO with Z),
-    response top-level {orders, paging} (not wrapped in "result"),
-    revenue = prices.payment.value + prices.subsidy.value.
+    revenue = (prices.payment.value + prices.subsidy.value) * count
+    Pagination via body.pageToken from response.paging.nextPageToken.
     """
     if not YM_API_KEY or not YM_BUSINESS_ID:
         return []
     rows: list[dict] = []
     iso_from = f"{date_from}T00:00:00Z"
     iso_to   = f"{date_to}T23:59:59Z"
+    page_num = 0
+    logged_sample = False
     try:
         page_token: str | None = None
         while True:
@@ -147,10 +148,12 @@ async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
                 "limit": 50,
             }
             if page_token:
-                body["filter"] = {"fromDate": iso_from, "toDate": iso_to}
                 body["pageToken"] = page_token
             data = await _post(f"/businesses/{YM_BUSINESS_ID}/orders", body)
+            page_num += 1
             orders = data.get("orders") or []
+            _log.info("[YM] sales_detail page %d: %d orders, paging=%s",
+                      page_num, len(orders), data.get("paging"))
             for order in orders:
                 status = order.get("status") or ""
                 date = (order.get("creationDate") or "")[:10]
@@ -158,9 +161,16 @@ async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
                     oid = item.get("offerId") or (item.get("offer") or {}).get("offerId", "")
                     qty = item.get("count") or item.get("initialCount") or 0
                     prices = item.get("prices") or {}
-                    payment = (prices.get("payment") or {}).get("value") or 0
-                    subsidy = (prices.get("subsidy") or {}).get("value") or 0
-                    revenue = float(payment) + float(subsidy)
+                    payment_val = float((prices.get("payment") or {}).get("value") or 0)
+                    subsidy_val = float((prices.get("subsidy") or {}).get("value") or 0)
+                    revenue = (payment_val + subsidy_val) * (qty or 1)
+                    if not logged_sample and oid:
+                        _log.info(
+                            "[YM] sample item: offerId=%s count=%s payment_value=%s "
+                            "subsidy_value=%s revenue=%s status=%s",
+                            oid, qty, payment_val, subsidy_val, revenue, status,
+                        )
+                        logged_sample = True
                     if oid and qty:
                         rows.append({"date": date, "shop_sku": oid, "qty": qty,
                                      "revenue": revenue, "status": status})
@@ -168,10 +178,13 @@ async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
             page_token = paging.get("nextPageToken")
             if not orders or not page_token:
                 break
-        _log.info("[YM] sales_detail: %d rows for %s–%s", len(rows), date_from, date_to)
+        orders_total = len(rows)
+        buyouts_total = sum(1 for r in rows if r["status"] == "DELIVERED")
+        _log.info("[YM] sales_detail done: pages=%d rows=%d delivered=%d for %s–%s",
+                  page_num, orders_total, buyouts_total, date_from, date_to)
         return rows
     except Exception as e:
-        _log.warning("[YM] get_sales_detail failed: %s", e)
+        _log.warning("[YM] get_sales_detail failed (page %d): %s", page_num, e)
         return rows
 
 
