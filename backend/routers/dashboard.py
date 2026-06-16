@@ -311,23 +311,13 @@ async def get_sales_analytics(
     date_data: dict = {d: {"wb_qty": 0, "wb_rev": 0.0, "oz_qty": 0, "oz_rev": 0.0, "ym_qty": 0, "ym_rev": 0.0}
                        for d in all_dates}
 
-    import logging as _logging
-    _salog = _logging.getLogger("sales_analytics")
     _wb_sales_filtered = [s for s in wb_sales if analytics._is_sale(s)]
-    if _wb_sales_filtered:
-        s0 = _wb_sales_filtered[0]
-        _salog.info(
-            "WB sale sample: saleID=%s finishedPrice=%s forPay=%s priceWithDisc=%s totalPrice=%s discountPercent=%s",
-            s0.get("saleID"), s0.get("finishedPrice"), s0.get("forPay"),
-            s0.get("priceWithDisc"), s0.get("totalPrice"), s0.get("discountPercent"),
-        )
-    _salog.info("WB sales total=%d after _is_sale filter=%d", len(wb_sales), len(_wb_sales_filtered))
 
     if marketplace in ("wb", "all"):
         for s in _wb_sales_filtered:
             art  = s.get("supplierArticle", "")
             date = (s.get("date") or "")[:10]
-            rev  = float(s.get("finishedPrice") or 0)
+            rev  = analytics._gross(s)
             art_data[art]["wb_qty"] += 1
             art_data[art]["wb_rev"] += rev
             if date in date_data:
@@ -518,41 +508,3 @@ async def invalidate_cache():
     return {"status": "ok"}
 
 
-@router.get("/wb-sales-debug", include_in_schema=False)
-async def wb_sales_debug(
-    date_from: Annotated[Optional[str], _DATE_FROM] = None,
-    date_to:   Annotated[Optional[str], _DATE_TO]   = None,
-    days:      Annotated[int, _DAYS]                = 30,
-):
-    """Debug: show first 10 WB sale records with key fields."""
-    dt_from, dt_to = _range(date_from, date_to, days)
-    sales, _, _ = await cache.get_raw_data(dt_from, dt_to)
-    sample = []
-    for r in sales[:20]:
-        sample.append({
-            "saleID":        r.get("saleID"),
-            "date":          r.get("date", "")[:10],
-            "finishedPrice": r.get("finishedPrice"),
-            "forPay":        r.get("forPay"),
-            "quantity":      r.get("quantity"),
-            "totalPrice":    r.get("totalPrice"),
-            "discountPercent": r.get("discountPercent"),
-            "supplierArticle": r.get("supplierArticle"),
-        })
-    by_prefix: dict = {}
-    for r in sales:
-        sid = r.get("saleID", "") or ""
-        p = sid[:1] if sid else "(empty)"
-        by_prefix[p] = by_prefix.get(p, 0) + 1
-    fp_negative = sum(1 for r in sales if (r.get("finishedPrice") or 0) < 0)
-    fp_zero     = sum(1 for r in sales if (r.get("finishedPrice") or 0) == 0)
-    fp_positive = sum(1 for r in sales if (r.get("finishedPrice") or 0) > 0)
-    qty_neg     = sum(1 for r in sales if (r.get("quantity") or 0) < 0)
-    qty_pos     = sum(1 for r in sales if (r.get("quantity") or 0) > 0)
-    return {
-        "total": len(sales),
-        "by_saleID_prefix": by_prefix,
-        "finishedPrice": {"negative": fp_negative, "zero": fp_zero, "positive": fp_positive},
-        "quantity": {"negative": qty_neg, "positive": qty_pos},
-        "sample": sample,
-    }

@@ -21,12 +21,10 @@ def _date(s: str) -> str:
     return s[:10]
 
 def _is_sale(r: dict) -> bool:
-    """Real buyout: saleID starts with 'S' AND finishedPrice > 0.
-    Returns/storno come as negative finishedPrice (even with S-prefix)."""
-    sid = r.get("saleID", "")
-    if not sid or not sid.startswith("S"):
-        return False
-    return (r.get("finishedPrice") or 0) > 0
+    """A record counts toward 'Продажи' if it's a genuine buyout, not a return/storno.
+    Matches the seller's own WB report methodology: no saleID-prefix filtering,
+    just exclude records with non-positive priceWithDisc (returns/storno)."""
+    return _gross(r) > 0
 
 def _is_return_storno(r: dict) -> bool:
     """saleID starts with 'A' = сторно возврата, not a sale."""
@@ -35,12 +33,14 @@ def _is_return_storno(r: dict) -> bool:
 
 def _gross(r: dict) -> float:
     """Price the buyer actually paid — matches WB 'Продажи' column.
-    WB Statistics API returns finishedPrice (after SPP discount) on sales records."""
+    WB seller cabinet reports priceWithDisc (price after seller's own discount,
+    before SPP), not finishedPrice (which is post-SPP and undercounts)."""
+    pwd = r.get("priceWithDisc")
+    if pwd is not None:
+        return pwd
     fp = r.get("finishedPrice")
     if fp:
         return fp
-    if "priceWithDisc" in r:
-        return r["priceWithDisc"]
     return r.get("totalPrice", 0) * (1 - r.get("discountPercent", 0) / 100)
 
 def _forpay(r: dict) -> float:
@@ -102,8 +102,9 @@ def finance_aggregate(sales: list[dict], orders: list[dict]) -> dict[str, float]
     logistics = sum(_delivery(r) for r in real_sales)
     storage = sum(_storage(r) for r in real_sales)
     cost = sum(_cost(r) for r in real_sales)
-    orders_rub = sum(_gross(r) for r in orders)
-    orders_qty = len(orders)
+    real_orders = [r for r in orders if not r.get("isCancel")]
+    orders_rub = sum(_gross(r) for r in real_orders)
+    orders_qty = len(real_orders)
     buyout_rate = (sales_qty / orders_qty * 100) if orders_qty else 0.0
     advertising = round(realization * AD_RATE)
     drr = (advertising / realization * 100) if realization else 0.0
