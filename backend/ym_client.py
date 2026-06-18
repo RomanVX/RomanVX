@@ -160,9 +160,10 @@ async def _fetch_chunk(date_from: str, date_to: str) -> list[dict]:
                 oid     = item.get("offerId") or ""
                 qty     = item.get("count") or 0
                 prices  = item.get("prices") or {}
-                payment = float((prices.get("payment") or {}).get("value") or 0)
-                # payment = buyer total (incl. Yandex Plus cashback) = "Заказано на сумму"
-                revenue = payment
+                payment  = float((prices.get("payment")  or {}).get("value") or 0)
+                cashback = float((prices.get("cashback") or {}).get("value") or 0)
+                # "Заказано на сумму" = payment (cash) + cashback (Yandex Plus points)
+                revenue = payment + cashback
                 if oid and qty:
                     rows.append({"date": date_str, "shop_sku": oid, "qty": qty,
                                  "revenue": revenue, "status": status})
