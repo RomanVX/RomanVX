@@ -163,20 +163,15 @@ async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
             _log.warning("[YM] businesses page %d failed: %s", page, e)
             break
 
-        orders = (data.get("result") or {}).get("orders") or []
-        if page == 0:
-            _log.info("[YM] businesses page0 raw keys=%s result_keys=%s orders_count=%d body_sent=%s",
-                      list(data.keys()),
-                      list((data.get("result") or {}).keys()),
-                      len(orders),
-                      body)
+        # /v1/businesses/{id}/orders returns orders/paging at top level (no "result" wrapper)
+        orders = data.get("orders") or []
         _log.info("[YM] businesses page %d: %d orders", page, len(orders))
         if not orders:
             break
 
         for order in orders:
             status   = order.get("status") or ""
-            # creationDate from businesses endpoint is ISO: "2026-05-18T10:30:00+03:00"
+            # creationDate is ISO: "2026-05-18T10:30:00+03:00" → [:10] = YYYY-MM-DD
             date_str = (order.get("creationDate") or "")[:10]
             for item in order.get("items") or []:
                 oid = item.get("offerId") or (item.get("offer") or {}).get("offerId", "")
@@ -196,7 +191,7 @@ async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
                     rows.append({"date": date_str, "shop_sku": oid, "qty": qty,
                                  "revenue": revenue, "status": status})
 
-        paging = (data.get("result") or {}).get("paging") or {}
+        paging = data.get("paging") or {}
         next_token = paging.get("nextPageToken")
         if not next_token:
             break
