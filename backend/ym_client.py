@@ -162,9 +162,8 @@ async def _fetch_chunk(date_from: str, date_to: str) -> list[dict]:
                 prices  = item.get("prices") or {}
                 payment  = float((prices.get("payment")  or {}).get("value") or 0)
                 subsidy  = float((prices.get("subsidy")  or {}).get("value") or 0)
-                cashback = float((prices.get("cashback") or {}).get("value") or 0)
-                # payment + cashback + subsidy = "Заказано на сумму"
-                revenue = payment + cashback + subsidy
+                # payment already includes cashback; + subsidy = "Заказано на сумму"
+                revenue = payment + subsidy
                 if oid and qty:
                     rows.append({"date": date_str, "shop_sku": oid, "qty": qty,
                                  "revenue": revenue, "status": status})
