@@ -167,7 +167,7 @@ async def _fetch_pages(body: dict) -> list[dict]:
     orders_all: list[dict] = []
     page_token: str | None = None
     while True:
-        query: dict = {"limit": 200}
+        query: dict = {"limit": 50}
         if page_token:
             query["pageToken"] = page_token
         try:
@@ -185,24 +185,21 @@ async def _fetch_pages(body: dict) -> list[dict]:
 
 
 async def _fetch_chunk_orders(date_from: str, date_to: str) -> list[dict]:
-    """Orders placed in [date_from, date_to] — Продажи. Excludes CANCELLED.
+    """Orders created in [date_from, date_to] — Продажи. Excludes CANCELLED.
 
-    Uses dateFrom/dateTo — the correct API parameters for creation date range.
-    (filter.fromDate and dates.creationDateFrom are NOT valid parameters and
-    were silently ignored by the API, causing incorrect results.)
-    Post-filters by creation date as a safety net.
+    Uses dates.creationDateFrom/To per official API docs.
+    creationDateTo is EXCLUSIVE — caller must pass end+1 day.
     """
     orders = await _fetch_pages({
-        "dateFrom": date_from,
-        "dateTo":   date_to,
+        "dates": {
+            "creationDateFrom": date_from,
+            "creationDateTo":   date_to,   # exclusive — already +1 day from caller
+        }
     })
-    _log.info("[YM] chunk %s–%s: API returned %d orders", date_from, date_to, len(orders))
     rows = _parse_ym_orders(orders, "creationDate")
     rows = [r for r in rows if r["status"] != "CANCELLED"]
-    rows_filtered = [r for r in rows if date_from <= r["date"] <= date_to]
-    _log.info("[YM] chunk %s–%s: after status+date filter: %d rows (was %d)",
-              date_from, date_to, len(rows_filtered), len(rows))
-    return rows_filtered
+    _log.info("[YM] chunk %s–%s: %d rows after filter", date_from, date_to, len(rows))
+    return rows
 
 
 async def _fetch_chunk_delivered(date_from: str, date_to: str) -> list[dict]:
@@ -218,9 +215,9 @@ async def _fetch_chunk_delivered(date_from: str, date_to: str) -> list[dict]:
 async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
     """Return [{date, shop_sku, qty, revenue, status}] for given range.
 
-    Uses creationDateFrom/To. Excludes CANCELLED.
-    For YM FBY, returns are handled via a separate returns API — order status
-    stays DELIVERED, so Продажи ≈ Выкупы for completed weeks (expected behaviour).
+    Uses POST /v1/businesses/{businessId}/orders with dates.creationDateFrom/To.
+    Max 29-day chunks (API allows 30 days; creationDateTo is exclusive so
+    passing end+1 means the actual queried range is 30 days).
     """
     if not YM_API_KEY or not YM_BUSINESS_ID:
         return []
@@ -228,17 +225,19 @@ async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
     dt_from = datetime.strptime(date_from, "%Y-%m-%d")
     dt_to   = datetime.strptime(date_to,   "%Y-%m-%d")
 
-    # Split into ≤30-day chunks. filter.toDate=T23:59:59Z is inclusive, no +1 needed.
+    # creationDateTo is exclusive → pass chunk_end + 1 day
+    # Keep chunks ≤ 29 days so exclusive end stays within 30-day API limit
     chunks: list[tuple[str, str]] = []
     cur = dt_from
     while cur <= dt_to:
-        chunk_end = min(cur + timedelta(days=29), dt_to)
-        chunks.append((cur.strftime("%Y-%m-%d"), chunk_end.strftime("%Y-%m-%d")))
+        chunk_end    = min(cur + timedelta(days=28), dt_to)
+        exclusive_to = (chunk_end + timedelta(days=1)).strftime("%Y-%m-%d")
+        chunks.append((cur.strftime("%Y-%m-%d"), exclusive_to))
         cur = chunk_end + timedelta(days=1)
 
-    results = await asyncio.gather(*[_fetch_chunk_orders(c_from, c_to) for c_from, c_to in chunks])
-    rows: list[dict] = [r for chunk_rows in results for r in chunk_rows]
-    _log.info("[YM] sales_detail done: chunks=%d rows=%d for %s–%s",
+    results = await asyncio.gather(*[_fetch_chunk_orders(c0, c1) for c0, c1 in chunks])
+    rows = [r for chunk in results for r in chunk]
+    _log.info("[YM] sales_detail: chunks=%d rows=%d for %s–%s",
               len(chunks), len(rows), date_from, date_to)
     return rows
 
