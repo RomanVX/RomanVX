@@ -153,10 +153,12 @@ async def _fetch_chunk(date_from: str, date_to: str) -> list[dict]:
                 qty     = item.get("count") or 0
                 prices  = item.get("prices") or {}
                 payment = float((prices.get("payment") or {}).get("value") or 0)
-                # payment is already total for all units; revenue = payment
+                subsidy = float((prices.get("subsidy") or {}).get("value") or 0)
+                # payment + subsidy = "Заказано на сумму" (total incl. YM compensation)
+                revenue = payment + subsidy
                 if oid and qty:
                     rows.append({"date": date_str, "shop_sku": oid, "qty": qty,
-                                 "revenue": payment, "status": status})
+                                 "revenue": revenue, "status": status})
         page_token = (data.get("paging") or {}).get("nextPageToken")
         if not orders or not page_token:
             break
@@ -176,12 +178,14 @@ async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
     dt_from = datetime.strptime(date_from, "%Y-%m-%d")
     dt_to   = datetime.strptime(date_to,   "%Y-%m-%d")
 
-    # Split into ≤30-day chunks
+    # Split into ≤30-day chunks.
+    # creationDateTo is exclusive per API docs, so pass end+1 to include the last day.
     chunks: list[tuple[str, str]] = []
     cur = dt_from
     while cur <= dt_to:
         chunk_end = min(cur + timedelta(days=29), dt_to)
-        chunks.append((cur.strftime("%Y-%m-%d"), chunk_end.strftime("%Y-%m-%d")))
+        exclusive_end = chunk_end + timedelta(days=1)
+        chunks.append((cur.strftime("%Y-%m-%d"), exclusive_end.strftime("%Y-%m-%d")))
         cur = chunk_end + timedelta(days=1)
 
     results = await asyncio.gather(*[_fetch_chunk(c_from, c_to) for c_from, c_to in chunks])
