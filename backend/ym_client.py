@@ -192,6 +192,11 @@ async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
                         payment_val = float(item.get("buyerPrice") or 0)
                     revenue = (payment_val + subsidy_val) * (qty or 1)
                     if not logged_sample and oid:
+                        _log.info("[YM] ITEM DUMP: %s", item)
+                        _log.info("[YM] ORDER DUMP keys: itemsTotal=%s buyerItemsTotal=%s "
+                                  "buyerItemsTotalBeforeDiscount=%s",
+                                  order.get("itemsTotal"), order.get("buyerItemsTotal"),
+                                  order.get("buyerItemsTotalBeforeDiscount"))
                         _log.info("[YM] sample: offerId=%s qty=%s payment=%s subsidy=%s "
                                   "revenue=%s status=%s date=%s",
                                   oid, qty, payment_val, subsidy_val, revenue, status, date_str)
