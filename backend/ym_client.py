@@ -189,11 +189,11 @@ async def _fetch_chunk_delivered(date_from: str, date_to: str) -> list[dict]:
 
 
 async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
-    """Return [{date, shop_sku, qty, revenue, status, is_buyout}] for given range.
+    """Return [{date, shop_sku, qty, revenue, status}] for given range.
 
-    Two parallel fetches per chunk:
-    - orders: creationDateFrom/To, all non-CANCELLED → Продажи (is_buyout=False)
-    - delivered: filter.fromDate/toDate + DELIVERED status, bucketed by updateDate → Выкупы (is_buyout=True)
+    Uses creationDateFrom/To. Excludes CANCELLED.
+    For YM FBY, returns are handled via a separate returns API — order status
+    stays DELIVERED, so Продажи ≈ Выкупы for completed weeks (expected behaviour).
     """
     if not YM_API_KEY or not YM_BUSINESS_ID:
         return []
@@ -210,22 +210,10 @@ async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
         chunks.append((cur.strftime("%Y-%m-%d"), exclusive_end.strftime("%Y-%m-%d")))
         cur = chunk_end + timedelta(days=1)
 
-    order_tasks    = [_fetch_chunk_orders(c_from, c_to)    for c_from, c_to in chunks]
-    delivered_tasks = [_fetch_chunk_delivered(c_from, c_to) for c_from, c_to in chunks]
-    all_results = await asyncio.gather(*(order_tasks + delivered_tasks))
-
-    n = len(chunks)
-    order_rows    = [r for part in all_results[:n] for r in part]
-    delivered_rows = [r for part in all_results[n:] for r in part]
-
-    for r in order_rows:
-        r["is_buyout"] = False
-    for r in delivered_rows:
-        r["is_buyout"] = True
-
-    rows = order_rows + delivered_rows
-    _log.info("[YM] sales_detail done: chunks=%d orders=%d delivered=%d for %s–%s",
-              len(chunks), len(order_rows), len(delivered_rows), date_from, date_to)
+    results = await asyncio.gather(*[_fetch_chunk_orders(c_from, c_to) for c_from, c_to in chunks])
+    rows: list[dict] = [r for chunk_rows in results for r in chunk_rows]
+    _log.info("[YM] sales_detail done: chunks=%d rows=%d for %s–%s",
+              len(chunks), len(rows), date_from, date_to)
     return rows
 
 
