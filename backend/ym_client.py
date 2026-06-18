@@ -125,14 +125,49 @@ async def _try_business_orders_post(date_from: str, date_to: str) -> dict[str, i
         return {}
 
 
+def _parse_orders(orders: list[dict]) -> list[dict]:
+    rows: list[dict] = []
+    for order in orders:
+        status   = order.get("status") or ""
+        raw_date = (order.get("creationDate") or "")[:10]
+        try:
+            date_str = datetime.strptime(raw_date, "%d-%m-%Y").strftime("%Y-%m-%d")
+        except ValueError:
+            date_str = raw_date
+        for item in order.get("items") or []:
+            oid = item.get("offerId") or (item.get("offer") or {}).get("offerId", "")
+            qty = item.get("count") or item.get("initialCount") or 0
+            buyer_before = float(item.get("buyerPriceBeforeDiscount") or 0)
+            buyer_price  = float(item.get("buyerPrice") or item.get("price") or 0)
+            unit_price   = buyer_before or buyer_price
+            revenue      = unit_price * (qty or 1)
+            if oid and qty:
+                rows.append({"date": date_str, "shop_sku": oid, "qty": qty,
+                             "revenue": revenue, "status": status})
+    return rows
+
+
+async def _fetch_day(sem: asyncio.Semaphore, day: datetime) -> list[dict]:
+    """Fetch all orders for a single day (pagination broken → 1 request per day)."""
+    fmt = day.strftime("%d-%m-%Y")
+    async with sem:
+        try:
+            data = await _get(
+                f"/campaigns/{YM_CAMPAIGN_ID}/orders",
+                {"fromDate": fmt, "toDate": fmt, "limit": 50, "page": 1},
+            )
+        except Exception as e:
+            _log.warning("[YM] day %s failed: %s", fmt, e)
+            return []
+    return _parse_orders(data.get("orders") or [])
+
+
 async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
     """Return [{date, shop_sku, qty, revenue, status}] for given range — no cache.
 
-    GET /campaigns/{id}/orders — respects fromDate/toDate filter (DD-MM-YYYY).
-    Split into ≤28-day chunks (API rejects longer intervals).
-    Paginated by integer page; stop when <50 rows or duplicate page detected.
-    revenue = (prices.payment.value + prices.subsidy.value) * count,
-    with buyerPrice fallback. creationDate arrives as DD-MM-YYYY.
+    YM campaigns pagination is broken (always returns same 50 orders regardless
+    of page). Workaround: 1-day requests, all fired concurrently (semaphore=10).
+    revenue = buyerPriceBeforeDiscount × qty (matches Excel "Заказано на сумму").
     """
     if not YM_API_KEY or not YM_CAMPAIGN_ID:
         return []
@@ -140,65 +175,19 @@ async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
     dt_from = datetime.strptime(date_from, "%Y-%m-%d")
     dt_to   = datetime.strptime(date_to,   "%Y-%m-%d")
 
-    # 1-day chunks: YM campaigns endpoint always returns the same ≤50 most recent
-    # orders on any page (broken pagination). One day per request ensures we never
-    # exceed the 50-order page limit even on high-volume days.
-    chunks: list[tuple[datetime, datetime]] = []
+    days: list[datetime] = []
     cur = dt_from
     while cur <= dt_to:
-        chunks.append((cur, cur))
+        days.append(cur)
         cur += timedelta(days=1)
 
-    rows: list[dict] = []
+    sem = asyncio.Semaphore(10)
+    results = await asyncio.gather(*[_fetch_day(sem, d) for d in days])
 
-    for c_from, c_to in chunks:
-        fmt_from = c_from.strftime("%d-%m-%Y")
-        fmt_to   = c_to.strftime("%d-%m-%Y")
-        page = 1
-        seen_ids: set = set()
-        _log.info("[YM] chunk %s – %s", fmt_from, fmt_to)
-
-        while page <= 10:
-            params = {"fromDate": fmt_from, "toDate": fmt_to, "limit": 50, "page": page}
-            try:
-                data = await _get(f"/campaigns/{YM_CAMPAIGN_ID}/orders", params)
-            except Exception as e:
-                _log.warning("[YM] chunk %s page %d failed: %s", fmt_from, page, e)
-                break
-            orders = data.get("orders") or []
-            _log.info("[YM] chunk %s page %d: %d orders", fmt_from, page, len(orders))
-            if not orders:
-                break
-            page_ids = {o.get("id") for o in orders if o.get("id")}
-            if page_ids and page_ids.issubset(seen_ids):
-                _log.warning("[YM] chunk %s page %d: duplicate page, stopping", fmt_from, page)
-                break
-            seen_ids.update(page_ids)
-            for order in orders:
-                status   = order.get("status") or ""
-                raw_date = (order.get("creationDate") or "")[:10]
-                try:
-                    date_str = datetime.strptime(raw_date, "%d-%m-%Y").strftime("%Y-%m-%d")
-                except ValueError:
-                    date_str = raw_date
-                for item in order.get("items") or []:
-                    oid = item.get("offerId") or (item.get("offer") or {}).get("offerId", "")
-                    qty = item.get("count") or item.get("initialCount") or 0
-                    buyer_before = float(item.get("buyerPriceBeforeDiscount") or 0)
-                    buyer_price  = float(item.get("buyerPrice") or item.get("price") or 0)
-                    unit_price   = buyer_before or buyer_price
-                    revenue      = unit_price * (qty or 1)
-                    if oid and qty:
-                        rows.append({"date": date_str, "shop_sku": oid, "qty": qty,
-                                     "revenue": revenue, "status": status})
-            if len(orders) < 50:
-                break
-            page += 1
-
-
+    rows: list[dict] = [r for day_rows in results for r in day_rows]
     delivered = sum(1 for r in rows if r["status"] == "DELIVERED")
-    _log.info("[YM] sales_detail done: chunks=%d rows=%d delivered=%d for %s–%s",
-              len(chunks), len(rows), delivered, date_from, date_to)
+    _log.info("[YM] sales_detail done: days=%d rows=%d delivered=%d for %s–%s",
+              len(days), len(rows), delivered, date_from, date_to)
     return rows
 
 
