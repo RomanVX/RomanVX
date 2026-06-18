@@ -135,7 +135,7 @@ async def _fetch_chunk(date_from: str, date_to: str) -> list[dict]:
             query["pageToken"] = page_token
         try:
             data = await _post(
-                f"/businesses/{YM_BUSINESS_ID}/orders",
+                f"/v1/businesses/{YM_BUSINESS_ID}/orders",
                 {"dates": {"creationDateFrom": date_from, "creationDateTo": date_to}},
                 params=query,
             )
