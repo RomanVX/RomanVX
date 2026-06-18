@@ -143,7 +143,9 @@ async def _fetch_chunk(date_from: str, date_to: str) -> list[dict]:
             _log.warning("[YM] chunk %s–%s failed: %s", date_from, date_to, e)
             break
         orders = data.get("orders") or []
-        _log.info("[YM] chunk %s–%s page_token=%s: %d orders", date_from, date_to, page_token, len(orders))
+        paging_raw = data.get("paging")
+        _log.info("[YM] chunk %s–%s page_token=%s: %d orders paging=%s top_keys=%s",
+                  date_from, date_to, page_token, len(orders), paging_raw, list(data.keys()))
         for order in orders:
             status   = order.get("status") or ""
             raw_dt   = order.get("creationDate") or ""
