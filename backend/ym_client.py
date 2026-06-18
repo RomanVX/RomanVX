@@ -136,7 +136,11 @@ def _parse_ym_orders(orders: list[dict], date_field: str = "creationDate") -> li
         try:
             date_str = datetime.fromisoformat(raw_dt).astimezone(msk).strftime("%Y-%m-%d")
         except Exception:
-            date_str = raw_dt[:10]
+            # Fallback: try DD-MM-YYYY format (some YM endpoints return this)
+            try:
+                date_str = datetime.strptime(raw_dt[:10], "%d-%m-%Y").strftime("%Y-%m-%d")
+            except Exception:
+                date_str = raw_dt[:10]
         for item in order.get("items") or []:
             oid     = item.get("offerId") or ""
             qty     = item.get("count") or 0
@@ -155,7 +159,7 @@ async def _fetch_pages(body: dict) -> list[dict]:
     orders_all: list[dict] = []
     page_token: str | None = None
     while True:
-        query: dict = {"limit": 50}
+        query: dict = {"limit": 200}
         if page_token:
             query["pageToken"] = page_token
         try:
@@ -164,7 +168,7 @@ async def _fetch_pages(body: dict) -> list[dict]:
             _log.warning("[YM] fetch failed: %s", e)
             break
         orders = data.get("orders") or []
-        _log.info("[YM] page token=%s: %d orders", page_token, len(orders))
+        _log.info("[YM] page token=%s: %d orders (body=%s)", page_token, len(orders), list(body.keys()))
         orders_all.extend(orders)
         page_token = (data.get("paging") or {}).get("nextPageToken")
         if not orders or not page_token:
@@ -175,17 +179,19 @@ async def _fetch_pages(body: dict) -> list[dict]:
 async def _fetch_chunk_orders(date_from: str, date_to: str) -> list[dict]:
     """Orders placed in [date_from, date_to] — Продажи. Excludes CANCELLED.
 
-    Uses filter.fromDate/toDate with UTC timestamps (same as Power Query that
-    produces correct totals). dates.creationDateFrom/To returned only ~50% of
-    orders — filter.fromDate is the only reliable approach for this endpoint.
+    Uses dateFrom/dateTo — the correct API parameters for creation date range.
+    (filter.fromDate and dates.creationDateFrom are NOT valid parameters and
+    were silently ignored by the API, causing incorrect results.)
+    Post-filters by creation date as a safety net.
     """
     orders = await _fetch_pages({
-        "filter": {
-            "fromDate": f"{date_from}T00:00:00Z",
-            "toDate":   f"{date_to}T23:59:59Z",
-        }
+        "dateFrom": date_from,   # YYYY-MM-DD — order creation date from
+        "dateTo":   date_to,     # YYYY-MM-DD — order creation date to
     })
-    return [r for r in _parse_ym_orders(orders, "creationDate") if r["status"] != "CANCELLED"]
+    rows = _parse_ym_orders(orders, "creationDate")
+    rows = [r for r in rows if r["status"] != "CANCELLED"]
+    # Post-filter: keep only rows created within the requested range
+    return [r for r in rows if date_from <= r["date"] <= date_to]
 
 
 async def _fetch_chunk_delivered(date_from: str, date_to: str) -> list[dict]:
