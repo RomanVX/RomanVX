@@ -135,7 +135,11 @@ async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
     Paginated via nextPageToken; stops when token absent or repeated.
     """
     if not YM_API_KEY or not YM_BUSINESS_ID:
+        _log.warning("[YM] get_sales_detail: missing YM_API_KEY or YM_BUSINESS_ID")
         return []
+
+    _log.info("[YM] businesses detail: business_id=%s date_from=%s date_to=%s",
+              YM_BUSINESS_ID, date_from, date_to)
 
     since = f"{date_from}T00:00:00Z"
     to    = f"{date_to}T23:59:59Z"
@@ -160,6 +164,12 @@ async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
             break
 
         orders = (data.get("result") or {}).get("orders") or []
+        if page == 0:
+            _log.info("[YM] businesses page0 raw keys=%s result_keys=%s orders_count=%d body_sent=%s",
+                      list(data.keys()),
+                      list((data.get("result") or {}).keys()),
+                      len(orders),
+                      body)
         _log.info("[YM] businesses page %d: %d orders", page, len(orders))
         if not orders:
             break
