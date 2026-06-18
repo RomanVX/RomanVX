@@ -136,10 +136,7 @@ async def _fetch_chunk(date_from: str, date_to: str) -> list[dict]:
         try:
             data = await _post(
                 f"/v1/businesses/{YM_BUSINESS_ID}/orders",
-                {"filter": {
-                    "fromDate": f"{date_from}T00:00:00Z",
-                    "toDate":   f"{date_to}T23:59:59Z",
-                }},
+                {"dates": {"creationDateFrom": date_from, "creationDateTo": date_to}},
                 params=query,
             )
         except Exception as e:
