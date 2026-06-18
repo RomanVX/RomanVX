@@ -140,10 +140,12 @@ async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
     dt_from = datetime.strptime(date_from, "%Y-%m-%d")
     dt_to   = datetime.strptime(date_to,   "%Y-%m-%d")
 
+    # 7-day chunks: YM returns the same 50 orders on every page (broken pagination),
+    # so keep each chunk small enough that all orders fit in one page (<50).
     chunks: list[tuple[datetime, datetime]] = []
     chunk_start = dt_from
     while chunk_start <= dt_to:
-        chunk_end = min(chunk_start + timedelta(days=27), dt_to)
+        chunk_end = min(chunk_start + timedelta(days=6), dt_to)
         chunks.append((chunk_start, chunk_end))
         chunk_start = chunk_end + timedelta(days=1)
 
