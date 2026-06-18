@@ -128,83 +128,83 @@ async def _try_business_orders_post(date_from: str, date_to: str) -> dict[str, i
 async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
     """Return [{date, shop_sku, qty, revenue, status}] for given range — no cache.
 
-    POST /v1/businesses/{id}/orders — same endpoint as Power Query / Excel.
-    Filter sent as filter.fromDate / filter.toDate in ISO format.
-    creationDate returned as ISO datetime; [:10] gives YYYY-MM-DD directly.
-    revenue = (prices.payment.value + prices.subsidy.value) * count.
-    Paginated via nextPageToken; stops when token absent or repeated.
+    GET /campaigns/{id}/orders — respects fromDate/toDate filter (DD-MM-YYYY).
+    Split into ≤28-day chunks (API rejects longer intervals).
+    Paginated by integer page; stop when <50 rows or duplicate page detected.
+    revenue = (prices.payment.value + prices.subsidy.value) * count,
+    with buyerPrice fallback. creationDate arrives as DD-MM-YYYY.
     """
-    if not YM_API_KEY or not YM_BUSINESS_ID:
-        _log.warning("[YM] get_sales_detail: missing YM_API_KEY or YM_BUSINESS_ID")
+    if not YM_API_KEY or not YM_CAMPAIGN_ID:
         return []
 
-    _log.info("[YM] businesses detail: business_id=%s date_from=%s date_to=%s",
-              YM_BUSINESS_ID, date_from, date_to)
+    dt_from = datetime.strptime(date_from, "%Y-%m-%d")
+    dt_to   = datetime.strptime(date_to,   "%Y-%m-%d")
 
-    since = f"{date_from}T00:00:00Z"
-    to    = f"{date_to}T23:59:59Z"
+    chunks: list[tuple[datetime, datetime]] = []
+    chunk_start = dt_from
+    while chunk_start <= dt_to:
+        chunk_end = min(chunk_start + timedelta(days=27), dt_to)
+        chunks.append((chunk_start, chunk_end))
+        chunk_start = chunk_end + timedelta(days=1)
+
     rows: list[dict] = []
-    page_token: str | None = None
-    seen_tokens: set[str] = set()
-    page = 0
     logged_sample = False
 
-    while page < 20:  # safety cap: 20p × 50 = 1000 orders
-        body: dict = {
-            "filter": {"fromDate": since, "toDate": to},
-            "limit": 50,
-        }
-        if page_token:
-            body["pageToken"] = page_token
+    for c_from, c_to in chunks:
+        fmt_from = c_from.strftime("%d-%m-%Y")
+        fmt_to   = c_to.strftime("%d-%m-%Y")
+        page = 1
+        seen_ids: set = set()
+        _log.info("[YM] chunk %s – %s", fmt_from, fmt_to)
 
-        try:
-            data = await _post(f"/v1/businesses/{YM_BUSINESS_ID}/orders", body)
-        except Exception as e:
-            _log.warning("[YM] businesses page %d failed: %s", page, e)
-            break
+        while page <= 10:
+            params = {"fromDate": fmt_from, "toDate": fmt_to, "limit": 50, "page": page}
+            try:
+                data = await _get(f"/campaigns/{YM_CAMPAIGN_ID}/orders", params)
+            except Exception as e:
+                _log.warning("[YM] chunk %s page %d failed: %s", fmt_from, page, e)
+                break
+            orders = data.get("orders") or []
+            _log.info("[YM] chunk %s page %d: %d orders", fmt_from, page, len(orders))
+            if not orders:
+                break
+            page_ids = {o.get("id") for o in orders if o.get("id")}
+            if page_ids and page_ids.issubset(seen_ids):
+                _log.warning("[YM] chunk %s page %d: duplicate page, stopping", fmt_from, page)
+                break
+            seen_ids.update(page_ids)
+            for order in orders:
+                status   = order.get("status") or ""
+                raw_date = (order.get("creationDate") or "")[:10]
+                try:
+                    date_str = datetime.strptime(raw_date, "%d-%m-%Y").strftime("%Y-%m-%d")
+                except ValueError:
+                    date_str = raw_date
+                for item in order.get("items") or []:
+                    oid = item.get("offerId") or (item.get("offer") or {}).get("offerId", "")
+                    qty = item.get("count") or item.get("initialCount") or 0
+                    prices      = item.get("prices") or {}
+                    payment_val = float((prices.get("payment") or {}).get("value") or 0)
+                    subsidy_val = float((prices.get("subsidy") or {}).get("value") or 0)
+                    if not payment_val and not subsidy_val:
+                        payment_val = float(item.get("buyerPrice") or 0)
+                    revenue = (payment_val + subsidy_val) * (qty or 1)
+                    if not logged_sample and oid:
+                        _log.info("[YM] sample: offerId=%s qty=%s payment=%s subsidy=%s "
+                                  "revenue=%s status=%s date=%s",
+                                  oid, qty, payment_val, subsidy_val, revenue, status, date_str)
+                        logged_sample = True
+                    if oid and qty:
+                        rows.append({"date": date_str, "shop_sku": oid, "qty": qty,
+                                     "revenue": revenue, "status": status})
+            if len(orders) < 50:
+                break
+            page += 1
 
-        # /v1/businesses/{id}/orders returns orders/paging at top level (no "result" wrapper)
-        orders = data.get("orders") or []
-        _log.info("[YM] businesses page %d: %d orders", page, len(orders))
-        if not orders:
-            break
-
-        for order in orders:
-            status   = order.get("status") or ""
-            # creationDate is ISO: "2026-05-18T10:30:00+03:00" → [:10] = YYYY-MM-DD
-            date_str = (order.get("creationDate") or "")[:10]
-            for item in order.get("items") or []:
-                oid = item.get("offerId") or (item.get("offer") or {}).get("offerId", "")
-                qty = item.get("count") or item.get("initialCount") or 0
-                prices      = item.get("prices") or {}
-                payment_val = float((prices.get("payment") or {}).get("value") or 0)
-                subsidy_val = float((prices.get("subsidy") or {}).get("value") or 0)
-                if not payment_val and not subsidy_val:
-                    payment_val = float(item.get("buyerPrice") or 0)
-                revenue = (payment_val + subsidy_val) * (qty or 1)
-                if not logged_sample and oid:
-                    _log.info("[YM] sample: offerId=%s qty=%s payment=%s subsidy=%s "
-                              "revenue=%s status=%s date=%s",
-                              oid, qty, payment_val, subsidy_val, revenue, status, date_str)
-                    logged_sample = True
-                if oid and qty:
-                    rows.append({"date": date_str, "shop_sku": oid, "qty": qty,
-                                 "revenue": revenue, "status": status})
-
-        paging = data.get("paging") or {}
-        next_token = paging.get("nextPageToken")
-        if not next_token:
-            break
-        if next_token in seen_tokens:
-            _log.warning("[YM] businesses: duplicate nextPageToken on page %d, stopping", page)
-            break
-        seen_tokens.add(next_token)
-        page_token = next_token
-        page += 1
 
     delivered = sum(1 for r in rows if r["status"] == "DELIVERED")
-    _log.info("[YM] businesses done: pages=%d rows=%d delivered=%d for %s–%s",
-              page + 1, len(rows), delivered, date_from, date_to)
+    _log.info("[YM] sales_detail done: chunks=%d rows=%d delivered=%d for %s–%s",
+              len(chunks), len(rows), delivered, date_from, date_to)
     return rows
 
 
