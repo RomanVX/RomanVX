@@ -27,9 +27,9 @@ def _headers() -> dict:
     }
 
 
-async def _post(path: str, body: dict) -> dict:
+async def _post(path: str, body: dict, params: dict | None = None) -> dict:
     async with httpx.AsyncClient(timeout=60) as c:
-        r = await c.post(f"{_BASE}{path}", headers=_headers(), json=body)
+        r = await c.post(f"{_BASE}{path}", headers=_headers(), json=body, params=params or {})
         if not r.is_success:
             _log.warning("[YM] POST %s → %s | resp[:300]=%s", path, r.status_code, r.text[:300])
             r.raise_for_status()
@@ -125,69 +125,70 @@ async def _try_business_orders_post(date_from: str, date_to: str) -> dict[str, i
         return {}
 
 
-def _parse_orders(orders: list[dict]) -> list[dict]:
+async def _fetch_chunk(date_from: str, date_to: str) -> list[dict]:
+    """POST /businesses/{id}/orders for a ≤30-day chunk. pageToken is a query param."""
     rows: list[dict] = []
-    for order in orders:
-        status   = order.get("status") or ""
-        raw_date = (order.get("creationDate") or "")[:10]
+    page_token: str | None = None
+    while True:
+        query: dict = {"limit": 50}
+        if page_token:
+            query["pageToken"] = page_token
         try:
-            date_str = datetime.strptime(raw_date, "%d-%m-%Y").strftime("%Y-%m-%d")
-        except ValueError:
-            date_str = raw_date
-        for item in order.get("items") or []:
-            oid = item.get("offerId") or (item.get("offer") or {}).get("offerId", "")
-            qty = item.get("count") or item.get("initialCount") or 0
-            buyer_before = float(item.get("buyerPriceBeforeDiscount") or 0)
-            buyer_price  = float(item.get("buyerPrice") or item.get("price") or 0)
-            unit_price   = buyer_before or buyer_price
-            revenue      = unit_price * (qty or 1)
-            if oid and qty:
-                rows.append({"date": date_str, "shop_sku": oid, "qty": qty,
-                             "revenue": revenue, "status": status})
-    return rows
-
-
-async def _fetch_day(sem: asyncio.Semaphore, day: datetime) -> list[dict]:
-    """Fetch all orders for a single day (pagination broken → 1 request per day)."""
-    fmt = day.strftime("%d-%m-%Y")
-    async with sem:
-        try:
-            data = await _get(
-                f"/campaigns/{YM_CAMPAIGN_ID}/orders",
-                {"fromDate": fmt, "toDate": fmt, "limit": 50, "page": 1},
+            data = await _post(
+                f"/businesses/{YM_BUSINESS_ID}/orders",
+                {"dates": {"creationDateFrom": date_from, "creationDateTo": date_to}},
+                params=query,
             )
         except Exception as e:
-            _log.warning("[YM] day %s failed: %s", fmt, e)
-            return []
-    return _parse_orders(data.get("orders") or [])
+            _log.warning("[YM] chunk %s–%s failed: %s", date_from, date_to, e)
+            break
+        orders = data.get("orders") or []
+        _log.info("[YM] chunk %s–%s page_token=%s: %d orders", date_from, date_to, page_token, len(orders))
+        for order in orders:
+            status   = order.get("status") or ""
+            raw_dt   = order.get("creationDate") or ""
+            date_str = raw_dt[:10]  # ISO 8601 → YYYY-MM-DD
+            for item in order.get("items") or []:
+                oid     = item.get("offerId") or ""
+                qty     = item.get("count") or 0
+                prices  = item.get("prices") or {}
+                payment = float((prices.get("payment") or {}).get("value") or 0)
+                # payment is already total for all units; revenue = payment
+                if oid and qty:
+                    rows.append({"date": date_str, "shop_sku": oid, "qty": qty,
+                                 "revenue": payment, "status": status})
+        page_token = (data.get("paging") or {}).get("nextPageToken")
+        if not orders or not page_token:
+            break
+    return rows
 
 
 async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
     """Return [{date, shop_sku, qty, revenue, status}] for given range — no cache.
 
-    YM campaigns pagination is broken (always returns same 50 orders regardless
-    of page). Workaround: 1-day requests, all fired concurrently (semaphore=10).
-    revenue = buyerPriceBeforeDiscount × qty (matches Excel "Заказано на сумму").
+    POST /businesses/{id}/orders: pageToken is a query param, dates go in body under
+    'dates.creationDateFrom/To', max 30-day range per request.
+    revenue = prices.payment.value (already total for all units in the line).
     """
-    if not YM_API_KEY or not YM_CAMPAIGN_ID:
+    if not YM_API_KEY or not YM_BUSINESS_ID:
         return []
 
     dt_from = datetime.strptime(date_from, "%Y-%m-%d")
     dt_to   = datetime.strptime(date_to,   "%Y-%m-%d")
 
-    days: list[datetime] = []
+    # Split into ≤30-day chunks
+    chunks: list[tuple[str, str]] = []
     cur = dt_from
     while cur <= dt_to:
-        days.append(cur)
-        cur += timedelta(days=1)
+        chunk_end = min(cur + timedelta(days=29), dt_to)
+        chunks.append((cur.strftime("%Y-%m-%d"), chunk_end.strftime("%Y-%m-%d")))
+        cur = chunk_end + timedelta(days=1)
 
-    sem = asyncio.Semaphore(10)
-    results = await asyncio.gather(*[_fetch_day(sem, d) for d in days])
-
-    rows: list[dict] = [r for day_rows in results for r in day_rows]
+    results = await asyncio.gather(*[_fetch_chunk(c_from, c_to) for c_from, c_to in chunks])
+    rows: list[dict] = [r for chunk_rows in results for r in chunk_rows]
     delivered = sum(1 for r in rows if r["status"] == "DELIVERED")
-    _log.info("[YM] sales_detail done: days=%d rows=%d delivered=%d for %s–%s",
-              len(days), len(rows), delivered, date_from, date_to)
+    _log.info("[YM] sales_detail done: chunks=%d rows=%d delivered=%d for %s–%s",
+              len(chunks), len(rows), delivered, date_from, date_to)
     return rows
 
 
