@@ -136,7 +136,10 @@ async def _fetch_chunk(date_from: str, date_to: str) -> list[dict]:
         try:
             data = await _post(
                 f"/v1/businesses/{YM_BUSINESS_ID}/orders",
-                {"dates": {"creationDateFrom": date_from, "creationDateTo": date_to}},
+                {"filter": {
+                    "fromDate": f"{date_from}T00:00:00Z",
+                    "toDate":   f"{date_to}T23:59:59Z",
+                }},
                 params=query,
             )
         except Exception as e:
@@ -160,11 +163,10 @@ async def _fetch_chunk(date_from: str, date_to: str) -> list[dict]:
                 oid      = item.get("offerId") or ""
                 qty      = item.get("count") or 0
                 prices   = item.get("prices") or {}
-                payment  = float((prices.get("payment")  or {}).get("value") or 0)
-                cashback = float((prices.get("cashback") or {}).get("value") or 0)
-                subsidy  = float((prices.get("subsidy")  or {}).get("value") or 0)
-                revenue  = payment + cashback
-                if oid and qty:
+                payment = float((prices.get("payment") or {}).get("value") or 0)
+                subsidy = float((prices.get("subsidy") or {}).get("value") or 0)
+                revenue = payment + subsidy
+                if oid and qty and status != "CANCELLED":
                     rows.append({"date": date_str, "shop_sku": oid, "qty": qty,
                                  "revenue": revenue, "status": status})
         page_token = (data.get("paging") or {}).get("nextPageToken")
