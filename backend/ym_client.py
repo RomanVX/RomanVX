@@ -130,20 +130,28 @@ def _parse_ym_orders(orders: list[dict], date_field: str = "creationDate") -> li
     from datetime import timezone as _tz
     msk = _tz(timedelta(hours=3))
     rows: list[dict] = []
+    logged = False
     for order in orders:
         status = order.get("status") or ""
         raw_dt = order.get(date_field) or order.get("creationDate") or ""
         try:
             date_str = datetime.fromisoformat(raw_dt).astimezone(msk).strftime("%Y-%m-%d")
         except Exception:
-            # Fallback: try DD-MM-YYYY format (some YM endpoints return this)
             try:
                 date_str = datetime.strptime(raw_dt[:10], "%d-%m-%Y").strftime("%Y-%m-%d")
             except Exception:
                 date_str = raw_dt[:10]
+        if not logged:
+            _log.info("[YM] SAMPLE ORDER: status=%s date_field_raw=%s date_str=%s keys=%s",
+                      status, raw_dt, date_str, list(order.keys()))
+            items_sample = order.get("items") or []
+            if items_sample:
+                _log.info("[YM] SAMPLE ITEM: keys=%s value=%s", list(items_sample[0].keys()), items_sample[0])
+            logged = True
         for item in order.get("items") or []:
-            oid     = item.get("offerId") or ""
-            qty     = item.get("count") or 0
+            # Try multiple field names — older orders may use shopSku instead of offerId
+            oid = item.get("offerId") or item.get("shopSku") or item.get("offerName") or ""
+            qty = item.get("count") or 0
             prices  = item.get("prices") or {}
             payment = float((prices.get("payment") or {}).get("value") or 0)
             subsidy = float((prices.get("subsidy") or {}).get("value") or 0)
@@ -185,13 +193,16 @@ async def _fetch_chunk_orders(date_from: str, date_to: str) -> list[dict]:
     Post-filters by creation date as a safety net.
     """
     orders = await _fetch_pages({
-        "dateFrom": date_from,   # YYYY-MM-DD — order creation date from
-        "dateTo":   date_to,     # YYYY-MM-DD — order creation date to
+        "dateFrom": date_from,
+        "dateTo":   date_to,
     })
+    _log.info("[YM] chunk %s–%s: API returned %d orders", date_from, date_to, len(orders))
     rows = _parse_ym_orders(orders, "creationDate")
     rows = [r for r in rows if r["status"] != "CANCELLED"]
-    # Post-filter: keep only rows created within the requested range
-    return [r for r in rows if date_from <= r["date"] <= date_to]
+    rows_filtered = [r for r in rows if date_from <= r["date"] <= date_to]
+    _log.info("[YM] chunk %s–%s: after status+date filter: %d rows (was %d)",
+              date_from, date_to, len(rows_filtered), len(rows))
+    return rows_filtered
 
 
 async def _fetch_chunk_delivered(date_from: str, date_to: str) -> list[dict]:
