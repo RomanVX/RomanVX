@@ -612,22 +612,23 @@ async def get_weekly_summary():
             rub["OZON"]["buyout"][idx] += r["revenue"]
             qty["OZON"]["buyout"][idx] += r["qty"]
 
-    # YM Продажи = все заказы; Выкупы = status == DELIVERED
-    ym_matched = 0
+    # YM: Продажи = is_buyout==False (orders by creation date, no CANCELLED)
+    #     Выкупы = is_buyout==True  (DELIVERED orders by delivery date)
+    ym_sales_matched = ym_buyout_matched = 0
     for r in ym_rows:
         idx = week_index(r.get("date"))
         if idx is None:
-            _ws.info("[WS] ym row date=%s — NO WEEK MATCH (shop_sku=%s)",
-                     r.get("date"), r.get("shop_sku"))
             continue
-        ym_matched += 1
-        rub["YM"]["sales"][idx] += r["revenue"]
-        qty["YM"]["sales"][idx] += r["qty"]
-        if (r.get("status") or "") == "DELIVERED":
+        if r.get("is_buyout"):
             rub["YM"]["buyout"][idx] += r["revenue"]
             qty["YM"]["buyout"][idx] += r["qty"]
-    _ws.info("[WS] ym matched_rows=%d / total=%d, sales_rub=%s",
-             ym_matched, len(ym_rows), rub["YM"]["sales"])
+            ym_buyout_matched += 1
+        else:
+            rub["YM"]["sales"][idx] += r["revenue"]
+            qty["YM"]["sales"][idx] += r["qty"]
+            ym_sales_matched += 1
+    _ws.info("[WS] ym sales_rows=%d buyout_rows=%d sales_rub=%s",
+             ym_sales_matched, ym_buyout_matched, rub["YM"]["sales"])
 
     def block(d: dict, mp: str) -> dict:
         return {"sales": [round(v, 2) for v in d[mp]["sales"]],

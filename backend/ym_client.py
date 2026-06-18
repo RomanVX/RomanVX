@@ -125,59 +125,75 @@ async def _try_business_orders_post(date_from: str, date_to: str) -> dict[str, i
         return {}
 
 
-async def _fetch_chunk(date_from: str, date_to: str) -> list[dict]:
-    """POST /businesses/{id}/orders for a ≤30-day chunk. pageToken is a query param."""
+def _parse_ym_orders(orders: list[dict], date_field: str = "creationDate") -> list[dict]:
+    """Extract rows from orders list. date_field selects which date to use for bucketing."""
+    from datetime import timezone as _tz
+    msk = _tz(timedelta(hours=3))
     rows: list[dict] = []
+    for order in orders:
+        status = order.get("status") or ""
+        raw_dt = order.get(date_field) or order.get("creationDate") or ""
+        try:
+            date_str = datetime.fromisoformat(raw_dt).astimezone(msk).strftime("%Y-%m-%d")
+        except Exception:
+            date_str = raw_dt[:10]
+        for item in order.get("items") or []:
+            oid     = item.get("offerId") or ""
+            qty     = item.get("count") or 0
+            prices  = item.get("prices") or {}
+            payment = float((prices.get("payment") or {}).get("value") or 0)
+            subsidy = float((prices.get("subsidy") or {}).get("value") or 0)
+            revenue = payment + subsidy
+            if oid and qty:
+                rows.append({"date": date_str, "shop_sku": oid, "qty": qty,
+                             "revenue": revenue, "status": status})
+    return rows
+
+
+async def _fetch_pages(body: dict) -> list[dict]:
+    """Paginate through businesses orders endpoint, return all order dicts."""
+    orders_all: list[dict] = []
     page_token: str | None = None
     while True:
         query: dict = {"limit": 50}
         if page_token:
             query["pageToken"] = page_token
         try:
-            data = await _post(
-                f"/v1/businesses/{YM_BUSINESS_ID}/orders",
-                {"dates": {"creationDateFrom": date_from, "creationDateTo": date_to}},
-                params=query,
-            )
+            data = await _post(f"/v1/businesses/{YM_BUSINESS_ID}/orders", body, params=query)
         except Exception as e:
-            _log.warning("[YM] chunk %s–%s failed: %s", date_from, date_to, e)
+            _log.warning("[YM] fetch failed: %s", e)
             break
         orders = data.get("orders") or []
-        paging_raw = data.get("paging")
-        _log.info("[YM] chunk %s–%s page_token=%s: %d orders paging=%s top_keys=%s",
-                  date_from, date_to, page_token, len(orders), paging_raw, list(data.keys()))
-        for order in orders:
-            status   = order.get("status") or ""
-            raw_dt   = order.get("creationDate") or ""
-            try:
-                from datetime import timezone as _tz
-                dt_obj = datetime.fromisoformat(raw_dt)
-                msk = _tz(timedelta(hours=3))
-                date_str = dt_obj.astimezone(msk).strftime("%Y-%m-%d")
-            except Exception:
-                date_str = raw_dt[:10]
-            for item in order.get("items") or []:
-                oid      = item.get("offerId") or ""
-                qty      = item.get("count") or 0
-                prices   = item.get("prices") or {}
-                payment = float((prices.get("payment") or {}).get("value") or 0)
-                subsidy = float((prices.get("subsidy") or {}).get("value") or 0)
-                revenue = payment + subsidy
-                if oid and qty and status != "CANCELLED":
-                    rows.append({"date": date_str, "shop_sku": oid, "qty": qty,
-                                 "revenue": revenue, "status": status})
+        _log.info("[YM] page token=%s: %d orders", page_token, len(orders))
+        orders_all.extend(orders)
         page_token = (data.get("paging") or {}).get("nextPageToken")
         if not orders or not page_token:
             break
-    return rows
+    return orders_all
+
+
+async def _fetch_chunk_orders(date_from: str, date_to: str) -> list[dict]:
+    """Orders created in [date_from, date_to] — Продажи. Excludes CANCELLED."""
+    orders = await _fetch_pages({"dates": {"creationDateFrom": date_from, "creationDateTo": date_to}})
+    return [r for r in _parse_ym_orders(orders, "creationDate") if r["status"] != "CANCELLED"]
+
+
+async def _fetch_chunk_delivered(date_from: str, date_to: str) -> list[dict]:
+    """Orders delivered in [date_from, date_to] — Выкупы. DELIVERED only, bucketed by updateDate."""
+    orders = await _fetch_pages({
+        "filter": {"fromDate": f"{date_from}T00:00:00Z", "toDate": f"{date_to}T23:59:59Z"},
+        "statuses": ["DELIVERED"],
+    })
+    # Use updateDate for week bucketing so Выкупы land in the delivery week
+    return [r for r in _parse_ym_orders(orders, "updateDate") if r["status"] == "DELIVERED"]
 
 
 async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
-    """Return [{date, shop_sku, qty, revenue, status}] for given range — no cache.
+    """Return [{date, shop_sku, qty, revenue, status, is_buyout}] for given range.
 
-    POST /businesses/{id}/orders: pageToken is a query param, dates go in body under
-    'dates.creationDateFrom/To', max 30-day range per request.
-    revenue = prices.payment.value (already total for all units in the line).
+    Two parallel fetches per chunk:
+    - orders: creationDateFrom/To, all non-CANCELLED → Продажи (is_buyout=False)
+    - delivered: filter.fromDate/toDate + DELIVERED status, bucketed by updateDate → Выкупы (is_buyout=True)
     """
     if not YM_API_KEY or not YM_BUSINESS_ID:
         return []
@@ -185,8 +201,7 @@ async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
     dt_from = datetime.strptime(date_from, "%Y-%m-%d")
     dt_to   = datetime.strptime(date_to,   "%Y-%m-%d")
 
-    # Split into ≤30-day chunks.
-    # creationDateTo is exclusive per API docs, so pass end+1 to include the last day.
+    # Split into ≤30-day chunks (creationDateTo is exclusive → pass end+1)
     chunks: list[tuple[str, str]] = []
     cur = dt_from
     while cur <= dt_to:
@@ -195,11 +210,22 @@ async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
         chunks.append((cur.strftime("%Y-%m-%d"), exclusive_end.strftime("%Y-%m-%d")))
         cur = chunk_end + timedelta(days=1)
 
-    results = await asyncio.gather(*[_fetch_chunk(c_from, c_to) for c_from, c_to in chunks])
-    rows: list[dict] = [r for chunk_rows in results for r in chunk_rows]
-    delivered = sum(1 for r in rows if r["status"] == "DELIVERED")
-    _log.info("[YM] sales_detail done: chunks=%d rows=%d delivered=%d for %s–%s",
-              len(chunks), len(rows), delivered, date_from, date_to)
+    order_tasks    = [_fetch_chunk_orders(c_from, c_to)    for c_from, c_to in chunks]
+    delivered_tasks = [_fetch_chunk_delivered(c_from, c_to) for c_from, c_to in chunks]
+    all_results = await asyncio.gather(*(order_tasks + delivered_tasks))
+
+    n = len(chunks)
+    order_rows    = [r for part in all_results[:n] for r in part]
+    delivered_rows = [r for part in all_results[n:] for r in part]
+
+    for r in order_rows:
+        r["is_buyout"] = False
+    for r in delivered_rows:
+        r["is_buyout"] = True
+
+    rows = order_rows + delivered_rows
+    _log.info("[YM] sales_detail done: chunks=%d orders=%d delivered=%d for %s–%s",
+              len(chunks), len(order_rows), len(delivered_rows), date_from, date_to)
     return rows
 
 
