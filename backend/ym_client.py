@@ -173,8 +173,18 @@ async def _fetch_pages(body: dict) -> list[dict]:
 
 
 async def _fetch_chunk_orders(date_from: str, date_to: str) -> list[dict]:
-    """Orders created in [date_from, date_to] — Продажи. Excludes CANCELLED."""
-    orders = await _fetch_pages({"dates": {"creationDateFrom": date_from, "creationDateTo": date_to}})
+    """Orders placed in [date_from, date_to] — Продажи. Excludes CANCELLED.
+
+    Uses filter.fromDate/toDate with UTC timestamps (same as Power Query that
+    produces correct totals). dates.creationDateFrom/To returned only ~50% of
+    orders — filter.fromDate is the only reliable approach for this endpoint.
+    """
+    orders = await _fetch_pages({
+        "filter": {
+            "fromDate": f"{date_from}T00:00:00Z",
+            "toDate":   f"{date_to}T23:59:59Z",
+        }
+    })
     return [r for r in _parse_ym_orders(orders, "creationDate") if r["status"] != "CANCELLED"]
 
 
@@ -201,13 +211,12 @@ async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
     dt_from = datetime.strptime(date_from, "%Y-%m-%d")
     dt_to   = datetime.strptime(date_to,   "%Y-%m-%d")
 
-    # Split into ≤30-day chunks (creationDateTo is exclusive → pass end+1)
+    # Split into ≤30-day chunks. filter.toDate=T23:59:59Z is inclusive, no +1 needed.
     chunks: list[tuple[str, str]] = []
     cur = dt_from
     while cur <= dt_to:
         chunk_end = min(cur + timedelta(days=29), dt_to)
-        exclusive_end = chunk_end + timedelta(days=1)
-        chunks.append((cur.strftime("%Y-%m-%d"), exclusive_end.strftime("%Y-%m-%d")))
+        chunks.append((cur.strftime("%Y-%m-%d"), chunk_end.strftime("%Y-%m-%d")))
         cur = chunk_end + timedelta(days=1)
 
     results = await asyncio.gather(*[_fetch_chunk_orders(c_from, c_to) for c_from, c_to in chunks])
