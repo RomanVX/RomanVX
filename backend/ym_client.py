@@ -147,15 +147,24 @@ async def _fetch_chunk(date_from: str, date_to: str) -> list[dict]:
         for order in orders:
             status   = order.get("status") or ""
             raw_dt   = order.get("creationDate") or ""
-            date_str = raw_dt[:10]  # ISO 8601 → YYYY-MM-DD
+            # creationDate is ISO 8601 with tz offset (e.g. 2026-06-01T14:30:00+03:00)
+            # Parse properly so Moscow-timezone orders don't shift to wrong day
+            try:
+                from datetime import timezone as _tz
+                dt_obj = datetime.fromisoformat(raw_dt)
+                msk = _tz(timedelta(hours=3))
+                date_str = dt_obj.astimezone(msk).strftime("%Y-%m-%d")
+            except Exception:
+                date_str = raw_dt[:10]
             for item in order.get("items") or []:
                 oid     = item.get("offerId") or ""
                 qty     = item.get("count") or 0
                 prices  = item.get("prices") or {}
-                payment = float((prices.get("payment") or {}).get("value") or 0)
-                subsidy = float((prices.get("subsidy") or {}).get("value") or 0)
-                # payment + subsidy = "Заказано на сумму" (total incl. YM compensation)
-                revenue = payment + subsidy
+                payment  = float((prices.get("payment")  or {}).get("value") or 0)
+                subsidy  = float((prices.get("subsidy")  or {}).get("value") or 0)
+                cashback = float((prices.get("cashback") or {}).get("value") or 0)
+                # payment + cashback + subsidy = "Заказано на сумму"
+                revenue = payment + cashback + subsidy
                 if oid and qty:
                     rows.append({"date": date_str, "shop_sku": oid, "qty": qty,
                                  "revenue": revenue, "status": status})
