@@ -150,7 +150,6 @@ async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
         cur += timedelta(days=1)
 
     rows: list[dict] = []
-    logged_sample = False
 
     for c_from, c_to in chunks:
         fmt_from = c_from.strftime("%d-%m-%Y")
@@ -185,22 +184,10 @@ async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
                 for item in order.get("items") or []:
                     oid = item.get("offerId") or (item.get("offer") or {}).get("offerId", "")
                     qty = item.get("count") or item.get("initialCount") or 0
-                    prices      = item.get("prices") or {}
-                    payment_val = float((prices.get("payment") or {}).get("value") or 0)
-                    subsidy_val = float((prices.get("subsidy") or {}).get("value") or 0)
-                    if not payment_val and not subsidy_val:
-                        payment_val = float(item.get("buyerPrice") or 0)
-                    revenue = (payment_val + subsidy_val) * (qty or 1)
-                    if not logged_sample and oid:
-                        _log.info("[YM] ITEM DUMP: %s", item)
-                        _log.info("[YM] ORDER DUMP keys: itemsTotal=%s buyerItemsTotal=%s "
-                                  "buyerItemsTotalBeforeDiscount=%s",
-                                  order.get("itemsTotal"), order.get("buyerItemsTotal"),
-                                  order.get("buyerItemsTotalBeforeDiscount"))
-                        _log.info("[YM] sample: offerId=%s qty=%s payment=%s subsidy=%s "
-                                  "revenue=%s status=%s date=%s",
-                                  oid, qty, payment_val, subsidy_val, revenue, status, date_str)
-                        logged_sample = True
+                    buyer_before = float(item.get("buyerPriceBeforeDiscount") or 0)
+                    buyer_price  = float(item.get("buyerPrice") or item.get("price") or 0)
+                    unit_price   = buyer_before or buyer_price
+                    revenue      = unit_price * (qty or 1)
                     if oid and qty:
                         rows.append({"date": date_str, "shop_sku": oid, "qty": qty,
                                      "revenue": revenue, "status": status})
