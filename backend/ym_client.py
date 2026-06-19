@@ -141,6 +141,14 @@ def _parse_ym_orders(orders: list[dict], date_field: str = "creationDate") -> li
                 date_str = datetime.strptime(raw_dt[:10], "%d-%m-%Y").strftime("%Y-%m-%d")
             except Exception:
                 date_str = raw_dt[:10]
+        raw_update = order.get("updateDate") or ""
+        try:
+            update_date_str = datetime.fromisoformat(raw_update).astimezone(msk).strftime("%Y-%m-%d")
+        except Exception:
+            try:
+                update_date_str = datetime.strptime(raw_update[:10], "%d-%m-%Y").strftime("%Y-%m-%d")
+            except Exception:
+                update_date_str = raw_update[:10]
         if not logged:
             _log.info("[YM] SAMPLE ORDER: status=%s date_field_raw=%s date_str=%s keys=%s",
                       status, raw_dt, date_str, list(order.keys()))
@@ -157,7 +165,8 @@ def _parse_ym_orders(orders: list[dict], date_field: str = "creationDate") -> li
             subsidy = float((prices.get("subsidy") or {}).get("value") or 0)
             revenue = payment + subsidy
             if oid and qty:
-                rows.append({"date": date_str, "shop_sku": oid, "qty": qty,
+                rows.append({"date": date_str, "update_date": update_date_str,
+                             "shop_sku": oid, "qty": qty,
                              "revenue": revenue, "status": status})
     return rows
 
