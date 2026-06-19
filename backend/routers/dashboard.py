@@ -612,20 +612,20 @@ async def get_weekly_summary():
             rub["OZON"]["buyout"][idx] += r["revenue"]
             qty["OZON"]["buyout"][idx] += r["qty"]
 
-    # YM Продажи = все заказы (non-CANCELLED); Выкупы = status == DELIVERED
+    # YM Продажи = пусто. YM Выкупы = только DELIVERED (как в Power Query).
     ym_matched = 0
     for r in ym_rows:
+        if (r.get("status") or "") != "DELIVERED":
+            continue
         idx = week_index(r.get("date"))
         if idx is None:
             continue
         ym_matched += 1
-        rub["YM"]["sales"][idx] += r["revenue"]
-        qty["YM"]["sales"][idx] += r["qty"]
-        if (r.get("status") or "") == "DELIVERED":
-            rub["YM"]["buyout"][idx] += r["revenue"]
-            qty["YM"]["buyout"][idx] += r["qty"]
-    _ws.info("[WS] ym matched_rows=%d / total=%d, sales_rub=%s",
-             ym_matched, len(ym_rows), rub["YM"]["sales"])
+        rub["YM"]["buyout"][idx] += r["revenue"]
+        qty["YM"]["buyout"][idx] += r["qty"]
+    # sales остаётся нулями — не трогаем
+    _ws.info("[WS] ym matched_rows=%d / total=%d, buyout_rub=%s",
+             ym_matched, len(ym_rows), rub["YM"]["buyout"])
 
     def block(d: dict, mp: str) -> dict:
         return {"sales": [round(v, 2) for v in d[mp]["sales"]],
