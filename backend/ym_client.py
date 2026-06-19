@@ -185,7 +185,7 @@ async def _fetch_pages(body: dict) -> list[dict]:
 
 
 async def _fetch_chunk_orders(date_from: str, date_to: str) -> list[dict]:
-    """Orders created in [date_from, date_to] — Продажи. Excludes CANCELLED.
+    """Orders created in [date_from, date_to] — includes all statuses incl. CANCELLED.
 
     Uses dates.creationDateFrom/To per official API docs.
     creationDateTo is EXCLUSIVE — caller must pass end+1 day.
@@ -197,8 +197,7 @@ async def _fetch_chunk_orders(date_from: str, date_to: str) -> list[dict]:
         }
     })
     rows = _parse_ym_orders(orders, "creationDate")
-    rows = [r for r in rows if r["status"] != "CANCELLED"]
-    _log.info("[YM] chunk %s–%s: %d rows after filter", date_from, date_to, len(rows))
+    _log.info("[YM] chunk %s–%s: %d rows (incl. CANCELLED)", date_from, date_to, len(rows))
     return rows
 
 
