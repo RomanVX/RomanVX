@@ -1,4 +1,7 @@
+import asyncio
+import logging
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -8,7 +11,31 @@ from fastapi.responses import FileResponse
 
 from routers import dashboard, upload, advert
 
-app = FastAPI(title="WB Analytics Dashboard", version="1.0.0")
+_log = logging.getLogger("weekly_prefetch")
+_PREFETCH_INTERVAL = 1800  # 30 минут
+
+
+async def _prefetch_weekly():
+    """Фоновая задача: обновляет кеш weekly_summary каждые 30 минут."""
+    await asyncio.sleep(5)  # дать серверу подняться
+    while True:
+        try:
+            _log.info("Prefetching weekly_summary...")
+            await dashboard.get_weekly_summary()
+            _log.info("weekly_summary cache updated")
+        except Exception as exc:
+            _log.warning("weekly_summary prefetch failed: %s", exc)
+        await asyncio.sleep(_PREFETCH_INTERVAL)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    task = asyncio.create_task(_prefetch_weekly())
+    yield
+    task.cancel()
+
+
+app = FastAPI(title="WB Analytics Dashboard", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
