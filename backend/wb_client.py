@@ -1,8 +1,11 @@
 """Async client for Wildberries Statistics API."""
+import asyncio
 import logging
 from datetime import datetime, timedelta
 
 import httpx
+
+_funnel_sem = asyncio.Semaphore(1)  # не более 1 параллельного запроса к воронке
 
 from config import WB_API_KEY, USE_MOCK
 import mock_data
@@ -68,32 +71,32 @@ async def _nm_report_week_single(date_from: str, date_to: str) -> dict:
         "selectedPeriod": {"start": date_from, "end": date_to},
         "nmIds": [], "brandNames": [], "subjectIds": [], "tagIds": [],
         "skipDeletedNm": False,
-        "orderBy": {"field": "ordersSumRub", "mode": "desc"},
         "limit": 1000,
     }
     orders_rub = orders_qty = buyouts_rub = buyouts_qty = 0
     offset = 0
     logged = False
-    while True:
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(FUNNEL_URL, headers=_headers(), json={**body_base, "offset": offset})
-        if not resp.is_success:
-            _log.error("WB funnel %s–%s → %s %s", date_from, date_to, resp.status_code, resp.text[:300])
-            break
-        data   = resp.json().get("data") or {}
-        prods  = data.get("products") or []
-        if not logged and prods:
-            _log.info("[WB funnel] sample product keys=%s", list(prods[0].keys()))
-            logged = True
-        for p in prods:
-            sp = p.get("selectedPeriod") or (p.get("statistics") or {}).get("selectedPeriod") or {}
-            orders_rub  += float(sp.get("ordersSumRub",  0) or 0)
-            orders_qty  += int(sp.get("ordersCount",     0) or 0)
-            buyouts_rub += float(sp.get("buyoutsSumRub", 0) or 0)
-            buyouts_qty += int(sp.get("buyoutsCount",    0) or 0)
-        if len(prods) < 1000:
-            break
-        offset += 1000
+    async with _funnel_sem:
+        while True:
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.post(FUNNEL_URL, headers=_headers(), json={**body_base, "offset": offset})
+            if not resp.is_success:
+                _log.error("WB funnel %s–%s → %s %s", date_from, date_to, resp.status_code, resp.text[:300])
+                break
+            data   = resp.json().get("data") or {}
+            prods  = data.get("products") or []
+            if not logged and prods:
+                _log.info("[WB funnel] sample product keys=%s", list(prods[0].keys()))
+                logged = True
+            for p in prods:
+                sp = p.get("selectedPeriod") or (p.get("statistics") or {}).get("selectedPeriod") or {}
+                orders_rub  += float(sp.get("ordersSumRub",  0) or 0)
+                orders_qty  += int(sp.get("ordersCount",     0) or 0)
+                buyouts_rub += float(sp.get("buyoutsSumRub", 0) or 0)
+                buyouts_qty += int(sp.get("buyoutsCount",    0) or 0)
+            if len(prods) < 1000:
+                break
+            offset += 1000
     return {"orders_rub": orders_rub, "buyouts_rub": buyouts_rub,
             "orders_qty": orders_qty,  "buyouts_qty": buyouts_qty}
 
