@@ -532,14 +532,11 @@ async def get_weekly_summary():
     dt_from = datetime.combine(weeks[0][0], datetime.min.time())
     dt_to   = datetime.combine(weeks[-1][1], datetime.min.time())
 
-    import logging as _wblog
-    _wb = _wblog.getLogger("weekly_summary.wb")
+    import logging as _wslog
     try:
         wb_sales, wb_orders, _ = await cache.get_raw_data(dt_from, dt_to)
-        _wb.info("[WB] cache ok: sales=%d orders=%d range=%s–%s",
-                 len(wb_sales), len(wb_orders), dt_from.date(), dt_to.date())
     except Exception as _exc:
-        _wb.error("[WB] cache.get_raw_data FAILED: %s", _exc)
+        _wslog.getLogger("weekly_summary").error("[WB] cache.get_raw_data FAILED: %s", _exc)
         wb_sales, wb_orders = [], []
 
     date_from_str = weeks[0][0].strftime("%Y-%m-%d")
@@ -557,14 +554,6 @@ async def get_weekly_summary():
         _tlog.getLogger("weekly_summary").warning("[WS] marketplace detail fetch timed out after 120s")
         oz_rows, ym_rows = [], []
 
-    import logging as _wslog
-    _ws = _wslog.getLogger("weekly_summary")
-    _ws.info("[WS] ym_rows total=%d date_from=%s date_to=%s",
-             len(ym_rows), date_from_str, date_to_str)
-    if ym_rows:
-        r0 = ym_rows[0]
-        _ws.info("[WS] ym_rows[0] keys=%s value=%s", list(r0.keys()), r0)
-    _ws.info("[WS] weeks=%s", [(str(s), str(e)) for s, e in weeks])
 
     def week_index(date_str: str):
         try:
@@ -587,39 +576,23 @@ async def get_weekly_summary():
             return float(pwd)
         return float(r.get("totalPrice") or 0) * (1 - float(r.get("discountPercent") or 0) / 100)
 
-    # WB Продажи = /supplier/orders, isCancel != True, priceWithDisc (как в Power Query)
-    if wb_orders:
-        _ws.info("[WB] orders[0] keys=%s sample=%s", list(wb_orders[0].keys()), {k: wb_orders[0].get(k) for k in ("date", "lastChangeDate", "isCancel", "priceWithDisc", "totalPrice", "supplierArticle")})
-    n_skip_cancel = n_skip_date = n_added = 0
+    # WB Продажи = /supplier/orders, isCancel != True, priceWithDisc
     for r in wb_orders:
         if r.get("isCancel") is True:
-            n_skip_cancel += 1
             continue
         idx = week_index(r.get("date"))
         if idx is None:
-            n_skip_date += 1
             continue
-        n_added += 1
         rub["WB"]["sales"][idx] += _wb_price(r)
         qty["WB"]["sales"][idx] += 1
-    _ws.info("[WB] orders: added=%d skip_cancel=%d skip_date=%d / total=%d", n_added, n_skip_cancel, n_skip_date, len(wb_orders))
 
-    # WB Выкупы = /supplier/sales все записи, priceWithDisc (как в Power Query)
-    # Возвраты (R*) имеют отрицательный priceWithDisc — они вычитаются автоматически
-    if wb_sales:
-        _ws.info("[WB] sales[0] keys=%s sample=%s", list(wb_sales[0].keys()), {k: wb_sales[0].get(k) for k in ("date", "lastChangeDate", "saleID", "priceWithDisc", "supplierArticle")})
-    n_skip_date_s = n_added_s = 0
+    # WB Выкупы = /supplier/sales, возвраты (R*) вычитаются автоматически через отрицательный priceWithDisc
     for r in wb_sales:
         idx = week_index(r.get("date"))
         if idx is None:
-            n_skip_date_s += 1
             continue
-        n_added_s += 1
         rub["WB"]["buyout"][idx] += _wb_price(r)
         qty["WB"]["buyout"][idx] += 1
-    _ws.info("[WB] sales: added=%d skip_date=%d / total=%d", n_added_s, n_skip_date_s, len(wb_sales))
-    _ws.info("[WB] rub[WB][sales]=%s", rub["WB"]["sales"])
-    _ws.info("[WB] rub[WB][buyout]=%s", rub["WB"]["buyout"])
 
     # Ozon Продажи = все строки FBO; Выкупы = status == delivered
     for r in oz_rows:
@@ -632,23 +605,17 @@ async def get_weekly_summary():
             rub["OZON"]["buyout"][idx] += r["revenue"]
             qty["OZON"]["buyout"][idx] += r["qty"]
 
-    # Продажи — все статусы, по дате создания (date)
-    # Выкупы — только DELIVERED, по дате доставки (update_date)
-    ym_sales = ym_buyout = 0
+    # YM Продажи — все статусы по дате создания; Выкупы — только DELIVERED по дате доставки
     for r in ym_rows:
         idx = week_index(r.get("date"))
         if idx is not None:
             rub["YM"]["sales"][idx] += r["revenue"]
             qty["YM"]["sales"][idx] += r["qty"]
-            ym_sales += 1
         if (r.get("status") or "") == "DELIVERED":
             idx_d = week_index(r.get("update_date"))
             if idx_d is not None:
                 rub["YM"]["buyout"][idx_d] += r["revenue"]
                 qty["YM"]["buyout"][idx_d] += r["qty"]
-                ym_buyout += 1
-    _ws.info("[WS] ym sales_rows=%d buyout_rows=%d / total=%d",
-             ym_sales, ym_buyout, len(ym_rows))
 
     def block(d: dict, mp: str) -> dict:
         return {"sales": [round(v, 2) for v in d[mp]["sales"]],
