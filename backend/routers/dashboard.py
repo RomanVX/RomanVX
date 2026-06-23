@@ -618,6 +618,8 @@ async def get_weekly_summary():
         rub["WB"]["buyout"][idx] += _wb_price(r)
         qty["WB"]["buyout"][idx] += 1
     _ws.info("[WB] sales: added=%d skip_date=%d / total=%d", n_added_s, n_skip_date_s, len(wb_sales))
+    _ws.info("[WB] rub[WB][sales]=%s", rub["WB"]["sales"])
+    _ws.info("[WB] rub[WB][buyout]=%s", rub["WB"]["buyout"])
 
     # Ozon Продажи = все строки FBO; Выкупы = status == delivered
     for r in oz_rows:
