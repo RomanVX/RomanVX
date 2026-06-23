@@ -614,8 +614,11 @@ async def get_weekly_summary():
             rub["OZON"]["sales"][idx] += r["revenue"]
             qty["OZON"]["sales"][idx] += r["qty"]
             if (r.get("status") or "").lower() == "delivered":
-                rub["OZON"]["buyout"][idx] += r["revenue"]
-                qty["OZON"]["buyout"][idx] += r["qty"]
+                # выкупы по дате доставки (как в Excel-запросе "Выкупы ШТ OZON")
+                idx_d = week_index(r.get("delivered_date") or r.get("date"))
+                if idx_d is not None:
+                    rub["OZON"]["buyout"][idx_d] += r["revenue"]
+                    qty["OZON"]["buyout"][idx_d] += r["qty"]
 
         for r in ym_rows:
             idx = week_index(r.get("date"))
@@ -765,8 +768,10 @@ async def get_monthly_summary():
             rub["OZON"]["sales"][idx] += r["revenue"]
             qty["OZON"]["sales"][idx] += r["qty"]
             if (r.get("status") or "").lower() == "delivered":
-                rub["OZON"]["buyout"][idx] += r["revenue"]
-                qty["OZON"]["buyout"][idx] += r["qty"]
+                idx_d = month_index(r.get("delivered_date") or r.get("date"))
+                if idx_d is not None:
+                    rub["OZON"]["buyout"][idx_d] += r["revenue"]
+                    qty["OZON"]["buyout"][idx_d] += r["qty"]
 
         for r in ym_rows:
             idx = month_index(r.get("date"))

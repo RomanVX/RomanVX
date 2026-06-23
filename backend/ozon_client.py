@@ -159,15 +159,20 @@ async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
             if not result:
                 break
             for posting in result:
-                date = (posting.get("created_at") or "")[:10]
+                order_date    = (posting.get("created_at")  or "")[:10]
+                delivered_date = (posting.get("delivered_at") or "")[:10] or order_date
                 status = posting.get("status", "")
                 for prod in posting.get("products") or []:
                     oid = prod.get("offer_id", "")
                     qty = prod.get("quantity") or 0
                     price = float(prod.get("price") or 0)
                     if oid and qty:
-                        rows.append({"date": date, "offer_id": oid, "qty": qty,
-                                     "revenue": price * qty, "status": status})
+                        rows.append({
+                            "date": order_date,
+                            "delivered_date": delivered_date,
+                            "offer_id": oid, "qty": qty,
+                            "revenue": price * qty, "status": status,
+                        })
             offset += len(result)
             if len(result) < 1000:
                 break
