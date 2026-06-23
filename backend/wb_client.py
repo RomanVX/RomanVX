@@ -71,6 +71,7 @@ async def _nm_report_week_single(date_from: str, date_to: str) -> dict:
         "selectedPeriod": {"start": date_from, "end": date_to},
         "nmIds": [], "brandNames": [], "subjectIds": [], "tagIds": [],
         "skipDeletedNm": False,
+        "orderBy": {"field": "orderSum", "mode": "desc"},
         "limit": 1000,
     }
     orders_rub = orders_qty = buyouts_rub = buyouts_qty = 0
