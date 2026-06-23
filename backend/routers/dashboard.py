@@ -525,9 +525,26 @@ def _week_label(start, end) -> str:
     return f"{start.strftime('%d.%m')} - {end.strftime('%d.%m')}"
 
 
+import time as _wtime
+_weekly_cache: dict = {}
+_weekly_cache_ts: float = 0.0
+_WEEKLY_TTL = 1800  # 30 минут
+
+
+@router.post("/weekly_summary/invalidate", include_in_schema=False)
+async def invalidate_weekly_cache():
+    global _weekly_cache, _weekly_cache_ts
+    _weekly_cache = {}
+    _weekly_cache_ts = 0.0
+    return {"status": "ok"}
+
+
 @router.get("/weekly_summary")
 async def get_weekly_summary():
     """Сводка Продажи/Выкупы по неделям (Пн-Вс) за последние 8 недель, все МП."""
+    global _weekly_cache, _weekly_cache_ts
+    if _weekly_cache and _wtime.monotonic() - _weekly_cache_ts < _WEEKLY_TTL:
+        return _weekly_cache
     weeks = _week_ranges(8)
     n = len(weeks)
     dt_from = datetime.combine(weeks[0][0], datetime.min.time())
@@ -611,10 +628,13 @@ async def get_weekly_summary():
             "buyout": [round(sum(d[mp]["buyout"][i] for mp in ("WB", "OZON", "YM")), 2) for i in range(n)],
         }
 
-    return {
+    result = {
         "weeks": [_week_label(s, e) for s, e in weeks],
         "rub": {"OZON": block(rub, "OZON"), "WB": block(rub, "WB"), "YM": block(rub, "YM"), "total": total(rub)},
         "qty": {"OZON": block(qty, "OZON"), "WB": block(qty, "WB"), "YM": block(qty, "YM"), "total": total(qty)},
     }
+    _weekly_cache = result
+    _weekly_cache_ts = _wtime.monotonic()
+    return result
 
 

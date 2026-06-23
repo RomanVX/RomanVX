@@ -90,8 +90,9 @@ async def _nm_report_week_single(date_from: str, date_to: str) -> dict:
                 _log.info("[WB funnel] sample product keys=%s", list(prods[0].keys()))
                 logged = True
             for p in prods:
-                sp  = p.get("selectedPeriod") or (p.get("statistics") or {}).get("selectedPeriod") or {}
-                wbc = sp.get("wbClub") or {}
+                stat = p.get("statistic") or p.get("statistics") or {}
+                sp   = stat.get("selectedPeriod") or p.get("selectedPeriod") or {}
+                wbc  = sp.get("wbClub") or {}
                 orders_rub  += float(wbc.get("orderSum",   0) or 0)
                 orders_qty  += int(wbc.get("orderCount",   0) or 0)
                 buyouts_rub += float(wbc.get("buyoutSum",  0) or 0) - float(wbc.get("cancelSum",  0) or 0)
