@@ -854,10 +854,25 @@ function initSortable(tableEl) {
 // ── Sales Analytics ───────────────────────────────────────────────────────────
 
 let _wsData = null;
+let _salesMp = 'WB';   // выбранная площадка в Аналитике продаж
 
 async function loadSalesAnalytics() {
   await loadWeeklySummary();
   await loadMonthlySummary();
+}
+
+function setSalesMp(mp, btn) {
+  _salesMp = mp;
+  document.querySelectorAll('#salesMpGroup .btn').forEach(b => {
+    b.classList.remove('btn-primary');
+    b.classList.add('btn-outline-secondary');
+  });
+  if (btn) { btn.classList.remove('btn-outline-secondary'); btn.classList.add('btn-primary'); }
+  if (_wsData) {
+    renderWsTable('wsRubTable', _wsData.weeks, _wsData.rub, fmtRub);
+    renderWsTable('wsQtyTable', _wsData.weeks, _wsData.qty, fmt);
+  }
+  renderMonthlyChart();
 }
 
 let _msData = null;
@@ -879,7 +894,9 @@ async function loadMonthlySummary() {
 
 function renderMonthlyChart() {
   if (!_msData) return;
-  const mp = document.getElementById('monthlyMp').value;
+  const mp = _salesMp;
+  const lbl = document.getElementById('monthlyMpLabel');
+  if (lbl) lbl.textContent = mp;
   const block = _msData.rub[mp] || _msData.rub.total;
   const ctx = document.getElementById('monthlyChart').getContext('2d');
   if (charts.monthly) charts.monthly.destroy();
@@ -927,10 +944,7 @@ async function loadWeeklySummary() {
 
 function renderWsTable(elId, weeks, block, fmtFn) {
   const rowDefs = [
-    { key: 'OZON', label: 'OZON' },
-    { key: 'WB',   label: 'WB' },
-    { key: 'YM',   label: 'YM' },
-    { key: 'total', label: 'Итого поступления', isTotal: true },
+    { key: _salesMp, label: _salesMp },
   ];
   let thead = '<thead class="sticky-top"><tr><th rowspan="2" class="align-middle">Маркетплейс</th>';
   weeks.forEach(w => { thead += `<th colspan="2" class="text-center">${w}</th>`; });
