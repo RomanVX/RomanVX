@@ -2,7 +2,8 @@
 
 # YM may use different offer_ids for the same product — map them to canonical SKU
 SKU_ALIASES: dict[str, str] = {
-    "ALOE-02": "AL-03",
+    "ALOE-02":       "AL-03",
+    "AL-03,ALOE-02": "AL-03",
 }
 
 CATALOG: dict[str, dict[str, str]] = {
