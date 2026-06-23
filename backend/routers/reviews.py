@@ -13,7 +13,7 @@ _log = logging.getLogger(__name__)
 async def get_reviews_data(
     background_tasks: BackgroundTasks,
     platform: str = Query("all"),
-    limit: int = Query(500),
+    limit: int = Query(5000),
 ):
     """Return reviews, ratings, dynamics, stats. Triggers a background refresh if stale."""
     background_tasks.add_task(rc.refresh_all)

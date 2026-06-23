@@ -1034,7 +1034,7 @@ async function loadReviews() {
   const feedEl = document.getElementById('reviewsFeed');
   if (feedEl) feedEl.innerHTML = '<p class="text-secondary">Загружаем отзывы...</p>';
   try {
-    const res = await fetch(`${API}/api/reviews/data?limit=500`);
+    const res = await fetch(`${API}/api/reviews/data?limit=5000`);
     const data = await res.json();
     _allReviews = data.reviews || [];
     _statsData = data.stats || {};
