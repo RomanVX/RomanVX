@@ -563,21 +563,28 @@ async def get_weekly_summary():
         date_to_str   = weeks[-1][1].strftime("%Y-%m-%d")
         week_str_ranges = [(s.strftime("%Y-%m-%d"), e.strftime("%Y-%m-%d")) for s, e in weeks]
 
+        # OZON/YM — быстрые, отдельный короткий таймаут
         try:
-            wb_funnel_weeks, oz_rows, ym_rows = await asyncio.wait_for(
+            oz_rows, ym_rows = await asyncio.wait_for(
                 asyncio.gather(
-                    wb_client.get_nm_report_weeks(week_str_ranges),
                     ozon_client.get_sales_detail(date_from_str, date_to_str),
                     ym_client.get_sales_detail(date_from_str, date_to_str),
                 ),
-                timeout=150,
+                timeout=90,
             )
-        except asyncio.TimeoutError:
-            _wslog.warning("[WS] fetch timed out after 150s")
-            wb_funnel_weeks, oz_rows, ym_rows = [], [], []
         except Exception as _exc:
-            _wslog.error("[WS] fetch FAILED: %s", _exc)
-            wb_funnel_weeks, oz_rows, ym_rows = [], [], []
+            _wslog.error("[WS] OZON/YM fetch failed: %s", _exc)
+            oz_rows, ym_rows = [], []
+
+        # WB воронка — медленная (8 запросов с лимитом), длинный таймаут
+        try:
+            wb_funnel_weeks = await asyncio.wait_for(
+                wb_client.get_nm_report_weeks(week_str_ranges), timeout=300,
+            )
+        except Exception as _exc:
+            _wslog.error("[WS] WB funnel fetch failed: %s", _exc)
+            wb_funnel_weeks = []
+        wb_ok = any(f.get("orders_rub") or f.get("orders_qty") for f in wb_funnel_weeks)
 
         def week_index(date_str: str):
             try:
@@ -636,8 +643,9 @@ async def get_weekly_summary():
             "rub": {"OZON": block(rub, "OZON"), "WB": block(rub, "WB"), "YM": block(rub, "YM"), "total": total(rub)},
             "qty": {"OZON": block(qty, "OZON"), "WB": block(qty, "WB"), "YM": block(qty, "YM"), "total": total(qty)},
         }
-        _weekly_cache = result
-        _weekly_cache_ts = _wtime.monotonic()
+        if wb_ok:                      # кешируем только полный результат с данными WB
+            _weekly_cache = result
+            _weekly_cache_ts = _wtime.monotonic()
         return result
 
 
@@ -709,20 +717,25 @@ async def get_monthly_summary():
         month_str_ranges = [(s.strftime("%Y-%m-%d"), e.strftime("%Y-%m-%d")) for s, e in months]
 
         try:
-            wb_funnel_months, oz_rows, ym_rows = await asyncio.wait_for(
+            oz_rows, ym_rows = await asyncio.wait_for(
                 asyncio.gather(
-                    wb_client.get_nm_report_weeks(month_str_ranges),
                     ozon_client.get_sales_detail(date_from_str, date_to_str),
                     ym_client.get_sales_detail(date_from_str, date_to_str),
                 ),
-                timeout=200,
+                timeout=90,
             )
-        except asyncio.TimeoutError:
-            _mslog.warning("[MS] fetch timed out")
-            wb_funnel_months, oz_rows, ym_rows = [], [], []
         except Exception as _exc:
-            _mslog.error("[MS] fetch FAILED: %s", _exc)
-            wb_funnel_months, oz_rows, ym_rows = [], [], []
+            _mslog.error("[MS] OZON/YM fetch failed: %s", _exc)
+            oz_rows, ym_rows = [], []
+
+        try:
+            wb_funnel_months = await asyncio.wait_for(
+                wb_client.get_nm_report_weeks(month_str_ranges), timeout=300,
+            )
+        except Exception as _exc:
+            _mslog.error("[MS] WB funnel fetch failed: %s", _exc)
+            wb_funnel_months = []
+        wb_ok = any(f.get("orders_rub") or f.get("orders_qty") for f in wb_funnel_months)
 
         def month_index(date_str: str):
             try:
@@ -781,8 +794,9 @@ async def get_monthly_summary():
             "rub": {"OZON": block(rub, "OZON"), "WB": block(rub, "WB"), "YM": block(rub, "YM"), "total": total(rub)},
             "qty": {"OZON": block(qty, "OZON"), "WB": block(qty, "WB"), "YM": block(qty, "YM"), "total": total(qty)},
         }
-        _monthly_cache = result
-    _monthly_cache_ts = _wtime.monotonic()
-    return result
+        if wb_ok:
+            _monthly_cache = result
+            _monthly_cache_ts = _wtime.monotonic()
+        return result
 
 
