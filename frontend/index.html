@@ -215,6 +215,18 @@
       </div>
     </div>
 
+    <div class="card border-0 bg-card mb-3">
+      <div class="card-header bg-transparent border-0 fw-semibold d-flex align-items-center">
+        <span>Продажи / Выкупы по месяцам (₽)</span>
+        <button class="btn btn-sm btn-outline-secondary ms-auto" onclick="loadMonthlySummary()" title="Перезагрузить">
+          <i class="bi bi-arrow-clockwise"></i>
+        </button>
+      </div>
+      <div class="card-body">
+        <canvas id="monthlyChart" height="100"></canvas>
+      </div>
+    </div>
+
   </div><!-- /pane-salesan -->
 
   <!-- ── Остатки ── -->
@@ -432,6 +444,6 @@
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
-<script src="app.js?v=14"></script>
+<script src="app.js?v=15"></script>
 </body>
 </html>

@@ -25,6 +25,12 @@ async def _prefetch_weekly():
             _log.info("weekly_summary cache updated")
         except Exception as exc:
             _log.warning("weekly_summary prefetch failed: %s", exc)
+        try:
+            _log.info("Prefetching monthly_summary...")
+            await dashboard.get_monthly_summary()
+            _log.info("monthly_summary cache updated")
+        except Exception as exc:
+            _log.warning("monthly_summary prefetch failed: %s", exc)
         await asyncio.sleep(_PREFETCH_INTERVAL)
 
 

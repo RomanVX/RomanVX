@@ -857,6 +857,38 @@ let _wsData = null;
 
 async function loadSalesAnalytics() {
   await loadWeeklySummary();
+  await loadMonthlySummary();
+}
+
+async function loadMonthlySummary() {
+  try {
+    const r = await fetch(`${API}/api/dashboard/monthly_summary`);
+    if (!r.ok) throw new Error(r.status);
+    const data = await r.json();
+    const ctx = document.getElementById('monthlyChart').getContext('2d');
+    if (charts.monthly) charts.monthly.destroy();
+    charts.monthly = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: data.months,
+        datasets: [
+          { label: 'Продажи', data: data.rub.total.sales,  backgroundColor: '#6366f1' },
+          { label: 'Выкупы',  data: data.rub.total.buyout, backgroundColor: '#22c55e' },
+        ],
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          legend: { labels: { color: '#cbd5e1' } },
+          tooltip: { callbacks: { label: c => `${c.dataset.label}: ${fmtRub(c.raw)}` } },
+        },
+        scales: {
+          x: { ticks: { color: '#cbd5e1' }, grid: { color: '#27272a' } },
+          y: { ticks: { color: '#cbd5e1', callback: v => fmtRub(v) }, grid: { color: '#27272a' } },
+        },
+      },
+    });
+  } catch (e) { console.error('monthlyChart', e); }
 }
 
 async function loadWeeklySummary() {

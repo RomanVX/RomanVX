@@ -638,3 +638,143 @@ async def get_weekly_summary():
     return result
 
 
+# ── Помесячная сводка Продажи/Выкупы ──────────────────────────────────────────
+
+_RU_MONTHS = ["", "Янв", "Фев", "Мар", "Апр", "Май", "Июн",
+              "Июл", "Авг", "Сен", "Окт", "Ноя", "Дек"]
+
+
+def _month_ranges(n_months: int = 6) -> list[tuple]:
+    """Последние n_months календарных месяцев (date-диапазоны), старые первыми, вкл. текущий."""
+    today = (datetime.utcnow() + timedelta(hours=3)).date()  # Moscow time
+    ranges = []
+    y, m = today.year, today.month
+    months_back = []
+    for _ in range(n_months):
+        months_back.append((y, m))
+        m -= 1
+        if m == 0:
+            m = 12
+            y -= 1
+    for (yy, mm) in reversed(months_back):
+        start = datetime(yy, mm, 1).date()
+        if mm == 12:
+            end = datetime(yy, 12, 31).date()
+        else:
+            end = (datetime(yy, mm + 1, 1) - timedelta(days=1)).date()
+        ranges.append((start, end))
+    return ranges
+
+
+def _month_label(start) -> str:
+    return f"{_RU_MONTHS[start.month]} {start.year}"
+
+
+_monthly_cache: dict = {}
+_monthly_cache_ts: float = 0.0
+_MONTHLY_TTL = 1800  # 30 минут
+
+
+@router.post("/monthly_summary/invalidate", include_in_schema=False)
+async def invalidate_monthly_cache():
+    global _monthly_cache, _monthly_cache_ts
+    _monthly_cache = {}
+    _monthly_cache_ts = 0.0
+    return {"status": "ok"}
+
+
+@router.get("/monthly_summary")
+async def get_monthly_summary():
+    """Сводка Продажи/Выкупы по месяцам за последние 6 месяцев, все МП."""
+    global _monthly_cache, _monthly_cache_ts
+    if _monthly_cache and _wtime.monotonic() - _monthly_cache_ts < _MONTHLY_TTL:
+        return _monthly_cache
+
+    months = _month_ranges(6)
+    n = len(months)
+
+    import logging as _mslog
+    _mslog = _mslog.getLogger("monthly_summary")
+
+    date_from_str = months[0][0].strftime("%Y-%m-%d")
+    date_to_str   = months[-1][1].strftime("%Y-%m-%d")
+    month_str_ranges = [(s.strftime("%Y-%m-%d"), e.strftime("%Y-%m-%d")) for s, e in months]
+
+    try:
+        wb_funnel_months, oz_rows, ym_rows = await asyncio.wait_for(
+            asyncio.gather(
+                wb_client.get_nm_report_weeks(month_str_ranges),
+                ozon_client.get_sales_detail(date_from_str, date_to_str),
+                ym_client.get_sales_detail(date_from_str, date_to_str),
+            ),
+            timeout=200,
+        )
+    except asyncio.TimeoutError:
+        _mslog.warning("[MS] fetch timed out")
+        wb_funnel_months, oz_rows, ym_rows = [], [], []
+    except Exception as _exc:
+        _mslog.error("[MS] fetch FAILED: %s", _exc)
+        wb_funnel_months, oz_rows, ym_rows = [], [], []
+
+    def month_index(date_str: str):
+        try:
+            d = datetime.strptime((date_str or "")[:10], "%Y-%m-%d").date()
+        except ValueError:
+            return None
+        for i, (s, e) in enumerate(months):
+            if s <= d <= e:
+                return i
+        return None
+
+    rub = {mp: {"sales": [0.0] * n, "buyout": [0.0] * n} for mp in ("WB", "OZON", "YM")}
+    qty = {mp: {"sales": [0] * n, "buyout": [0] * n} for mp in ("WB", "OZON", "YM")}
+
+    for i, fw in enumerate(wb_funnel_months):
+        if i >= n:
+            break
+        rub["WB"]["sales"][i]  = fw.get("orders_rub", 0.0)
+        qty["WB"]["sales"][i]  = fw.get("orders_qty", 0)
+        rub["WB"]["buyout"][i] = fw.get("buyouts_rub", 0.0)
+        qty["WB"]["buyout"][i] = fw.get("buyouts_qty", 0)
+
+    for r in oz_rows:
+        idx = month_index(r.get("date"))
+        if idx is None:
+            continue
+        rub["OZON"]["sales"][idx] += r["revenue"]
+        qty["OZON"]["sales"][idx] += r["qty"]
+        if (r.get("status") or "").lower() == "delivered":
+            rub["OZON"]["buyout"][idx] += r["revenue"]
+            qty["OZON"]["buyout"][idx] += r["qty"]
+
+    for r in ym_rows:
+        idx = month_index(r.get("date"))
+        if idx is not None:
+            rub["YM"]["sales"][idx] += r["revenue"]
+            qty["YM"]["sales"][idx] += r["qty"]
+        if (r.get("status") or "") == "DELIVERED":
+            idx_d = month_index(r.get("update_date"))
+            if idx_d is not None:
+                rub["YM"]["buyout"][idx_d] += r["revenue"]
+                qty["YM"]["buyout"][idx_d] += r["qty"]
+
+    def block(d: dict, mp: str) -> dict:
+        return {"sales": [round(v, 2) for v in d[mp]["sales"]],
+                "buyout": [round(v, 2) for v in d[mp]["buyout"]]}
+
+    def total(d: dict) -> dict:
+        return {
+            "sales":  [round(sum(d[mp]["sales"][i]  for mp in ("WB", "OZON", "YM")), 2) for i in range(n)],
+            "buyout": [round(sum(d[mp]["buyout"][i] for mp in ("WB", "OZON", "YM")), 2) for i in range(n)],
+        }
+
+    result = {
+        "months": [_month_label(s) for s, e in months],
+        "rub": {"OZON": block(rub, "OZON"), "WB": block(rub, "WB"), "YM": block(rub, "YM"), "total": total(rub)},
+        "qty": {"OZON": block(qty, "OZON"), "WB": block(qty, "WB"), "YM": block(qty, "YM"), "total": total(qty)},
+    }
+    _monthly_cache = result
+    _monthly_cache_ts = _wtime.monotonic()
+    return result
+
+
