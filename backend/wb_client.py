@@ -13,6 +13,12 @@ STATS_BASE    = "https://statistics-api.wildberries.ru/api/v1"
 REPORT_BASE   = "https://statistics-api.wildberries.ru"
 ANALYTICS_BASE = "https://seller-analytics-api.wildberries.ru"
 
+# Актуальные пути nm-report (WB периодически меняет версии)
+_NM_REPORT_PATHS = [
+    "/api/v2/nm-report/detail",
+    "/api/v1/nm-report/detail",
+]
+
 
 def _headers() -> dict:
     return {"Authorization": WB_API_KEY}
@@ -66,30 +72,42 @@ async def get_nm_report_week(date_from: str, date_to: str) -> dict:
         return {"orders_rub": 0, "buyouts_rub": 0, "orders_qty": 0, "buyouts_qty": 0}
 
     all_cards: list[dict] = []
-    page = 1
-    while True:
-        body = {
-            "brandNames": [], "objectIDs": [], "tagIDs": [], "nmIDs": [],
-            "timezone": "Europe/Moscow",
-            "period": {"begin": f"{date_from} 00:00:00", "end": f"{date_to} 23:59:59"},
-            "orderBy": {"field": "ordersSumRub", "mode": "desc"},
-            "page": page,
-        }
+    body_base = {
+        "brandNames": [], "objectIDs": [], "tagIDs": [], "nmIDs": [],
+        "timezone": "Europe/Moscow",
+        "period": {"begin": f"{date_from} 00:00:00", "end": f"{date_to} 23:59:59"},
+        "orderBy": {"field": "ordersSumRub", "mode": "desc"},
+    }
+    # Перебираем известные пути — WB периодически меняет версию
+    working_path: str | None = None
+    for path in _NM_REPORT_PATHS:
         async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(
-                f"{ANALYTICS_BASE}/api/v2/nm-report/detail",
-                headers=_headers(),
-                json=body,
-            )
-        if not resp.is_success:
-            _log.error("WB nm-report %s–%s → %s %s", date_from, date_to, resp.status_code, resp.text[:200])
-            break
-        data = resp.json().get("data") or {}
-        cards = data.get("cards") or []
-        all_cards.extend(cards)
-        if not data.get("isNextPage"):
-            break
-        page += 1
+            r = await client.post(f"{ANALYTICS_BASE}{path}", headers=_headers(), json={**body_base, "page": 1})
+        if r.status_code == 404:
+            continue
+        if r.is_success:
+            working_path = path
+            first_data = r.json().get("data") or {}
+            all_cards.extend(first_data.get("cards") or [])
+            if first_data.get("isNextPage"):
+                page = 2
+                while True:
+                    async with httpx.AsyncClient(timeout=30) as client:
+                        r2 = await client.post(f"{ANALYTICS_BASE}{path}", headers=_headers(), json={**body_base, "page": page})
+                    if not r2.is_success:
+                        break
+                    d2 = r2.json().get("data") or {}
+                    all_cards.extend(d2.get("cards") or [])
+                    if not d2.get("isNextPage"):
+                        break
+                    page += 1
+        else:
+            _log.error("WB nm-report %s–%s path=%s → %s %s", date_from, date_to, path, r.status_code, r.text[:200])
+        break
+
+    if working_path is None:
+        _log.error("WB nm-report: все пути вернули 404 (%s–%s), данные недоступны", date_from, date_to)
+        return {"orders_rub": 0, "buyouts_rub": 0, "orders_qty": 0, "buyouts_qty": 0}
 
     def _stat(card: dict) -> dict:
         return (card.get("statistics") or {}).get("selectedPeriod") or {}
