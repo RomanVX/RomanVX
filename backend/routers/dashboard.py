@@ -532,9 +532,14 @@ async def get_weekly_summary():
     dt_from = datetime.combine(weeks[0][0], datetime.min.time())
     dt_to   = datetime.combine(weeks[-1][1], datetime.min.time())
 
+    import logging as _wblog
+    _wb = _wblog.getLogger("weekly_summary.wb")
     try:
         wb_sales, wb_orders, _ = await cache.get_raw_data(dt_from, dt_to)
-    except Exception:
+        _wb.info("[WB] cache ok: sales=%d orders=%d range=%s–%s",
+                 len(wb_sales), len(wb_orders), dt_from.date(), dt_to.date())
+    except Exception as _exc:
+        _wb.error("[WB] cache.get_raw_data FAILED: %s", _exc)
         wb_sales, wb_orders = [], []
 
     date_from_str = weeks[0][0].strftime("%Y-%m-%d")
