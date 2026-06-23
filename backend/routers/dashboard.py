@@ -510,7 +510,7 @@ async def invalidate_cache():
 
 def _week_ranges(n_weeks: int = 8) -> list[tuple]:
     """Last n_weeks Mon–Sun ranges (date objects), oldest first, including current week."""
-    today = datetime.utcnow().date()
+    today = (datetime.utcnow() + timedelta(hours=3)).date()  # Moscow time
     monday_this_week = today - timedelta(days=today.weekday())
     weeks = []
     for i in range(n_weeks):
