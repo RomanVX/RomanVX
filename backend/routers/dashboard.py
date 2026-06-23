@@ -582,24 +582,38 @@ async def get_weekly_summary():
             return float(pwd)
         return float(r.get("totalPrice") or 0) * (1 - float(r.get("discountPercent") or 0) / 100)
 
-    # WB Продажи = все записи /supplier/orders, priceWithDisc
+    # WB Продажи = все записи /supplier/orders, isCancel != True, priceWithDisc
+    if wb_orders:
+        _ws.info("[WB] orders[0] sample=%s", {k: wb_orders[0].get(k) for k in ("date","isCancel","priceWithDisc","totalPrice","supplierArticle")})
+    n_skip_cancel = n_skip_date = n_added = 0
     for r in wb_orders:
+        if r.get("isCancel") is True:
+            n_skip_cancel += 1
+            continue
         idx = week_index(r.get("date"))
         if idx is None:
+            n_skip_date += 1
             continue
+        n_added += 1
         rub["WB"]["sales"][idx] += _wb_price(r)
         qty["WB"]["sales"][idx] += 1
+    _ws.info("[WB] orders: added=%d skip_cancel=%d skip_date=%d / total=%d", n_added, n_skip_cancel, n_skip_date, len(wb_orders))
+    _ws.info("[WB] rub[WB][sales]=%s", rub["WB"]["sales"])
 
-    # WB Выкупы = /supplier/sales, saleID начинается с "S", priceWithDisc
+    # WB Выкупы = /supplier/sales все записи (возвраты с отрицательным priceWithDisc вычитаются)
+    if wb_sales:
+        _ws.info("[WB] sales[0] sample=%s", {k: wb_sales[0].get(k) for k in ("date","saleID","priceWithDisc","supplierArticle")})
+    n_skip_date_s = n_added_s = 0
     for r in wb_sales:
-        sid = r.get("saleID") or ""
-        if not sid.startswith("S"):
-            continue
         idx = week_index(r.get("date"))
         if idx is None:
+            n_skip_date_s += 1
             continue
+        n_added_s += 1
         rub["WB"]["buyout"][idx] += _wb_price(r)
         qty["WB"]["buyout"][idx] += 1
+    _ws.info("[WB] sales: added=%d skip_date=%d / total=%d", n_added_s, n_skip_date_s, len(wb_sales))
+    _ws.info("[WB] rub[WB][buyout]=%s", rub["WB"]["buyout"])
 
     # Ozon Продажи = все строки FBO; Выкупы = status == delivered
     for r in oz_rows:
