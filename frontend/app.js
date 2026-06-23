@@ -1038,7 +1038,7 @@ async function loadReviews() {
     const data = await res.json();
     _allReviews = data.reviews || [];
     _statsData = data.stats || {};
-    renderRatingsTable(data.ratings || []);
+    renderRatingsTable(data.ratings || {});
     renderStats(_statsData);
     renderRatingDynamics(data.dynamics || []);
     renderReviewsFeed();
@@ -1069,23 +1069,42 @@ function renderStats(stats) {
 function renderRatingsTable(ratings) {
   const el = document.getElementById('ratingsTable');
   if (!el) return;
-  if (!ratings.length) { el.innerHTML = '<p class="text-secondary small">Нет данных. Нажмите «Обновить».</p>'; return; }
+  const groups   = ratings.groups   || [];
+  const articles = ratings.articles || [];
+  if (!groups.length && !articles.length) {
+    el.innerHTML = '<p class="text-secondary small">Нет данных. Нажмите «Обновить».</p>'; return;
+  }
   const color = v => !v ? '' : v >= 4.8 ? 'text-success' : v >= 4.5 ? 'text-warning' : 'text-danger';
-  const cell = (v, cnt) => v
+  const cell = (v, cnt) => v != null
     ? `<b class="${color(v)}">${v.toFixed(2)}</b> <span class="text-secondary small">(${cnt})</span>`
     : '<span class="text-secondary">—</span>';
+  const hdr = `<thead><tr><th>Название</th>
+    <th class="text-center">Ozon</th><th class="text-center">WB</th><th class="text-center">YM</th>
+  </tr></thead>`;
 
-  let html = `<div class="table-responsive"><table class="table table-dark table-sm table-hover mb-0">
-    <thead><tr><th>Артикул</th>
-      <th class="text-center">Ozon</th>
-      <th class="text-center">WB</th>
-      <th class="text-center">YM</th>
-    </tr></thead><tbody>`;
-  for (const r of ratings) {
-    html += `<tr><td>${r.sku}</td>
+  let html = '<h6 class="text-secondary small mb-1">По склейкам</h6>';
+  html += `<div class="table-responsive mb-3"><table class="table table-dark table-sm table-hover mb-0">${hdr}<tbody>`;
+  for (const r of groups) {
+    html += `<tr><td class="fw-semibold">${r.group}</td>
       <td class="text-center">${cell(r.ozon, r.ozon_cnt)}</td>
-      <td class="text-center">${cell(r.wb, r.wb_cnt)}</td>
-      <td class="text-center">${cell(r.ym, r.ym_cnt)}</td>
+      <td class="text-center">${cell(r.wb,   r.wb_cnt)}</td>
+      <td class="text-center">${cell(r.ym,   r.ym_cnt)}</td>
+    </tr>`;
+  }
+  html += '</tbody></table></div>';
+
+  html += '<h6 class="text-secondary small mb-1">По артикулам</h6>';
+  html += `<div class="table-responsive"><table class="table table-dark table-sm table-hover mb-0">
+    <thead><tr><th>Артикул</th><th>Название</th>
+      <th class="text-center">Ozon</th><th class="text-center">WB</th><th class="text-center">YM</th>
+    </tr></thead><tbody>`;
+  for (const r of articles) {
+    html += `<tr>
+      <td class="text-secondary small">${r.sku}</td>
+      <td>${r.name || r.sku}</td>
+      <td class="text-center">${cell(r.ozon, r.ozon_cnt)}</td>
+      <td class="text-center">${cell(r.wb,   r.wb_cnt)}</td>
+      <td class="text-center">${cell(r.ym,   r.ym_cnt)}</td>
     </tr>`;
   }
   html += '</tbody></table></div>';
@@ -1139,12 +1158,15 @@ function renderReviewsFeed() {
 
   el.innerHTML = filtered.map(r => `
     <div class="card bg-dark border-secondary mb-2 p-3">
-      <div class="d-flex justify-content-between align-items-center mb-1">
-        <div class="d-flex align-items-center gap-2">
+      <div class="d-flex justify-content-between align-items-start mb-1">
+        <div class="d-flex align-items-center gap-2 flex-wrap">
           ${badge(r.platform)} ${stars(r.rating)}
           <span class="text-secondary small">${r.date}</span>
         </div>
-        <span class="text-secondary small">${r.sku}</span>
+        <div class="text-end ms-2">
+          <div class="small">${r.name || r.sku}</div>
+          ${r.group ? `<div class="text-secondary" style="font-size:0.75rem">${r.group}</div>` : ''}
+        </div>
       </div>
       ${r.text ? `<div class="mt-1">${r.text}</div>` : '<div class="text-secondary small fst-italic">без текста</div>'}
     </div>

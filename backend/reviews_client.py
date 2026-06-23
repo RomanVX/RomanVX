@@ -10,8 +10,9 @@ import httpx
 from config import (
     WB_API_KEY,
     OZON_CLIENT_ID, OZON_API_KEY,
-    YM_API_KEY, YM_CAMPAIGN_ID, YM_BUSINESS_ID,
+    YM_API_KEY, YM_BUSINESS_ID,
 )
+import catalog as cat
 
 _log = logging.getLogger(__name__)
 DB_PATH = "/tmp/reviews.db"
@@ -26,11 +27,19 @@ def _init_db():
             id          TEXT PRIMARY KEY,
             platform    TEXT,
             sku         TEXT,
+            name        TEXT,
+            brand       TEXT,
+            grp         TEXT,
             rating      INTEGER,
             text        TEXT,
             created_at  TEXT
         )
     """)
+    # migrate old schema if name column missing
+    cols = {r[1] for r in con.execute("PRAGMA table_info(reviews)").fetchall()}
+    for col, typ in [("name", "TEXT"), ("brand", "TEXT"), ("grp", "TEXT")]:
+        if col not in cols:
+            con.execute(f"ALTER TABLE reviews ADD COLUMN {col} {typ}")
     con.execute("""
         CREATE TABLE IF NOT EXISTS rating_snapshots (
             snapshot_date TEXT,
@@ -47,13 +56,22 @@ def _init_db():
 _init_db()
 
 
+def _enrich(row: dict) -> dict:
+    """Add name/brand/group from catalog to a review row."""
+    info = cat.lookup(row.get("sku") or "")
+    row["name"]  = info.get("name", "")
+    row["brand"] = info.get("brand", "")
+    row["grp"]   = info.get("group", "")
+    return row
+
+
 def _upsert_reviews(rows: list[dict]):
     if not rows:
         return
     con = sqlite3.connect(DB_PATH)
     con.executemany(
-        "INSERT OR IGNORE INTO reviews (id, platform, sku, rating, text, created_at) "
-        "VALUES (:id, :platform, :sku, :rating, :text, :created_at)",
+        "INSERT OR IGNORE INTO reviews (id, platform, sku, name, brand, grp, rating, text, created_at) "
+        "VALUES (:id, :platform, :sku, :name, :brand, :grp, :rating, :text, :created_at)",
         rows,
     )
     con.commit()
@@ -62,7 +80,6 @@ def _upsert_reviews(rows: list[dict]):
 
 
 def _save_snapshot():
-    """Save daily rating snapshot per platform+sku."""
     today = date.today().isoformat()
     con = sqlite3.connect(DB_PATH)
     rows = con.execute(
@@ -81,43 +98,66 @@ def get_all_reviews(platform=None, limit=500) -> list[dict]:
     con = sqlite3.connect(DB_PATH)
     if platform and platform != "all":
         rows = con.execute(
-            "SELECT id,platform,sku,rating,text,created_at FROM reviews "
+            "SELECT id,platform,sku,name,brand,grp,rating,text,created_at FROM reviews "
             "WHERE platform=? ORDER BY created_at DESC LIMIT ?",
             (platform, limit),
         ).fetchall()
     else:
         rows = con.execute(
-            "SELECT id,platform,sku,rating,text,created_at FROM reviews "
+            "SELECT id,platform,sku,name,brand,grp,rating,text,created_at FROM reviews "
             "ORDER BY created_at DESC LIMIT ?",
             (limit,),
         ).fetchall()
     con.close()
-    return [{"id": r[0], "platform": r[1], "sku": r[2],
-             "rating": r[3], "text": r[4], "date": (r[5] or "")[:10]} for r in rows]
+    return [{"id": r[0], "platform": r[1], "sku": r[2], "name": r[3],
+             "brand": r[4], "group": r[5], "rating": r[6],
+             "text": r[7], "date": (r[8] or "")[:10]} for r in rows]
 
 
 def get_rating_table() -> list[dict]:
-    """Current avg rating per platform per sku."""
+    """Ratings per article and per group."""
     con = sqlite3.connect(DB_PATH)
-    rows = con.execute(
-        "SELECT platform, sku, ROUND(AVG(rating),2), COUNT(*) "
+    # per article
+    art_rows = con.execute(
+        "SELECT platform, sku, name, brand, grp, ROUND(AVG(rating),2), COUNT(*) "
         "FROM reviews WHERE rating > 0 GROUP BY platform, sku ORDER BY sku"
     ).fetchall()
+    # per group
+    grp_rows = con.execute(
+        "SELECT platform, grp, ROUND(AVG(rating),2), COUNT(*) "
+        "FROM reviews WHERE rating > 0 AND grp != '' GROUP BY platform, grp ORDER BY grp"
+    ).fetchall()
     con.close()
-    # Pivot: sku → {ozon, wb, ym, count}
-    table: dict[str, dict] = {}
-    for platform, sku, avg, cnt in rows:
-        if sku not in table:
-            table[sku] = {"sku": sku, "ozon": None, "wb": None, "ym": None,
-                          "ozon_cnt": 0, "wb_cnt": 0, "ym_cnt": 0}
+
+    # Pivot articles
+    art_table: dict[str, dict] = {}
+    for platform, sku, name, brand, grp, avg, cnt in art_rows:
+        if sku not in art_table:
+            art_table[sku] = {"sku": sku, "name": name or sku, "brand": brand or "",
+                               "group": grp or "",
+                               "ozon": None, "wb": None, "ym": None,
+                               "ozon_cnt": 0, "wb_cnt": 0, "ym_cnt": 0}
         key = platform.lower()
-        table[sku][key] = avg
-        table[sku][f"{key}_cnt"] = cnt
-    return sorted(table.values(), key=lambda x: x["sku"])
+        art_table[sku][key] = avg
+        art_table[sku][f"{key}_cnt"] = cnt
+
+    # Pivot groups
+    grp_table: dict[str, dict] = {}
+    for platform, grp, avg, cnt in grp_rows:
+        if grp not in grp_table:
+            grp_table[grp] = {"group": grp, "ozon": None, "wb": None, "ym": None,
+                               "ozon_cnt": 0, "wb_cnt": 0, "ym_cnt": 0}
+        key = platform.lower()
+        grp_table[grp][key] = avg
+        grp_table[grp][f"{key}_cnt"] = cnt
+
+    return {
+        "articles": sorted(art_table.values(), key=lambda x: x["sku"]),
+        "groups":   sorted(grp_table.values(), key=lambda x: x["group"]),
+    }
 
 
 def get_rating_dynamics() -> list[dict]:
-    """Return rating dynamics per platform over time."""
     con = sqlite3.connect(DB_PATH)
     rows = con.execute(
         "SELECT snapshot_date, platform, ROUND(AVG(rating),2) "
@@ -151,7 +191,6 @@ def get_stats() -> dict:
 # ─── WB ──────────────────────────────────────────────────────────────────────
 
 async def fetch_wb_reviews():
-    """Fetch all WB feedbacks (answered + unanswered)."""
     if not WB_API_KEY:
         return
     rows = []
@@ -174,17 +213,19 @@ async def fetch_wb_reviews():
                     if not feedbacks:
                         break
                     for f in feedbacks:
-                        text = (f.get("text") or "").strip()
                         details = f.get("productDetails") or {}
-                        sku = str(details.get("supplierArticle") or f.get("nmId") or "")
-                        rows.append({
+                        raw_sku = str(details.get("supplierArticle") or f.get("nmId") or "")
+                        # resolve via nmId first if supplierArticle missing
+                        nm_id = f.get("nmId")
+                        sku = cat.resolve_wb(nm_id) if nm_id else raw_sku
+                        rows.append(_enrich({
                             "id": f"wb_{f['id']}",
                             "platform": "WB",
                             "sku": sku,
                             "rating": int(f.get("productValuation") or 0),
-                            "text": text,
+                            "text": (f.get("text") or "").strip(),
                             "created_at": (f.get("createdDate") or "")[:19],
-                        })
+                        }))
                     skip += len(feedbacks)
                     if len(feedbacks) < 5000:
                         break
@@ -199,7 +240,6 @@ async def fetch_wb_reviews():
 # ─── OZON ────────────────────────────────────────────────────────────────────
 
 async def fetch_ozon_reviews():
-    """Fetch all Ozon reviews (requires Premium Plus subscription)."""
     if not OZON_CLIENT_ID or not OZON_API_KEY:
         return
     rows = []
@@ -225,15 +265,17 @@ async def fetch_ozon_reviews():
                 if not items:
                     break
                 for rev in items:
-                    rows.append({
+                    raw_sku = str(rev.get("sku") or rev.get("offer_id") or "")
+                    sku = cat.resolve_ozon(raw_sku) if raw_sku else raw_sku
+                    rows.append(_enrich({
                         "id": f"ozon_{rev.get('id') or rev.get('review_id')}",
                         "platform": "Ozon",
-                        "sku": str(rev.get("sku") or rev.get("offer_id") or ""),
+                        "sku": sku,
                         "rating": int(rev.get("rating") or 0),
                         "text": (rev.get("text") or rev.get("comment") or "").strip(),
                         "created_at": (rev.get("published_at") or rev.get("created_at") or
                                        rev.get("create_at") or "")[:19],
-                    })
+                    }))
                 last_id = payload.get("last_id") or ""
                 has_next = payload.get("has_next")
                 if not last_id or has_next is False or len(items) < 100:
@@ -249,7 +291,6 @@ async def fetch_ozon_reviews():
 # ─── YM ──────────────────────────────────────────────────────────────────────
 
 async def fetch_ym_reviews():
-    """Fetch Yandex Market reviews via business goods-feedback API."""
     if not YM_API_KEY or not YM_BUSINESS_ID:
         return
     rows = []
@@ -259,7 +300,7 @@ async def fetch_ym_reviews():
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             page_token = None
-            for _ in range(200):  # safety bound on pages
+            for _ in range(200):
                 params = {"limit": 50}
                 if page_token:
                     params["page_token"] = page_token
@@ -277,14 +318,16 @@ async def fetch_ym_reviews():
                     descr = f.get("description") or {}
                     parts = [descr.get("comment"), descr.get("advantages"), descr.get("disadvantages")]
                     text = " ".join(p.strip() for p in parts if p).strip()
-                    rows.append({
+                    raw_sku = str(ident.get("offerId") or ident.get("shopSku") or "")
+                    sku = cat.resolve_ym(raw_sku) if raw_sku else raw_sku
+                    rows.append(_enrich({
                         "id": f"ym_{f.get('feedbackId') or f.get('id')}",
                         "platform": "YM",
-                        "sku": str(ident.get("offerId") or ident.get("shopSku") or ""),
+                        "sku": sku,
                         "rating": int(stats.get("rating") or 0),
                         "text": text,
                         "created_at": (f.get("createdAt") or "")[:19],
-                    })
+                    }))
                 page_token = (result.get("paging") or {}).get("nextPageToken")
                 if not page_token:
                     break
@@ -296,7 +339,7 @@ async def fetch_ym_reviews():
     _log.info("YM: fetched %d feedbacks", len(rows))
 
 
-# ─── MAIN REFRESH ─────────────────────────────────────────────────────────────
+# ─── REFRESH ──────────────────────────────────────────────────────────────────
 
 _last_refresh = 0.0
 _refresh_lock = asyncio.Lock()
