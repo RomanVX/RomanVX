@@ -534,26 +534,30 @@ async def get_weekly_summary():
 
     import logging as _wslog
     try:
-        wb_sales, wb_orders, _ = await cache.get_raw_data(dt_from, dt_to)
-    except Exception as _exc:
-        _wslog.getLogger("weekly_summary").error("[WB] cache.get_raw_data FAILED: %s", _exc)
-        wb_sales, wb_orders = [], []
+        _, _, _ = await cache.get_raw_data(dt_from, dt_to)  # прогреть кэш для других эндпоинтов
+    except Exception:
+        pass
 
     date_from_str = weeks[0][0].strftime("%Y-%m-%d")
     date_to_str   = weeks[-1][1].strftime("%Y-%m-%d")
+
+    # Запрашиваем всё параллельно: nm-report по каждой неделе + OZON + YM
+    import wb_client as _wb
+    wb_tasks  = [_wb.get_nm_report_week(s.strftime("%Y-%m-%d"), e.strftime("%Y-%m-%d")) for s, e in weeks]
     try:
-        oz_rows, ym_rows = await asyncio.wait_for(
-            asyncio.gather(
-                ozon_client.get_sales_detail(date_from_str, date_to_str),
-                ym_client.get_sales_detail(date_from_str, date_to_str),
-            ),
+        results = await asyncio.wait_for(
+            asyncio.gather(*wb_tasks,
+                           ozon_client.get_sales_detail(date_from_str, date_to_str),
+                           ym_client.get_sales_detail(date_from_str, date_to_str)),
             timeout=120,
         )
     except asyncio.TimeoutError:
-        import logging as _tlog
-        _tlog.getLogger("weekly_summary").warning("[WS] marketplace detail fetch timed out after 120s")
-        oz_rows, ym_rows = [], []
+        _wslog.getLogger("weekly_summary").warning("[WS] fetch timed out after 120s")
+        results = [{"orders_rub": 0, "buyouts_rub": 0, "orders_qty": 0, "buyouts_qty": 0}] * n + [[], []]
 
+    wb_weeks = results[:n]
+    oz_rows  = results[n]
+    ym_rows  = results[n + 1]
 
     def week_index(date_str: str):
         try:
@@ -568,29 +572,12 @@ async def get_weekly_summary():
     rub = {mp: {"sales": [0.0] * n, "buyout": [0.0] * n} for mp in ("WB", "OZON", "YM")}
     qty = {mp: {"sales": [0] * n, "buyout": [0] * n} for mp in ("WB", "OZON", "YM")}
 
-    def _wb_price(r: dict) -> float:
-        """priceWithDisc — цена после скидки продавца, ДО скидки СПП (за счёт WB).
-        finishedPrice исключает СПП-скидку WB, поэтому для нашей выручки не подходит."""
-        pwd = r.get("priceWithDisc")
-        if pwd is not None:
-            return float(pwd)
-        return float(r.get("totalPrice") or 0) * (1 - float(r.get("discountPercent") or 0) / 100)
-
-    # WB Продажи = все заказы /supplier/orders (включая отменённые) = "Заказали на сумму" в аналитике WB
-    for r in wb_orders:
-        idx = week_index(r.get("date"))
-        if idx is None:
-            continue
-        rub["WB"]["sales"][idx] += _wb_price(r)
-        qty["WB"]["sales"][idx] += 1
-
-    # WB Выкупы = /supplier/sales, возвраты (R*) вычитаются автоматически через отрицательный priceWithDisc
-    for r in wb_sales:
-        idx = week_index(r.get("date"))
-        if idx is None:
-            continue
-        rub["WB"]["buyout"][idx] += _wb_price(r)
-        qty["WB"]["buyout"][idx] += 1
+    # WB — данные из Analytics API (точное совпадение с кабинетом WB)
+    for i, wd in enumerate(wb_weeks):
+        rub["WB"]["sales"][i]  = float(wd["orders_rub"])
+        rub["WB"]["buyout"][i] = float(wd["buyouts_rub"])
+        qty["WB"]["sales"][i]  = int(wd["orders_qty"])
+        qty["WB"]["buyout"][i] = int(wd["buyouts_qty"])
 
     # Ozon Продажи = все строки FBO; Выкупы = status == delivered
     for r in oz_rows:

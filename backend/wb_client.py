@@ -9,8 +9,9 @@ import mock_data
 
 _log = logging.getLogger(__name__)
 
-STATS_BASE = "https://statistics-api.wildberries.ru/api/v1"
-REPORT_BASE = "https://statistics-api.wildberries.ru"
+STATS_BASE    = "https://statistics-api.wildberries.ru/api/v1"
+REPORT_BASE   = "https://statistics-api.wildberries.ru"
+ANALYTICS_BASE = "https://seller-analytics-api.wildberries.ru"
 
 
 def _headers() -> dict:
@@ -52,6 +53,53 @@ async def get_stocks() -> list[dict]:
         f"{STATS_BASE}/supplier/stocks",
         {"dateFrom": date_from},
     )
+
+
+async def get_nm_report_week(date_from: str, date_to: str) -> dict:
+    """Воронка продаж по всем артикулам за период (Analytics API).
+
+    Возвращает точные цифры кабинета WB:
+      orders_rub / orders_qty  — «Заказали на сумму / шт»
+      buyouts_rub / buyouts_qty — «Выкупили на сумму / шт»
+    """
+    if USE_MOCK:
+        return {"orders_rub": 0, "buyouts_rub": 0, "orders_qty": 0, "buyouts_qty": 0}
+
+    all_cards: list[dict] = []
+    page = 1
+    while True:
+        body = {
+            "brandNames": [], "objectIDs": [], "tagIDs": [], "nmIDs": [],
+            "timezone": "Europe/Moscow",
+            "period": {"begin": f"{date_from} 00:00:00", "end": f"{date_to} 23:59:59"},
+            "orderBy": {"field": "ordersSumRub", "mode": "desc"},
+            "page": page,
+        }
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                f"{ANALYTICS_BASE}/api/v2/nm-report/detail",
+                headers=_headers(),
+                json=body,
+            )
+        if not resp.is_success:
+            _log.error("WB nm-report %s–%s → %s %s", date_from, date_to, resp.status_code, resp.text[:200])
+            break
+        data = resp.json().get("data") or {}
+        cards = data.get("cards") or []
+        all_cards.extend(cards)
+        if not data.get("isNextPage"):
+            break
+        page += 1
+
+    def _stat(card: dict) -> dict:
+        return (card.get("statistics") or {}).get("selectedPeriod") or {}
+
+    return {
+        "orders_rub":  sum(_stat(c).get("ordersSumRub",  0) for c in all_cards),
+        "buyouts_rub": sum(_stat(c).get("buyoutsSumRub", 0) for c in all_cards),
+        "orders_qty":  sum(_stat(c).get("ordersCount",   0) for c in all_cards),
+        "buyouts_qty": sum(_stat(c).get("buyoutsCount",  0) for c in all_cards),
+    }
 
 
 async def get_report_detail(date_from: datetime, date_to: datetime) -> list[dict]:
