@@ -1093,19 +1093,32 @@ function renderRatingsTable(ratings) {
   }
   html += '</tbody></table></div>';
 
+  // Группировка по брендам, как в Остатках
+  const BRAND_ORDER = ['Джага', 'Satisfucktion', 'Aloe'];
+  const groupMap = {};
+  articles.forEach(r => {
+    const g = BRAND_ORDER.includes(r.brand) ? r.brand : 'Прочее';
+    (groupMap[g] = groupMap[g] || []).push(r);
+  });
+  Object.values(groupMap).forEach(rows => rows.sort((a, b) => a.sku.localeCompare(b.sku)));
+  const orderedGroups = [...BRAND_ORDER, 'Прочее'].filter(g => groupMap[g]).map(g => [g, groupMap[g]]);
+
   html += '<h6 class="text-secondary small mb-1">По артикулам</h6>';
   html += `<div class="table-responsive"><table class="table table-dark table-sm table-hover mb-0">
     <thead><tr><th>Артикул</th><th>Название</th>
       <th class="text-center">Ozon</th><th class="text-center">WB</th><th class="text-center">YM</th>
     </tr></thead><tbody>`;
-  for (const r of articles) {
-    html += `<tr>
-      <td class="text-secondary small">${r.sku}</td>
-      <td>${r.name || r.sku}</td>
-      <td class="text-center">${cell(r.ozon, r.ozon_cnt)}</td>
-      <td class="text-center">${cell(r.wb,   r.wb_cnt)}</td>
-      <td class="text-center">${cell(r.ym,   r.ym_cnt)}</td>
-    </tr>`;
+  for (const [grp, rows] of orderedGroups) {
+    html += `<tr class="table-secondary"><td colspan="5"><strong>${grp}</strong> <span class="text-secondary small">(${rows.length} арт.)</span></td></tr>`;
+    for (const r of rows) {
+      html += `<tr>
+        <td class="text-secondary small">${r.sku}</td>
+        <td>${r.name || r.sku}</td>
+        <td class="text-center">${cell(r.ozon, r.ozon_cnt)}</td>
+        <td class="text-center">${cell(r.wb,   r.wb_cnt)}</td>
+        <td class="text-center">${cell(r.ym,   r.ym_cnt)}</td>
+      </tr>`;
+    }
   }
   html += '</tbody></table></div>';
   el.innerHTML = html;
