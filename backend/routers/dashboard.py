@@ -582,15 +582,16 @@ async def get_weekly_summary():
             return float(pwd)
         return float(r.get("totalPrice") or 0) * (1 - float(r.get("discountPercent") or 0) / 100)
 
-    # WB Продажи = все записи /supplier/orders, priceWithDisc
+    # WB Продажи = все записи /supplier/orders, priceWithDisc × quantity
     for r in wb_orders:
         idx = week_index(r.get("date"))
         if idx is None:
             continue
-        rub["WB"]["sales"][idx] += _wb_price(r)
-        qty["WB"]["sales"][idx] += 1
+        q = int(r.get("quantity") or 1)
+        rub["WB"]["sales"][idx] += _wb_price(r) * q
+        qty["WB"]["sales"][idx] += q
 
-    # WB Выкупы = /supplier/sales, saleID начинается с "S", priceWithDisc
+    # WB Выкупы = /supplier/sales, saleID начинается с "S", priceWithDisc × quantity
     for r in wb_sales:
         sid = r.get("saleID") or ""
         if not sid.startswith("S"):
@@ -598,8 +599,9 @@ async def get_weekly_summary():
         idx = week_index(r.get("date"))
         if idx is None:
             continue
-        rub["WB"]["buyout"][idx] += _wb_price(r)
-        qty["WB"]["buyout"][idx] += 1
+        q = int(r.get("quantity") or 1)
+        rub["WB"]["buyout"][idx] += _wb_price(r) * q
+        qty["WB"]["buyout"][idx] += q
 
     # Ozon Продажи = все строки FBO; Выкупы = status == delivered
     for r in oz_rows:
