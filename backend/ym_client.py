@@ -275,6 +275,7 @@ async def get_stocks() -> dict[str, int]:
                     offer_id = offer.get("offerId", "")
                     if not offer_id:
                         continue
+                    offer_id = SKU_ALIASES.get(offer_id, offer_id)
                     for stock in offer.get("stocks") or []:
                         if stock.get("type") == "FIT":
                             result[offer_id] = result.get(offer_id, 0) + (stock.get("count") or 0)
