@@ -4,6 +4,8 @@ import logging
 import time
 from datetime import datetime, timedelta
 
+from catalog import SKU_ALIASES
+
 import httpx
 
 from config import YM_API_KEY, YM_CAMPAIGN_ID, YM_BUSINESS_ID
@@ -159,6 +161,7 @@ def _parse_ym_orders(orders: list[dict], date_field: str = "creationDate") -> li
         for item in order.get("items") or []:
             # Try multiple field names — older orders may use shopSku instead of offerId
             oid = item.get("offerId") or item.get("shopSku") or item.get("offerName") or ""
+            oid = SKU_ALIASES.get(oid, oid)
             qty = item.get("count") or 0
             prices  = item.get("prices") or {}
             payment = float((prices.get("payment") or {}).get("value") or 0)

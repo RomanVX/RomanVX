@@ -1,5 +1,10 @@
 """Hardcoded article → name/brand catalog."""
 
+# YM may use different offer_ids for the same product — map them to canonical SKU
+SKU_ALIASES: dict[str, str] = {
+    "ALOE-02": "AL-03",
+}
+
 CATALOG: dict[str, dict[str, str]] = {
     "BMN-0028": {"name": "SEX FIST 500 мл",              "brand": "Джага"},
     "BMN-0013": {"name": "SEX FIST 200 мл",              "brand": "Джага"},
