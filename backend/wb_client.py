@@ -5,8 +5,6 @@ from datetime import datetime, timedelta
 
 import httpx
 
-_funnel_sem = asyncio.Semaphore(1)  # не более 1 параллельного запроса к воронке
-
 from config import WB_API_KEY, USE_MOCK
 import mock_data
 
@@ -64,8 +62,14 @@ async def get_stocks() -> list[dict]:
     )
 
 
+_funnel_lock = asyncio.Lock()  # одна загрузка воронки одновременно (prefetch vs прямой запрос)
+
+
 async def _nm_report_week_single(date_from: str, date_to: str) -> dict:
-    """Один запрос к /api/analytics/v3/sales-funnel/products за период."""
+    """Один запрос к /api/analytics/v3/sales-funnel/products за период.
+
+    При 429 повторяет до 3 раз с паузой 21 сек (лимит WB пополняется ~1 токен/20 сек).
+    """
     FUNNEL_URL = f"{ANALYTICS_BASE}/api/analytics/v3/sales-funnel/products"
     body_base = {
         "selectedPeriod": {"start": date_from, "end": date_to},
@@ -76,51 +80,55 @@ async def _nm_report_week_single(date_from: str, date_to: str) -> dict:
     }
     orders_rub = orders_qty = buyouts_rub = buyouts_qty = 0
     offset = 0
-    logged = False
-    async with _funnel_sem:
-        while True:
+    while True:
+        # запрос одной страницы с retry на 429
+        resp = None
+        for attempt in range(4):
             async with httpx.AsyncClient(timeout=30) as client:
                 resp = await client.post(FUNNEL_URL, headers=_headers(), json={**body_base, "offset": offset})
-            if not resp.is_success:
-                _log.error("WB funnel %s–%s → %s %s", date_from, date_to, resp.status_code, resp.text[:300])
-                break
-            data   = resp.json().get("data") or {}
-            prods  = data.get("products") or []
-            if not logged and prods:
-                _log.info("[WB funnel] first week %s products, keys=%s", len(prods), list(prods[0].keys()))
-                logged = True
-            for p in prods:
-                stat = p.get("statistic") or {}
-                sp   = stat.get("selected") or {}
-                orders_rub  += float(sp.get("orderSum",   0) or 0)
-                orders_qty  += int(sp.get("orderCount",   0) or 0)
-                buyouts_rub += float(sp.get("buyoutSum",  0) or 0) - float(sp.get("cancelSum",  0) or 0)
-                buyouts_qty += int(sp.get("buyoutCount",  0) or 0) - int(sp.get("cancelCount",  0) or 0)
-            if len(prods) < 1000:
-                break
-            offset += 1000
+            if resp.status_code == 429:
+                _log.warning("WB funnel %s–%s → 429, retry %d/3 через 21с", date_from, date_to, attempt + 1)
+                await asyncio.sleep(21)
+                continue
+            break
+        if resp is None or not resp.is_success:
+            code = resp.status_code if resp is not None else "—"
+            _log.error("WB funnel %s–%s → %s %s", date_from, date_to, code,
+                       resp.text[:300] if resp is not None else "")
+            break
+        data   = resp.json().get("data") or {}
+        prods  = data.get("products") or []
+        for p in prods:
+            stat = p.get("statistic") or {}
+            sp   = stat.get("selected") or {}
+            orders_rub  += float(sp.get("orderSum",   0) or 0)
+            orders_qty  += int(sp.get("orderCount",   0) or 0)
+            buyouts_rub += float(sp.get("buyoutSum",  0) or 0) - float(sp.get("cancelSum",  0) or 0)
+            buyouts_qty += int(sp.get("buyoutCount",  0) or 0) - int(sp.get("cancelCount",  0) or 0)
+        if len(prods) < 1000:
+            break
+        offset += 1000
     return {"orders_rub": orders_rub, "buyouts_rub": buyouts_rub,
             "orders_qty": orders_qty,  "buyouts_qty": buyouts_qty}
 
 
 async def get_nm_report_weeks(week_ranges: list[tuple[str, str]]) -> list[dict]:
-    """Воронка продаж для списка недель с соблюдением лимита WB (3 запроса/мин, интервал 20 сек).
+    """Воронка продаж для списка недель с соблюдением лимита WB (3 запроса/мин).
 
-    Запрашивает батчами по 3, между батчами пауза 21 сек.
+    Лимит — token bucket: burst 3, пополнение ~1 токен / 20 сек.
+    Поэтому первые 3 запроса идут сразу, далее по одному с паузой 21 сек.
     Возвращает точные цифры кабинета WB: «Заказали на сумму / Выкупили на сумму».
     """
     if USE_MOCK:
         return [{"orders_rub": 0, "buyouts_rub": 0, "orders_qty": 0, "buyouts_qty": 0}] * len(week_ranges)
 
-    import asyncio as _aio
-    results: list[dict] = []
-    batch_size = 3
-    for i in range(0, len(week_ranges), batch_size):
-        batch = week_ranges[i:i + batch_size]
-        batch_res = await _aio.gather(*[_nm_report_week_single(s, e) for s, e in batch])
-        results.extend(batch_res)
-        if i + batch_size < len(week_ranges):
-            await _aio.sleep(21)   # пауза между батчами чтобы не превысить лимит
+    async with _funnel_lock:
+        results: list[dict] = []
+        for i, (s, e) in enumerate(week_ranges):
+            if i >= 3:                       # после burst-окна — пауза перед каждым запросом
+                await asyncio.sleep(21)
+            results.append(await _nm_report_week_single(s, e))
+        return results
     return results
 
 
