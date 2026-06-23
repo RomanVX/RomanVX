@@ -587,26 +587,24 @@ async def get_weekly_summary():
             return float(pwd)
         return float(r.get("totalPrice") or 0) * (1 - float(r.get("discountPercent") or 0) / 100)
 
-    # WB Продажи = все записи /supplier/orders, priceWithDisc × quantity
+    # WB Продажи = /supplier/orders, isCancel != True, priceWithDisc (как в Power Query)
     for r in wb_orders:
+        if r.get("isCancel") is True:
+            continue
         idx = week_index(r.get("date"))
         if idx is None:
             continue
-        q = int(r.get("quantity") or 1)
-        rub["WB"]["sales"][idx] += _wb_price(r) * q
-        qty["WB"]["sales"][idx] += q
+        rub["WB"]["sales"][idx] += _wb_price(r)
+        qty["WB"]["sales"][idx] += 1
 
-    # WB Выкупы = /supplier/sales, saleID начинается с "S", priceWithDisc × quantity
+    # WB Выкупы = /supplier/sales все записи, priceWithDisc (как в Power Query)
+    # Возвраты (R*) имеют отрицательный priceWithDisc — они вычитаются автоматически
     for r in wb_sales:
-        sid = r.get("saleID") or ""
-        if not sid.startswith("S"):
-            continue
         idx = week_index(r.get("date"))
         if idx is None:
             continue
-        q = int(r.get("quantity") or 1)
-        rub["WB"]["buyout"][idx] += _wb_price(r) * q
-        qty["WB"]["buyout"][idx] += q
+        rub["WB"]["buyout"][idx] += _wb_price(r)
+        qty["WB"]["buyout"][idx] += 1
 
     # Ozon Продажи = все строки FBO; Выкупы = status == delivered
     for r in oz_rows:
