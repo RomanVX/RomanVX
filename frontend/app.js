@@ -861,13 +861,18 @@ async function loadSalesAnalytics() {
   await loadMonthlySummary();
 }
 
-function setSalesMp(mp, btn) {
+function setSalesMp(mp, card) {
   _salesMp = mp;
-  document.querySelectorAll('#salesMpGroup .btn').forEach(b => {
-    b.classList.remove('btn-primary');
-    b.classList.add('btn-outline-secondary');
+  // подсветка выбранной карточки
+  document.querySelectorAll('.salesmp-card').forEach(c => {
+    c.style.outline = c.dataset.mp === mp ? '2px solid #6366f1' : '';
+    c.style.color   = c.dataset.mp === mp ? '#a5b4fc' : '';
   });
-  if (btn) { btn.classList.remove('btn-outline-secondary'); btn.classList.add('btn-primary'); }
+  // показываем блок данных
+  document.getElementById('salesMpData').style.display = '';
+  const lbl = document.getElementById('salesMpLabel');
+  if (lbl) lbl.textContent = mp;
+  // рендерим таблицы если данные уже загружены
   if (_wsData) {
     renderWsTable('wsRubTable', _wsData.weeks, _wsData.rub, fmtRub);
     renderWsTable('wsQtyTable', _wsData.weeks, _wsData.qty, fmt);
