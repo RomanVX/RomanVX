@@ -576,10 +576,8 @@ async def get_weekly_summary():
             return float(pwd)
         return float(r.get("totalPrice") or 0) * (1 - float(r.get("discountPercent") or 0) / 100)
 
-    # WB Продажи = /supplier/orders, isCancel != True, priceWithDisc
+    # WB Продажи = все заказы /supplier/orders (включая отменённые) = "Заказали на сумму" в аналитике WB
     for r in wb_orders:
-        if r.get("isCancel") is True:
-            continue
         idx = week_index(r.get("date"))
         if idx is None:
             continue
