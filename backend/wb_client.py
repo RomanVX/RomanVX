@@ -71,7 +71,7 @@ async def _nm_report_week_single(date_from: str, date_to: str) -> dict:
         "selectedPeriod": {"start": date_from, "end": date_to},
         "nmIds": [], "brandNames": [], "subjectIds": [], "tagIds": [],
         "skipDeletedNm": False,
-        "orderBy": {"field": "orderSum", "mode": "desc"},
+        "orderBy": {"field": "wbClub.orderSum", "mode": "desc"},
         "limit": 1000,
     }
     orders_rub = orders_qty = buyouts_rub = buyouts_qty = 0
@@ -90,11 +90,12 @@ async def _nm_report_week_single(date_from: str, date_to: str) -> dict:
                 _log.info("[WB funnel] sample product keys=%s", list(prods[0].keys()))
                 logged = True
             for p in prods:
-                sp = p.get("selectedPeriod") or (p.get("statistics") or {}).get("selectedPeriod") or {}
-                orders_rub  += float(sp.get("ordersSumRub",  0) or 0)
-                orders_qty  += int(sp.get("ordersCount",     0) or 0)
-                buyouts_rub += float(sp.get("buyoutsSumRub", 0) or 0)
-                buyouts_qty += int(sp.get("buyoutsCount",    0) or 0)
+                sp  = p.get("selectedPeriod") or (p.get("statistics") or {}).get("selectedPeriod") or {}
+                wbc = sp.get("wbClub") or {}
+                orders_rub  += float(wbc.get("orderSum",   0) or 0)
+                orders_qty  += int(wbc.get("orderCount",   0) or 0)
+                buyouts_rub += float(wbc.get("buyoutSum",  0) or 0) - float(wbc.get("cancelSum",  0) or 0)
+                buyouts_qty += int(wbc.get("buyoutCount",  0) or 0) - int(wbc.get("cancelCount",  0) or 0)
             if len(prods) < 1000:
                 break
             offset += 1000
