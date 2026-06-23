@@ -61,63 +61,62 @@ async def get_stocks() -> list[dict]:
     )
 
 
-async def get_nm_report_week(date_from: str, date_to: str) -> dict:
-    """Воронка продаж по всем артикулам за период (Analytics API).
+async def _nm_report_week_single(date_from: str, date_to: str) -> dict:
+    """Один запрос к /api/analytics/v3/sales-funnel/products за период."""
+    FUNNEL_URL = f"{ANALYTICS_BASE}/api/analytics/v3/sales-funnel/products"
+    body_base = {
+        "selectedPeriod": {"start": date_from, "end": date_to},
+        "nmIds": [], "brandNames": [], "subjectIds": [], "tagIds": [],
+        "skipDeletedNm": False,
+        "orderBy": {"field": "ordersSumRub", "mode": "desc"},
+        "limit": 1000,
+    }
+    orders_rub = orders_qty = buyouts_rub = buyouts_qty = 0
+    offset = 0
+    logged = False
+    while True:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(FUNNEL_URL, headers=_headers(), json={**body_base, "offset": offset})
+        if not resp.is_success:
+            _log.error("WB funnel %s–%s → %s %s", date_from, date_to, resp.status_code, resp.text[:300])
+            break
+        data   = resp.json().get("data") or {}
+        prods  = data.get("products") or []
+        if not logged and prods:
+            _log.info("[WB funnel] sample product keys=%s", list(prods[0].keys()))
+            logged = True
+        for p in prods:
+            sp = p.get("selectedPeriod") or (p.get("statistics") or {}).get("selectedPeriod") or {}
+            orders_rub  += float(sp.get("ordersSumRub",  0) or 0)
+            orders_qty  += int(sp.get("ordersCount",     0) or 0)
+            buyouts_rub += float(sp.get("buyoutsSumRub", 0) or 0)
+            buyouts_qty += int(sp.get("buyoutsCount",    0) or 0)
+        if len(prods) < 1000:
+            break
+        offset += 1000
+    return {"orders_rub": orders_rub, "buyouts_rub": buyouts_rub,
+            "orders_qty": orders_qty,  "buyouts_qty": buyouts_qty}
 
-    Возвращает точные цифры кабинета WB:
-      orders_rub / orders_qty  — «Заказали на сумму / шт»
-      buyouts_rub / buyouts_qty — «Выкупили на сумму / шт»
+
+async def get_nm_report_weeks(week_ranges: list[tuple[str, str]]) -> list[dict]:
+    """Воронка продаж для списка недель с соблюдением лимита WB (3 запроса/мин, интервал 20 сек).
+
+    Запрашивает батчами по 3, между батчами пауза 21 сек.
+    Возвращает точные цифры кабинета WB: «Заказали на сумму / Выкупили на сумму».
     """
     if USE_MOCK:
-        return {"orders_rub": 0, "buyouts_rub": 0, "orders_qty": 0, "buyouts_qty": 0}
+        return [{"orders_rub": 0, "buyouts_rub": 0, "orders_qty": 0, "buyouts_qty": 0}] * len(week_ranges)
 
-    all_cards: list[dict] = []
-    body_base = {
-        "brandNames": [], "objectIDs": [], "tagIDs": [], "nmIDs": [],
-        "timezone": "Europe/Moscow",
-        "period": {"begin": f"{date_from} 00:00:00", "end": f"{date_to} 23:59:59"},
-        "orderBy": {"field": "ordersSumRub", "mode": "desc"},
-    }
-    # Перебираем известные пути — WB периодически меняет версию
-    working_path: str | None = None
-    for path in _NM_REPORT_PATHS:
-        async with httpx.AsyncClient(timeout=30) as client:
-            r = await client.post(f"{ANALYTICS_BASE}{path}", headers=_headers(), json={**body_base, "page": 1})
-        if r.status_code == 404:
-            continue
-        if r.is_success:
-            working_path = path
-            first_data = r.json().get("data") or {}
-            all_cards.extend(first_data.get("cards") or [])
-            if first_data.get("isNextPage"):
-                page = 2
-                while True:
-                    async with httpx.AsyncClient(timeout=30) as client:
-                        r2 = await client.post(f"{ANALYTICS_BASE}{path}", headers=_headers(), json={**body_base, "page": page})
-                    if not r2.is_success:
-                        break
-                    d2 = r2.json().get("data") or {}
-                    all_cards.extend(d2.get("cards") or [])
-                    if not d2.get("isNextPage"):
-                        break
-                    page += 1
-        else:
-            _log.error("WB nm-report %s–%s path=%s → %s %s", date_from, date_to, path, r.status_code, r.text[:200])
-        break
-
-    if working_path is None:
-        _log.error("WB nm-report: все пути вернули 404 (%s–%s), данные недоступны", date_from, date_to)
-        return {"orders_rub": 0, "buyouts_rub": 0, "orders_qty": 0, "buyouts_qty": 0}
-
-    def _stat(card: dict) -> dict:
-        return (card.get("statistics") or {}).get("selectedPeriod") or {}
-
-    return {
-        "orders_rub":  sum(_stat(c).get("ordersSumRub",  0) for c in all_cards),
-        "buyouts_rub": sum(_stat(c).get("buyoutsSumRub", 0) for c in all_cards),
-        "orders_qty":  sum(_stat(c).get("ordersCount",   0) for c in all_cards),
-        "buyouts_qty": sum(_stat(c).get("buyoutsCount",  0) for c in all_cards),
-    }
+    import asyncio as _aio
+    results: list[dict] = []
+    batch_size = 3
+    for i in range(0, len(week_ranges), batch_size):
+        batch = week_ranges[i:i + batch_size]
+        batch_res = await _aio.gather(*[_nm_report_week_single(s, e) for s, e in batch])
+        results.extend(batch_res)
+        if i + batch_size < len(week_ranges):
+            await _aio.sleep(21)   # пауза между батчами чтобы не превысить лимит
+    return results
 
 
 async def get_report_detail(date_from: datetime, date_to: datetime) -> list[dict]:

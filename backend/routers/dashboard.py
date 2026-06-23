@@ -8,6 +8,7 @@ import cache
 import catalog as _catalog
 import cost_store
 import ozon_client
+import wb_client
 import ym_client
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
@@ -533,25 +534,27 @@ async def get_weekly_summary():
     dt_to   = datetime.combine(weeks[-1][1], datetime.min.time())
 
     import logging as _wslog
-    try:
-        wb_sales, wb_orders, _ = await cache.get_raw_data(dt_from, dt_to)
-    except Exception as _exc:
-        _wslog.getLogger("weekly_summary").error("[WB] cache FAILED: %s", _exc)
-        wb_sales, wb_orders = [], []
+    _wslog = _wslog.getLogger("weekly_summary")
 
     date_from_str = weeks[0][0].strftime("%Y-%m-%d")
     date_to_str   = weeks[-1][1].strftime("%Y-%m-%d")
+    week_str_ranges = [(s.strftime("%Y-%m-%d"), e.strftime("%Y-%m-%d")) for s, e in weeks]
+
     try:
-        oz_rows, ym_rows = await asyncio.wait_for(
+        wb_funnel_weeks, oz_rows, ym_rows = await asyncio.wait_for(
             asyncio.gather(
+                wb_client.get_nm_report_weeks(week_str_ranges),
                 ozon_client.get_sales_detail(date_from_str, date_to_str),
                 ym_client.get_sales_detail(date_from_str, date_to_str),
             ),
-            timeout=120,
+            timeout=150,
         )
     except asyncio.TimeoutError:
-        _wslog.getLogger("weekly_summary").warning("[WS] fetch timed out after 120s")
-        oz_rows, ym_rows = [], []
+        _wslog.warning("[WS] fetch timed out after 150s")
+        wb_funnel_weeks, oz_rows, ym_rows = [], [], []
+    except Exception as _exc:
+        _wslog.error("[WS] fetch FAILED: %s", _exc)
+        wb_funnel_weeks, oz_rows, ym_rows = [], [], []
 
     def week_index(date_str: str):
         try:
@@ -566,27 +569,14 @@ async def get_weekly_summary():
     rub = {mp: {"sales": [0.0] * n, "buyout": [0.0] * n} for mp in ("WB", "OZON", "YM")}
     qty = {mp: {"sales": [0] * n, "buyout": [0] * n} for mp in ("WB", "OZON", "YM")}
 
-    def _wb_price(r: dict) -> float:
-        pwd = r.get("priceWithDisc")
-        if pwd is not None:
-            return float(pwd)
-        return float(r.get("totalPrice") or 0) * (1 - float(r.get("discountPercent") or 0) / 100)
-
-    # WB Продажи = все заказы (включая отменённые) = "Заказали на сумму" в кабинете WB
-    for r in wb_orders:
-        idx = week_index(r.get("date"))
-        if idx is None:
-            continue
-        rub["WB"]["sales"][idx] += _wb_price(r)
-        qty["WB"]["sales"][idx] += 1
-
-    # WB Выкупы = /supplier/sales (возвраты R* с отриц. priceWithDisc вычитаются автоматически)
-    for r in wb_sales:
-        idx = week_index(r.get("date"))
-        if idx is None:
-            continue
-        rub["WB"]["buyout"][idx] += _wb_price(r)
-        qty["WB"]["buyout"][idx] += 1
+    # WB Продажи/Выкупы = данные воронки (точные цифры кабинета WB)
+    for i, fw in enumerate(wb_funnel_weeks):
+        if i >= n:
+            break
+        rub["WB"]["sales"][i]  = fw.get("orders_rub", 0.0)
+        qty["WB"]["sales"][i]  = fw.get("orders_qty", 0)
+        rub["WB"]["buyout"][i] = fw.get("buyouts_rub", 0.0)
+        qty["WB"]["buyout"][i] = fw.get("buyouts_qty", 0)
 
     # Ozon Продажи = все строки FBO; Выкупы = status == delivered
     for r in oz_rows:
