@@ -103,8 +103,8 @@ async def _nm_report_week_single(date_from: str, date_to: str) -> dict:
             sp   = stat.get("selected") or {}
             orders_rub  += float(sp.get("orderSum",   0) or 0)
             orders_qty  += int(sp.get("orderCount",   0) or 0)
-            buyouts_rub += float(sp.get("buyoutSum",  0) or 0) - float(sp.get("cancelSum",  0) or 0)
-            buyouts_qty += int(sp.get("buyoutCount",  0) or 0) - int(sp.get("cancelCount",  0) or 0)
+            buyouts_rub += float(sp.get("buyoutSum",  0) or 0)
+            buyouts_qty += int(sp.get("buyoutCount",  0) or 0)
         if len(prods) < 1000:
             break
         offset += 1000
