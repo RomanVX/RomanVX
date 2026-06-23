@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
-from routers import dashboard, upload, advert
+from routers import dashboard, upload, advert, reviews
 
 _log = logging.getLogger("weekly_prefetch")
 _PREFETCH_INTERVAL = 1800  # 30 минут
@@ -53,6 +53,7 @@ app.add_middleware(
 app.include_router(dashboard.router)
 app.include_router(upload.router)
 app.include_router(advert.router)
+app.include_router(reviews.router)
 
 FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
 

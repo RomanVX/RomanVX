@@ -3,7 +3,7 @@
 const API = '';
 let charts = {};
 let sortState = {};
-const dirty = { finance: true, products: true, salesan: true, stocks: true, supplies: true, unitec: true, advert: true };
+const dirty = { finance: true, products: true, salesan: true, stocks: true, supplies: true, unitec: true, advert: true, reviews: true };
 let _advertData = [];
 let currentTab = 'finance';
 let prodAllData = [];
@@ -97,14 +97,14 @@ function skuName(r) {
 function switchTab(name, linkEl) {
   document.querySelectorAll('#mainTabs .nav-link').forEach(a => a.classList.remove('active'));
   if (linkEl) linkEl.classList.add('active');
-  ['finance', 'products', 'salesan', 'stocks', 'supplies', 'unitec', 'advert'].forEach(t => {
+  ['finance', 'products', 'salesan', 'stocks', 'supplies', 'unitec', 'advert', 'reviews'].forEach(t => {
     document.getElementById('pane-' + t).style.display = t === name ? 'block' : 'none';
   });
   currentTab = name;
   if (dirty[name]) {
     dirty[name] = false;
     ({ finance: loadFinance, products: loadProducts, salesan: loadSalesAnalytics, stocks: loadStocks,
-       supplies: loadSupplies, unitec: loadUnitEc, advert: loadAdvert })[name]();
+       supplies: loadSupplies, unitec: loadUnitEc, advert: loadAdvert, reviews: loadReviews })[name]();
   }
 }
 
@@ -1024,3 +1024,97 @@ document.addEventListener('DOMContentLoaded', () => {
     showOverlay('login');
   }
 });
+
+// === REVIEWS TAB ===
+async function loadReviews() {
+  try {
+    const res = await fetch(`${API}/api/reviews/reviews-data`);
+    const data = await res.json();
+    window._reviewsCache = data.reviews || [];
+    window._statsCache = data.stats || {};
+    renderRatingsTable(data.ratings || []);
+    renderReviewsFeed(window._reviewsCache, window._statsCache);
+  } catch (e) { console.error('loadReviews', e); }
+}
+
+function renderRatingsTable(ratings) {
+  const el = document.getElementById('ratingsTable');
+  if (!el) return;
+  if (!ratings.length) { el.innerHTML = '<p class="text-secondary">Загрузите файл Рейтинг.xlsx</p>'; return; }
+
+  const ratingColor = (v) => {
+    if (!v) return 'text-secondary';
+    if (v >= 4.8) return 'text-success';
+    if (v >= 4.5) return 'text-warning';
+    return 'text-danger';
+  };
+  const fmtV = (v) => v ? v.toFixed(2) : '—';
+
+  let html = `<table class="table table-dark table-sm table-hover">
+    <thead><tr>
+      <th>Группа товаров</th>
+      <th class="text-center">Ozon</th>
+      <th class="text-center">WB</th>
+      <th class="text-center">YM</th>
+      <th class="text-center">Итого</th>
+    </tr></thead><tbody>`;
+  for (const r of ratings) {
+    html += `<tr>
+      <td>${r.group}</td>
+      <td class="text-center ${ratingColor(r.ozon)}"><b>${fmtV(r.ozon)}</b></td>
+      <td class="text-center ${ratingColor(r.wb)}"><b>${fmtV(r.wb)}</b></td>
+      <td class="text-center ${ratingColor(r.ym)}"><b>${fmtV(r.ym)}</b></td>
+      <td class="text-center ${ratingColor(r.total)}"><b>${fmtV(r.total)}</b></td>
+    </tr>`;
+  }
+  html += '</tbody></table>';
+  el.innerHTML = html;
+}
+
+function renderReviewsFeed(reviews, stats) {
+  const statsEl = document.getElementById('reviewsStats');
+  if (statsEl && stats.total) {
+    const byPlatform = Object.entries(stats.by_platform || {})
+      .map(([k, v]) => `${k}: ${v}`).join(' · ');
+    statsEl.innerHTML = `Всего: <b>${stats.total}</b> отзывов · Средний рейтинг: <b>${stats.avg_rating}</b> · ${byPlatform} · Обновлено: ${stats.updated}`;
+  }
+
+  const el = document.getElementById('reviewsFeed');
+  if (!el) return;
+
+  const platform = document.getElementById('reviewsPlatform')?.value || 'all';
+  const filtered = platform === 'all' ? reviews : reviews.filter(r => r.platform === platform);
+
+  const stars = (n) => '★'.repeat(n) + '☆'.repeat(5 - n);
+  const platformBadge = (p) => {
+    const colors = { Ozon: 'primary', WB: 'danger', YM: 'warning' };
+    return `<span class="badge bg-${colors[p] || 'secondary'}">${p}</span>`;
+  };
+
+  if (!filtered.length) { el.innerHTML = '<p class="text-secondary mt-3">Нет отзывов с текстом</p>'; return; }
+
+  el.innerHTML = filtered.map(r => `
+    <div class="card bg-dark border-secondary mb-2 p-3">
+      <div class="d-flex justify-content-between align-items-start mb-1">
+        <div>${platformBadge(r.platform)} <span class="text-warning">${stars(r.rating)}</span> <span class="text-secondary small">${r.date}</span></div>
+        <span class="text-secondary small">${r.name} · ${r.brand}</span>
+      </div>
+      <div>${r.text}</div>
+    </div>
+  `).join('');
+}
+
+async function uploadRatingFile(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const fd = new FormData();
+  fd.append('file', file);
+  const btn = document.getElementById('uploadRatingBtn');
+  btn.textContent = 'Загрузка...';
+  try {
+    const res = await fetch(`${API}/api/reviews/upload-rating`, { method: 'POST', body: fd });
+    const data = await res.json();
+    if (data.ok) await loadReviews();
+  } catch (e) { console.error('uploadRating', e); }
+  btn.textContent = '📊 Загрузить Рейтинг.xlsx';
+}
