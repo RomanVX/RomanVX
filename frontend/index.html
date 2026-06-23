@@ -473,27 +473,33 @@
   <div id="pane-reviews" style="display:none">
     <div class="d-flex justify-content-between align-items-center mb-3">
       <h5 class="mb-0">Отзывы и рейтинги</h5>
-      <div>
-        <input type="file" id="ratingFileInput" accept=".xlsx" style="display:none" onchange="uploadRatingFile(this)">
-        <button id="uploadRatingBtn" class="btn btn-sm btn-outline-secondary" onclick="document.getElementById('ratingFileInput').click()">
-          📊 Загрузить Рейтинг.xlsx
-        </button>
-      </div>
+      <button id="refreshReviewsBtn" class="btn btn-sm btn-outline-secondary" onclick="forceRefreshReviews()">
+        🔄 Обновить
+      </button>
     </div>
 
     <div id="reviewsStats" class="text-secondary small mb-3"></div>
 
-    <h6 class="mb-2">Рейтинг по группам товаров</h6>
+    <div class="card border-0 bg-card mb-4">
+      <div class="card-header bg-transparent border-0 fw-semibold">Динамика среднего рейтинга</div>
+      <div class="card-body"><div style="height:260px"><canvas id="ratingDynChart"></canvas></div></div>
+    </div>
+
+    <h6 class="mb-2">Рейтинг по артикулам</h6>
     <div id="ratingsTable" class="mb-4"></div>
 
-    <div class="d-flex justify-content-between align-items-center mb-2">
-      <h6 class="mb-0">Отзывы с текстом</h6>
-      <select id="reviewsPlatform" class="form-select form-select-sm w-auto bg-dark text-white border-secondary" onchange="renderReviewsFeed(window._reviewsCache||[], window._statsCache||{})">
+    <div class="d-flex align-items-center gap-3 mb-2">
+      <h6 class="mb-0">Отзывы</h6>
+      <select id="reviewsPlatform" class="form-select form-select-sm w-auto bg-dark text-white border-secondary" onchange="renderReviewsFeed()">
         <option value="all">Все платформы</option>
         <option value="Ozon">Ozon</option>
         <option value="WB">WB</option>
         <option value="YM">YM</option>
       </select>
+      <div class="form-check mb-0">
+        <input class="form-check-input" type="checkbox" id="reviewsOnlyText" checked onchange="renderReviewsFeed()">
+        <label class="form-check-label small" for="reviewsOnlyText">Только с текстом</label>
+      </div>
     </div>
     <div id="reviewsFeed"></div>
   </div><!-- /pane-reviews -->
@@ -503,6 +509,6 @@
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
-<script src="app.js?v=19"></script>
+<script src="app.js?v=20"></script>
 </body>
 </html>

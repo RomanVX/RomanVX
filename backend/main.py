@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
 from routers import dashboard, upload, advert, reviews
+import reviews_client
 
 _log = logging.getLogger("weekly_prefetch")
 _PREFETCH_INTERVAL = 1800  # 30 минут
@@ -31,6 +32,12 @@ async def _prefetch_weekly():
             _log.info("monthly_summary cache updated")
         except Exception as exc:
             _log.warning("monthly_summary prefetch failed: %s", exc)
+        try:
+            _log.info("Refreshing reviews...")
+            await reviews_client.refresh_all()
+            _log.info("reviews refreshed")
+        except Exception as exc:
+            _log.warning("reviews refresh failed: %s", exc)
         await asyncio.sleep(_PREFETCH_INTERVAL)
 
 

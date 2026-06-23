@@ -1025,96 +1025,128 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 });
 
-// === REVIEWS TAB ===
+
+// === REVIEWS TAB (auto-fetch from WB / Ozon / YM APIs) ===
+let _allReviews = [];
+let _statsData = {};
+
 async function loadReviews() {
+  const feedEl = document.getElementById('reviewsFeed');
+  if (feedEl) feedEl.innerHTML = '<p class="text-secondary">Загружаем отзывы...</p>';
   try {
-    const res = await fetch(`${API}/api/reviews/reviews-data`);
+    const res = await fetch(`${API}/api/reviews/data?limit=500`);
     const data = await res.json();
-    window._reviewsCache = data.reviews || [];
-    window._statsCache = data.stats || {};
+    _allReviews = data.reviews || [];
+    _statsData = data.stats || {};
     renderRatingsTable(data.ratings || []);
-    renderReviewsFeed(window._reviewsCache, window._statsCache);
-  } catch (e) { console.error('loadReviews', e); }
+    renderStats(_statsData);
+    renderRatingDynamics(data.dynamics || []);
+    renderReviewsFeed();
+  } catch (e) {
+    console.error('loadReviews', e);
+    if (feedEl) feedEl.innerHTML = `<p class="text-danger">Ошибка: ${e.message}</p>`;
+  }
+}
+
+async function forceRefreshReviews() {
+  const btn = document.getElementById('refreshReviewsBtn');
+  if (btn) btn.textContent = 'Обновляем...';
+  try {
+    await fetch(`${API}/api/reviews/refresh`, { method: 'POST' });
+    await loadReviews();
+  } catch (e) { console.error('refreshReviews', e); }
+  if (btn) btn.textContent = '🔄 Обновить';
+}
+
+function renderStats(stats) {
+  const el = document.getElementById('reviewsStats');
+  if (!el) return;
+  const parts = Object.entries(stats.by_platform || {})
+    .map(([p, d]) => `${p}: <b>${d.count}</b> (★${d.avg})`).join(' · ');
+  el.innerHTML = `Всего отзывов: <b>${stats.total || 0}</b>${parts ? ' · ' + parts : ''} · Последний: ${stats.last_review || '—'}`;
 }
 
 function renderRatingsTable(ratings) {
   const el = document.getElementById('ratingsTable');
   if (!el) return;
-  if (!ratings.length) { el.innerHTML = '<p class="text-secondary">Загрузите файл Рейтинг.xlsx</p>'; return; }
+  if (!ratings.length) { el.innerHTML = '<p class="text-secondary small">Нет данных. Нажмите «Обновить».</p>'; return; }
+  const color = v => !v ? '' : v >= 4.8 ? 'text-success' : v >= 4.5 ? 'text-warning' : 'text-danger';
+  const cell = (v, cnt) => v
+    ? `<b class="${color(v)}">${v.toFixed(2)}</b> <span class="text-secondary small">(${cnt})</span>`
+    : '<span class="text-secondary">—</span>';
 
-  const ratingColor = (v) => {
-    if (!v) return 'text-secondary';
-    if (v >= 4.8) return 'text-success';
-    if (v >= 4.5) return 'text-warning';
-    return 'text-danger';
-  };
-  const fmtV = (v) => v ? v.toFixed(2) : '—';
-
-  let html = `<table class="table table-dark table-sm table-hover">
-    <thead><tr>
-      <th>Группа товаров</th>
+  let html = `<div class="table-responsive"><table class="table table-dark table-sm table-hover mb-0">
+    <thead><tr><th>Артикул</th>
       <th class="text-center">Ozon</th>
       <th class="text-center">WB</th>
       <th class="text-center">YM</th>
-      <th class="text-center">Итого</th>
     </tr></thead><tbody>`;
   for (const r of ratings) {
-    html += `<tr>
-      <td>${r.group}</td>
-      <td class="text-center ${ratingColor(r.ozon)}"><b>${fmtV(r.ozon)}</b></td>
-      <td class="text-center ${ratingColor(r.wb)}"><b>${fmtV(r.wb)}</b></td>
-      <td class="text-center ${ratingColor(r.ym)}"><b>${fmtV(r.ym)}</b></td>
-      <td class="text-center ${ratingColor(r.total)}"><b>${fmtV(r.total)}</b></td>
+    html += `<tr><td>${r.sku}</td>
+      <td class="text-center">${cell(r.ozon, r.ozon_cnt)}</td>
+      <td class="text-center">${cell(r.wb, r.wb_cnt)}</td>
+      <td class="text-center">${cell(r.ym, r.ym_cnt)}</td>
     </tr>`;
   }
-  html += '</tbody></table>';
+  html += '</tbody></table></div>';
   el.innerHTML = html;
 }
 
-function renderReviewsFeed(reviews, stats) {
-  const statsEl = document.getElementById('reviewsStats');
-  if (statsEl && stats.total) {
-    const byPlatform = Object.entries(stats.by_platform || {})
-      .map(([k, v]) => `${k}: ${v}`).join(' · ');
-    statsEl.innerHTML = `Всего: <b>${stats.total}</b> отзывов · Средний рейтинг: <b>${stats.avg_rating}</b> · ${byPlatform} · Обновлено: ${stats.updated}`;
-  }
+function renderRatingDynamics(dyn) {
+  const cv = document.getElementById('ratingDynChart');
+  if (!cv) return;
+  if (charts.ratingDyn) charts.ratingDyn.destroy();
+  if (!dyn.length) return;
+  const labels = dyn.map(d => d.date);
+  const mk = (key, label, color) => ({
+    label, borderColor: color, backgroundColor: color, tension: 0.3, spanGaps: true,
+    data: dyn.map(d => d[key] ?? null),
+  });
+  charts.ratingDyn = new Chart(cv.getContext('2d'), {
+    type: 'line',
+    data: { labels, datasets: [
+      mk('ozon', 'Ozon', '#6366f1'),
+      mk('wb', 'WB', '#ef4444'),
+      mk('ym', 'YM', '#eab308'),
+    ] },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { labels: { color: '#cbd5e1', usePointStyle: true } } },
+      scales: {
+        x: { ticks: { color: '#94a3b8' }, grid: { display: false } },
+        y: { min: 1, max: 5, ticks: { color: '#94a3b8' }, grid: { color: 'rgba(255,255,255,.06)' } },
+      },
+    },
+  });
+}
 
+function renderReviewsFeed() {
   const el = document.getElementById('reviewsFeed');
   if (!el) return;
-
   const platform = document.getElementById('reviewsPlatform')?.value || 'all';
-  const filtered = platform === 'all' ? reviews : reviews.filter(r => r.platform === platform);
+  const onlyText = document.getElementById('reviewsOnlyText')?.checked ?? true;
 
-  const stars = (n) => '★'.repeat(n) + '☆'.repeat(5 - n);
-  const platformBadge = (p) => {
-    const colors = { Ozon: 'primary', WB: 'danger', YM: 'warning' };
-    return `<span class="badge bg-${colors[p] || 'secondary'}">${p}</span>`;
+  let filtered = platform === 'all' ? _allReviews : _allReviews.filter(r => r.platform === platform);
+  if (onlyText) filtered = filtered.filter(r => r.text);
+
+  if (!filtered.length) { el.innerHTML = '<p class="text-secondary mt-3">Нет отзывов</p>'; return; }
+
+  const stars = n => '<span class="text-warning">' + '★'.repeat(n) + '</span><span class="text-secondary">' + '☆'.repeat(5 - n) + '</span>';
+  const badge = p => {
+    const c = { Ozon: 'primary', WB: 'danger', YM: 'warning' };
+    return `<span class="badge bg-${c[p] || 'secondary'}">${p}</span>`;
   };
-
-  if (!filtered.length) { el.innerHTML = '<p class="text-secondary mt-3">Нет отзывов с текстом</p>'; return; }
 
   el.innerHTML = filtered.map(r => `
     <div class="card bg-dark border-secondary mb-2 p-3">
-      <div class="d-flex justify-content-between align-items-start mb-1">
-        <div>${platformBadge(r.platform)} <span class="text-warning">${stars(r.rating)}</span> <span class="text-secondary small">${r.date}</span></div>
-        <span class="text-secondary small">${r.name} · ${r.brand}</span>
+      <div class="d-flex justify-content-between align-items-center mb-1">
+        <div class="d-flex align-items-center gap-2">
+          ${badge(r.platform)} ${stars(r.rating)}
+          <span class="text-secondary small">${r.date}</span>
+        </div>
+        <span class="text-secondary small">${r.sku}</span>
       </div>
-      <div>${r.text}</div>
+      ${r.text ? `<div class="mt-1">${r.text}</div>` : '<div class="text-secondary small fst-italic">без текста</div>'}
     </div>
   `).join('');
-}
-
-async function uploadRatingFile(input) {
-  const file = input.files[0];
-  if (!file) return;
-  const fd = new FormData();
-  fd.append('file', file);
-  const btn = document.getElementById('uploadRatingBtn');
-  btn.textContent = 'Загрузка...';
-  try {
-    const res = await fetch(`${API}/api/reviews/upload-rating`, { method: 'POST', body: fd });
-    const data = await res.json();
-    if (data.ok) await loadReviews();
-  } catch (e) { console.error('uploadRating', e); }
-  btn.textContent = '📊 Загрузить Рейтинг.xlsx';
 }
