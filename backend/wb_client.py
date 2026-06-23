@@ -87,12 +87,11 @@ async def _nm_report_week_single(date_from: str, date_to: str) -> dict:
             data   = resp.json().get("data") or {}
             prods  = data.get("products") or []
             if not logged and prods:
-                import json as _json
-                _log.info("[WB funnel] sample product FULL=%s", _json.dumps(prods[0], ensure_ascii=False)[:2000])
+                _log.info("[WB funnel] first week %s products, keys=%s", len(prods), list(prods[0].keys()))
                 logged = True
             for p in prods:
-                stat = p.get("statistic") or p.get("statistics") or {}
-                sp   = stat.get("selectedPeriod") or p.get("selectedPeriod") or {}
+                stat = p.get("statistic") or {}
+                sp   = stat.get("selected") or {}
                 wbc  = sp.get("wbClub") or {}
                 orders_rub  += float(wbc.get("orderSum",   0) or 0)
                 orders_qty  += int(wbc.get("orderCount",   0) or 0)
