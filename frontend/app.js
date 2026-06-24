@@ -1029,58 +1029,59 @@ function _ordersTableHTML() {
     });
   });
 
-  if (!skus.length) {
-    tbody += `<tr><td colspan="${1 + n*2}" class="text-center text-secondary py-4">Нет данных по этой площадке за период</td></tr>`;
+  // ── tfoot: бублики доли групп по неделям ─────────────────────────────────
+  const gd = _ordersGrouped();
+  let tfoot = '';
+  if (gd && gd.orderedGroups.length) {
+    const labels = gd.orderedGroups.map(([grp]) => grp);
+    const colors = labels.map(_groupColor);
+    // legend в первой ячейке (залипает слева)
+    const legendHTML = labels.map((l, i) =>
+      `<div style="white-space:nowrap;font-size:0.72rem;color:#cbd5e1;margin-bottom:2px">`
+      + `<span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${colors[i]};margin-right:4px"></span>${l}</div>`
+    ).join('');
+    tfoot = `<tfoot><tr>`
+      + `<td style="position:sticky;left:0;background:#0f1117;padding:10px 8px;vertical-align:middle">${legendHTML}</td>`;
+    for (let i = 0; i < n; i++) {
+      tfoot += `<td colspan="2" class="text-center" style="background:#0f1117;padding:6px 2px">`
+             + `<canvas id="ordDonutW${i}" width="108" height="108"></canvas></td>`;
+    }
+    tfoot += `</tr></tfoot>`;
   }
 
-  tbody += '</tbody>';
-  return thead + tbody;
+  return thead + tbody + tfoot;
 }
 
 function renderOrdersTable() {
   const tbl = document.getElementById('ordersTable');
   if (tbl) tbl.innerHTML = _ordersTableHTML();
-  renderOrdersDonuts();
+  _renderTfootDonuts();
 }
 
-// круговые диаграммы доли групп: по неделям + общая за период
-function renderOrdersDonuts() {
-  const card = document.getElementById('ordersDonutsCard');
-  const wrap = document.getElementById('ordersDonuts');
-  if (!card || !wrap) return;
-
-  // очищаем старые графики
+// рендерит Chart.js бублики в canvas-ы внутри tfoot (уже вставленного в DOM)
+function _renderTfootDonuts() {
   (charts.ordersDonuts || []).forEach(c => { try { c.destroy(); } catch (e) {} });
   charts.ordersDonuts = [];
 
   const g = _ordersGrouped();
-  if (!g || !g.orderedGroups.length) { card.style.display = 'none'; return; }
-  card.style.display = '';
+  if (!g || !g.orderedGroups.length) return;
   const { weeks, n, orderedGroups } = g;
 
-  // rub по группе на каждую неделю + за весь период
   const labels = orderedGroups.map(([grp]) => grp);
   const colors = labels.map(_groupColor);
   const perWeek = weeks.map((_, i) =>
     orderedGroups.map(([, sk]) => sk.reduce((acc, s) => acc + (s.rub[i] || 0), 0)));
-  const periodTotals = labels.map((_, gi) =>
-    perWeek.reduce((acc, wk) => acc + wk[gi], 0));
 
-  wrap.innerHTML = '';
-
-  function donut(canvasId, dataArr, titleHtml) {
-    const cell = document.createElement('div');
-    cell.style.cssText = 'flex:0 0 auto;width:130px;text-align:center';
-    cell.innerHTML = `<div class="small text-secondary mb-1" style="white-space:nowrap">${titleHtml}</div>`
-                   + `<canvas id="${canvasId}" width="120" height="120"></canvas>`;
-    wrap.appendChild(cell);
+  weeks.forEach((_, i) => {
+    const canvas = document.getElementById('ordDonutW' + i);
+    if (!canvas) return;
+    const dataArr = perWeek[i];
     const sum = dataArr.reduce((a, b) => a + b, 0);
-    const ctx = document.getElementById(canvasId).getContext('2d');
-    const c = new Chart(ctx, {
+    const c = new Chart(canvas.getContext('2d'), {
       type: 'doughnut',
       data: { labels, datasets: [{ data: dataArr, backgroundColor: colors, borderWidth: 0 }] },
       options: {
-        responsive: false, cutout: '58%',
+        responsive: false, cutout: '60%',
         plugins: {
           legend: { display: false },
           tooltip: { callbacks: { label: c =>
@@ -1089,20 +1090,7 @@ function renderOrdersDonuts() {
       },
     });
     charts.ordersDonuts.push(c);
-  }
-
-  // общий за период — первым, крупнее по подписи
-  donut('ordDonutTotal', periodTotals, '<strong>За период</strong>');
-  weeks.forEach((w, i) => donut('ordDonutW' + i, perWeek[i], w));
-
-  // легенда групп
-  const legend = document.createElement('div');
-  legend.style.cssText = 'flex:0 0 auto;align-self:center;padding-left:8px';
-  legend.innerHTML = labels.map((l, i) =>
-    `<div class="small" style="white-space:nowrap;color:#cbd5e1">`
-    + `<span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${colors[i]};margin-right:5px"></span>${l}</div>`
-  ).join('');
-  wrap.appendChild(legend);
+  });
 }
 
 function _fmtShort(v) {
