@@ -67,7 +67,7 @@ async def _refresh() -> None:
         _log.info("Cache refreshed: %d sales, %d orders, %d stocks", len(sales), len(orders), len(stocks))
         try:
             import sales_history
-            sales_history.persist_wb(sales)
+            sales_history.persist_wb_bg(sales)
         except Exception as exc:
             _log.warning("sales_history persist (WB) failed: %s", exc)
     except Exception as exc:

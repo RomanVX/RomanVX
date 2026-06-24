@@ -181,7 +181,7 @@ async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
     _log.info("OZON sales_detail: %d rows for %s–%s", len(rows), date_from, date_to)
     try:
         import sales_history
-        sales_history.persist_detail(rows, "Ozon")
+        sales_history.persist_detail_bg(rows, "Ozon")
     except Exception as e:
         _log.warning("sales_history persist (Ozon) failed: %s", e)
     return rows

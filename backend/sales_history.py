@@ -5,6 +5,7 @@ API маркетплейсов отдают ограниченную истор�
 по первичному ключу, поэтому повторные загрузки одного периода не дублируют
 данные, а обновляют их до самых полных значений.
 """
+import asyncio
 import logging
 from datetime import date as _date
 
@@ -12,6 +13,30 @@ import catalog as cat
 import db
 
 _log = logging.getLogger(__name__)
+
+# Фоновые задачи записи в БД — держим ссылки, чтобы их не собрал GC.
+_bg_tasks: set = set()
+
+
+def _schedule(coro):
+    """Запустить корутину в фоне (fire-and-forget), не блокируя event loop."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return  # нет активного loop — пропускаем (например, при импорте)
+    t = loop.create_task(coro)
+    _bg_tasks.add(t)
+    t.add_done_callback(_bg_tasks.discard)
+
+
+def persist_wb_bg(sales: list[dict]):
+    """Неблокирующая запись WB: синхронный I/O к Neon уходит в отдельный поток."""
+    _schedule(asyncio.to_thread(persist_wb, sales))
+
+
+def persist_detail_bg(rows: list[dict], platform: str):
+    """Неблокирующая запись Ozon/YM: I/O уходит в отдельный поток."""
+    _schedule(asyncio.to_thread(persist_detail, rows, platform))
 
 
 def _init():

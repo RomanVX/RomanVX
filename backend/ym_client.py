@@ -252,7 +252,7 @@ async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
               len(chunks), len(rows), date_from, date_to)
     try:
         import sales_history
-        sales_history.persist_detail(rows, "YM")
+        sales_history.persist_detail_bg(rows, "YM")
     except Exception as e:
         _log.warning("sales_history persist (YM) failed: %s", e)
     return rows
