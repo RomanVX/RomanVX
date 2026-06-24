@@ -1187,6 +1187,12 @@ function renderRatingDynamics(dyn, artLabel) {
     pointRadius: 3,
     data: dyn.map(d => d[key] ?? null),
   });
+
+  // Авто-зум шкалы: все рейтинги ~4.2–5.0, фиксированная 1–5 жмёт всё вверх
+  const vals = [];
+  dyn.forEach(d => ['ozon', 'wb', 'ym'].forEach(k => { if (d[k] != null) vals.push(d[k]); }));
+  const dataMin = vals.length ? Math.min(...vals) : 1;
+  const yMin = Math.max(1, Math.floor((dataMin - 0.1) * 4) / 4);  // вниз до 0.25
   charts.ratingDyn = new Chart(cv.getContext('2d'), {
     type: 'line',
     data: { labels, datasets: [
@@ -1202,7 +1208,7 @@ function renderRatingDynamics(dyn, artLabel) {
       },
       scales: {
         x: { ticks: { color: '#94a3b8' }, grid: { display: false } },
-        y: { min: 1, max: 5, ticks: { color: '#94a3b8', stepSize: 0.5 },
+        y: { min: yMin, max: 5, ticks: { color: '#94a3b8', stepSize: 0.25 },
              grid: { color: 'rgba(255,255,255,.06)' } },
       },
     },
