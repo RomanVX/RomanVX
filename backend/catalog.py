@@ -177,22 +177,31 @@ SKU_ALIASES: dict[str, str] = {
 }
 
 
+def _norm(s) -> str:
+    """Normalize an id/article: strip surrounding whitespace."""
+    return str(s).strip()
+
+
 def resolve_wb(nm_id) -> str:
     """WB nmId (int or str) → internal article."""
-    return WB_ID_TO_ART.get(str(nm_id), str(nm_id))
+    s = _norm(nm_id)
+    return WB_ID_TO_ART.get(s, SKU_ALIASES.get(s, s))
 
 
 def resolve_ozon(sku) -> str:
     """Ozon product id/sku → internal article."""
-    return OZON_ID_TO_ART.get(str(sku), str(sku))
+    s = _norm(sku)
+    return OZON_ID_TO_ART.get(s, SKU_ALIASES.get(s, s))
 
 
 def resolve_ym(offer_id) -> str:
     """YM offer_id → internal article."""
-    s = str(offer_id)
+    s = _norm(offer_id)
     return YM_ID_TO_ART.get(s, SKU_ALIASES.get(s, s))
 
 
 def lookup(article: str) -> dict[str, str]:
     """Return {name, brand, group} from CATALOG or fallback."""
-    return CATALOG.get(article, {"name": article, "brand": "Прочее", "group": ""})
+    a = _norm(article)
+    a = SKU_ALIASES.get(a, a)
+    return CATALOG.get(a, {"name": a, "brand": "Прочее", "group": ""})

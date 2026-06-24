@@ -235,10 +235,10 @@ async def fetch_wb_reviews():
                         break
                     for f in feedbacks:
                         details = f.get("productDetails") or {}
-                        raw_sku = str(details.get("supplierArticle") or f.get("nmId") or "")
+                        raw_sku = str(details.get("supplierArticle") or f.get("nmId") or "").strip()
                         # resolve via nmId first if supplierArticle missing
                         nm_id = f.get("nmId")
-                        sku = cat.resolve_wb(nm_id) if nm_id else raw_sku
+                        sku = cat.resolve_wb(nm_id) if nm_id else cat.resolve_wb(raw_sku)
                         rows.append(_enrich({
                             "id": f"wb_{f['id']}",
                             "platform": "WB",
