@@ -49,17 +49,11 @@ async def _prefetch_weekly():
     await asyncio.sleep(5)  # дать серверу подняться
     while True:
         try:
-            _log.info("Prefetching weekly_summary...")
-            await dashboard.get_weekly_summary()
-            _log.info("weekly_summary cache updated")
+            _log.info("Prefetching weekly_orders...")
+            await dashboard.get_weekly_orders()
+            _log.info("weekly_orders cache updated")
         except Exception as exc:
-            _log.warning("weekly_summary prefetch failed: %s", exc)
-        try:
-            _log.info("Prefetching monthly_summary...")
-            await dashboard.get_monthly_summary()
-            _log.info("monthly_summary cache updated")
-        except Exception as exc:
-            _log.warning("monthly_summary prefetch failed: %s", exc)
+            _log.warning("weekly_orders prefetch failed: %s", exc)
         try:
             _log.info("Refreshing reviews...")
             await reviews_client.refresh_all()

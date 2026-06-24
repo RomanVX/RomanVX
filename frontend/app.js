@@ -3,7 +3,7 @@
 const API = '';
 let charts = {};
 let sortState = {};
-const dirty = { finance: true, products: true, salesan: true, stocks: true, supplies: true, unitec: true, advert: true, reviews: true, history: true };
+const dirty = { salesan: true, stocks: true, reviews: true, history: true };
 let _advertData = [];
 let currentTab = 'finance';
 let prodAllData = [];
@@ -76,17 +76,19 @@ function initDates(daysBack = 30) {
 }
 
 function getDateParams() {
-  const from = document.getElementById('dateFrom').value;
-  const to   = document.getElementById('dateTo').value;
+  const fromEl = document.getElementById('dateFrom');
+  const toEl   = document.getElementById('dateTo');
+  const from = fromEl && fromEl.value;
+  const to   = toEl && toEl.value;
   return from && to ? `date_from=${from}&date_to=${to}` : `days=30`;
 }
 
 function getParams() {
   let p = getDateParams();
-  const brand = document.getElementById('brandFilter').value;
-  const cat   = document.getElementById('catFilter').value;
-  if (brand) p += `&brand=${encodeURIComponent(brand)}`;
-  if (cat)   p += `&category=${encodeURIComponent(cat)}`;
+  const bEl = document.getElementById('brandFilter');
+  const cEl = document.getElementById('catFilter');
+  if (bEl && bEl.value) p += `&brand=${encodeURIComponent(bEl.value)}`;
+  if (cEl && cEl.value) p += `&category=${encodeURIComponent(cEl.value)}`;
   return p;
 }
 
@@ -117,15 +119,15 @@ function skuName(r) {
 function switchTab(name, linkEl) {
   document.querySelectorAll('#mainTabs .nav-link').forEach(a => a.classList.remove('active'));
   if (linkEl) linkEl.classList.add('active');
-  ['finance', 'products', 'salesan', 'stocks', 'supplies', 'unitec', 'advert', 'reviews', 'history'].forEach(t => {
-    document.getElementById('pane-' + t).style.display = t === name ? 'block' : 'none';
+  ['salesan', 'stocks', 'reviews', 'history'].forEach(t => {
+    const el = document.getElementById('pane-' + t);
+    if (el) el.style.display = t === name ? 'block' : 'none';
   });
   currentTab = name;
   if (dirty[name]) {
     dirty[name] = false;
-    ({ finance: loadFinance, products: loadProducts, salesan: loadSalesAnalytics, stocks: loadStocks,
-       supplies: loadSupplies, unitec: loadUnitEc, advert: loadAdvert, reviews: loadReviews,
-       history: loadHistory })[name]();
+    ({ salesan: loadSalesAnalytics, stocks: loadStocks,
+       reviews: loadReviews, history: loadHistory })[name]();
   }
 }
 
@@ -1184,35 +1186,7 @@ function renderHistory(d) {
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 function initDashboard() {
-  initDates(30);
-
-  document.getElementById('daysSelect').addEventListener('change', e => {
-    initDates(parseInt(e.target.value, 10));
-    loadAll();
-  });
-
-  ['dateFrom', 'dateTo'].forEach(id => {
-    document.getElementById(id).addEventListener('change', () => {
-      document.getElementById('daysSelect').value = '';
-      loadAll();
-    });
-  });
-
-  document.getElementById('brandFilter').addEventListener('change', () => { markAllDirty(); switchTab(currentTab); });
-  document.getElementById('catFilter').addEventListener('change',   () => { markAllDirty(); switchTab(currentTab); });
-
-  document.getElementById('prodSearch').addEventListener('input', e => {
-    const q = e.target.value.trim().toLowerCase();
-    const filtered = q
-      ? prodAllData.filter(r =>
-          (r.supplierArticle || '').toLowerCase().includes(q) ||
-          (r.subject || '').toLowerCase().includes(q))
-      : prodAllData;
-    renderProdTable(filtered);
-  });
-
-  loadFilters();
-  switchTab('finance', document.querySelector('#mainTabs .nav-link'));
+  switchTab('salesan', document.querySelector('#mainTabs .nav-link'));
   setInterval(() => { markAllDirty(); switchTab(currentTab); }, 5 * 60 * 1000);
 }
 

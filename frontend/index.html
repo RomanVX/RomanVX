@@ -45,22 +45,6 @@
     </span>
   </div>
   <div class="d-flex align-items-center gap-2 flex-wrap">
-    <div class="input-group input-group-sm" style="width:110px">
-      <span class="input-group-text bg-secondary border-0 text-white">Дней</span>
-      <select id="daysSelect" class="form-select form-select-sm bg-secondary border-0 text-white">
-        <option value="7">7</option>
-        <option value="14">14</option>
-        <option value="30" selected>30</option>
-        <option value="60">60</option>
-        <option value="90">90</option>
-      </select>
-    </div>
-    <div class="input-group input-group-sm" style="width:auto">
-      <span class="input-group-text bg-secondary border-0 text-white">с</span>
-      <input type="date" id="dateFrom" class="form-control form-control-sm bg-secondary border-0 text-white" style="width:130px" />
-      <span class="input-group-text bg-secondary border-0 text-white">по</span>
-      <input type="date" id="dateTo" class="form-control form-control-sm bg-secondary border-0 text-white" style="width:130px" />
-    </div>
     <button class="btn btn-sm btn-outline-light" onclick="loadAll()">
       <i class="bi bi-arrow-clockwise"></i> Обновить
     </button>
@@ -76,118 +60,12 @@
 <div id="mainContent" style="display:none">
 <div class="container-fluid py-3">
 
-  <!-- Filter bar -->
-  <div class="d-flex gap-2 mb-3 flex-wrap" id="filterBar">
-    <select id="brandFilter" class="form-select form-select-sm bg-secondary border-0 text-white" style="width:180px">
-      <option value="">Все бренды</option>
-    </select>
-    <select id="catFilter" class="form-select form-select-sm bg-secondary border-0 text-white" style="width:210px">
-      <option value="">Все категории</option>
-    </select>
-  </div>
-
-  <!-- Tabs -->
-  <!-- Cost upload bar -->
-  <div class="d-flex align-items-center gap-2 mb-3" id="costBar">
-    <label class="btn btn-sm btn-outline-secondary mb-0" style="cursor:pointer">
-      <i class="bi bi-upload"></i> Загрузить себестоимость
-      <input type="file" id="costFile" accept=".xlsx,.csv" style="display:none" onchange="uploadCosts(this)" />
-    </label>
-    <span id="costStatus" class="text-secondary" style="font-size:12px"></span>
-  </div>
-
   <ul class="nav nav-tabs mb-3" id="mainTabs">
-    <li class="nav-item"><a class="nav-link active" href="#" onclick="switchTab('finance',this);return false">Дашборд</a></li>
-    <li class="nav-item"><a class="nav-link" href="#" onclick="switchTab('products',this);return false">Товары</a></li>
-    <li class="nav-item"><a class="nav-link" href="#" onclick="switchTab('salesan',this);return false">Заказы</a></li>
+    <li class="nav-item"><a class="nav-link active" href="#" onclick="switchTab('salesan',this);return false">Заказы</a></li>
     <li class="nav-item"><a class="nav-link" href="#" onclick="switchTab('stocks',this);return false">Остатки</a></li>
-    <li class="nav-item"><a class="nav-link" href="#" onclick="switchTab('supplies',this);return false">Поставки</a></li>
-    <li class="nav-item"><a class="nav-link" href="#" onclick="switchTab('unitec',this);return false">Юнит-эк.</a></li>
-    <li class="nav-item"><a class="nav-link" href="#" onclick="switchTab('advert',this);return false">Продвижение</a></li>
     <li class="nav-item"><a class="nav-link" href="#" onclick="switchTab('reviews',this);return false">Отзывы</a></li>
     <li class="nav-item"><a class="nav-link" href="#" onclick="switchTab('history',this);return false">История</a></li>
   </ul>
-
-  <!-- ── Дашборд ── -->
-  <div id="pane-finance">
-
-    <!-- 16-card P&L grid -->
-    <div class="row g-2 mb-3" id="cardsGrid">
-      <div class="col-12 text-center text-secondary py-4"><span class="spinner-border"></span></div>
-    </div>
-
-    <!-- Structure chart + Top-5 SKU -->
-    <div class="row g-3 mb-3">
-      <div class="col-12 col-xl-7">
-        <div class="card border-0 bg-card">
-          <div class="card-header bg-transparent border-0 fw-semibold">Структура выручки</div>
-          <div class="card-body">
-            <canvas id="structureChart" height="200"></canvas>
-          </div>
-        </div>
-      </div>
-      <div class="col-12 col-xl-5">
-        <div class="card border-0 bg-card h-100">
-          <div class="card-header bg-transparent border-0 fw-semibold">Топ-5 SKU</div>
-          <div class="card-body">
-            <div id="top5List">
-              <div class="text-secondary text-center py-3"><span class="spinner-border spinner-border-sm"></span></div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Sales dynamics -->
-    <div class="card border-0 bg-card">
-      <div class="card-header bg-transparent border-0 fw-semibold">Динамика продаж</div>
-      <div class="card-body">
-        <canvas id="salesChart" height="100"></canvas>
-      </div>
-    </div>
-
-  </div><!-- /pane-finance -->
-
-  <!-- ── Товары ── -->
-  <div id="pane-products" style="display:none">
-    <div class="card border-0 bg-card">
-      <div class="card-header bg-transparent border-0 d-flex justify-content-between align-items-center flex-wrap gap-2">
-        <span class="fw-semibold">Таблица товаров</span>
-        <input id="prodSearch" type="search" class="form-control form-control-sm bg-secondary border-0 text-white"
-               placeholder="Поиск по артикулу или названию..." style="width:260px" />
-      </div>
-      <div class="card-body p-0">
-        <div class="table-responsive">
-          <table class="table table-hover table-sm align-middle mb-0" id="prodTable">
-            <thead class="sticky-top">
-              <tr>
-                <th data-col="supplierArticle">Артикул <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="subject">Товар <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="realization">Реализация ₽ <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="sales_after_spp">После СПП ₽ <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="for_pay">К перечисл. ₽ <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="profit">Прибыль ₽ <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="margin">Маржа% <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="roi">ROI% <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="drr">ДРР% <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="buyout">Выкуп% <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="orders">Заказы <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="sold">Продано <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="returns">Возвраты <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="abc_rev">ABC выр. <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="abc_profit">ABC приб. <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-              </tr>
-            </thead>
-            <tbody id="prodBody">
-              <tr><td colspan="15" class="text-center text-secondary py-4">
-                <span class="spinner-border spinner-border-sm"></span>
-              </td></tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  </div><!-- /pane-products -->
 
   <!-- ── Заказы ── -->
   <div id="pane-salesan" style="display:none">
@@ -252,178 +130,8 @@
     </div>
   </div>
 
-  <!-- ── Поставки ── -->
-  <div id="pane-supplies" style="display:none">
-    <div class="card border-0 bg-card">
-      <div class="card-header bg-transparent border-0 fw-semibold">Прогноз поставок</div>
-      <div class="card-body p-0">
-        <div class="table-responsive">
-          <table class="table table-hover table-sm align-middle mb-0" id="supTable">
-            <thead class="sticky-top">
-              <tr>
-                <th data-col="supplierArticle">Артикул <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="subject">Наименование <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="stock_qty">Остаток <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="avg_daily_sales">Продаж/день <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="coverage_days">Покрытие, дней <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="need_30d">Нужно 30д <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="need_60d">Нужно 60д <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="need_90d">Нужно 90д <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="priority">Приоритет <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-              </tr>
-            </thead>
-            <tbody id="supBody">
-              <tr><td colspan="9" class="text-center text-secondary py-4">
-                <span class="spinner-border spinner-border-sm"></span>
-              </td></tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  </div><!-- /pane-supplies -->
 
-  <!-- ── Юнит-экономика ── -->
-  <div id="pane-unitec" style="display:none">
 
-    <!-- Unit economics table -->
-    <div class="card border-0 bg-card mb-3">
-      <div class="card-header bg-transparent border-0 d-flex justify-content-between align-items-center flex-wrap gap-2">
-        <span class="fw-semibold">
-          Юнит-экономика
-          <span id="unitecCostBadge" class="badge bg-secondary ms-2" style="font-size:10px;font-weight:400"></span>
-          <span id="unitecSourceBadge" class="badge bg-info ms-1" style="font-size:10px;font-weight:400;display:none"></span>
-        </span>
-      </div>
-      <div class="card-body p-0">
-        <div class="table-responsive">
-          <table class="table table-hover table-sm align-middle mb-0" id="unitecTable">
-            <thead class="sticky-top">
-              <tr>
-                <th data-col="supplierArticle">Артикул <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="name">Название <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="sale_qty">Выкупы шт <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="buy_rub">Выкупы ₽ <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="cost_per_unit">Себест.ед ₽ <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="cost_total">Себест. ₽ <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="logistics">Логистика ₽ <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="commission">Комиссия ₽ <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="acquiring">Эквайринг ₽ <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="storage">Хранение ₽ <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="penalty">Штрафы ₽ <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="deduction">Удержания ₽ <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="tax">Налог УСН ₽ <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="profit">Прибыль ₽ <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="margin">Маржа % <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="roi">ROI % <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-              </tr>
-            </thead>
-            <tbody id="unitecBody">
-              <tr><td colspan="16" class="text-center text-secondary py-4">
-                <span class="spinner-border spinner-border-sm"></span>
-              </td></tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-
-    <!-- Monthly pivot -->
-    <div class="card border-0 bg-card">
-      <div class="card-header bg-transparent border-0 fw-semibold">Свод по месяцам</div>
-      <div class="card-body p-0">
-        <div class="table-responsive">
-          <table class="table table-hover table-sm align-middle mb-0" id="pivotTable">
-            <thead class="sticky-top">
-              <tr>
-                <th>Месяц</th>
-                <th data-col="sale_qty">Выкупы шт <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="return_qty">Возвраты шт <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="buy_rub">Выкупы ₽ <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="logistics">Логистика ₽ <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="commission">Комиссия ₽ <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="acquiring">Эквайринг ₽ <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="storage">Хранение ₽ <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="penalty">Штрафы ₽ <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="deduction">Удержания ₽ <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="for_pay">К перечисл. ₽ <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="tax">Налог УСН ₽ <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="profit">Прибыль ₽ <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="margin">Маржа % <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-              </tr>
-            </thead>
-            <tbody id="pivotBody">
-              <tr><td colspan="14" class="text-center text-secondary py-3">
-                <span class="spinner-border spinner-border-sm"></span>
-              </td></tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-
-  </div><!-- /pane-unitec -->
-
-  <!-- ── Продвижение ── -->
-  <div id="pane-advert" style="display:none">
-
-    <!-- Summary cards -->
-    <div class="row g-2 mb-3" id="advertCards">
-      <div class="col-12 text-center text-secondary py-4"><span class="spinner-border"></span></div>
-    </div>
-
-    <!-- Campaigns table -->
-    <div class="card border-0 bg-card">
-      <div class="card-header bg-transparent border-0 d-flex justify-content-between align-items-center flex-wrap gap-2">
-        <span class="fw-semibold">Рекламные кампании</span>
-        <div class="d-flex gap-2 align-items-center">
-          <select id="advertStatusFilter" class="form-select form-select-sm bg-secondary border-0 text-white" style="width:160px" onchange="filterAdvertTable()">
-            <option value="">Все статусы</option>
-            <option value="Активна">Активна</option>
-            <option value="Пауза">Пауза</option>
-            <option value="Готова">Готова</option>
-            <option value="Завершена">Завершена</option>
-          </select>
-          <select id="advertTypeFilter" class="form-select form-select-sm bg-secondary border-0 text-white" style="width:180px" onchange="filterAdvertTable()">
-            <option value="">Все типы</option>
-            <option value="Автокампания">Автокампания</option>
-            <option value="Поиск">Поиск</option>
-            <option value="Каталог">Каталог</option>
-          </select>
-          <input id="advertSearch" type="search" class="form-control form-control-sm bg-secondary border-0 text-white"
-                 placeholder="Поиск по названию..." style="width:220px" oninput="filterAdvertTable()" />
-        </div>
-      </div>
-      <div class="card-body p-0">
-        <div class="table-responsive">
-          <table class="table table-hover table-sm align-middle mb-0" id="advertTable">
-            <thead class="sticky-top">
-              <tr>
-                <th data-col="name">Название <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="type">Тип <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="status">Статус <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="views">Показы <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="clicks">Клики <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="ctr">CTR% <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="cpc">CPC ₽ <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="spend">Расход ₽ <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="orders">Заказы <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="revenue">Выручка ₽ <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="cr">CR% <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="cpo">CPO ₽ <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-                <th data-col="drr">ДРР% <i class="bi bi-arrow-down-up text-secondary small"></i></th>
-              </tr>
-            </thead>
-            <tbody id="advertBody">
-              <tr><td colspan="13" class="text-center text-secondary py-4">
-                <span class="spinner-border spinner-border-sm"></span>
-              </td></tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  </div><!-- /pane-advert -->
 
   <!-- ── Отзывы ── -->
   <div id="pane-reviews" style="display:none">
@@ -510,6 +218,6 @@
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
-<script src="app.js?v=34"></script>
+<script src="app.js?v=35"></script>
 </body>
 </html>
