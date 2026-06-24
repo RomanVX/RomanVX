@@ -931,33 +931,28 @@ function _qtyCell(v, cls) {
   return `<td class="text-end ${cls}">${v ? fmt(v) : '<span class="text-muted">—</span>'}</td>`;
 }
 
-function _ordersTableHTML() {
+// цвета групп для бубликов (совпадают с GROUP_ORDER)
+const _GROUP_COLORS = {
+  'Фисты':            '#ef4444',
+  'Aloe':             '#22c55e',
+  'Спреи для минета': '#f59e0b',
+  'Satisfucktion':    '#ec4899',
+  'Джага':            '#8b5cf6',
+  'Прочее':           '#64748b',
+};
+function _groupColor(g) { return _GROUP_COLORS[g] || '#64748b'; }
+
+// разбивка выбранной площадки по группам (как в остатках)
+function _ordersGrouped() {
   const d = _ordersData;
-  if (!d) return '';
+  if (!d) return null;
   const mp = _ordersMp;
   const block = d[mp];
-  if (!block) return '';
-  const col = _MP_COLORS[mp];
+  if (!block) return null;
   const weeks = d.weeks;
   const n = weeks.length;
 
-  // thead: Артикул/Название | Итого ₽ | week1 ₽/шт | week2 ₽/шт | ...
-  let thead = '<thead class="sticky-top"><tr>'
-    + '<th style="min-width:200px">Артикул / Название</th>'
-    + '<th class="text-end text-secondary" rowspan="2" style="min-width:80px;vertical-align:bottom">Итого ₽</th>';
-  weeks.forEach(w => {
-    thead += `<th class="text-end" colspan="2" style="white-space:nowrap">${w}</th>`;
-  });
-  thead += '</tr><tr><th></th>';
-  weeks.forEach(() => {
-    thead += '<th class="text-end text-secondary" style="font-size:0.72rem;min-width:78px">₽</th>'
-           + '<th class="text-end text-secondary" style="font-size:0.72rem;min-width:38px">шт</th>';
-  });
-  thead += '</tr></thead>';
-
-  // Группировка как в остатках: articleGroup + GROUP_ORDER (с подгруппами Фисты/Спреи)
-  const skus = (block.skus || []).filter(s =>
-    s.rub.some(v => v) || s.qty.some(v => v));
+  const skus = (block.skus || []).filter(s => s.rub.some(v => v) || s.qty.some(v => v));
   const groupMap = {};
   skus.forEach(s => {
     const g = articleGroup(s);
@@ -967,16 +962,35 @@ function _ordersTableHTML() {
     rows.sort((a, b) => b.rub.reduce((x,y)=>x+y,0) - a.rub.reduce((x,y)=>x+y,0)));
   const orderedGroups = GROUP_ORDER.filter(g => groupMap[g]).map(g => [g, groupMap[g]]);
 
+  return { mp, block, weeks, n, col: _MP_COLORS[mp], skus, orderedGroups };
+}
+
+function _ordersTableHTML() {
+  const g = _ordersGrouped();
+  if (!g) return '';
+  const { mp, block, weeks, n, col, skus, orderedGroups } = g;
+
+  // thead: Артикул/Название | week1 ₽/шт | week2 ₽/шт | ...
+  let thead = '<thead class="sticky-top"><tr>'
+    + '<th rowspan="2" style="min-width:200px;vertical-align:bottom">Артикул / Название</th>';
+  weeks.forEach(w => {
+    thead += `<th class="text-end" colspan="2" style="white-space:nowrap">${w}</th>`;
+  });
+  thead += '</tr><tr>';
+  weeks.forEach(() => {
+    thead += '<th class="text-end text-secondary" style="font-size:0.72rem;min-width:78px">₽</th>'
+           + '<th class="text-end text-secondary" style="font-size:0.72rem;min-width:38px">шт</th>';
+  });
+  thead += '</tr></thead>';
+
   const totalRub = block.total_rub;
   const totalQty = block.total_qty;
-  const grandRub = totalRub.reduce((a,b)=>a+b,0);
 
   let tbody = '<tbody>';
 
   // итоговая строка площадки
-  tbody += `<tr style="background:#1a1a2e">`;
+  tbody += `<tr data-row="mp" style="background:#1a1a2e">`;
   tbody += `<td class="fw-bold" style="color:${col}">${_MP_LABEL[mp]}</td>`;
-  tbody += `<td class="fw-bold text-end" style="color:${col}">${fmtRub(grandRub)}</td>`;
   totalRub.forEach((r, i) => {
     tbody += _rubCell(totalRub, i, 'fw-semibold');
     tbody += _qtyCell(totalQty[i], 'fw-semibold');
@@ -991,11 +1005,10 @@ function _ordersTableHTML() {
       s.rub.forEach((v, i) => { bRub[i] += v; });
       s.qty.forEach((v, i) => { bQty[i] += v; });
     });
-    const bGrandRub = bRub.reduce((a,b)=>a+b,0);
 
-    tbody += `<tr class="table-secondary" style="background:#141520;border-top:1px solid #2d3148">`;
-    tbody += `<td class="fw-semibold ps-2"><strong>${grp}</strong> <span class="text-secondary small">(${grpSkus.length} арт.)</span></td>`;
-    tbody += `<td class="fw-semibold text-end">${fmtRub(bGrandRub)}</td>`;
+    tbody += `<tr data-row="grp" class="table-secondary" style="background:#141520;border-top:1px solid #2d3148">`;
+    tbody += `<td class="fw-semibold ps-2"><span class="me-1" style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${_groupColor(grp)}"></span>`
+           + `<strong>${grp}</strong> <span class="text-secondary small">(${grpSkus.length} арт.)</span></td>`;
     bRub.forEach((r, i) => {
       tbody += _rubCell(bRub, i, 'small fw-semibold');
       tbody += _qtyCell(bQty[i], 'small fw-semibold');
@@ -1004,12 +1017,10 @@ function _ordersTableHTML() {
 
     // строки SKU
     grpSkus.forEach(s => {
-      const sRub = s.rub.reduce((a,b)=>a+b,0);
-      tbody += `<tr style="background:#111122">`;
+      tbody += `<tr data-row="sku" style="background:#111122">`;
       tbody += `<td class="ps-4 small" style="max-width:260px;overflow:hidden;text-overflow:ellipsis">`
              + `<span class="badge me-1" style="background:${col}22;color:${col};font-size:10px">${s.sku}</span>`
              + `<span class="text-muted">${s.name || s.sku}</span></td>`;
-      tbody += `<td class="text-end small">${sRub ? fmtRub(sRub) : '<span class="text-muted">—</span>'}</td>`;
       s.rub.forEach((r, i) => {
         tbody += _rubCell(s.rub, i, 'small');
         tbody += _qtyCell(s.qty[i], 'small');
@@ -1019,7 +1030,7 @@ function _ordersTableHTML() {
   });
 
   if (!skus.length) {
-    tbody += `<tr><td colspan="${2 + n*2}" class="text-center text-secondary py-4">Нет данных по этой площадке за период</td></tr>`;
+    tbody += `<tr><td colspan="${1 + n*2}" class="text-center text-secondary py-4">Нет данных по этой площадке за период</td></tr>`;
   }
 
   tbody += '</tbody>';
@@ -1029,6 +1040,69 @@ function _ordersTableHTML() {
 function renderOrdersTable() {
   const tbl = document.getElementById('ordersTable');
   if (tbl) tbl.innerHTML = _ordersTableHTML();
+  renderOrdersDonuts();
+}
+
+// круговые диаграммы доли групп: по неделям + общая за период
+function renderOrdersDonuts() {
+  const card = document.getElementById('ordersDonutsCard');
+  const wrap = document.getElementById('ordersDonuts');
+  if (!card || !wrap) return;
+
+  // очищаем старые графики
+  (charts.ordersDonuts || []).forEach(c => { try { c.destroy(); } catch (e) {} });
+  charts.ordersDonuts = [];
+
+  const g = _ordersGrouped();
+  if (!g || !g.orderedGroups.length) { card.style.display = 'none'; return; }
+  card.style.display = '';
+  const { weeks, n, orderedGroups } = g;
+
+  // rub по группе на каждую неделю + за весь период
+  const labels = orderedGroups.map(([grp]) => grp);
+  const colors = labels.map(_groupColor);
+  const perWeek = weeks.map((_, i) =>
+    orderedGroups.map(([, sk]) => sk.reduce((acc, s) => acc + (s.rub[i] || 0), 0)));
+  const periodTotals = labels.map((_, gi) =>
+    perWeek.reduce((acc, wk) => acc + wk[gi], 0));
+
+  wrap.innerHTML = '';
+
+  function donut(canvasId, dataArr, titleHtml) {
+    const cell = document.createElement('div');
+    cell.style.cssText = 'flex:0 0 auto;width:130px;text-align:center';
+    cell.innerHTML = `<div class="small text-secondary mb-1" style="white-space:nowrap">${titleHtml}</div>`
+                   + `<canvas id="${canvasId}" width="120" height="120"></canvas>`;
+    wrap.appendChild(cell);
+    const sum = dataArr.reduce((a, b) => a + b, 0);
+    const ctx = document.getElementById(canvasId).getContext('2d');
+    const c = new Chart(ctx, {
+      type: 'doughnut',
+      data: { labels, datasets: [{ data: dataArr, backgroundColor: colors, borderWidth: 0 }] },
+      options: {
+        responsive: false, cutout: '58%',
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: c =>
+            ` ${c.label}: ${fmtRub(c.raw)} (${sum ? Math.round(c.raw / sum * 100) : 0}%)` } },
+        },
+      },
+    });
+    charts.ordersDonuts.push(c);
+  }
+
+  // общий за период — первым, крупнее по подписи
+  donut('ordDonutTotal', periodTotals, '<strong>За период</strong>');
+  weeks.forEach((w, i) => donut('ordDonutW' + i, perWeek[i], w));
+
+  // легенда групп
+  const legend = document.createElement('div');
+  legend.style.cssText = 'flex:0 0 auto;align-self:center;padding-left:8px';
+  legend.innerHTML = labels.map((l, i) =>
+    `<div class="small" style="white-space:nowrap;color:#cbd5e1">`
+    + `<span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${colors[i]};margin-right:5px"></span>${l}</div>`
+  ).join('');
+  wrap.appendChild(legend);
 }
 
 function _fmtShort(v) {

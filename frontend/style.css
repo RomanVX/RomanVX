@@ -281,3 +281,18 @@ body {
   border-radius: 50%;
   flex-shrink: 0;
 }
+
+/* ══ Заказы: залипающий первый столбец (артикулы) ══ */
+#ordersTableWrap { max-height: 70vh; }
+#ordersTable th:first-child,
+#ordersTable td:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: #12141e;
+}
+#ordersTable thead th:first-child { z-index: 3; }
+/* фон первого столбца наследует фон строки для итогов/групп */
+#ordersTable tr[data-row="mp"]    td:first-child { background: #1a1a2e; }
+#ordersTable tr[data-row="grp"]   td:first-child { background: #141520; }
+#ordersTable tr[data-row="sku"]   td:first-child { background: #111122; }
