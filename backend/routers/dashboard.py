@@ -788,12 +788,10 @@ async def get_weekly_orders():
             "YM":   {"total_rub": ym_rub, "total_qty": ym_qty,
                      "skus": clean_sku(ym_by_sku, ym_rub, ym_qty)},
         }
-        # кешируем только если данные всех площадок подтянулись (иначе пустые
-        # OZON/YM из-за таймаута залипли бы в кеше на 30 минут)
-        wb_ok = any(wb_total_rub) or any(wb_total_qty)
-        if wb_ok and oz_ok and ym_ok:
-            _wo_cache = result
-            _wo_cache_ts = _wtime.monotonic()
+        # Кешируем всегда. Если Ozon/YM упали — TTL короткий (5 мин),
+        # чтобы при следующем заходе попробовать снова; если всё ок — 30 мин.
+        _wo_cache = result
+        _wo_cache_ts = _wtime.monotonic() if (oz_ok and ym_ok) else (_wtime.monotonic() - _WO_TTL + 300)
         return result
 
 
