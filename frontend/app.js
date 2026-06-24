@@ -8,6 +8,20 @@ let _advertData = [];
 let currentTab = 'finance';
 let prodAllData = [];
 
+// ── Группировка по брендам + спец-разбивки (фисты / спреи для минета) ──────────
+const BRAND_ORDER = ['Джага', 'Satisfucktion', 'Aloe'];
+const SUBGROUPS = [
+  { name: 'Фисты',             skus: ['BMN-0013', 'BMN-0028', 'BMN-0035', 'BMN-0036', 'ST-07'] },
+  { name: 'Спреи для минета',  skus: ['BMN-0115', 'BMN-0116', 'BMN-0110'] },
+];
+const GROUP_ORDER = [...BRAND_ORDER, ...SUBGROUPS.map(s => s.name), 'Прочее'];
+
+function articleGroup(r) {
+  const sku = r.supplierArticle || r.sku || '';
+  for (const sg of SUBGROUPS) if (sg.skus.includes(sku)) return sg.name;
+  return BRAND_ORDER.includes(r.brand) ? r.brand : 'Прочее';
+}
+
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
 const CREDS = { user: 'admin', pass: 'admin' };
@@ -370,7 +384,6 @@ function renderStocksTable() {
   const STATUS_ORD  = { red: 0, yellow: 1, green: 2 };
   const STATUS_ICON = { red: '🔴', yellow: '🟡', green: '🟢' };
   const STATUS_CLS  = { red: 'text-danger fw-bold', yellow: 'text-warning', green: 'text-success' };
-  const BRAND_ORDER = ['Джага', 'Satisfucktion', 'Aloe'];
 
   const col = _stocksSortCol;
   const asc = _stocksSortAsc;
@@ -389,7 +402,7 @@ function renderStocksTable() {
   // Within each group: sort by wb_per_day desc, fallback oz_per_day desc
   const groupMap = {};
   sorted.forEach(r => {
-    const g = BRAND_ORDER.includes(r.brand) ? r.brand : 'Прочее';
+    const g = articleGroup(r);
     (groupMap[g] = groupMap[g] || []).push(r);
   });
   Object.values(groupMap).forEach(rows => {
@@ -399,7 +412,7 @@ function renderStocksTable() {
       return bv - av;
     });
   });
-  const orderedGroups = [...BRAND_ORDER, 'Прочее']
+  const orderedGroups = GROUP_ORDER
     .filter(g => groupMap[g])
     .map(g => [g, groupMap[g]]);
 
@@ -1096,15 +1109,14 @@ function renderRatingsTable(ratings) {
   }
   html += '</tbody></table></div>';
 
-  // Группировка по брендам, как в Остатках
-  const BRAND_ORDER = ['Джага', 'Satisfucktion', 'Aloe'];
+  // Группировка по брендам + спец-разбивки, как в Остатках
   const groupMap = {};
   articles.forEach(r => {
-    const g = BRAND_ORDER.includes(r.brand) ? r.brand : 'Прочее';
+    const g = articleGroup(r);
     (groupMap[g] = groupMap[g] || []).push(r);
   });
   Object.values(groupMap).forEach(rows => rows.sort((a, b) => a.sku.localeCompare(b.sku)));
-  const orderedGroups = [...BRAND_ORDER, 'Прочее'].filter(g => groupMap[g]).map(g => [g, groupMap[g]]);
+  const orderedGroups = GROUP_ORDER.filter(g => groupMap[g]).map(g => [g, groupMap[g]]);
 
   html += '<h6 class="text-secondary small mb-1">По артикулам</h6>';
   html += `<div class="table-responsive"><table class="table table-dark table-sm table-hover mb-0">
@@ -1131,14 +1143,13 @@ function populateDynFilter(ratings) {
   const sel = document.getElementById('dynArtFilter');
   if (!sel) return;
   sel.innerHTML = '<option value="__all__">Все (по платформам)</option>';
-  const BRAND_ORDER = ['Джага', 'Satisfucktion', 'Aloe'];
   const articles = (ratings.articles || []).slice().sort((a, b) => a.sku.localeCompare(b.sku));
   const grouped = {};
   articles.forEach(r => {
-    const g = BRAND_ORDER.includes(r.brand) ? r.brand : 'Прочее';
+    const g = articleGroup(r);
     (grouped[g] = grouped[g] || []).push(r);
   });
-  [...BRAND_ORDER, 'Прочее'].filter(g => grouped[g]).forEach(g => {
+  GROUP_ORDER.filter(g => grouped[g]).forEach(g => {
     const og = document.createElement('optgroup');
     og.label = g;
     grouped[g].forEach(r => {
