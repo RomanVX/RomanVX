@@ -250,6 +250,11 @@ async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
     rows = [r for chunk in results for r in chunk]
     _log.info("[YM] sales_detail: chunks=%d rows=%d for %s–%s",
               len(chunks), len(rows), date_from, date_to)
+    try:
+        import sales_history
+        sales_history.persist_detail(rows, "YM")
+    except Exception as e:
+        _log.warning("sales_history persist (YM) failed: %s", e)
     return rows
 
 

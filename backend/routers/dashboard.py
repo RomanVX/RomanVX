@@ -8,10 +8,20 @@ import cache
 import catalog as _catalog
 import cost_store
 import ozon_client
+import sales_history
 import wb_client
 import ym_client
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
+
+
+@router.get("/sales_history")
+async def sales_history_endpoint(
+    date_from: Optional[str] = Query(None, description="YYYY-MM-DD"),
+    date_to: Optional[str] = Query(None, description="YYYY-MM-DD"),
+):
+    """Накопленная история продаж (день × площадка) из БД — за пределами окон API."""
+    return sales_history.get_summary(date_from=date_from, date_to=date_to)
 
 _DATE_FROM = Query(description="YYYY-MM-DD. Overrides ?days.")
 _DATE_TO   = Query(description="YYYY-MM-DD. Defaults to today.")

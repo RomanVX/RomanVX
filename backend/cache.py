@@ -65,6 +65,11 @@ async def _refresh() -> None:
         _store.stocks     = stocks
         _store.fetched_at = time.monotonic()
         _log.info("Cache refreshed: %d sales, %d orders, %d stocks", len(sales), len(orders), len(stocks))
+        try:
+            import sales_history
+            sales_history.persist_wb(sales)
+        except Exception as exc:
+            _log.warning("sales_history persist (WB) failed: %s", exc)
     except Exception as exc:
         stale = bool(_store.sales or _store.orders)
         _log.warning("WB API refresh failed (%s) — %s", exc,
