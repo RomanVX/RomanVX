@@ -248,8 +248,10 @@ async def post_answer(review_id: str, text: str) -> tuple[bool, str]:
 def get_rating_table() -> list[dict]:
     """Ratings per article and per group."""
     # per article
+    # MAX(name/brand/grp): эти поля одинаковы в рамках sku, но Postgres требует
+    # их в GROUP BY либо под агрегатом (SQLite такой строгости не имеет).
     art_rows = db.fetchall(
-        "SELECT platform, sku, name, brand, grp, ROUND(AVG(rating),2), COUNT(*) "
+        "SELECT platform, sku, MAX(name), MAX(brand), MAX(grp), ROUND(AVG(rating),2), COUNT(*) "
         "FROM reviews WHERE rating > 0 GROUP BY platform, sku ORDER BY sku"
     )
     # per group
