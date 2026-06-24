@@ -1028,9 +1028,9 @@ function _ordersTableHTML() {
       s.qty.forEach((v, i) => { bQty[i] += v; });
     });
 
-    // светлый фон группы → тёмный текст для читаемости
-    const dark = 'color:#15172b;';
-    tbody += `<tr data-row="grp" class="table-secondary" style="border-top:1px solid #2d3148">`;
+    // белый фон + чёрный текст для строк-категорий
+    const dark = 'color:#000000;';
+    tbody += `<tr data-row="grp" style="background:#ffffff;border-top:2px solid #2d3148">`;
     tbody += `<td class="fw-semibold ps-2" style="${dark}"><span class="me-1" style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${_groupColor(grp)}"></span>`
            + `<strong>${grp}</strong> <span class="small" style="color:#475569">(${grpSkus.length} арт.)</span></td>`;
     vis.forEach(i => {
@@ -1069,12 +1069,13 @@ function _ordersTableHTML() {
       // доли групп этой недели
       const sums = orderedGroups.map(([, sk]) => sk.reduce((a, s) => a + (s.rub[i] || 0), 0));
       const tot = sums.reduce((a, b) => a + b, 0);
-      const pctHTML = labels.map((l, gi) => {
-        const p = tot ? Math.round(sums[gi] / tot * 100) : 0;
-        if (!p) return '';
-        return `<div style="white-space:nowrap;font-size:0.68rem;color:#cbd5e1;line-height:1.35">`
-             + `<span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${colors[gi]};margin-right:4px"></span>${p}%</div>`;
-      }).join('');
+      const pctItems = labels.map((l, gi) => ({ l, gi, p: tot ? Math.round(sums[gi] / tot * 100) : 0 }))
+        .filter(x => x.p > 0)
+        .sort((a, b) => b.p - a.p);
+      const pctHTML = pctItems.map(({ gi, p }) =>
+        `<div style="white-space:nowrap;font-size:0.68rem;color:#cbd5e1;line-height:1.35">`
+        + `<span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${colors[gi]};margin-right:4px"></span>${p}%</div>`
+      ).join('');
       tfoot += `<td colspan="2" style="background:#0f1117;padding:6px 4px;${_WEEK_SEP}">`
              + `<div style="display:flex;align-items:center;justify-content:center;gap:6px">`
              + `<canvas id="ordDonutW${i}" width="96" height="96"></canvas>`
