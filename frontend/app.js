@@ -1331,16 +1331,25 @@ function replyBlock(r) {
       <button class="btn btn-sm btn-outline-info py-0 ms-2" onclick="genDraft('${r.id}')">✨ Сгенерировать заново</button>
     </div>`;
   }
-  // pending
+  // pending — редактируемый черновик
+  const ta = `draft_${cssId(r.id)}`;
   return `<div class="mt-2 ps-2 border-start border-info">
-    <div class="text-info small mb-1">🤖 Черновик ответа (на проверке)</div>
-    <div class="small mb-2">${esc(d.draft)}</div>
+    <div class="text-info small mb-1">🤖 Черновик ответа (можно отредактировать)</div>
+    <textarea id="${ta}" class="form-control form-control-sm bg-dark text-white border-secondary mb-2"
+              rows="3" oninput="autoGrow(this)">${esc(d.draft)}</textarea>
     <div class="d-flex gap-2">
-      <button class="btn btn-sm btn-success py-0" onclick="approveDraft('${r.id}')">✓ Одобрить</button>
+      <button class="btn btn-sm btn-success py-0" onclick="approveDraft('${r.id}')">✓ Одобрить и опубликовать</button>
       <button class="btn btn-sm btn-outline-danger py-0" onclick="declineDraft('${r.id}')">✕ Отклонить</button>
       <button class="btn btn-sm btn-outline-secondary py-0" onclick="genDraft('${r.id}')">↻ Перегенерировать</button>
     </div>
   </div>`;
+}
+
+function cssId(id) { return id.replace(/[^a-zA-Z0-9_-]/g, '_'); }
+
+function autoGrow(el) {
+  el.style.height = 'auto';
+  el.style.height = el.scrollHeight + 'px';
 }
 
 function esc(s) {
@@ -1360,10 +1369,18 @@ async function genDraft(id) {
 }
 
 async function approveDraft(id) {
+  const ta = document.getElementById('draft_' + cssId(id));
+  const text = ta ? ta.value.trim() : (_drafts[id] && _drafts[id].draft) || '';
+  if (!text) { alert('Текст ответа пустой'); return; }
   try {
-    const res = await fetch(`${API}/api/reviews/approve?id=${encodeURIComponent(id)}`, { method: 'POST' });
+    const res = await fetch(`${API}/api/reviews/approve?id=${encodeURIComponent(id)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
     const d = await res.json();
     if (d.error) { alert('Не опубликовано: ' + d.error); return; }
+    _drafts[id].draft = text;
     _drafts[id].status = 'approved';
   } catch (e) { alert('Ошибка: ' + e.message); }
   renderReviewsFeed();

@@ -1,7 +1,7 @@
 """Reviews endpoints — auto-fetch from WB / Ozon / YM APIs."""
 import logging
 
-from fastapi import APIRouter, BackgroundTasks, Query
+from fastapi import APIRouter, BackgroundTasks, Body, Query
 
 import reviews_client as rc
 import review_ai
@@ -73,18 +73,25 @@ async def make_drafts(platform: str = Query("WB"), limit: int = Query(20)):
 
 
 @router.post("/approve")
-async def approve_draft(id: str = Query(...), publish: bool = Query(True)):
-    """Approve a draft. If publish=true and it's a WB review, post it to WB."""
+async def approve_draft(
+    id: str = Query(...),
+    publish: bool = Query(True),
+    body: dict = Body(default=None),
+):
+    """Approve a draft (optionally edited). If publish and WB review — post to WB."""
     d = rc.get_draft(id)
     if not d:
         return {"error": "Черновик не найден"}
+    text = ((body or {}).get("text") or d["draft"] or "").strip()
+    if not text:
+        return {"error": "Текст ответа пустой"}
     published, msg = False, ""
     if publish and id.startswith("wb_"):
         feedback_id = id[3:]
-        published, msg = await rc.wb_post_answer(feedback_id, d["draft"])
+        published, msg = await rc.wb_post_answer(feedback_id, text)
         if not published:
             return {"id": id, "status": "pending", "published": False, "error": msg}
-    rc.set_draft_status(id, "approved")
+    rc.save_draft(id, text, status="approved")
     return {"id": id, "status": "approved", "published": published, "message": msg}
 
 
