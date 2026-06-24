@@ -873,10 +873,22 @@ let _wsData = null;
 // ── Заказы по неделям с разбивкой по SKU ─────────────────────────────────────
 
 let _ordersData = null;
-const _expandedMp = {};  // { WB: true/false, OZON: true/false, YM: true/false }
+let _ordersMp = 'WB';
+
+const _MP_COLORS = { WB: '#a855f7', OZON: '#3b82f6', YM: '#eab308' };
+const _MP_LABEL  = { WB: 'WB (Wildberries)', OZON: 'Ozon', YM: 'Яндекс Маркет' };
 
 async function loadSalesAnalytics() {
   await loadOrders();
+}
+
+function setOrdersMp(mp) {
+  _ordersMp = mp;
+  ['WB','OZON','YM'].forEach(m => {
+    const el = document.getElementById('ordMp' + m);
+    if (el) el.classList.toggle('active', m === mp);
+  });
+  renderOrdersTable();
 }
 
 async function reloadOrders() {
@@ -886,84 +898,121 @@ async function reloadOrders() {
 }
 
 async function loadOrders() {
-  ['ordersRubTable','ordersQtyTable'].forEach(id => {
-    document.getElementById(id).innerHTML =
-      '<tr><td class="text-center text-secondary py-4"><span class="spinner-border spinner-border-sm"></span> Загрузка…</td></tr>';
-  });
+  const tbl = document.getElementById('ordersTable');
+  if (tbl) tbl.innerHTML =
+    '<tr><td class="text-center text-secondary py-4"><span class="spinner-border spinner-border-sm"></span> Загрузка…</td></tr>';
   try {
     _ordersData = await fetchJSON('/api/dashboard/weekly_orders');
     renderOrdersTable();
   } catch (e) {
-    ['ordersRubTable','ordersQtyTable'].forEach(id => {
-      document.getElementById(id).innerHTML =
-        `<tr><td class="text-danger py-3">Ошибка: ${e.message}</td></tr>`;
-    });
+    if (tbl) tbl.innerHTML = `<tr><td class="text-danger py-3">Ошибка: ${e.message}</td></tr>`;
   }
 }
 
-const _MP_COLORS = { WB: '#a855f7', OZON: '#3b82f6', YM: '#eab308' };
-const _MP_LABEL  = { WB: 'WB (Wildberries)', OZON: 'Ozon', YM: 'Яндекс Маркет' };
-
-function _ordersTableHTML(mode) {  // mode = 'rub' | 'qty'
+function _ordersTableHTML() {
   const d = _ordersData;
   if (!d) return '';
+  const mp = _ordersMp;
+  const block = d[mp];
+  if (!block) return '';
+  const col = _MP_COLORS[mp];
   const weeks = d.weeks;
   const n = weeks.length;
-  const fmtFn = mode === 'rub' ? fmtRub : v => fmt(v) + ' шт.';
 
+  // thead: Артикул/Название | week1 ₽/шт | week2 ₽/шт | ...
   let thead = '<thead class="sticky-top"><tr>'
-    + '<th style="min-width:180px">Площадка / SKU</th>';
-  weeks.forEach(w => { thead += `<th class="text-end" style="white-space:nowrap">${w}</th>`; });
+    + '<th style="min-width:200px">Артикул / Название</th>'
+    + '<th class="text-secondary" style="min-width:50px">Итого ₽</th>'
+    + '<th class="text-secondary" style="min-width:40px">шт</th>';
+  weeks.forEach(w => {
+    thead += `<th class="text-end" colspan="2" style="white-space:nowrap">${w}</th>`;
+  });
+  thead += '</tr>'
+    + '<tr><th></th><th></th><th></th>';
+  weeks.forEach(() => {
+    thead += '<th class="text-end text-secondary" style="font-size:0.72rem;min-width:70px">₽</th>'
+           + '<th class="text-end text-secondary" style="font-size:0.72rem;min-width:40px">шт</th>';
+  });
   thead += '</tr></thead>';
 
-  let tbody = '<tbody>';
-  ['WB','OZON','YM'].forEach(mp => {
-    const block = d[mp];
-    if (!block) return;
-    const col = _MP_COLORS[mp];
-    const expanded = _expandedMp[mp];
-    const totalRow = mode === 'rub' ? block.total_rub : block.total_qty;
-    const hasSkus = block.skus && block.skus.length > 0;
+  // Group SKUs by brand (same logic as stocks)
+  const skus = block.skus || [];
+  const groupMap = {};
+  skus.forEach(s => {
+    const g = s.brand || 'Прочее';
+    (groupMap[g] = groupMap[g] || []).push(s);
+  });
+  const knownBrands = ['Джага', 'Satisfucktion', 'Aloe'];
+  const orderedGroups = [
+    ...knownBrands.filter(b => groupMap[b]).map(b => [b, groupMap[b]]),
+    ...Object.keys(groupMap).filter(g => !knownBrands.includes(g)).map(g => [g, groupMap[g]]),
+  ];
 
-    // строка площадки
-    tbody += `<tr style="cursor:${hasSkus?'pointer':'default'};background:#1a1a2e" onclick="toggleSkus('${mp}','${mode}')">`;
-    tbody += `<td class="fw-semibold" style="color:${col}">`;
-    if (hasSkus) tbody += `<span class="me-1">${expanded ? '▼' : '▶'}</span>`;
-    tbody += `${_MP_LABEL[mp]}</td>`;
-    totalRow.forEach(v => {
-      tbody += `<td class="text-end fw-semibold" style="color:${col}">${fmtFn(v)}</td>`;
+  const totalRub = block.total_rub;
+  const totalQty = block.total_qty;
+  const grandRub = totalRub.reduce((a,b)=>a+b,0);
+  const grandQty = totalQty.reduce((a,b)=>a+b,0);
+
+  let tbody = '<tbody>';
+
+  // итоговая строка площадки
+  tbody += `<tr style="background:#1a1a2e">`;
+  tbody += `<td class="fw-bold" style="color:${col}">${_MP_LABEL[mp]}</td>`;
+  tbody += `<td class="fw-bold text-end" style="color:${col}">${fmtRub(grandRub)}</td>`;
+  tbody += `<td class="fw-bold text-end" style="color:${col}">${fmt(grandQty)} шт</td>`;
+  totalRub.forEach((r, i) => {
+    tbody += `<td class="text-end fw-semibold" style="color:${col}">${r ? fmtRub(r) : '<span class="text-muted">—</span>'}</td>`;
+    tbody += `<td class="text-end fw-semibold" style="color:${col}">${totalQty[i] ? fmt(totalQty[i]) : '<span class="text-muted">—</span>'}</td>`;
+  });
+  tbody += '</tr>';
+
+  orderedGroups.forEach(([grp, grpSkus]) => {
+    // subtotal for brand
+    const bRub = Array(n).fill(0);
+    const bQty = Array(n).fill(0);
+    grpSkus.forEach(s => {
+      s.rub.forEach((v, i) => { bRub[i] += v; });
+      s.qty.forEach((v, i) => { bQty[i] += v; });
+    });
+    const bGrandRub = bRub.reduce((a,b)=>a+b,0);
+    const bGrandQty = bQty.reduce((a,b)=>a+b,0);
+
+    tbody += `<tr style="background:#141520;border-top:1px solid #2d3148">`;
+    tbody += `<td class="fw-semibold ps-2" style="color:#94a3b8">${grp} <span class="text-secondary small">(${grpSkus.length} арт.)</span></td>`;
+    tbody += `<td class="fw-semibold text-end text-secondary">${fmtRub(bGrandRub)}</td>`;
+    tbody += `<td class="fw-semibold text-end text-secondary">${fmt(bGrandQty)} шт</td>`;
+    bRub.forEach((r, i) => {
+      tbody += `<td class="text-end small text-secondary">${r ? fmtRub(r) : '<span class="text-muted">—</span>'}</td>`;
+      tbody += `<td class="text-end small text-secondary">${bQty[i] ? fmt(bQty[i]) : '<span class="text-muted">—</span>'}</td>`;
     });
     tbody += '</tr>';
 
-    // строки SKU (скрыты если не expanded)
-    if (hasSkus && expanded) {
-      block.skus.forEach(s => {
-        const vals = mode === 'rub' ? s.rub : s.qty;
-        const total = vals.reduce((a, b) => a + b, 0);
-        if (!total) return;
-        tbody += `<tr style="background:#111122">`;
-        tbody += `<td class="ps-4 small text-muted" style="max-width:220px;overflow:hidden;text-overflow:ellipsis">`
-               + `<span class="badge me-1" style="background:${col}22;color:${col};font-size:10px">${s.sku}</span>`
-               + `<span>${s.name || s.sku}</span></td>`;
-        vals.forEach(v => {
-          tbody += `<td class="text-end small">${v ? fmtFn(v) : '<span class="text-muted">—</span>'}</td>`;
-        });
-        tbody += '</tr>';
+    // SKU rows
+    grpSkus.forEach(s => {
+      const sRub = s.rub.reduce((a,b)=>a+b,0);
+      const sQty = s.qty.reduce((a,b)=>a+b,0);
+      if (!sRub && !sQty) return;
+      tbody += `<tr style="background:#111122">`;
+      tbody += `<td class="ps-4 small" style="max-width:240px;overflow:hidden;text-overflow:ellipsis">`
+             + `<span class="badge me-1" style="background:${col}22;color:${col};font-size:10px">${s.sku}</span>`
+             + `<span class="text-muted">${s.name || s.sku}</span></td>`;
+      tbody += `<td class="text-end small">${sRub ? fmtRub(sRub) : '<span class="text-muted">—</span>'}</td>`;
+      tbody += `<td class="text-end small">${sQty ? fmt(sQty) + ' шт' : '<span class="text-muted">—</span>'}</td>`;
+      s.rub.forEach((r, i) => {
+        tbody += `<td class="text-end small">${r ? fmtRub(r) : '<span class="text-muted">—</span>'}</td>`;
+        tbody += `<td class="text-end small">${s.qty[i] ? fmt(s.qty[i]) : '<span class="text-muted">—</span>'}</td>`;
       });
-    }
+      tbody += '</tr>';
+    });
   });
+
   tbody += '</tbody>';
   return thead + tbody;
 }
 
 function renderOrdersTable() {
-  document.getElementById('ordersRubTable').innerHTML = _ordersTableHTML('rub');
-  document.getElementById('ordersQtyTable').innerHTML = _ordersTableHTML('qty');
-}
-
-function toggleSkus(mp, mode) {
-  _expandedMp[mp] = !_expandedMp[mp];
-  renderOrdersTable();
+  const tbl = document.getElementById('ordersTable');
+  if (tbl) tbl.innerHTML = _ordersTableHTML();
 }
 
 function _fmtShort(v) {

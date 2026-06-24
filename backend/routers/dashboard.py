@@ -763,9 +763,12 @@ async def get_weekly_orders():
             """Sort SKUs by total revenue desc, round numbers."""
             result = []
             for sku, d in by_sku.items():
+                cat = _cat.CATALOG.get(sku) or {}
                 result.append({
                     "sku": sku,
-                    "name": d["name"],
+                    "name": d["name"] or cat.get("name", sku),
+                    "brand": cat.get("brand", ""),
+                    "group": cat.get("group", ""),
                     "rub": [round(v, 2) for v in d["rub"]],
                     "qty": d["qty"],
                 })

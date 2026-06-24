@@ -249,3 +249,35 @@ body {
 .prio-urgent  { color: #f87171; font-weight: 600; }
 .prio-planned { color: #fbbf24; font-weight: 600; }
 .prio-ok      { color: #4ade80; }
+
+/* ══ MP selector blocs (Заказы tab) ══ */
+.mp-selector-bloc {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 18px;
+  border-radius: 10px;
+  background: #1a1d27;
+  border: 1px solid #2d3148;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: #94a3b8;
+  transition: border-color .15s, color .15s, background .15s;
+  user-select: none;
+}
+.mp-selector-bloc:hover {
+  border-color: var(--mp-color);
+  color: #e2e8f0;
+}
+.mp-selector-bloc.active {
+  background: color-mix(in srgb, var(--mp-color) 18%, #1a1d27);
+  border-color: var(--mp-color);
+  color: #e2e8f0;
+}
+.mp-selector-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
