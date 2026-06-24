@@ -9,11 +9,39 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
+from datetime import datetime, timedelta
+
 from routers import dashboard, upload, advert, reviews
+import cache
+import ozon_client
 import reviews_client
+import ym_client
 
 _log = logging.getLogger("weekly_prefetch")
 _PREFETCH_INTERVAL = 1800  # 30 минут
+
+
+async def _accumulate_sales():
+    """Гарантированно складывает продажи за последние 30 дней в БД (write-through
+    внутри fetch-функций). Не зависит от кешей дашборда."""
+    dt_to   = datetime.utcnow()
+    dt_from = dt_to - timedelta(days=30)
+    df, dt = dt_from.strftime("%Y-%m-%d"), dt_to.strftime("%Y-%m-%d")
+    # WB — через cache._refresh (persist_wb внутри)
+    try:
+        cache.invalidate()
+        await cache.get_raw_data(dt_from, dt_to)
+    except Exception as exc:
+        _log.warning("accumulate WB failed: %s", exc)
+    # Ozon / YM — get_sales_detail сами вызывают persist_detail
+    try:
+        await ozon_client.get_sales_detail(df, dt)
+    except Exception as exc:
+        _log.warning("accumulate Ozon failed: %s", exc)
+    try:
+        await ym_client.get_sales_detail(df, dt)
+    except Exception as exc:
+        _log.warning("accumulate YM failed: %s", exc)
 
 
 async def _prefetch_weekly():
@@ -38,6 +66,12 @@ async def _prefetch_weekly():
             _log.info("reviews refreshed")
         except Exception as exc:
             _log.warning("reviews refresh failed: %s", exc)
+        try:
+            _log.info("Accumulating sales history...")
+            await _accumulate_sales()
+            _log.info("sales history accumulated")
+        except Exception as exc:
+            _log.warning("sales accumulation failed: %s", exc)
         await asyncio.sleep(_PREFETCH_INTERVAL)
 
 

@@ -3,7 +3,7 @@
 const API = '';
 let charts = {};
 let sortState = {};
-const dirty = { finance: true, products: true, salesan: true, stocks: true, supplies: true, unitec: true, advert: true, reviews: true };
+const dirty = { finance: true, products: true, salesan: true, stocks: true, supplies: true, unitec: true, advert: true, reviews: true, history: true };
 let _advertData = [];
 let currentTab = 'finance';
 let prodAllData = [];
@@ -117,14 +117,15 @@ function skuName(r) {
 function switchTab(name, linkEl) {
   document.querySelectorAll('#mainTabs .nav-link').forEach(a => a.classList.remove('active'));
   if (linkEl) linkEl.classList.add('active');
-  ['finance', 'products', 'salesan', 'stocks', 'supplies', 'unitec', 'advert', 'reviews'].forEach(t => {
+  ['finance', 'products', 'salesan', 'stocks', 'supplies', 'unitec', 'advert', 'reviews', 'history'].forEach(t => {
     document.getElementById('pane-' + t).style.display = t === name ? 'block' : 'none';
   });
   currentTab = name;
   if (dirty[name]) {
     dirty[name] = false;
     ({ finance: loadFinance, products: loadProducts, salesan: loadSalesAnalytics, stocks: loadStocks,
-       supplies: loadSupplies, unitec: loadUnitEc, advert: loadAdvert, reviews: loadReviews })[name]();
+       supplies: loadSupplies, unitec: loadUnitEc, advert: loadAdvert, reviews: loadReviews,
+       history: loadHistory })[name]();
   }
 }
 
@@ -940,6 +941,87 @@ function renderMonthlyChart() {
       scales: {
         x: { ticks: { color: '#cbd5e1', font: { size: 13 } }, grid: { display: false } },
         y: { ticks: { color: '#94a3b8', callback: v => _fmtShort(v) }, grid: { color: 'rgba(255,255,255,.06)' }, beginAtZero: true },
+      },
+    },
+  });
+}
+
+// ── Накопленная история продаж ────────────────────────────────────────────────
+
+async function loadHistory() {
+  const meta = document.getElementById('histMeta');
+  meta.textContent = 'Загрузка…';
+  try {
+    const from = document.getElementById('histFrom').value;
+    const to   = document.getElementById('histTo').value;
+    const qs = new URLSearchParams();
+    if (from) qs.set('date_from', from);
+    if (to)   qs.set('date_to', to);
+    const d = await fetchJSON('/api/dashboard/sales_history?' + qs.toString());
+    renderHistory(d);
+  } catch (e) {
+    console.error('history', e);
+    meta.textContent = 'Ошибка загрузки';
+  }
+}
+
+const _PLAT_COLORS = { wb: '#a855f7', ozon: '#3b82f6', ym: '#eab308' };
+const _PLAT_NAMES  = { wb: 'WB', ozon: 'Ozon', ym: 'YM' };
+
+function renderHistory(d) {
+  const meta = document.getElementById('histMeta');
+  if (d.stored_from) {
+    meta.textContent = `накоплено ${d.days_stored} дн. (${d.stored_from} — ${d.stored_to})`;
+  } else {
+    meta.textContent = 'данных пока нет — накопление началось, зайдите позже';
+  }
+
+  // Карточки итогов по площадкам
+  const order = ['wb', 'ozon', 'ym'];
+  const bp = {};
+  Object.entries(d.by_platform || {}).forEach(([k, v]) => { bp[k.toLowerCase()] = v; });
+  let totalRub = 0, totalQty = 0;
+  const cards = order.filter(k => bp[k]).map(k => {
+    const v = bp[k]; totalRub += v.revenue; totalQty += v.qty;
+    return `<div class="col-6 col-md-3"><div class="card h-100"><div class="card-body">
+      <div class="small text-muted">${_PLAT_NAMES[k]}</div>
+      <div class="h5 mb-0" style="color:${_PLAT_COLORS[k]}">${fmtRub(v.revenue)}</div>
+      <div class="small text-muted">${fmt(v.qty)} шт.</div>
+    </div></div></div>`;
+  });
+  cards.push(`<div class="col-6 col-md-3"><div class="card h-100 border-success"><div class="card-body">
+    <div class="small text-muted">Всего</div>
+    <div class="h5 mb-0 text-success">${fmtRub(totalRub)}</div>
+    <div class="small text-muted">${fmt(totalQty)} шт.</div>
+  </div></div></div>`);
+  document.getElementById('histCards').innerHTML = cards.join('');
+
+  // График выручки по дням (stacked по площадкам)
+  const daily = d.daily || [];
+  const labels = daily.map(r => r.date);
+  const datasets = order.map(k => ({
+    label: _PLAT_NAMES[k],
+    data: daily.map(r => r[k] || 0),
+    backgroundColor: _PLAT_COLORS[k],
+    borderRadius: 3,
+    stack: 'rev',
+  }));
+  const ctx = document.getElementById('histChart').getContext('2d');
+  if (charts.history) charts.history.destroy();
+  charts.history = new Chart(ctx, {
+    type: 'bar',
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { labels: { color: '#cbd5e1', usePointStyle: true, pointStyle: 'rectRounded' } },
+        tooltip: { callbacks: { label: c => `${c.dataset.label}: ${fmtRub(c.raw)}` } },
+        datalabels: false,
+      },
+      scales: {
+        x: { stacked: true, ticks: { color: '#94a3b8', maxRotation: 90, font: { size: 10 } }, grid: { display: false } },
+        y: { stacked: true, ticks: { color: '#94a3b8', callback: v => _fmtShort(v) }, grid: { color: 'rgba(255,255,255,.06)' }, beginAtZero: true },
       },
     },
   });
