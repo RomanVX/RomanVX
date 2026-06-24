@@ -481,7 +481,12 @@
     <div id="reviewsStats" class="text-secondary small mb-3"></div>
 
     <div class="card border-0 bg-card mb-4">
-      <div class="card-header bg-transparent border-0 fw-semibold">Динамика среднего рейтинга</div>
+      <div class="card-header bg-transparent border-0 d-flex justify-content-between align-items-center">
+        <span class="fw-semibold">Динамика среднего рейтинга</span>
+        <select id="dynArtFilter" class="form-select form-select-sm w-auto bg-dark text-white border-secondary" onchange="renderRatingDynamicsFiltered()">
+          <option value="__all__">Все (по платформам)</option>
+        </select>
+      </div>
       <div class="card-body"><div style="height:260px"><canvas id="ratingDynChart"></canvas></div></div>
     </div>
 

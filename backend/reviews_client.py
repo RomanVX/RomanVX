@@ -157,19 +157,40 @@ def get_rating_table() -> list[dict]:
     }
 
 
-def get_rating_dynamics() -> list[dict]:
+def get_rating_dynamics() -> dict:
+    """Monthly avg rating from reviews history — overview and per-article breakdown."""
     con = sqlite3.connect(DB_PATH)
-    rows = con.execute(
-        "SELECT snapshot_date, platform, ROUND(AVG(rating),2) "
-        "FROM rating_snapshots GROUP BY snapshot_date, platform ORDER BY snapshot_date"
+    art_rows = con.execute(
+        "SELECT strftime('%Y-%m', created_at) as month, platform, sku, "
+        "ROUND(AVG(rating),2), COUNT(*) "
+        "FROM reviews WHERE rating > 0 AND created_at != '' "
+        "GROUP BY month, platform, sku ORDER BY month"
+    ).fetchall()
+    ovr_rows = con.execute(
+        "SELECT strftime('%Y-%m', created_at) as month, platform, "
+        "ROUND(AVG(rating),2) "
+        "FROM reviews WHERE rating > 0 AND created_at != '' "
+        "GROUP BY month, platform ORDER BY month"
     ).fetchall()
     con.close()
-    result: dict[str, dict] = {}
-    for dt, platform, avg in rows:
-        if dt not in result:
-            result[dt] = {"date": dt}
-        result[dt][platform.lower()] = avg
-    return list(result.values())
+
+    # overview: [{month, ozon, wb, ym}, ...]
+    ovr: dict[str, dict] = {}
+    for month, platform, avg in ovr_rows:
+        ovr.setdefault(month, {"month": month})[platform.lower()] = avg
+
+    # by_article: {sku: [{month, ozon, wb, ym}, ...]}
+    art: dict[str, dict[str, dict]] = {}
+    for month, platform, sku, avg, _ in art_rows:
+        art.setdefault(sku, {}).setdefault(month, {"month": month})[platform.lower()] = avg
+
+    return {
+        "overview": sorted(ovr.values(), key=lambda x: x["month"]),
+        "by_article": {
+            sku: sorted(months.values(), key=lambda x: x["month"])
+            for sku, months in art.items()
+        },
+    }
 
 
 def get_stats() -> dict:

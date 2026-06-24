@@ -1029,6 +1029,7 @@ document.addEventListener('DOMContentLoaded', () => {
 // === REVIEWS TAB (auto-fetch from WB / Ozon / YM APIs) ===
 let _allReviews = [];
 let _statsData = {};
+let _dynData = {};
 
 async function loadReviews() {
   const feedEl = document.getElementById('reviewsFeed');
@@ -1038,9 +1039,11 @@ async function loadReviews() {
     const data = await res.json();
     _allReviews = data.reviews || [];
     _statsData = data.stats || {};
+    _dynData = data.dynamics || {};
     renderRatingsTable(data.ratings || {});
     renderStats(_statsData);
-    renderRatingDynamics(data.dynamics || []);
+    populateDynFilter(data.ratings || {});
+    renderRatingDynamicsFiltered();
     renderReviewsFeed();
   } catch (e) {
     console.error('loadReviews', e);
@@ -1124,14 +1127,51 @@ function renderRatingsTable(ratings) {
   el.innerHTML = html;
 }
 
-function renderRatingDynamics(dyn) {
+function populateDynFilter(ratings) {
+  const sel = document.getElementById('dynArtFilter');
+  if (!sel) return;
+  sel.innerHTML = '<option value="__all__">Все (по платформам)</option>';
+  const BRAND_ORDER = ['Джага', 'Satisfucktion', 'Aloe'];
+  const articles = (ratings.articles || []).slice().sort((a, b) => a.sku.localeCompare(b.sku));
+  const grouped = {};
+  articles.forEach(r => {
+    const g = BRAND_ORDER.includes(r.brand) ? r.brand : 'Прочее';
+    (grouped[g] = grouped[g] || []).push(r);
+  });
+  [...BRAND_ORDER, 'Прочее'].filter(g => grouped[g]).forEach(g => {
+    const og = document.createElement('optgroup');
+    og.label = g;
+    grouped[g].forEach(r => {
+      const o = document.createElement('option');
+      o.value = r.sku;
+      o.textContent = `${r.sku} — ${r.name || r.sku}`;
+      og.appendChild(o);
+    });
+    sel.appendChild(og);
+  });
+}
+
+function renderRatingDynamicsFiltered() {
+  const sel = document.getElementById('dynArtFilter');
+  const chosen = sel ? sel.value : '__all__';
+  if (chosen === '__all__') {
+    renderRatingDynamics(_dynData.overview || []);
+  } else {
+    const artData = (_dynData.by_article || {})[chosen] || [];
+    renderRatingDynamics(artData, chosen);
+  }
+}
+
+function renderRatingDynamics(dyn, artLabel) {
   const cv = document.getElementById('ratingDynChart');
   if (!cv) return;
   if (charts.ratingDyn) charts.ratingDyn.destroy();
   if (!dyn.length) return;
-  const labels = dyn.map(d => d.date);
+  const dateKey = dyn[0].date !== undefined ? 'date' : 'month';
+  const labels = dyn.map(d => d[dateKey] || d.month);
   const mk = (key, label, color) => ({
     label, borderColor: color, backgroundColor: color, tension: 0.3, spanGaps: true,
+    pointRadius: 3,
     data: dyn.map(d => d[key] ?? null),
   });
   charts.ratingDyn = new Chart(cv.getContext('2d'), {
@@ -1143,10 +1183,14 @@ function renderRatingDynamics(dyn) {
     ] },
     options: {
       responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { labels: { color: '#cbd5e1', usePointStyle: true } } },
+      plugins: {
+        legend: { labels: { color: '#cbd5e1', usePointStyle: true } },
+        title: artLabel ? { display: true, text: artLabel, color: '#94a3b8', font: { size: 12 } } : { display: false },
+      },
       scales: {
         x: { ticks: { color: '#94a3b8' }, grid: { display: false } },
-        y: { min: 1, max: 5, ticks: { color: '#94a3b8' }, grid: { color: 'rgba(255,255,255,.06)' } },
+        y: { min: 1, max: 5, ticks: { color: '#94a3b8', stepSize: 0.5 },
+             grid: { color: 'rgba(255,255,255,.06)' } },
       },
     },
   });
