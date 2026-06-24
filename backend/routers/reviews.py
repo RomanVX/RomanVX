@@ -60,16 +60,19 @@ async def make_draft(id: str = Query(...)):
 
 
 @router.post("/draft-batch")
-async def make_drafts(platform: str = Query("WB"), limit: int = Query(20)):
+async def make_drafts(platform: str = Query("all"), limit: int = Query(20)):
     """Generate drafts for up to `limit` unanswered reviews without a draft."""
-    todo = rc.get_unanswered(platform=platform, limit=limit)
+    platforms = ["WB", "Ozon", "YM"] if platform == "all" else [platform]
+    todo = []
+    for p in platforms:
+        todo += rc.get_unanswered(platform=p, limit=limit)
     made = 0
-    for review in todo:
-        draft = await review_ai.generate_reply(review, platform=platform)
+    for review in todo[:limit]:
+        draft = await review_ai.generate_reply(review, platform=review["platform"])
         if draft:
             rc.save_draft(review["id"], draft, status="pending")
             made += 1
-    return {"generated": made, "requested": len(todo)}
+    return {"generated": made, "requested": len(todo[:limit])}
 
 
 @router.post("/approve")
@@ -86,9 +89,8 @@ async def approve_draft(
     if not text:
         return {"error": "Текст ответа пустой"}
     published, msg = False, ""
-    if publish and id.startswith("wb_"):
-        feedback_id = id[3:]
-        published, msg = await rc.wb_post_answer(feedback_id, text)
+    if publish:
+        published, msg = await rc.post_answer(id, text)
         if not published:
             return {"id": id, "status": "pending", "published": False, "error": msg}
     rc.save_draft(id, text, status="approved")

@@ -208,6 +208,58 @@ async def wb_post_answer(feedback_id: str, text: str) -> tuple[bool, str]:
         return False, str(e)
 
 
+async def ozon_post_answer(review_id: str, text: str) -> tuple[bool, str]:
+    """Publish an answer to an Ozon review."""
+    if not OZON_CLIENT_ID or not OZON_API_KEY:
+        return False, "OZON_CLIENT_ID / OZON_API_KEY не заданы"
+    headers = {"Client-Id": str(OZON_CLIENT_ID), "Api-Key": OZON_API_KEY,
+               "Content-Type": "application/json"}
+    # review_id stored as "ozon_<id>" — strip prefix
+    rid = review_id.removeprefix("ozon_")
+    body = {"review_id": rid, "text": text}
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.post(
+                "https://api-seller.ozon.ru/v1/review/comment/create",
+                headers=headers, json=body,
+            )
+            if r.is_success:
+                return True, "опубликовано"
+            return False, f"Ozon {r.status_code}: {r.text[:200]}"
+    except Exception as e:
+        return False, str(e)
+
+
+async def ym_post_answer(feedback_id: str, text: str) -> tuple[bool, str]:
+    """Publish an answer to a YM goods-feedback."""
+    if not YM_API_KEY or not YM_BUSINESS_ID:
+        return False, "YM_API_KEY / YM_BUSINESS_ID не заданы"
+    headers = {"Api-Key": YM_API_KEY, "Content-Type": "application/json"}
+    # feedback_id stored as "ym_<id>" — strip prefix
+    fid = feedback_id.removeprefix("ym_")
+    url = f"https://api.partner.market.yandex.ru/businesses/{YM_BUSINESS_ID}/goods-feedback/comments"
+    body = {"feedbackId": int(fid), "comment": {"text": text}}
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.post(url, headers=headers, json=body)
+            if r.is_success:
+                return True, "опубликовано"
+            return False, f"YM {r.status_code}: {r.text[:200]}"
+    except Exception as e:
+        return False, str(e)
+
+
+async def post_answer(review_id: str, text: str) -> tuple[bool, str]:
+    """Route to the right platform based on review_id prefix."""
+    if review_id.startswith("wb_"):
+        return await wb_post_answer(review_id[3:], text)
+    if review_id.startswith("ozon_"):
+        return await ozon_post_answer(review_id, text)
+    if review_id.startswith("ym_"):
+        return await ym_post_answer(review_id, text)
+    return False, f"Неизвестный prefix review_id: {review_id}"
+
+
 def get_rating_table() -> list[dict]:
     """Ratings per article and per group."""
     con = sqlite3.connect(DB_PATH)

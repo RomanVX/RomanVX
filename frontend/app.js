@@ -1333,12 +1333,13 @@ function replyBlock(r) {
   }
   // pending — редактируемый черновик
   const ta = `draft_${cssId(r.id)}`;
+  const platIcon = { WB: '🟣', Ozon: '🔵', YM: '🟡' }[r.platform] || '📤';
   return `<div class="mt-2 ps-2 border-start border-info">
     <div class="text-info small mb-1">🤖 Черновик ответа (можно отредактировать)</div>
     <textarea id="${ta}" class="form-control form-control-sm bg-dark text-white border-secondary mb-2"
               rows="3" oninput="autoGrow(this)">${esc(d.draft)}</textarea>
     <div class="d-flex gap-2">
-      <button class="btn btn-sm btn-success py-0" onclick="approveDraft('${r.id}')">✓ Одобрить и опубликовать</button>
+      <button class="btn btn-sm btn-success py-0" onclick="approveDraft('${r.id}')">✓ Одобрить ${platIcon}</button>
       <button class="btn btn-sm btn-outline-danger py-0" onclick="declineDraft('${r.id}')">✕ Отклонить</button>
       <button class="btn btn-sm btn-outline-secondary py-0" onclick="genDraft('${r.id}')">↻ Перегенерировать</button>
     </div>
@@ -1396,12 +1397,13 @@ async function declineDraft(id) {
 
 async function genBatch() {
   const btn = document.getElementById('genBatchBtn');
+  const platform = document.getElementById('batchPlatform')?.value || 'all';
   if (btn) { btn.disabled = true; btn.textContent = '✨ Генерирую…'; }
   try {
-    const res = await fetch(`${API}/api/reviews/draft-batch?platform=WB&limit=20`, { method: 'POST' });
+    const res = await fetch(`${API}/api/reviews/draft-batch?platform=${platform}&limit=20`, { method: 'POST' });
     const d = await res.json();
     await loadReviews();
-    alert(`Сгенерировано черновиков: ${d.generated || 0}`);
+    alert(`Сгенерировано черновиков: ${d.generated || 0} из ${d.requested || 0} отзывов`);
   } catch (e) { alert('Ошибка: ' + e.message); }
   if (btn) { btn.disabled = false; btn.textContent = '✨ Сгенерировать ответы'; }
 }
