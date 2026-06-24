@@ -17,6 +17,9 @@ import catalog as cat
 _log = logging.getLogger(__name__)
 DB_PATH = "/tmp/reviews.db"
 
+# Маркер: ответ на платформе уже есть, но его текст нам недоступен (Ozon)
+ANSWERED_MARK = "✓ Отвечено на платформе"
+
 
 # ─── DATABASE ────────────────────────────────────────────────────────────────
 
@@ -344,9 +347,9 @@ def get_answered_pairs(platform="WB", limit=400) -> list[dict]:
     con = sqlite3.connect(DB_PATH)
     rows = con.execute(
         "SELECT platform, sku, name, rating, text, answer, created_at FROM reviews "
-        "WHERE answer IS NOT NULL AND answer != '' AND platform = ? "
+        "WHERE answer IS NOT NULL AND answer != '' AND answer != ? AND platform = ? "
         "ORDER BY created_at DESC LIMIT ?",
-        (platform, limit),
+        (ANSWERED_MARK, platform, limit),
     ).fetchall()
     con.close()
     return [{"platform": r[0], "sku": r[1], "name": r[2], "rating": r[3],
@@ -461,13 +464,16 @@ async def fetch_ozon_reviews():
                 for rev in items:
                     raw_sku = str(rev.get("sku") or rev.get("offer_id") or "")
                     sku = cat.resolve_ozon(raw_sku) if raw_sku else raw_sku
+                    # Ozon не отдаёт текст нашего ответа в списке — судим по статусу
+                    status = (rev.get("status") or "").upper()
+                    answered = status == "PROCESSED" or (rev.get("comments_amount") or 0) > 0
                     rows.append(_enrich({
                         "id": f"ozon_{rev.get('id') or rev.get('review_id')}",
                         "platform": "Ozon",
                         "sku": sku,
                         "rating": int(rev.get("rating") or 0),
                         "text": (rev.get("text") or rev.get("comment") or "").strip(),
-                        "answer": "",
+                        "answer": ANSWERED_MARK if answered else "",
                         "created_at": (rev.get("published_at") or rev.get("created_at") or
                                        rev.get("create_at") or "")[:19],
                     }))
@@ -492,6 +498,7 @@ async def fetch_ym_reviews():
     headers = {"Api-Key": YM_API_KEY, "Content-Type": "application/json"}
     url = f"https://api.partner.market.yandex.ru/businesses/{YM_BUSINESS_ID}/goods-feedback"
 
+    fb_ids = []  # (row_index, feedback_id) для подтягивания наших ответов
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             page_token = None
@@ -515,8 +522,10 @@ async def fetch_ym_reviews():
                     text = " ".join(p.strip() for p in parts if p).strip()
                     raw_sku = str(ident.get("offerId") or ident.get("shopSku") or "")
                     sku = cat.resolve_ym(raw_sku) if raw_sku else raw_sku
+                    fid = f.get("feedbackId") or f.get("id")
+                    fb_ids.append((len(rows), fid))
                     rows.append(_enrich({
-                        "id": f"ym_{f.get('feedbackId') or f.get('id')}",
+                        "id": f"ym_{fid}",
                         "platform": "YM",
                         "sku": sku,
                         "rating": int(stats.get("rating") or 0),
@@ -528,6 +537,26 @@ async def fetch_ym_reviews():
                 if not page_token:
                     break
                 await asyncio.sleep(0.3)
+
+            # Подтягиваем наши ответы (комментарии продавца) по каждому отзыву
+            comments_url = f"{url}/comments"
+            for idx, fid in fb_ids:
+                try:
+                    cr = await client.post(comments_url, headers=headers,
+                                           json={"feedbackId": int(fid), "limit": 50})
+                    if not cr.is_success:
+                        continue
+                    comments = ((cr.json().get("result") or {}).get("comments")) or []
+                    seller = next(
+                        (c.get("text", "").strip() for c in comments
+                         if (c.get("author") or {}).get("type") in ("BUSINESS", "SHOP", "SELLER")),
+                        "",
+                    )
+                    if seller:
+                        rows[idx]["answer"] = seller
+                except Exception:
+                    pass
+                await asyncio.sleep(0.1)
     except Exception as e:
         _log.warning("YM reviews exception: %s", e)
 

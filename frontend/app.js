@@ -1305,8 +1305,15 @@ function renderReviewsFeed() {
   `).join('');
 }
 
+const ANSWERED_MARK = '✓ Отвечено на платформе';
+
 function replyBlock(r) {
   // Уже ответили на платформе
+  if (r.answer === ANSWERED_MARK) {
+    return `<div class="mt-2 ps-2 border-start border-success">
+      <div class="text-success small">✓ Ответ уже оставлен на платформе</div>
+    </div>`;
+  }
   if (r.answer) {
     return `<div class="mt-2 ps-2 border-start border-success">
       <div class="text-success small mb-1">✓ Наш ответ</div>
