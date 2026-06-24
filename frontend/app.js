@@ -909,6 +909,28 @@ async function loadOrders() {
   }
 }
 
+// стрелка динамики week-over-week (как в остатках): ▲ рост / ▼ падение
+function _dynArrow(cur, prev) {
+  if (!prev || !cur) return '';
+  const diff = cur - prev;
+  if (Math.abs(diff) < 0.005 * Math.max(cur, prev)) return '';  // <0.5% — без стрелки
+  const pct = Math.round(Math.abs(diff) / prev * 100);
+  if (diff > 0) return `<span style="color:#4ade80;font-size:0.68rem;margin-left:3px">▲${pct}%</span>`;
+  return `<span style="color:#f87171;font-size:0.68rem;margin-left:3px">▼${pct}%</span>`;
+}
+
+// ячейка ₽ с динамикой относительно предыдущей недели
+function _rubCell(arr, i, cls) {
+  const v = arr[i];
+  if (!v) return `<td class="text-end ${cls}"><span class="text-muted">—</span></td>`;
+  const prev = i > 0 ? arr[i - 1] : 0;
+  return `<td class="text-end ${cls}" style="white-space:nowrap">${fmtRub(v)}${_dynArrow(v, prev)}</td>`;
+}
+
+function _qtyCell(v, cls) {
+  return `<td class="text-end ${cls}">${v ? fmt(v) : '<span class="text-muted">—</span>'}</td>`;
+}
+
 function _ordersTableHTML() {
   const d = _ordersData;
   if (!d) return '';
@@ -919,39 +941,35 @@ function _ordersTableHTML() {
   const weeks = d.weeks;
   const n = weeks.length;
 
-  // thead: Артикул/Название | week1 ₽/шт | week2 ₽/шт | ...
+  // thead: Артикул/Название | Итого ₽ | week1 ₽/шт | week2 ₽/шт | ...
   let thead = '<thead class="sticky-top"><tr>'
     + '<th style="min-width:200px">Артикул / Название</th>'
-    + '<th class="text-secondary" style="min-width:50px">Итого ₽</th>'
-    + '<th class="text-secondary" style="min-width:40px">шт</th>';
+    + '<th class="text-end text-secondary" rowspan="2" style="min-width:80px;vertical-align:bottom">Итого ₽</th>';
   weeks.forEach(w => {
     thead += `<th class="text-end" colspan="2" style="white-space:nowrap">${w}</th>`;
   });
-  thead += '</tr>'
-    + '<tr><th></th><th></th><th></th>';
+  thead += '</tr><tr><th></th>';
   weeks.forEach(() => {
-    thead += '<th class="text-end text-secondary" style="font-size:0.72rem;min-width:70px">₽</th>'
-           + '<th class="text-end text-secondary" style="font-size:0.72rem;min-width:40px">шт</th>';
+    thead += '<th class="text-end text-secondary" style="font-size:0.72rem;min-width:78px">₽</th>'
+           + '<th class="text-end text-secondary" style="font-size:0.72rem;min-width:38px">шт</th>';
   });
   thead += '</tr></thead>';
 
-  // Group SKUs by brand (same logic as stocks)
-  const skus = block.skus || [];
+  // Группировка как в остатках: articleGroup + GROUP_ORDER (с подгруппами Фисты/Спреи)
+  const skus = (block.skus || []).filter(s =>
+    s.rub.some(v => v) || s.qty.some(v => v));
   const groupMap = {};
   skus.forEach(s => {
-    const g = s.brand || 'Прочее';
+    const g = articleGroup(s);
     (groupMap[g] = groupMap[g] || []).push(s);
   });
-  const knownBrands = ['Джага', 'Satisfucktion', 'Aloe'];
-  const orderedGroups = [
-    ...knownBrands.filter(b => groupMap[b]).map(b => [b, groupMap[b]]),
-    ...Object.keys(groupMap).filter(g => !knownBrands.includes(g)).map(g => [g, groupMap[g]]),
-  ];
+  Object.values(groupMap).forEach(rows =>
+    rows.sort((a, b) => b.rub.reduce((x,y)=>x+y,0) - a.rub.reduce((x,y)=>x+y,0)));
+  const orderedGroups = GROUP_ORDER.filter(g => groupMap[g]).map(g => [g, groupMap[g]]);
 
   const totalRub = block.total_rub;
   const totalQty = block.total_qty;
   const grandRub = totalRub.reduce((a,b)=>a+b,0);
-  const grandQty = totalQty.reduce((a,b)=>a+b,0);
 
   let tbody = '<tbody>';
 
@@ -959,15 +977,14 @@ function _ordersTableHTML() {
   tbody += `<tr style="background:#1a1a2e">`;
   tbody += `<td class="fw-bold" style="color:${col}">${_MP_LABEL[mp]}</td>`;
   tbody += `<td class="fw-bold text-end" style="color:${col}">${fmtRub(grandRub)}</td>`;
-  tbody += `<td class="fw-bold text-end" style="color:${col}">${fmt(grandQty)} шт</td>`;
   totalRub.forEach((r, i) => {
-    tbody += `<td class="text-end fw-semibold" style="color:${col}">${r ? fmtRub(r) : '<span class="text-muted">—</span>'}</td>`;
-    tbody += `<td class="text-end fw-semibold" style="color:${col}">${totalQty[i] ? fmt(totalQty[i]) : '<span class="text-muted">—</span>'}</td>`;
+    tbody += _rubCell(totalRub, i, 'fw-semibold');
+    tbody += _qtyCell(totalQty[i], 'fw-semibold');
   });
   tbody += '</tr>';
 
   orderedGroups.forEach(([grp, grpSkus]) => {
-    // subtotal for brand
+    // промежуточный итог по группе
     const bRub = Array(n).fill(0);
     const bQty = Array(n).fill(0);
     grpSkus.forEach(s => {
@@ -975,36 +992,35 @@ function _ordersTableHTML() {
       s.qty.forEach((v, i) => { bQty[i] += v; });
     });
     const bGrandRub = bRub.reduce((a,b)=>a+b,0);
-    const bGrandQty = bQty.reduce((a,b)=>a+b,0);
 
-    tbody += `<tr style="background:#141520;border-top:1px solid #2d3148">`;
-    tbody += `<td class="fw-semibold ps-2" style="color:#94a3b8">${grp} <span class="text-secondary small">(${grpSkus.length} арт.)</span></td>`;
-    tbody += `<td class="fw-semibold text-end text-secondary">${fmtRub(bGrandRub)}</td>`;
-    tbody += `<td class="fw-semibold text-end text-secondary">${fmt(bGrandQty)} шт</td>`;
+    tbody += `<tr class="table-secondary" style="background:#141520;border-top:1px solid #2d3148">`;
+    tbody += `<td class="fw-semibold ps-2"><strong>${grp}</strong> <span class="text-secondary small">(${grpSkus.length} арт.)</span></td>`;
+    tbody += `<td class="fw-semibold text-end">${fmtRub(bGrandRub)}</td>`;
     bRub.forEach((r, i) => {
-      tbody += `<td class="text-end small text-secondary">${r ? fmtRub(r) : '<span class="text-muted">—</span>'}</td>`;
-      tbody += `<td class="text-end small text-secondary">${bQty[i] ? fmt(bQty[i]) : '<span class="text-muted">—</span>'}</td>`;
+      tbody += _rubCell(bRub, i, 'small fw-semibold');
+      tbody += _qtyCell(bQty[i], 'small fw-semibold');
     });
     tbody += '</tr>';
 
-    // SKU rows
+    // строки SKU
     grpSkus.forEach(s => {
       const sRub = s.rub.reduce((a,b)=>a+b,0);
-      const sQty = s.qty.reduce((a,b)=>a+b,0);
-      if (!sRub && !sQty) return;
       tbody += `<tr style="background:#111122">`;
-      tbody += `<td class="ps-4 small" style="max-width:240px;overflow:hidden;text-overflow:ellipsis">`
+      tbody += `<td class="ps-4 small" style="max-width:260px;overflow:hidden;text-overflow:ellipsis">`
              + `<span class="badge me-1" style="background:${col}22;color:${col};font-size:10px">${s.sku}</span>`
              + `<span class="text-muted">${s.name || s.sku}</span></td>`;
       tbody += `<td class="text-end small">${sRub ? fmtRub(sRub) : '<span class="text-muted">—</span>'}</td>`;
-      tbody += `<td class="text-end small">${sQty ? fmt(sQty) + ' шт' : '<span class="text-muted">—</span>'}</td>`;
       s.rub.forEach((r, i) => {
-        tbody += `<td class="text-end small">${r ? fmtRub(r) : '<span class="text-muted">—</span>'}</td>`;
-        tbody += `<td class="text-end small">${s.qty[i] ? fmt(s.qty[i]) : '<span class="text-muted">—</span>'}</td>`;
+        tbody += _rubCell(s.rub, i, 'small');
+        tbody += _qtyCell(s.qty[i], 'small');
       });
       tbody += '</tr>';
     });
   });
+
+  if (!skus.length) {
+    tbody += `<tr><td colspan="${2 + n*2}" class="text-center text-secondary py-4">Нет данных по этой площадке за период</td></tr>`;
+  }
 
   tbody += '</tbody>';
   return thead + tbody;

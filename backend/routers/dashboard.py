@@ -726,18 +726,21 @@ async def get_weekly_orders():
             import logging; logging.getLogger(__name__).warning("weekly_orders WB: %s", e)
 
         # ── OZON / YM ──
+        oz_ok = ym_ok = True
         try:
             oz_rows, ym_rows = await asyncio.wait_for(
                 asyncio.gather(
                     ozon_client.get_sales_detail(date_from_str, date_to_str),
                     ym_client.get_sales_detail(date_from_str, date_to_str),
                 ),
-                timeout=90,
+                timeout=120,
             )
-        except Exception:
+        except Exception as _exc:
+            import logging; logging.getLogger(__name__).warning("weekly_orders OZON/YM: %s", _exc)
             oz_rows, ym_rows = [], []
+            oz_ok = ym_ok = False
 
-        def agg_rows(rows, sku_field):
+        def agg_rows(rows, sku_field, resolve):
             by_sku: dict = {}
             total_rub = [0.0] * n
             total_qty = [0]   * n
@@ -745,7 +748,8 @@ async def get_weekly_orders():
                 idx = week_idx(r.get("date"))
                 if idx is None:
                     continue
-                sku = r.get(sku_field) or ""
+                raw = r.get(sku_field) or ""
+                sku = resolve(raw) if raw else ""
                 rev = float(r.get("revenue") or 0)
                 qty = int(r.get("qty") or 0)
                 if sku not in by_sku:
@@ -756,8 +760,8 @@ async def get_weekly_orders():
                 total_qty[idx] += qty
             return by_sku, total_rub, total_qty
 
-        oz_by_sku, oz_rub, oz_qty = agg_rows(oz_rows, "offer_id")
-        ym_by_sku, ym_rub, ym_qty = agg_rows(ym_rows, "shop_sku")
+        oz_by_sku, oz_rub, oz_qty = agg_rows(oz_rows, "offer_id", _cat.resolve_ozon)
+        ym_by_sku, ym_rub, ym_qty = agg_rows(ym_rows, "shop_sku", _cat.resolve_ym)
 
         def clean_sku(by_sku, total_rub, total_qty):
             """Sort SKUs by total revenue desc, round numbers."""
@@ -784,8 +788,12 @@ async def get_weekly_orders():
             "YM":   {"total_rub": ym_rub, "total_qty": ym_qty,
                      "skus": clean_sku(ym_by_sku, ym_rub, ym_qty)},
         }
-        _wo_cache = result
-        _wo_cache_ts = _wtime.monotonic()
+        # кешируем только если данные всех площадок подтянулись (иначе пустые
+        # OZON/YM из-за таймаута залипли бы в кеше на 30 минут)
+        wb_ok = any(wb_total_rub) or any(wb_total_qty)
+        if wb_ok and oz_ok and ym_ok:
+            _wo_cache = result
+            _wo_cache_ts = _wtime.monotonic()
         return result
 
 
