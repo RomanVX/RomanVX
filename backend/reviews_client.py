@@ -1,7 +1,6 @@
-"""Clients for fetching reviews from WB, Ozon, YM APIs + SQLite storage."""
+"""Clients for fetching reviews from WB, Ozon, YM APIs + Postgres/SQLite storage."""
 import asyncio
 import logging
-import sqlite3
 import time
 from datetime import date
 
@@ -13,9 +12,9 @@ from config import (
     YM_API_KEY, YM_BUSINESS_ID,
 )
 import catalog as cat
+import db
 
 _log = logging.getLogger(__name__)
-DB_PATH = "/tmp/reviews.db"
 
 # Маркер: ответ на платформе уже есть, но его текст нам недоступен (Ozon)
 ANSWERED_MARK = "✓ Отвечено на платформе"
@@ -24,8 +23,7 @@ ANSWERED_MARK = "✓ Отвечено на платформе"
 # ─── DATABASE ────────────────────────────────────────────────────────────────
 
 def _init_db():
-    con = sqlite3.connect(DB_PATH)
-    con.execute("""
+    db.execute("""
         CREATE TABLE IF NOT EXISTS reviews (
             id          TEXT PRIMARY KEY,
             platform    TEXT,
@@ -39,12 +37,7 @@ def _init_db():
             created_at  TEXT
         )
     """)
-    # migrate old schema if name column missing
-    cols = {r[1] for r in con.execute("PRAGMA table_info(reviews)").fetchall()}
-    for col, typ in [("name", "TEXT"), ("brand", "TEXT"), ("grp", "TEXT"), ("answer", "TEXT")]:
-        if col not in cols:
-            con.execute(f"ALTER TABLE reviews ADD COLUMN {col} {typ}")
-    con.execute("""
+    db.execute("""
         CREATE TABLE IF NOT EXISTS drafts (
             review_id   TEXT PRIMARY KEY,
             draft       TEXT,
@@ -52,7 +45,7 @@ def _init_db():
             updated_at  TEXT
         )
     """)
-    con.execute("""
+    db.execute("""
         CREATE TABLE IF NOT EXISTS rating_snapshots (
             snapshot_date TEXT,
             platform      TEXT,
@@ -62,8 +55,6 @@ def _init_db():
             PRIMARY KEY (snapshot_date, platform, sku)
         )
     """)
-    con.commit()
-    con.close()
 
 _init_db()
 
@@ -80,44 +71,46 @@ def _enrich(row: dict) -> dict:
 def _upsert_reviews(rows: list[dict]):
     if not rows:
         return
-    con = sqlite3.connect(DB_PATH)
-    con.executemany(
+    db.executemany(
         "INSERT INTO reviews (id, platform, sku, name, brand, grp, rating, text, answer, created_at) "
-        "VALUES (:id, :platform, :sku, :name, :brand, :grp, :rating, :text, :answer, :created_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?) "
         "ON CONFLICT(id) DO UPDATE SET "
         "answer = COALESCE(NULLIF(excluded.answer, ''), reviews.answer)",
-        rows,
+        [(r["id"], r["platform"], r["sku"], r["name"], r["brand"], r["grp"],
+          r["rating"], r["text"], r["answer"], r["created_at"]) for r in rows],
     )
-    con.commit()
-    con.close()
     _log.info("Upserted %d reviews", len(rows))
 
 
 def _save_snapshot():
     today = date.today().isoformat()
-    con = sqlite3.connect(DB_PATH)
-    rows = con.execute(
+    rows = db.fetchall(
         "SELECT platform, sku, AVG(rating), COUNT(*) FROM reviews "
         "WHERE rating > 0 GROUP BY platform, sku"
-    ).fetchall()
-    con.executemany(
-        "INSERT OR REPLACE INTO rating_snapshots VALUES (?,?,?,?,?)",
-        [(today, r[0], r[1], round(r[2], 2), r[3]) for r in rows],
     )
-    con.commit()
-    con.close()
+    data = [(today, r[0], r[1], round(float(r[2]), 2), r[3]) for r in rows]
+    if db.IS_PG:
+        db.executemany(
+            "INSERT INTO rating_snapshots (snapshot_date, platform, sku, rating, count) "
+            "VALUES (?,?,?,?,?) "
+            "ON CONFLICT(snapshot_date, platform, sku) DO UPDATE SET "
+            "rating=excluded.rating, count=excluded.count",
+            data,
+        )
+    else:
+        db.executemany(
+            "INSERT OR REPLACE INTO rating_snapshots VALUES (?,?,?,?,?)", data,
+        )
 
 
 def get_all_reviews(platform=None, limit=500) -> list[dict]:
-    con = sqlite3.connect(DB_PATH)
     sel = ("SELECT id,platform,sku,name,brand,grp,rating,text,created_at,answer "
            "FROM reviews ")
     if platform and platform != "all":
-        rows = con.execute(sel + "WHERE platform=? ORDER BY created_at DESC LIMIT ?",
-                           (platform, limit)).fetchall()
+        rows = db.fetchall(sel + "WHERE platform=? ORDER BY created_at DESC LIMIT ?",
+                           (platform, limit))
     else:
-        rows = con.execute(sel + "ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
-    con.close()
+        rows = db.fetchall(sel + "ORDER BY created_at DESC LIMIT ?", (limit,))
     return [{"id": r[0], "platform": r[1], "sku": r[2], "name": r[3],
              "brand": r[4], "group": r[5], "rating": r[6],
              "text": r[7], "date": (r[8] or "")[:10],
@@ -127,12 +120,10 @@ def get_all_reviews(platform=None, limit=500) -> list[dict]:
 # ─── DRAFTS (AI-генерация ответов) ─────────────────────────────────────────────
 
 def get_review(review_id: str) -> dict | None:
-    con = sqlite3.connect(DB_PATH)
-    r = con.execute(
+    r = db.fetchone(
         "SELECT id,platform,sku,name,rating,text,answer FROM reviews WHERE id=?",
         (review_id,),
-    ).fetchone()
-    con.close()
+    )
     if not r:
         return None
     return {"id": r[0], "platform": r[1], "sku": r[2], "name": r[3],
@@ -140,56 +131,44 @@ def get_review(review_id: str) -> dict | None:
 
 
 def save_draft(review_id: str, draft: str, status="pending"):
-    con = sqlite3.connect(DB_PATH)
-    con.execute(
+    db.execute(
         "INSERT INTO drafts (review_id, draft, status, updated_at) VALUES (?,?,?,?) "
         "ON CONFLICT(review_id) DO UPDATE SET draft=excluded.draft, "
         "status=excluded.status, updated_at=excluded.updated_at",
         (review_id, draft, status, date.today().isoformat()),
     )
-    con.commit()
-    con.close()
 
 
 def set_draft_status(review_id: str, status: str):
-    con = sqlite3.connect(DB_PATH)
-    con.execute(
+    db.execute(
         "UPDATE drafts SET status=?, updated_at=? WHERE review_id=?",
         (status, date.today().isoformat(), review_id),
     )
-    con.commit()
-    con.close()
 
 
 def get_draft(review_id: str) -> dict | None:
-    con = sqlite3.connect(DB_PATH)
-    r = con.execute(
+    r = db.fetchone(
         "SELECT review_id, draft, status FROM drafts WHERE review_id=?",
         (review_id,),
-    ).fetchone()
-    con.close()
+    )
     return {"review_id": r[0], "draft": r[1], "status": r[2]} if r else None
 
 
 def get_drafts() -> dict:
-    con = sqlite3.connect(DB_PATH)
-    rows = con.execute("SELECT review_id, draft, status FROM drafts").fetchall()
-    con.close()
+    rows = db.fetchall("SELECT review_id, draft, status FROM drafts")
     return {r[0]: {"draft": r[1], "status": r[2]} for r in rows}
 
 
 def get_unanswered(platform="WB", limit=20) -> list[dict]:
     """Reviews we haven't answered yet and have no draft, with text, newest first."""
-    con = sqlite3.connect(DB_PATH)
-    rows = con.execute(
+    rows = db.fetchall(
         "SELECT r.id, r.platform, r.sku, r.name, r.rating, r.text "
         "FROM reviews r LEFT JOIN drafts d ON d.review_id = r.id "
         "WHERE r.platform=? AND (r.answer IS NULL OR r.answer='') "
         "AND r.text != '' AND d.review_id IS NULL "
         "ORDER BY r.created_at DESC LIMIT ?",
         (platform, limit),
-    ).fetchall()
-    con.close()
+    )
     return [{"id": r[0], "platform": r[1], "sku": r[2], "name": r[3],
              "rating": r[4], "text": r[5]} for r in rows]
 
@@ -265,22 +244,21 @@ async def post_answer(review_id: str, text: str) -> tuple[bool, str]:
 
 def get_rating_table() -> list[dict]:
     """Ratings per article and per group."""
-    con = sqlite3.connect(DB_PATH)
     # per article
-    art_rows = con.execute(
+    art_rows = db.fetchall(
         "SELECT platform, sku, name, brand, grp, ROUND(AVG(rating),2), COUNT(*) "
         "FROM reviews WHERE rating > 0 GROUP BY platform, sku ORDER BY sku"
-    ).fetchall()
+    )
     # per group
-    grp_rows = con.execute(
+    grp_rows = db.fetchall(
         "SELECT platform, grp, ROUND(AVG(rating),2), COUNT(*) "
         "FROM reviews WHERE rating > 0 AND grp != '' GROUP BY platform, grp ORDER BY grp"
-    ).fetchall()
-    con.close()
+    )
 
     # Pivot articles
     art_table: dict[str, dict] = {}
     for platform, sku, name, brand, grp, avg, cnt in art_rows:
+        avg = float(avg) if avg is not None else None
         if sku not in art_table:
             art_table[sku] = {"sku": sku, "name": name or sku, "brand": brand or "",
                                "group": grp or "",
@@ -293,6 +271,7 @@ def get_rating_table() -> list[dict]:
     # Pivot groups
     grp_table: dict[str, dict] = {}
     for platform, grp, avg, cnt in grp_rows:
+        avg = float(avg) if avg is not None else None
         if grp not in grp_table:
             grp_table[grp] = {"group": grp, "ozon": None, "wb": None, "ym": None,
                                "ozon_cnt": 0, "wb_cnt": 0, "ym_cnt": 0}
@@ -308,30 +287,28 @@ def get_rating_table() -> list[dict]:
 
 def get_rating_dynamics() -> dict:
     """Monthly avg rating from reviews history — overview and per-article breakdown."""
-    con = sqlite3.connect(DB_PATH)
-    art_rows = con.execute(
-        "SELECT strftime('%Y-%m', created_at) as month, platform, sku, "
+    art_rows = db.fetchall(
+        "SELECT substr(created_at,1,7) as month, platform, sku, "
         "ROUND(AVG(rating),2), COUNT(*) "
         "FROM reviews WHERE rating > 0 AND created_at != '' "
         "GROUP BY month, platform, sku ORDER BY month"
-    ).fetchall()
-    ovr_rows = con.execute(
-        "SELECT strftime('%Y-%m', created_at) as month, platform, "
+    )
+    ovr_rows = db.fetchall(
+        "SELECT substr(created_at,1,7) as month, platform, "
         "ROUND(AVG(rating),2) "
         "FROM reviews WHERE rating > 0 AND created_at != '' "
         "GROUP BY month, platform ORDER BY month"
-    ).fetchall()
-    con.close()
+    )
 
     # overview: [{month, ozon, wb, ym}, ...]
     ovr: dict[str, dict] = {}
     for month, platform, avg in ovr_rows:
-        ovr.setdefault(month, {"month": month})[platform.lower()] = avg
+        ovr.setdefault(month, {"month": month})[platform.lower()] = float(avg) if avg is not None else None
 
     # by_article: {sku: [{month, ozon, wb, ym}, ...]}
     art: dict[str, dict[str, dict]] = {}
     for month, platform, sku, avg, _ in art_rows:
-        art.setdefault(sku, {}).setdefault(month, {"month": month})[platform.lower()] = avg
+        art.setdefault(sku, {}).setdefault(month, {"month": month})[platform.lower()] = float(avg) if avg is not None else None
 
     return {
         "overview": sorted(ovr.values(), key=lambda x: x["month"]),
@@ -344,41 +321,35 @@ def get_rating_dynamics() -> dict:
 
 def get_answered_pairs(platform="WB", limit=400) -> list[dict]:
     """Review→our answer pairs (only where we actually answered), newest first."""
-    con = sqlite3.connect(DB_PATH)
-    rows = con.execute(
+    rows = db.fetchall(
         "SELECT platform, sku, name, rating, text, answer, created_at FROM reviews "
         "WHERE answer IS NOT NULL AND answer != '' AND answer != ? AND platform = ? "
         "ORDER BY created_at DESC LIMIT ?",
         (ANSWERED_MARK, platform, limit),
-    ).fetchall()
-    con.close()
+    )
     return [{"platform": r[0], "sku": r[1], "name": r[2], "rating": r[3],
              "text": r[4], "answer": r[5], "date": (r[6] or "")[:10]} for r in rows]
 
 
 def get_answer_stats() -> dict:
     """How many reviews have our answer, per platform."""
-    con = sqlite3.connect(DB_PATH)
-    rows = con.execute(
+    rows = db.fetchall(
         "SELECT platform, COUNT(*), SUM(CASE WHEN answer IS NOT NULL AND answer != '' "
         "THEN 1 ELSE 0 END) FROM reviews GROUP BY platform"
-    ).fetchall()
-    con.close()
+    )
     return {r[0]: {"total": r[1], "answered": r[2] or 0} for r in rows}
 
 
 def get_stats() -> dict:
-    con = sqlite3.connect(DB_PATH)
-    total = con.execute("SELECT COUNT(*) FROM reviews").fetchone()[0]
-    by_platform = con.execute(
+    total = db.fetchone("SELECT COUNT(*) FROM reviews")[0]
+    by_platform = db.fetchall(
         "SELECT platform, COUNT(*), ROUND(AVG(rating),2) FROM reviews "
         "WHERE rating > 0 GROUP BY platform"
-    ).fetchall()
-    last_date = con.execute("SELECT MAX(created_at) FROM reviews").fetchone()[0]
-    con.close()
+    )
+    last_date = db.fetchone("SELECT MAX(created_at) FROM reviews")[0]
     return {
         "total": total,
-        "by_platform": {r[0]: {"count": r[1], "avg": r[2]} for r in by_platform},
+        "by_platform": {r[0]: {"count": r[1], "avg": float(r[2]) if r[2] is not None else None} for r in by_platform},
         "last_review": (last_date or "")[:10],
     }
 
