@@ -1045,6 +1045,7 @@ document.addEventListener('DOMContentLoaded', () => {
 let _allReviews = [];
 let _statsData = {};
 let _dynData = {};
+let _drafts = {};
 
 async function loadReviews() {
   const feedEl = document.getElementById('reviewsFeed');
@@ -1055,6 +1056,7 @@ async function loadReviews() {
     _allReviews = data.reviews || [];
     _statsData = data.stats || {};
     _dynData = data.dynamics || {};
+    _drafts = data.drafts || {};
     renderRatingsTable(data.ratings || {});
     renderStats(_statsData);
     populateDynFilter(data.ratings || {});
@@ -1298,6 +1300,91 @@ function renderReviewsFeed() {
         </div>
       </div>
       ${r.text ? `<div class="mt-1">${r.text}</div>` : '<div class="text-secondary small fst-italic">без текста</div>'}
+      ${replyBlock(r)}
     </div>
   `).join('');
+}
+
+function replyBlock(r) {
+  // Уже ответили на платформе
+  if (r.answer) {
+    return `<div class="mt-2 ps-2 border-start border-success">
+      <div class="text-success small mb-1">✓ Наш ответ</div>
+      <div class="small text-secondary">${esc(r.answer)}</div>
+    </div>`;
+  }
+  const d = _drafts[r.id];
+  if (!d) {
+    return `<div class="mt-2">
+      <button class="btn btn-sm btn-outline-info py-0" onclick="genDraft('${r.id}')">✨ Сгенерировать ответ</button>
+    </div>`;
+  }
+  if (d.status === 'approved') {
+    return `<div class="mt-2 ps-2 border-start border-success">
+      <div class="text-success small mb-1">✓ Одобрено и опубликовано</div>
+      <div class="small text-secondary">${esc(d.draft)}</div>
+    </div>`;
+  }
+  if (d.status === 'declined') {
+    return `<div class="mt-2">
+      <span class="text-danger small">✕ Отклонено.</span>
+      <button class="btn btn-sm btn-outline-info py-0 ms-2" onclick="genDraft('${r.id}')">✨ Сгенерировать заново</button>
+    </div>`;
+  }
+  // pending
+  return `<div class="mt-2 ps-2 border-start border-info">
+    <div class="text-info small mb-1">🤖 Черновик ответа (на проверке)</div>
+    <div class="small mb-2">${esc(d.draft)}</div>
+    <div class="d-flex gap-2">
+      <button class="btn btn-sm btn-success py-0" onclick="approveDraft('${r.id}')">✓ Одобрить</button>
+      <button class="btn btn-sm btn-outline-danger py-0" onclick="declineDraft('${r.id}')">✕ Отклонить</button>
+      <button class="btn btn-sm btn-outline-secondary py-0" onclick="genDraft('${r.id}')">↻ Перегенерировать</button>
+    </div>
+  </div>`;
+}
+
+function esc(s) {
+  return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+async function genDraft(id) {
+  _drafts[id] = { draft: 'Генерирую…', status: 'pending' };
+  renderReviewsFeed();
+  try {
+    const res = await fetch(`${API}/api/reviews/draft?id=${encodeURIComponent(id)}`, { method: 'POST' });
+    const d = await res.json();
+    if (d.error) { delete _drafts[id]; alert(d.error); }
+    else _drafts[id] = { draft: d.draft, status: d.status };
+  } catch (e) { delete _drafts[id]; alert('Ошибка: ' + e.message); }
+  renderReviewsFeed();
+}
+
+async function approveDraft(id) {
+  try {
+    const res = await fetch(`${API}/api/reviews/approve?id=${encodeURIComponent(id)}`, { method: 'POST' });
+    const d = await res.json();
+    if (d.error) { alert('Не опубликовано: ' + d.error); return; }
+    _drafts[id].status = 'approved';
+  } catch (e) { alert('Ошибка: ' + e.message); }
+  renderReviewsFeed();
+}
+
+async function declineDraft(id) {
+  try {
+    await fetch(`${API}/api/reviews/decline?id=${encodeURIComponent(id)}`, { method: 'POST' });
+    _drafts[id].status = 'declined';
+  } catch (e) { alert('Ошибка: ' + e.message); }
+  renderReviewsFeed();
+}
+
+async function genBatch() {
+  const btn = document.getElementById('genBatchBtn');
+  if (btn) { btn.disabled = true; btn.textContent = '✨ Генерирую…'; }
+  try {
+    const res = await fetch(`${API}/api/reviews/draft-batch?platform=WB&limit=20`, { method: 'POST' });
+    const d = await res.json();
+    await loadReviews();
+    alert(`Сгенерировано черновиков: ${d.generated || 0}`);
+  } catch (e) { alert('Ошибка: ' + e.message); }
+  if (btn) { btn.disabled = false; btn.textContent = '✨ Сгенерировать ответы'; }
 }

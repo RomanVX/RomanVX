@@ -42,6 +42,14 @@ def _init_db():
         if col not in cols:
             con.execute(f"ALTER TABLE reviews ADD COLUMN {col} {typ}")
     con.execute("""
+        CREATE TABLE IF NOT EXISTS drafts (
+            review_id   TEXT PRIMARY KEY,
+            draft       TEXT,
+            status      TEXT,
+            updated_at  TEXT
+        )
+    """)
+    con.execute("""
         CREATE TABLE IF NOT EXISTS rating_snapshots (
             snapshot_date TEXT,
             platform      TEXT,
@@ -99,22 +107,105 @@ def _save_snapshot():
 
 def get_all_reviews(platform=None, limit=500) -> list[dict]:
     con = sqlite3.connect(DB_PATH)
+    sel = ("SELECT id,platform,sku,name,brand,grp,rating,text,created_at,answer "
+           "FROM reviews ")
     if platform and platform != "all":
-        rows = con.execute(
-            "SELECT id,platform,sku,name,brand,grp,rating,text,created_at FROM reviews "
-            "WHERE platform=? ORDER BY created_at DESC LIMIT ?",
-            (platform, limit),
-        ).fetchall()
+        rows = con.execute(sel + "WHERE platform=? ORDER BY created_at DESC LIMIT ?",
+                           (platform, limit)).fetchall()
     else:
-        rows = con.execute(
-            "SELECT id,platform,sku,name,brand,grp,rating,text,created_at FROM reviews "
-            "ORDER BY created_at DESC LIMIT ?",
-            (limit,),
-        ).fetchall()
+        rows = con.execute(sel + "ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
     con.close()
     return [{"id": r[0], "platform": r[1], "sku": r[2], "name": r[3],
              "brand": r[4], "group": r[5], "rating": r[6],
-             "text": r[7], "date": (r[8] or "")[:10]} for r in rows]
+             "text": r[7], "date": (r[8] or "")[:10],
+             "answer": r[9] or ""} for r in rows]
+
+
+# ─── DRAFTS (AI-генерация ответов) ─────────────────────────────────────────────
+
+def get_review(review_id: str) -> dict | None:
+    con = sqlite3.connect(DB_PATH)
+    r = con.execute(
+        "SELECT id,platform,sku,name,rating,text,answer FROM reviews WHERE id=?",
+        (review_id,),
+    ).fetchone()
+    con.close()
+    if not r:
+        return None
+    return {"id": r[0], "platform": r[1], "sku": r[2], "name": r[3],
+            "rating": r[4], "text": r[5], "answer": r[6] or ""}
+
+
+def save_draft(review_id: str, draft: str, status="pending"):
+    con = sqlite3.connect(DB_PATH)
+    con.execute(
+        "INSERT INTO drafts (review_id, draft, status, updated_at) VALUES (?,?,?,?) "
+        "ON CONFLICT(review_id) DO UPDATE SET draft=excluded.draft, "
+        "status=excluded.status, updated_at=excluded.updated_at",
+        (review_id, draft, status, date.today().isoformat()),
+    )
+    con.commit()
+    con.close()
+
+
+def set_draft_status(review_id: str, status: str):
+    con = sqlite3.connect(DB_PATH)
+    con.execute(
+        "UPDATE drafts SET status=?, updated_at=? WHERE review_id=?",
+        (status, date.today().isoformat(), review_id),
+    )
+    con.commit()
+    con.close()
+
+
+def get_draft(review_id: str) -> dict | None:
+    con = sqlite3.connect(DB_PATH)
+    r = con.execute(
+        "SELECT review_id, draft, status FROM drafts WHERE review_id=?",
+        (review_id,),
+    ).fetchone()
+    con.close()
+    return {"review_id": r[0], "draft": r[1], "status": r[2]} if r else None
+
+
+def get_drafts() -> dict:
+    con = sqlite3.connect(DB_PATH)
+    rows = con.execute("SELECT review_id, draft, status FROM drafts").fetchall()
+    con.close()
+    return {r[0]: {"draft": r[1], "status": r[2]} for r in rows}
+
+
+def get_unanswered(platform="WB", limit=20) -> list[dict]:
+    """Reviews we haven't answered yet and have no draft, with text, newest first."""
+    con = sqlite3.connect(DB_PATH)
+    rows = con.execute(
+        "SELECT r.id, r.platform, r.sku, r.name, r.rating, r.text "
+        "FROM reviews r LEFT JOIN drafts d ON d.review_id = r.id "
+        "WHERE r.platform=? AND (r.answer IS NULL OR r.answer='') "
+        "AND r.text != '' AND d.review_id IS NULL "
+        "ORDER BY r.created_at DESC LIMIT ?",
+        (platform, limit),
+    ).fetchall()
+    con.close()
+    return [{"id": r[0], "platform": r[1], "sku": r[2], "name": r[3],
+             "rating": r[4], "text": r[5]} for r in rows]
+
+
+async def wb_post_answer(feedback_id: str, text: str) -> tuple[bool, str]:
+    """Publish an answer to a WB feedback. Returns (ok, message)."""
+    if not WB_API_KEY:
+        return False, "WB_API_KEY не задан"
+    url = "https://feedbacks-api.wildberries.ru/api/v1/feedbacks/answer"
+    headers = {"Authorization": WB_API_KEY, "Content-Type": "application/json"}
+    body = {"id": feedback_id, "text": text}
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.post(url, headers=headers, json=body)
+            if r.is_success:
+                return True, "опубликовано"
+            return False, f"WB {r.status_code}: {r.text[:200]}"
+    except Exception as e:
+        return False, str(e)
 
 
 def get_rating_table() -> list[dict]:

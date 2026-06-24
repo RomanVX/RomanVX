@@ -81,3 +81,45 @@ async def analyze_style(platform="WB", sample=300) -> dict:
 
     guide["_meta"] = {"platform": platform, "analyzed": len(pairs)}
     return guide
+
+
+# ─── REPLY GENERATION ─────────────────────────────────────────────────────────
+
+def _build_system(platform: str, n_examples=12) -> str:
+    """System prompt seeded with our real answers (few-shot) for style match."""
+    pairs = rc.get_answered_pairs(platform=platform, limit=n_examples)
+    examples = "\n\n".join(
+        f"Отзыв ({p['rating']}★): {p['text'] or '(без текста)'}\nОтвет: {p['answer']}"
+        for p in pairs if p["answer"]
+    )
+    base = (
+        "Ты пишешь ответы продавца на отзывы покупателей на маркетплейсе. "
+        "Пиши ровно в том же стиле, тоне и длине, что и в примерах ниже — "
+        "это реальные ответы нашей команды. Не выдумывай факты о товаре, "
+        "будь тёплым и человечным, без шаблонной канцелярщины. "
+        "Верни ТОЛЬКО текст ответа, без кавычек и пояснений."
+    )
+    if examples:
+        base += f"\n\nПРИМЕРЫ НАШИХ ОТВЕТОВ:\n\n{examples}"
+    return base
+
+
+async def generate_reply(review: dict, platform="WB") -> str:
+    """Generate a draft reply for one review in our style."""
+    if not ANTHROPIC_API_KEY:
+        return ""
+    system = _build_system(platform)
+    user = (
+        f"Товар: {review.get('name') or review.get('sku') or '—'}\n"
+        f"Оценка: {review.get('rating')}★\n"
+        f"Отзыв покупателя: {review.get('text') or '(без текста)'}\n\n"
+        "Напиши ответ от лица продавца."
+    )
+    resp = await _get_client().messages.create(
+        model=MODEL,
+        max_tokens=600,
+        thinking={"type": "adaptive"},
+        system=system,
+        messages=[{"role": "user", "content": user}],
+    )
+    return "".join(b.text for b in resp.content if b.type == "text").strip()

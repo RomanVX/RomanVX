@@ -511,6 +511,9 @@
         <input class="form-check-input" type="checkbox" id="reviewsOnlyText" checked onchange="renderReviewsFeed()">
         <label class="form-check-label small" for="reviewsOnlyText">Только с текстом</label>
       </div>
+      <button id="genBatchBtn" class="btn btn-sm btn-info py-0 ms-auto" onclick="genBatch()" title="Сгенерировать черновики для 20 неотвеченных отзывов WB">
+        ✨ Сгенерировать ответы
+      </button>
     </div>
     <div id="reviewsFeed"></div>
   </div><!-- /pane-reviews -->
@@ -520,6 +523,6 @@
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
-<script src="app.js?v=24"></script>
+<script src="app.js?v=25"></script>
 </body>
 </html>
