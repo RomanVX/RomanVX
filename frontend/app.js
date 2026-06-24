@@ -966,54 +966,10 @@ function toggleSkus(mp, mode) {
   renderOrdersTable();
 }
 
-let _msData = null;
-
 function _fmtShort(v) {
   if (Math.abs(v) >= 1e6) return (v / 1e6).toFixed(1).replace('.0', '') + ' млн';
   if (Math.abs(v) >= 1e3) return Math.round(v / 1e3) + ' тыс';
   return Math.round(v).toString();
-}
-
-async function loadMonthlySummary() {
-  try {
-    const r = await fetch(`${API}/api/dashboard/monthly_summary`);
-    if (!r.ok) throw new Error(r.status);
-    _msData = await r.json();
-    renderMonthlyChart();
-  } catch (e) { console.error('monthlyChart', e); }
-}
-
-function renderMonthlyChart() {
-  if (!_msData) return;
-  const mp = _salesMp;
-  const lbl = document.getElementById('monthlyMpLabel');
-  if (lbl) lbl.textContent = mp;
-  const block = _msData.rub[mp] || _msData.rub.total;
-  const ctx = document.getElementById('monthlyChart').getContext('2d');
-  if (charts.monthly) charts.monthly.destroy();
-  charts.monthly = new Chart(ctx, {
-    type: 'bar',
-    data: {
-      labels: _msData.months,
-      datasets: [
-        { label: 'Продажи', data: block.sales,  backgroundColor: '#6366f1', borderRadius: 4, maxBarThickness: 48 },
-        { label: 'Выкупы',  data: block.buyout, backgroundColor: '#22c55e', borderRadius: 4, maxBarThickness: 48 },
-      ],
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: {
-        legend: { labels: { color: '#cbd5e1', usePointStyle: true, pointStyle: 'rectRounded' } },
-        tooltip: { callbacks: { label: c => `${c.dataset.label}: ${fmtRub(c.raw)}` } },
-        datalabels: false,
-      },
-      scales: {
-        x: { ticks: { color: '#cbd5e1', font: { size: 13 } }, grid: { display: false } },
-        y: { ticks: { color: '#94a3b8', callback: v => _fmtShort(v) }, grid: { color: 'rgba(255,255,255,.06)' }, beginAtZero: true },
-      },
-    },
-  });
 }
 
 // ── Накопленная история продаж ────────────────────────────────────────────────

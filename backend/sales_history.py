@@ -27,7 +27,10 @@ def _init():
         )
     """)
 
-_init()
+try:
+    _init()
+except Exception as _e:
+    _log.error("sales_history _init failed (БД недоступна?): %s", _e)
 
 
 def _upsert(agg: dict, platform: str):

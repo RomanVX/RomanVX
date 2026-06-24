@@ -9,7 +9,6 @@ DATABASE_URL = (os.environ.get("DATABASE_URL") or "").strip()
 IS_PG = DATABASE_URL.startswith("postgres")
 
 if IS_PG:
-    import psycopg2  # noqa: F401
     SQLITE_PATH = None
     _log.info("DB: using PostgreSQL")
 else:
@@ -19,7 +18,8 @@ else:
 
 def get_conn():
     if IS_PG:
-        return psycopg2.connect(DATABASE_URL)
+        import psycopg2  # ленивый импорт — отсутствие пакета не валит весь модуль
+        return psycopg2.connect(DATABASE_URL, connect_timeout=10)
     return sqlite3.connect(SQLITE_PATH)
 
 

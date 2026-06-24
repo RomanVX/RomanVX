@@ -56,7 +56,10 @@ def _init_db():
         )
     """)
 
-_init_db()
+try:
+    _init_db()
+except Exception as _e:
+    _log.error("reviews _init_db failed (БД недоступна?): %s", _e)
 
 
 def _enrich(row: dict) -> dict:
