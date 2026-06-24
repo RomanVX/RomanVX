@@ -14,12 +14,18 @@ const SUBGROUPS = [
   { name: 'Фисты',             skus: ['BMN-0013', 'BMN-0028', 'BMN-0035', 'BMN-0036', 'ST-07'] },
   { name: 'Спреи для минета',  skus: ['BMN-0115', 'BMN-0116', 'BMN-0110'] },
 ];
-const GROUP_ORDER = [...BRAND_ORDER, ...SUBGROUPS.map(s => s.name), 'Прочее'];
+const GROUP_ORDER = ['Фисты', 'Aloe', 'Спреи для минета', 'Satisfucktion', 'Джага', 'Прочее'];
 
 function articleGroup(r) {
   const sku = r.supplierArticle || r.sku || '';
   for (const sg of SUBGROUPS) if (sg.skus.includes(sku)) return sg.name;
   return BRAND_ORDER.includes(r.brand) ? r.brand : 'Прочее';
+}
+
+// Среднее продаж/день по платформам (для сортировки в остатках)
+function avgPerDay(r) {
+  const vals = [r.wb_per_day, r.oz_per_day, r.ym_per_day].map(v => +v || 0);
+  return (vals[0] + vals[1] + vals[2]) / 3;
 }
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
@@ -406,11 +412,7 @@ function renderStocksTable() {
     (groupMap[g] = groupMap[g] || []).push(r);
   });
   Object.values(groupMap).forEach(rows => {
-    rows.sort((a, b) => {
-      const av = a.wb_per_day || a.oz_per_day || 0;
-      const bv = b.wb_per_day || b.oz_per_day || 0;
-      return bv - av;
-    });
+    rows.sort((a, b) => avgPerDay(b) - avgPerDay(a));
   });
   const orderedGroups = GROUP_ORDER
     .filter(g => groupMap[g])
