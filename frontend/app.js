@@ -870,30 +870,100 @@ function initSortable(tableEl) {
 // ── Sales Analytics ───────────────────────────────────────────────────────────
 
 let _wsData = null;
-let _salesMp = 'WB';   // выбранная площадка в Аналитике продаж
+// ── Заказы по неделям с разбивкой по SKU ─────────────────────────────────────
+
+let _ordersData = null;
+const _expandedMp = {};  // { WB: true/false, OZON: true/false, YM: true/false }
 
 async function loadSalesAnalytics() {
-  await loadWeeklySummary();
-  await loadMonthlySummary();
+  await loadOrders();
 }
 
-function setSalesMp(mp, card) {
-  _salesMp = mp;
-  // подсветка выбранной карточки
-  document.querySelectorAll('.salesmp-card').forEach(c => {
-    c.style.outline = c.dataset.mp === mp ? '2px solid #6366f1' : '';
-    c.style.color   = c.dataset.mp === mp ? '#a5b4fc' : '';
+async function reloadOrders() {
+  await fetch(`${API}/api/dashboard/weekly_orders/invalidate`, { method: 'POST' }).catch(() => {});
+  _ordersData = null;
+  await loadOrders();
+}
+
+async function loadOrders() {
+  ['ordersRubTable','ordersQtyTable'].forEach(id => {
+    document.getElementById(id).innerHTML =
+      '<tr><td class="text-center text-secondary py-4"><span class="spinner-border spinner-border-sm"></span> Загрузка…</td></tr>';
   });
-  // показываем блок данных
-  document.getElementById('salesMpData').style.display = '';
-  const lbl = document.getElementById('salesMpLabel');
-  if (lbl) lbl.textContent = mp;
-  // рендерим таблицы если данные уже загружены
-  if (_wsData) {
-    renderWsTable('wsRubTable', _wsData.weeks, _wsData.rub, fmtRub);
-    renderWsTable('wsQtyTable', _wsData.weeks, _wsData.qty, fmt);
+  try {
+    _ordersData = await fetchJSON('/api/dashboard/weekly_orders');
+    renderOrdersTable();
+  } catch (e) {
+    ['ordersRubTable','ordersQtyTable'].forEach(id => {
+      document.getElementById(id).innerHTML =
+        `<tr><td class="text-danger py-3">Ошибка: ${e.message}</td></tr>`;
+    });
   }
-  renderMonthlyChart();
+}
+
+const _MP_COLORS = { WB: '#a855f7', OZON: '#3b82f6', YM: '#eab308' };
+const _MP_LABEL  = { WB: 'WB (Wildberries)', OZON: 'Ozon', YM: 'Яндекс Маркет' };
+
+function _ordersTableHTML(mode) {  // mode = 'rub' | 'qty'
+  const d = _ordersData;
+  if (!d) return '';
+  const weeks = d.weeks;
+  const n = weeks.length;
+  const fmtFn = mode === 'rub' ? fmtRub : v => fmt(v) + ' шт.';
+
+  let thead = '<thead class="sticky-top"><tr>'
+    + '<th style="min-width:180px">Площадка / SKU</th>';
+  weeks.forEach(w => { thead += `<th class="text-end" style="white-space:nowrap">${w}</th>`; });
+  thead += '</tr></thead>';
+
+  let tbody = '<tbody>';
+  ['WB','OZON','YM'].forEach(mp => {
+    const block = d[mp];
+    if (!block) return;
+    const col = _MP_COLORS[mp];
+    const expanded = _expandedMp[mp];
+    const totalRow = mode === 'rub' ? block.total_rub : block.total_qty;
+    const hasSkus = block.skus && block.skus.length > 0;
+
+    // строка площадки
+    tbody += `<tr style="cursor:${hasSkus?'pointer':'default'};background:#1a1a2e" onclick="toggleSkus('${mp}','${mode}')">`;
+    tbody += `<td class="fw-semibold" style="color:${col}">`;
+    if (hasSkus) tbody += `<span class="me-1">${expanded ? '▼' : '▶'}</span>`;
+    tbody += `${_MP_LABEL[mp]}</td>`;
+    totalRow.forEach(v => {
+      tbody += `<td class="text-end fw-semibold" style="color:${col}">${fmtFn(v)}</td>`;
+    });
+    tbody += '</tr>';
+
+    // строки SKU (скрыты если не expanded)
+    if (hasSkus && expanded) {
+      block.skus.forEach(s => {
+        const vals = mode === 'rub' ? s.rub : s.qty;
+        const total = vals.reduce((a, b) => a + b, 0);
+        if (!total) return;
+        tbody += `<tr style="background:#111122">`;
+        tbody += `<td class="ps-4 small text-muted" style="max-width:220px;overflow:hidden;text-overflow:ellipsis">`
+               + `<span class="badge me-1" style="background:${col}22;color:${col};font-size:10px">${s.sku}</span>`
+               + `<span>${s.name || s.sku}</span></td>`;
+        vals.forEach(v => {
+          tbody += `<td class="text-end small">${v ? fmtFn(v) : '<span class="text-muted">—</span>'}</td>`;
+        });
+        tbody += '</tr>';
+      });
+    }
+  });
+  tbody += '</tbody>';
+  return thead + tbody;
+}
+
+function renderOrdersTable() {
+  document.getElementById('ordersRubTable').innerHTML = _ordersTableHTML('rub');
+  document.getElementById('ordersQtyTable').innerHTML = _ordersTableHTML('qty');
+}
+
+function toggleSkus(mp, mode) {
+  _expandedMp[mp] = !_expandedMp[mp];
+  renderOrdersTable();
 }
 
 let _msData = null;
@@ -1027,48 +1097,6 @@ function renderHistory(d) {
   });
 }
 
-async function loadWeeklySummary() {
-  const rubEl = document.getElementById('wsRubTable');
-  const qtyEl = document.getElementById('wsQtyTable');
-  rubEl.innerHTML = qtyEl.innerHTML =
-    '<tr><td class="text-center text-secondary py-4"><span class="spinner-border spinner-border-sm"></span></td></tr>';
-  try {
-    const r = await fetch(`${API}/api/dashboard/weekly_summary`);
-    if (!r.ok) { const b = await r.json().catch(() => ({})); throw new Error(b.detail || r.status); }
-    _wsData = await r.json();
-    renderWsTable('wsRubTable', _wsData.weeks, _wsData.rub, fmtRub);
-    renderWsTable('wsQtyTable', _wsData.weeks, _wsData.qty, fmt);
-  } catch (e) {
-    rubEl.innerHTML = qtyEl.innerHTML =
-      `<tr><td class="text-center text-danger py-4">Ошибка: ${e.message}</td></tr>`;
-  }
-}
-
-function renderWsTable(elId, weeks, block, fmtFn) {
-  const rowDefs = [
-    { key: _salesMp, label: _salesMp },
-  ];
-  let thead = '<thead class="sticky-top"><tr><th rowspan="2" class="align-middle">Маркетплейс</th>';
-  weeks.forEach(w => { thead += `<th colspan="2" class="text-center">${w}</th>`; });
-  thead += '</tr><tr>';
-  weeks.forEach(() => { thead += '<th class="text-center small text-secondary">Продажи</th><th class="text-center small text-secondary">Выкупы</th>'; });
-  thead += '</tr></thead>';
-
-  let tbody = '<tbody>';
-  rowDefs.forEach((row, i) => {
-    const d = block[row.key];
-    const trCls = row.isTotal ? 'fw-bold' : (i % 2 === 1 ? '' : '');
-    const bgStyle = row.isTotal ? 'background:#1e1e2e' : (i % 2 === 1 ? 'background:#181818' : '');
-    tbody += `<tr class="${trCls}" style="${bgStyle}"><td>${row.label}</td>`;
-    weeks.forEach((_, idx) => {
-      tbody += `<td class="text-end">${fmtFn(d.sales[idx] || 0)}</td><td class="text-end">${fmtFn(d.buyout[idx] || 0)}</td>`;
-    });
-    tbody += '</tr>';
-  });
-  tbody += '</tbody>';
-
-  document.getElementById(elId).innerHTML = thead + tbody;
-}
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 

@@ -662,6 +662,137 @@ async def get_weekly_summary():
         return result
 
 
+# ── Заказы по неделям с разбивкой по SKU ──────────────────────────────────────
+
+import catalog as _cat
+
+_wo_cache: dict = {}
+_wo_cache_ts: float = 0.0
+_WO_TTL = 1800
+_wo_lock = asyncio.Lock()
+
+
+@router.get("/weekly_orders")
+async def get_weekly_orders():
+    """Заказы по неделям (Пн-Вс) с разбивкой по SKU, все МП."""
+    global _wo_cache, _wo_cache_ts
+    if _wo_cache and _wtime.monotonic() - _wo_cache_ts < _WO_TTL:
+        return _wo_cache
+
+    async with _wo_lock:
+        if _wo_cache and _wtime.monotonic() - _wo_cache_ts < _WO_TTL:
+            return _wo_cache
+
+        weeks = _week_ranges(8)
+        n = len(weeks)
+        date_from_str = weeks[0][0].strftime("%Y-%m-%d")
+        date_to_str   = weeks[-1][1].strftime("%Y-%m-%d")
+        dt_from = datetime.combine(weeks[0][0], datetime.min.time())
+        dt_to   = datetime.combine(weeks[-1][1], datetime.min.time())
+
+        def week_idx(date_str: str):
+            try:
+                d = datetime.strptime((date_str or "")[:10], "%Y-%m-%d").date()
+            except ValueError:
+                return None
+            for i, (s, e) in enumerate(weeks):
+                if s <= d <= e:
+                    return i
+            return None
+
+        # ── WB: из кеша orders (индивидуальные записи с nmId/supplierArticle) ──
+        wb_by_sku: dict = {}   # sku → {"rub": [n], "qty": [n], "name": str}
+        wb_total_rub = [0.0] * n
+        wb_total_qty = [0]   * n
+        try:
+            _, wb_orders, _ = await cache.get_raw_data(dt_from, dt_to)
+            for o in wb_orders:
+                if o.get("isCancel"):
+                    continue
+                idx = week_idx(o.get("date") or o.get("lastChangeDate"))
+                if idx is None:
+                    continue
+                raw = o.get("nmId") or o.get("supplierArticle") or ""
+                sku = _cat.resolve_wb(raw) if raw else str(raw)
+                name = o.get("subject") or o.get("category") or sku
+                price = float(o.get("priceWithDisc") or o.get("totalPrice") or 0)
+                if sku not in wb_by_sku:
+                    wb_by_sku[sku] = {"rub": [0.0]*n, "qty": [0]*n, "name": name}
+                wb_by_sku[sku]["rub"][idx] += price
+                wb_by_sku[sku]["qty"][idx] += 1
+                wb_total_rub[idx] += price
+                wb_total_qty[idx] += 1
+        except Exception as e:
+            import logging; logging.getLogger(__name__).warning("weekly_orders WB: %s", e)
+
+        # ── OZON / YM ──
+        try:
+            oz_rows, ym_rows = await asyncio.wait_for(
+                asyncio.gather(
+                    ozon_client.get_sales_detail(date_from_str, date_to_str),
+                    ym_client.get_sales_detail(date_from_str, date_to_str),
+                ),
+                timeout=90,
+            )
+        except Exception:
+            oz_rows, ym_rows = [], []
+
+        def agg_rows(rows, sku_field):
+            by_sku: dict = {}
+            total_rub = [0.0] * n
+            total_qty = [0]   * n
+            for r in rows:
+                idx = week_idx(r.get("date"))
+                if idx is None:
+                    continue
+                sku = r.get(sku_field) or ""
+                rev = float(r.get("revenue") or 0)
+                qty = int(r.get("qty") or 0)
+                if sku not in by_sku:
+                    by_sku[sku] = {"rub": [0.0]*n, "qty": [0]*n, "name": sku}
+                by_sku[sku]["rub"][idx] = round(by_sku[sku]["rub"][idx] + rev, 2)
+                by_sku[sku]["qty"][idx] += qty
+                total_rub[idx] = round(total_rub[idx] + rev, 2)
+                total_qty[idx] += qty
+            return by_sku, total_rub, total_qty
+
+        oz_by_sku, oz_rub, oz_qty = agg_rows(oz_rows, "offer_id")
+        ym_by_sku, ym_rub, ym_qty = agg_rows(ym_rows, "shop_sku")
+
+        def clean_sku(by_sku, total_rub, total_qty):
+            """Sort SKUs by total revenue desc, round numbers."""
+            result = []
+            for sku, d in by_sku.items():
+                result.append({
+                    "sku": sku,
+                    "name": d["name"],
+                    "rub": [round(v, 2) for v in d["rub"]],
+                    "qty": d["qty"],
+                })
+            result.sort(key=lambda x: sum(x["rub"]), reverse=True)
+            return result
+
+        result = {
+            "weeks": [_week_label(s, e) for s, e in weeks],
+            "WB":   {"total_rub": [round(v,2) for v in wb_total_rub], "total_qty": wb_total_qty,
+                     "skus": clean_sku(wb_by_sku, wb_total_rub, wb_total_qty)},
+            "OZON": {"total_rub": oz_rub, "total_qty": oz_qty,
+                     "skus": clean_sku(oz_by_sku, oz_rub, oz_qty)},
+            "YM":   {"total_rub": ym_rub, "total_qty": ym_qty,
+                     "skus": clean_sku(ym_by_sku, ym_rub, ym_qty)},
+        }
+        _wo_cache = result
+        _wo_cache_ts = _wtime.monotonic()
+        return result
+
+
+@router.post("/weekly_orders/invalidate", include_in_schema=False)
+async def invalidate_weekly_orders():
+    global _wo_cache, _wo_cache_ts
+    _wo_cache = {}; _wo_cache_ts = 0.0
+    return {"status": "ok"}
+
+
 # ── Помесячная сводка Продажи/Выкупы ──────────────────────────────────────────
 
 _RU_MONTHS = ["", "Янв", "Фев", "Мар", "Апр", "Май", "Июн",
