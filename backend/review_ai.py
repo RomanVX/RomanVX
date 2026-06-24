@@ -1,0 +1,83 @@
+"""Claude-powered analysis of our review answers + reply generation."""
+import json
+import logging
+
+from anthropic import AsyncAnthropic
+
+from config import ANTHROPIC_API_KEY
+import reviews_client as rc
+
+_log = logging.getLogger(__name__)
+MODEL = "claude-opus-4-8"
+
+_client: AsyncAnthropic | None = None
+
+
+def _get_client() -> AsyncAnthropic:
+    global _client
+    if _client is None:
+        _client = AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
+    return _client
+
+
+# ─── STYLE ANALYSIS ───────────────────────────────────────────────────────────
+
+async def analyze_style(platform="WB", sample=300) -> dict:
+    """Read our past answers and extract a reusable style guide."""
+    if not ANTHROPIC_API_KEY:
+        return {"error": "ANTHROPIC_API_KEY не задан"}
+
+    pairs = rc.get_answered_pairs(platform=platform, limit=sample)
+    if not pairs:
+        return {"error": f"Нет сохранённых ответов для {platform}. "
+                         "Нажмите «Обновить» — мы начали собирать ответы только сейчас."}
+
+    # Compact examples for the prompt
+    examples = "\n\n".join(
+        f"[{p['rating']}★] Отзыв: {p['text'] or '(без текста)'}\nНаш ответ: {p['answer']}"
+        for p in pairs[:sample]
+    )
+
+    system = (
+        "Ты — аналитик клиентского сервиса. Тебе дают реальные пары «отзыв покупателя — "
+        "ответ продавца» из маркетплейса. Изучи МАНЕРУ ответов продавца и опиши её так, "
+        "чтобы по этому описанию можно было генерировать новые ответы в том же стиле. "
+        "Отвечай строго в JSON."
+    )
+    prompt = (
+        f"Вот {len(pairs)} пар отзыв→ответ:\n\n{examples}\n\n"
+        "Верни JSON со следующими полями:\n"
+        "{\n"
+        '  "tone": "общий тон (тёплый/официальный/дружелюбный и т.п.)",\n'
+        '  "avg_length": "типичная длина ответа",\n'
+        '  "greeting": "как обращаются к клиенту (по имени? приветствие?)",\n'
+        '  "signature": "как подписываются / упоминание команды/бренда",\n'
+        '  "common_phrases": ["частые фразы и обороты"],\n'
+        '  "emoji": "используются ли эмодзи и какие",\n'
+        '  "structure": "из каких частей обычно состоит ответ",\n'
+        '  "by_rating": {"5": "как отвечают на 5★", "low": "как отвечают на негатив"},\n'
+        '  "dos": ["что характерно делать"],\n'
+        '  "donts": ["чего избегать"],\n'
+        '  "system_prompt": "готовый system-prompt для генерации новых ответов в этом стиле"\n'
+        "}"
+    )
+
+    resp = await _get_client().messages.create(
+        model=MODEL,
+        max_tokens=4000,
+        thinking={"type": "adaptive"},
+        system=system,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    text = "".join(b.text for b in resp.content if b.type == "text").strip()
+    # strip ```json fences if present
+    if text.startswith("```"):
+        text = text.split("```", 2)[1].lstrip("json").strip()
+    try:
+        guide = json.loads(text)
+    except Exception as e:
+        _log.warning("style JSON parse failed: %s", e)
+        return {"error": "Не удалось разобрать ответ модели", "raw": text}
+
+    guide["_meta"] = {"platform": platform, "analyzed": len(pairs)}
+    return guide

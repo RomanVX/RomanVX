@@ -1076,6 +1076,59 @@ async function forceRefreshReviews() {
   if (btn) btn.textContent = '🔄 Обновить';
 }
 
+async function analyzeStyle() {
+  const btn = document.getElementById('analyzeStyleBtn');
+  const out = document.getElementById('styleGuide');
+  if (btn) { btn.disabled = true; btn.textContent = '🧠 Анализирую…'; }
+  if (out) out.innerHTML = '<div class="text-secondary small">Изучаю наши прошлые ответы…</div>';
+  try {
+    const res = await fetch(`${API}/api/reviews/analyze-style?platform=WB&sample=300`, { method: 'POST' });
+    const g = await res.json();
+    renderStyleGuide(g);
+  } catch (e) {
+    if (out) out.innerHTML = `<div class="text-danger small">Ошибка: ${e.message}</div>`;
+  }
+  if (btn) { btn.disabled = false; btn.textContent = '🧠 Анализ стиля ответов'; }
+}
+
+function renderStyleGuide(g) {
+  const out = document.getElementById('styleGuide');
+  if (!out) return;
+  if (g.error) {
+    out.innerHTML = `<div class="alert alert-warning py-2 small mb-0">${g.error}</div>`;
+    return;
+  }
+  const list = arr => (arr || []).map(x => `<li>${x}</li>`).join('');
+  const m = g._meta || {};
+  out.innerHTML = `
+    <div class="card bg-card border-0">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <h6 class="mb-0">Стиль наших ответов <span class="text-secondary small">(${m.platform || 'WB'}, проанализировано ${m.analyzed || 0})</span></h6>
+        </div>
+        <div class="row small g-3">
+          <div class="col-md-6">
+            <div><b>Тон:</b> ${g.tone || '—'}</div>
+            <div><b>Длина:</b> ${g.avg_length || '—'}</div>
+            <div><b>Обращение:</b> ${g.greeting || '—'}</div>
+            <div><b>Подпись:</b> ${g.signature || '—'}</div>
+            <div><b>Эмодзи:</b> ${g.emoji || '—'}</div>
+            <div><b>Структура:</b> ${g.structure || '—'}</div>
+          </div>
+          <div class="col-md-6">
+            ${g.by_rating ? `<div><b>На 5★:</b> ${g.by_rating['5'] || '—'}</div>
+            <div><b>На негатив:</b> ${g.by_rating.low || '—'}</div>` : ''}
+            ${g.common_phrases ? `<div class="mt-1"><b>Частые фразы:</b><ul class="mb-1">${list(g.common_phrases)}</ul></div>` : ''}
+          </div>
+          <div class="col-md-6">${g.dos ? `<b class="text-success">Делаем:</b><ul class="mb-0">${list(g.dos)}</ul>` : ''}</div>
+          <div class="col-md-6">${g.donts ? `<b class="text-danger">Избегаем:</b><ul class="mb-0">${list(g.donts)}</ul>` : ''}</div>
+        </div>
+        ${g.system_prompt ? `<details class="mt-2"><summary class="small text-secondary" style="cursor:pointer">Готовый промпт для генерации ответов</summary>
+          <pre class="small mt-2 p-2 bg-dark rounded" style="white-space:pre-wrap">${g.system_prompt}</pre></details>` : ''}
+      </div>
+    </div>`;
+}
+
 function renderStats(stats) {
   const el = document.getElementById('reviewsStats');
   if (!el) return;

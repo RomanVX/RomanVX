@@ -4,6 +4,7 @@ import logging
 from fastapi import APIRouter, BackgroundTasks, Query
 
 import reviews_client as rc
+import review_ai
 
 router = APIRouter(prefix="/api/reviews", tags=["reviews"])
 _log = logging.getLogger(__name__)
@@ -30,3 +31,15 @@ async def force_refresh():
     """Force refresh from all platforms now."""
     await rc.refresh_all(force=True)
     return {"ok": True, "stats": rc.get_stats()}
+
+
+@router.get("/answer-stats")
+async def answer_stats():
+    """How many reviews already have our saved answer, per platform."""
+    return rc.get_answer_stats()
+
+
+@router.post("/analyze-style")
+async def analyze_style(platform: str = Query("WB"), sample: int = Query(300)):
+    """Analyze our past answers and return a reusable style guide."""
+    return await review_ai.analyze_style(platform=platform, sample=sample)

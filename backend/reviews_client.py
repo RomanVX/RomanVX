@@ -32,12 +32,13 @@ def _init_db():
             grp         TEXT,
             rating      INTEGER,
             text        TEXT,
+            answer      TEXT,
             created_at  TEXT
         )
     """)
     # migrate old schema if name column missing
     cols = {r[1] for r in con.execute("PRAGMA table_info(reviews)").fetchall()}
-    for col, typ in [("name", "TEXT"), ("brand", "TEXT"), ("grp", "TEXT")]:
+    for col, typ in [("name", "TEXT"), ("brand", "TEXT"), ("grp", "TEXT"), ("answer", "TEXT")]:
         if col not in cols:
             con.execute(f"ALTER TABLE reviews ADD COLUMN {col} {typ}")
     con.execute("""
@@ -70,8 +71,10 @@ def _upsert_reviews(rows: list[dict]):
         return
     con = sqlite3.connect(DB_PATH)
     con.executemany(
-        "INSERT OR IGNORE INTO reviews (id, platform, sku, name, brand, grp, rating, text, created_at) "
-        "VALUES (:id, :platform, :sku, :name, :brand, :grp, :rating, :text, :created_at)",
+        "INSERT INTO reviews (id, platform, sku, name, brand, grp, rating, text, answer, created_at) "
+        "VALUES (:id, :platform, :sku, :name, :brand, :grp, :rating, :text, :answer, :created_at) "
+        "ON CONFLICT(id) DO UPDATE SET "
+        "answer = COALESCE(NULLIF(excluded.answer, ''), reviews.answer)",
         rows,
     )
     con.commit()
@@ -193,6 +196,31 @@ def get_rating_dynamics() -> dict:
     }
 
 
+def get_answered_pairs(platform="WB", limit=400) -> list[dict]:
+    """Review→our answer pairs (only where we actually answered), newest first."""
+    con = sqlite3.connect(DB_PATH)
+    rows = con.execute(
+        "SELECT platform, sku, name, rating, text, answer, created_at FROM reviews "
+        "WHERE answer IS NOT NULL AND answer != '' AND platform = ? "
+        "ORDER BY created_at DESC LIMIT ?",
+        (platform, limit),
+    ).fetchall()
+    con.close()
+    return [{"platform": r[0], "sku": r[1], "name": r[2], "rating": r[3],
+             "text": r[4], "answer": r[5], "date": (r[6] or "")[:10]} for r in rows]
+
+
+def get_answer_stats() -> dict:
+    """How many reviews have our answer, per platform."""
+    con = sqlite3.connect(DB_PATH)
+    rows = con.execute(
+        "SELECT platform, COUNT(*), SUM(CASE WHEN answer IS NOT NULL AND answer != '' "
+        "THEN 1 ELSE 0 END) FROM reviews GROUP BY platform"
+    ).fetchall()
+    con.close()
+    return {r[0]: {"total": r[1], "answered": r[2] or 0} for r in rows}
+
+
 def get_stats() -> dict:
     con = sqlite3.connect(DB_PATH)
     total = con.execute("SELECT COUNT(*) FROM reviews").fetchone()[0]
@@ -239,12 +267,14 @@ async def fetch_wb_reviews():
                         # resolve via nmId first if supplierArticle missing
                         nm_id = f.get("nmId")
                         sku = cat.resolve_wb(nm_id) if nm_id else cat.resolve_wb(raw_sku)
+                        answer = ((f.get("answer") or {}).get("text") or "").strip()
                         rows.append(_enrich({
                             "id": f"wb_{f['id']}",
                             "platform": "WB",
                             "sku": sku,
                             "rating": int(f.get("productValuation") or 0),
                             "text": (f.get("text") or "").strip(),
+                            "answer": answer,
                             "created_at": (f.get("createdDate") or "")[:19],
                         }))
                     skip += len(feedbacks)
@@ -294,6 +324,7 @@ async def fetch_ozon_reviews():
                         "sku": sku,
                         "rating": int(rev.get("rating") or 0),
                         "text": (rev.get("text") or rev.get("comment") or "").strip(),
+                        "answer": "",
                         "created_at": (rev.get("published_at") or rev.get("created_at") or
                                        rev.get("create_at") or "")[:19],
                     }))
@@ -347,6 +378,7 @@ async def fetch_ym_reviews():
                         "sku": sku,
                         "rating": int(stats.get("rating") or 0),
                         "text": text,
+                        "answer": "",
                         "created_at": (f.get("createdAt") or "")[:19],
                     }))
                 page_token = (result.get("paging") or {}).get("nextPageToken")
