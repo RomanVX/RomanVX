@@ -262,7 +262,83 @@ async def invalidate_reco_cache():
     return {"status": "ok"}
 
 
-@router.get("/sales_analytics")
+# ── Анализ текущих продаж через Claude ────────────────────────────────────────
+
+_sales_analysis_cache: dict = {}
+_sales_analysis_ts: float = 0.0
+_SALES_ANALYSIS_TTL = 3600  # 1 час
+
+
+@router.get("/sales_analysis")
+async def get_sales_analysis(refresh: bool = False):
+    """Анализ недельных продаж через Claude."""
+    from config import ANTHROPIC_API_KEY
+    if not ANTHROPIC_API_KEY:
+        raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY не настроен")
+
+    global _sales_analysis_cache, _sales_analysis_ts
+    if not refresh and _sales_analysis_cache and _time.monotonic() - _sales_analysis_ts < _SALES_ANALYSIS_TTL:
+        return _sales_analysis_cache
+
+    # Берём данные из weekly_orders кэша
+    data = _wo_cache
+    if not data:
+        data = await get_weekly_orders()
+
+    weeks = data.get("weeks", [])
+    lines = ["Площадка | Артикул | Группа | " + " | ".join(weeks)]
+    for mp_key in ("WB", "OZON", "YM"):
+        block = data.get(mp_key, {})
+        for s in (block.get("skus") or []):
+            total = sum(s.get("rub") or [])
+            if total < 100:
+                continue
+            rub_vals = " | ".join(f"{round(v):,}" for v in (s.get("rub") or []))
+            lines.append(f"{mp_key} | {s['sku']} | {s.get('group','—')} | {rub_vals}")
+
+    table_text = "\n".join(lines[:120])  # ограничение по размеру промпта
+    now_str = datetime.utcnow().strftime("%d.%m.%Y")
+
+    prompt = f"""Ты аналитик маркетплейсов. Дата анализа: {now_str}.
+
+Ниже недельные продажи (₽) по артикулам за последние 8 недель (WB, OZON, YM):
+
+{table_text}
+
+Сформируй краткий структурированный анализ на русском:
+
+1. **ТРЕНДЫ** — какие группы/артикулы растут, какие падают. Выдели топ-3 роста и топ-3 падения.
+
+2. **ЛИДЕРЫ ПРОДАЖ** — топ-5 артикулов суммарно по всем площадкам за последние 2 недели.
+
+3. **АНОМАЛИИ** — резкие скачки или провалы (>50%) между неделями. Что могло стать причиной?
+
+4. **РЕКОМЕНДАЦИИ** — 3-5 конкретных действий для роста продаж на следующей неделе.
+
+Будь краток, по делу. Используй эмодзи."""
+
+    import anthropic as _anthropic
+    import logging as _salog
+    _salog = _salog.getLogger(__name__)
+    try:
+        client = _anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
+        message = await client.messages.create(
+            model="claude-haiku-4-5",
+            max_tokens=1500,
+            messages=[{"role": "user", "content": prompt}],
+        )
+    except Exception as exc:
+        _salog.error("Claude sales_analysis error: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Claude API error: {exc}")
+
+    text = message.content[0].text
+    result = {"text": text, "generated_at": datetime.utcnow().strftime("%d.%m.%Y %H:%M UTC")}
+    _sales_analysis_cache = result
+    _sales_analysis_ts = _time.monotonic()
+    return result
+
+
+
 async def get_sales_analytics(
     date_from:   Annotated[Optional[str], _DATE_FROM] = None,
     date_to:     Annotated[Optional[str], _DATE_TO]   = None,
@@ -791,7 +867,7 @@ async def get_weekly_orders():
                 cat = _cat.CATALOG.get(sku) or {}
                 item = {
                     "sku": sku,
-                    "name": d["name"] or cat.get("name", sku),
+                    "name": cat.get("name") or d["name"] or sku,
                     "brand": cat.get("brand", ""),
                     "group": cat.get("group", ""),
                     "rub": [round(v, 2) for v in d["rub"]],

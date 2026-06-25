@@ -878,8 +878,8 @@ let _ordersData = null;
 let _ordersMp = 'WB';
 let _ordersCompact = false;   // true → показываем только текущую и прошлую неделю
 
-const _MP_COLORS = { WB: '#a855f7', OZON: '#3b82f6', YM: '#eab308' };
-const _MP_LABEL  = { WB: 'WB (Wildberries)', OZON: 'Ozon', YM: 'Яндекс Маркет' };
+const _MP_COLORS = { WB: '#a855f7', OZON: '#3b82f6', YM: '#eab308', TOTAL: '#10b981' };
+const _MP_LABEL  = { WB: 'WB (Wildberries)', OZON: 'Ozon', YM: 'Яндекс Маркет', TOTAL: 'Все площадки' };
 
 async function loadSalesAnalytics() {
   await loadOrders();
@@ -887,7 +887,7 @@ async function loadSalesAnalytics() {
 
 function setOrdersMp(mp) {
   _ordersMp = mp;
-  ['WB','OZON','YM'].forEach(m => {
+  ['WB','OZON','YM','TOTAL'].forEach(m => {
     const el = document.getElementById('ordMp' + m);
     if (el) el.classList.toggle('active', m === mp);
   });
@@ -907,8 +907,82 @@ async function loadOrders() {
   try {
     _ordersData = await fetchJSON('/api/dashboard/weekly_orders');
     renderOrdersTable();
+    loadOrdersMonthly();  // подгружаем месячную разбивку параллельно
   } catch (e) {
     if (tbl) tbl.innerHTML = `<tr><td class="text-danger py-3">Ошибка: ${e.message}</td></tr>`;
+  }
+}
+
+let _monthlyData = null;
+
+async function loadOrdersMonthly() {
+  const wrap = document.getElementById('ordersMonthlyWrap');
+  if (!wrap) return;
+  try {
+    _monthlyData = _monthlyData || await fetchJSON('/api/dashboard/monthly_summary');
+    renderOrdersMonthly();
+  } catch (e) { /* тихо */ }
+}
+
+function renderOrdersMonthly() {
+  const wrap = document.getElementById('ordersMonthlyWrap');
+  if (!wrap || !_monthlyData) return;
+  const { months, rub, qty } = _monthlyData;
+  const n = months.length;
+
+  const MPs = [
+    { key: 'WB',   label: 'WB',   color: '#a855f7' },
+    { key: 'OZON', label: 'Ozon', color: '#3b82f6' },
+    { key: 'YM',   label: 'ЯМ',   color: '#eab308' },
+    { key: 'total',label: 'Итого',color: '#10b981' },
+  ];
+
+  let html = `<div class="card border-0 bg-card mt-1">
+    <div class="card-header bg-transparent border-0 py-2 d-flex align-items-center gap-2">
+      <span class="fw-semibold small">📅 По месяцам</span>
+      <span class="text-secondary" style="font-size:0.72rem">последние ${n} мес.</span>
+    </div>
+    <div class="card-body p-0"><div class="table-responsive">
+    <table class="table table-sm align-middle mb-0 text-nowrap" style="font-size:0.8rem">
+    <thead><tr>
+      <th style="min-width:80px">Площадка</th>`;
+  months.forEach(m => { html += `<th class="text-end" style="${_WEEK_SEP}">${m}</th>`; });
+  html += `</tr></thead><tbody>`;
+
+  MPs.forEach(({ key, label, color }) => {
+    const row = rub[key];
+    if (!row) return;
+    const isTotal = key === 'total';
+    const bg = isTotal ? 'background:#f0f0f0;color:#111' : '';
+    html += `<tr style="${bg}">`;
+    html += `<td class="fw-semibold" style="${bg}"><span style="color:${color}">${label}</span> <span class="text-secondary" style="font-size:0.68rem">₽</span></td>`;
+    row.sales.forEach((v, i) => {
+      html += `<td class="text-end" style="${_WEEK_SEP}${bg}">${v ? fmtRub(v) : '<span class="text-muted">—</span>'}`;
+      if (v && row.buyout[i] && row.buyout[i] < v) {
+        const pct = Math.round(row.buyout[i] / v * 100);
+        html += `<div style="font-size:0.6rem;color:#16a34a;line-height:1.1">✓${pct}%</div>`;
+      }
+      html += `</td>`;
+    });
+    html += `</tr>`;
+  });
+  html += `</tbody></table></div></div></div>`;
+  wrap.innerHTML = html;
+}
+
+async function loadSalesAnalysis(refresh = false) {
+  const modal = new bootstrap.Modal(document.getElementById('salesAnalysisModal'));
+  const body = document.getElementById('salesAnalysisBody');
+  const at = document.getElementById('salesAnalysisAt');
+  body.innerHTML = '<div class="text-center py-4"><span class="spinner-border"></span></div>';
+  modal.show();
+  try {
+    const url = '/api/dashboard/sales_analysis' + (refresh ? '?refresh=true' : '');
+    const d = await fetchJSON(url);
+    body.textContent = d.text;
+    if (at) at.textContent = d.generated_at || '';
+  } catch (e) {
+    body.innerHTML = `<div class="text-danger">Ошибка: ${e.message}</div>`;
   }
 }
 
@@ -976,10 +1050,35 @@ function _ordersGrouped() {
   const d = _ordersData;
   if (!d) return null;
   const mp = _ordersMp;
-  const block = d[mp];
-  if (!block) return null;
   const weeks = d.weeks;
   const n = weeks.length;
+
+  let block;
+  if (mp === 'TOTAL') {
+    // Объединяем SKU из всех трёх площадок по внутреннему артикулу
+    const merged = {};
+    ['WB','OZON','YM'].forEach(m => {
+      (d[m]?.skus || []).forEach(s => {
+        if (!merged[s.sku]) {
+          merged[s.sku] = { ...s, rub: [...s.rub], qty: [...s.qty],
+            cancel_rub: s.cancel_rub ? [...s.cancel_rub] : Array(n).fill(0),
+            cancel_qty: s.cancel_qty ? [...s.cancel_qty] : Array(n).fill(0) };
+        } else {
+          s.rub.forEach((v,i) => { merged[s.sku].rub[i] += v; });
+          s.qty.forEach((v,i) => { merged[s.sku].qty[i] += v; });
+          if (s.cancel_rub) s.cancel_rub.forEach((v,i) => { merged[s.sku].cancel_rub[i] += v; });
+          if (s.cancel_qty) s.cancel_qty.forEach((v,i) => { merged[s.sku].cancel_qty[i] += v; });
+        }
+      });
+    });
+    const mergedSkus = Object.values(merged);
+    const totRub = Array(n).fill(0), totQty = Array(n).fill(0);
+    mergedSkus.forEach(s => { s.rub.forEach((v,i) => totRub[i]+=v); s.qty.forEach((v,i) => totQty[i]+=v); });
+    block = { skus: mergedSkus, total_rub: totRub, total_qty: totQty };
+  } else {
+    block = d[mp];
+    if (!block) return null;
+  }
 
   const skus = (block.skus || []).filter(s => s.rub.some(v => v) || s.qty.some(v => v));
   const groupMap = {};
