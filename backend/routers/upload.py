@@ -59,27 +59,46 @@ def _parse_xlsx(content: bytes) -> tuple[dict[str, float], dict[str, str]]:
     return mapping, names
 
 
-def _parse_csv(content: bytes) -> tuple[dict[str, float], dict[str, str]]:
-    import csv
+def _parse_csv(content: bytes) -> tuple[dict[str, float], dict[str, str], dict[str, int]]:
+    import csv, re
     mapping: dict[str, float] = {}
     names:   dict[str, str]   = {}
+    nmids:   dict[str, int]   = {}
     text = content.decode("utf-8-sig", errors="replace")
-    reader = csv.reader(io.StringIO(text))
-    header_skipped = False
+    # detect delimiter
+    delim = ";" if text.count(";") > text.count(",") else ","
+    reader = csv.reader(io.StringIO(text), delimiter=delim)
     for row in reader:
-        if not header_skipped:
-            header_skipped = True
+        if not row or not row[0].strip():
             continue
-        if len(row) < 2:
+        article = row[0].strip()
+        # skip header rows
+        if article.lower() in ("артикул", "sku", "артикул продавца", ""):
             continue
         try:
-            article = row[0].strip()
-            cost = float(row[1].replace(",", ".").replace(" ", ""))
-            if article and cost > 0:
+            # Format: SKU ; nmId ; category ; full_name ; short_name ; cost ₽
+            # or older: SKU ; cost
+            if len(row) >= 6:
+                # nmId in col 1
+                try:
+                    nmids[article] = int(row[1].strip())
+                except (ValueError, TypeError):
+                    pass
+                # short name in col 4, full name in col 3
+                short = row[4].strip() if len(row) > 4 else ""
+                full  = row[3].strip() if len(row) > 3 else ""
+                names[article] = short or full
+                raw_cost = row[5]
+            else:
+                raw_cost = row[1]
+            # strip ₽, spaces, nbsp
+            raw_cost = re.sub(r"[₽\s\xa0]", "", str(raw_cost)).replace(",", ".")
+            cost = float(raw_cost)
+            if cost > 0:
                 mapping[article] = cost
         except (ValueError, IndexError):
             pass
-    return mapping, names
+    return mapping, names, nmids
 
 
 @router.post("/costs")
@@ -89,8 +108,9 @@ async def upload_costs(file: UploadFile = File(...)):
 
     if name.endswith(".xlsx") or name.endswith(".xls"):
         mapping, names = _parse_xlsx(content)
+        nmids = {}
     elif name.endswith(".csv"):
-        mapping, names = _parse_csv(content)
+        mapping, names, nmids = _parse_csv(content)
     else:
         raise HTTPException(400, "Формат не поддерживается. Загрузите .xlsx или .csv")
 
@@ -99,12 +119,18 @@ async def upload_costs(file: UploadFile = File(...)):
                                  "Убедитесь, что файл содержит колонки "
                                  "'Артикул продавца' и 'Себестоимость ед.'")
 
-    cost_store.set_costs(mapping, names)
-    _log.info("Costs loaded: %d articles, %d names", len(mapping), len(names))
-    return {"loaded": len(mapping), "names_loaded": len(names),
-            "sample": dict(list(mapping.items())[:3])}
+    cost_store.set_costs(mapping, names, nmids)
+    _log.info("Costs loaded: %d articles, %d names, %d nmIds", len(mapping), len(names), len(nmids))
+    return {"loaded": len(mapping), "names_loaded": len(names), "nmids_loaded": len(nmids),
+            "sample": {k: {"cost": mapping[k], "name": names.get(k)} for k in list(mapping)[:3]}}
 
 
 @router.get("/costs/status")
 async def costs_status():
     return {"loaded": cost_store.count()}
+
+
+@router.get("/costs/list")
+async def costs_list():
+    """Полный справочник себестоимостей."""
+    return {"items": cost_store.get_all(), "total": cost_store.count()}

@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 
 from routers import dashboard, upload, advert, reviews, finance
 import cache
+import cost_store
 import ozon_client
 import reviews_client
 import ym_client
@@ -77,6 +78,7 @@ async def _prefetch_weekly():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    cost_store.init()
     task = asyncio.create_task(_prefetch_weekly())
     yield
     task.cancel()
