@@ -714,15 +714,15 @@ async def get_weekly_orders():
                     return i
             return None
 
-        # ── WB: из кеша orders (индивидуальные записи с nmId/supplierArticle) ──
-        wb_by_sku: dict = {}   # sku → {"rub": [n], "qty": [n], "name": str}
-        wb_total_rub = [0.0] * n
-        wb_total_qty = [0]   * n
+        # ── WB: из кеша orders (все заказы включая отмены; cancel трекается отдельно) ──
+        wb_by_sku: dict = {}   # sku → {rub, qty, cancel_rub, cancel_qty, name}
+        wb_total_rub        = [0.0] * n
+        wb_total_qty        = [0]   * n
+        wb_total_cancel_rub = [0.0] * n
+        wb_total_cancel_qty = [0]   * n
         try:
             _, wb_orders, _ = await cache.get_raw_data(dt_from, dt_to)
             for o in wb_orders:
-                if o.get("isCancel"):
-                    continue
                 idx = week_idx(o.get("date") or o.get("lastChangeDate"))
                 if idx is None:
                     continue
@@ -730,12 +730,19 @@ async def get_weekly_orders():
                 sku = _cat.resolve_wb(raw) if raw else str(raw)
                 name = o.get("subject") or o.get("category") or sku
                 price = float(o.get("priceWithDisc") or o.get("totalPrice") or 0)
+                is_cancel = bool(o.get("isCancel"))
                 if sku not in wb_by_sku:
-                    wb_by_sku[sku] = {"rub": [0.0]*n, "qty": [0]*n, "name": name}
+                    wb_by_sku[sku] = {"rub": [0.0]*n, "qty": [0]*n,
+                                      "cancel_rub": [0.0]*n, "cancel_qty": [0]*n, "name": name}
                 wb_by_sku[sku]["rub"][idx] += price
                 wb_by_sku[sku]["qty"][idx] += 1
                 wb_total_rub[idx] += price
                 wb_total_qty[idx] += 1
+                if is_cancel:
+                    wb_by_sku[sku]["cancel_rub"][idx] += price
+                    wb_by_sku[sku]["cancel_qty"][idx] += 1
+                    wb_total_cancel_rub[idx] += price
+                    wb_total_cancel_qty[idx] += 1
         except Exception as e:
             import logging; logging.getLogger(__name__).warning("weekly_orders WB: %s", e)
 
@@ -777,30 +784,36 @@ async def get_weekly_orders():
         oz_by_sku, oz_rub, oz_qty = agg_rows(oz_rows, "offer_id", _cat.resolve_ozon)
         ym_by_sku, ym_rub, ym_qty = agg_rows(ym_rows, "shop_sku", _cat.resolve_ym)
 
-        def clean_sku(by_sku, total_rub, total_qty):
+        def clean_sku(by_sku, has_cancel=False):
             """Sort SKUs by total revenue desc, round numbers."""
             result = []
             for sku, d in by_sku.items():
                 cat = _cat.CATALOG.get(sku) or {}
-                result.append({
+                item = {
                     "sku": sku,
                     "name": d["name"] or cat.get("name", sku),
                     "brand": cat.get("brand", ""),
                     "group": cat.get("group", ""),
                     "rub": [round(v, 2) for v in d["rub"]],
                     "qty": d["qty"],
-                })
+                }
+                if has_cancel:
+                    item["cancel_rub"] = [round(v, 2) for v in d.get("cancel_rub", [0.0]*len(d["rub"]))]
+                    item["cancel_qty"] = d.get("cancel_qty", [0]*len(d["qty"]))
+                result.append(item)
             result.sort(key=lambda x: sum(x["rub"]), reverse=True)
             return result
 
         result = {
             "weeks": [_week_label(s, e) for s, e in weeks],
             "WB":   {"total_rub": [round(v,2) for v in wb_total_rub], "total_qty": wb_total_qty,
-                     "skus": clean_sku(wb_by_sku, wb_total_rub, wb_total_qty)},
+                     "total_cancel_rub": [round(v,2) for v in wb_total_cancel_rub],
+                     "total_cancel_qty": wb_total_cancel_qty,
+                     "skus": clean_sku(wb_by_sku, has_cancel=True)},
             "OZON": {"total_rub": oz_rub, "total_qty": oz_qty,
-                     "skus": clean_sku(oz_by_sku, oz_rub, oz_qty)},
+                     "skus": clean_sku(oz_by_sku)},
             "YM":   {"total_rub": ym_rub, "total_qty": ym_qty,
-                     "skus": clean_sku(ym_by_sku, ym_rub, ym_qty)},
+                     "skus": clean_sku(ym_by_sku)},
         }
         # Кешируем всегда. Если Ozon/YM упали — TTL короткий (5 мин),
         # чтобы при следующем заходе попробовать снова; если всё ок — 30 мин.
