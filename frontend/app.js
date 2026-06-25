@@ -1511,18 +1511,51 @@ function renderFinanceTable() {
   });
   html += `</div>`;
 
-  // Группировка по месяцам
+  // Группировка по месяцам с пропорциональным разбиением пограничных недель
   const RU_MON = ['Январь','Февраль','Март','Апрель','Май','Июнь',
                   'Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
-  const monthMap = {};  // "2025-05" → { label, reports[] }
-  reports.forEach(r => {
-    const mk = (r.dateFrom || '').slice(0, 7);  // "2025-05"
-    if (!mk) return;
+  const NUM_KEYS = ['retailAmount','forPay','deliveryService','paidStorage',
+                    'paidAcceptance','penalty','deduction','cashbackAmount',
+                    'additionalPayment','cashbackDiscount','cashbackCommission','bankPayment'];
+
+  // monthMap: "2025-05" → { label, total: {key→sum}, weekRows: [{label, vals}] }
+  const monthMap = {};
+  function ensureMonth(mk) {
     if (!monthMap[mk]) {
       const [y, m] = mk.split('-');
-      monthMap[mk] = { label: RU_MON[parseInt(m)-1] + ' ' + y, reports: [] };
+      const tot = {};
+      NUM_KEYS.forEach(k => { tot[k] = 0; });
+      monthMap[mk] = { label: RU_MON[parseInt(m)-1] + ' ' + y, total: tot, weekRows: [] };
     }
-    monthMap[mk].reports.push(r);
+    return monthMap[mk];
+  }
+
+  reports.forEach(r => {
+    const df = new Date(r.dateFrom);
+    const dt = new Date(r.dateTo);
+    if (isNaN(df) || isNaN(dt)) return;
+
+    // Определяем все месяцы, которые захватывает неделя
+    const segments = [];  // { mk, days }
+    let cur = new Date(df);
+    while (cur <= dt) {
+      const mk = cur.getFullYear() + '-' + String(cur.getMonth()+1).padStart(2,'0');
+      if (!segments.length || segments[segments.length-1].mk !== mk)
+        segments.push({ mk, days: 0 });
+      segments[segments.length-1].days++;
+      cur.setDate(cur.getDate() + 1);
+    }
+    const totalDays = segments.reduce((a, s) => a + s.days, 0);
+
+    segments.forEach(seg => {
+      const ratio = seg.days / totalDays;
+      const mon = ensureMonth(seg.mk);
+      NUM_KEYS.forEach(k => { mon.total[k] += (r[k] || 0) * ratio; });
+      // Добавляем строку недели только в месяц начала (для раскрытия)
+      if (seg.mk === segments[0].mk) {
+        mon.weekRows.push({ label: r.dateFrom + ' – ' + r.dateTo, r });
+      }
+    });
   });
   const months = Object.keys(monthMap).sort().reverse();
 
@@ -1539,18 +1572,27 @@ function renderFinanceTable() {
     { key: 'bankPayment',    label: 'Итого выплата ₽',  color: col },
   ];
 
-  function sumRows(rows, key) {
-    return rows.reduce((a, r) => a + (r[key] || 0), 0);
-  }
-  function cellVal(key, rows, isWeek) {
+  function monCellVal(key, total, isBold) {
     if (key === '_pct') {
-      const ret = sumRows(rows, 'retailAmount');
-      const pay = sumRows(rows, 'forPay');
+      const ret = total['retailAmount'] || 0;
+      const pay = total['forPay'] || 0;
       const pct = ret > 0 ? Math.round(pay / ret * 100) : 0;
       const clr = pct >= 70 ? '#4ade80' : pct >= 50 ? '#fbbf24' : '#f87171';
-      return `<span style="color:${clr};font-weight:${isWeek?'':'bold'}">${pct}%</span>`;
+      return `<span style="color:${clr}${isBold?';font-weight:bold':''}">${pct}%</span>`;
     }
-    const v = sumRows(rows, key);
+    const v = total[key] || 0;
+    const c = COLS.find(c => c.key === key);
+    return v > 0.5 ? `<span style="${c && c.color ? 'color:'+c.color : ''}">${fmtRub(Math.round(v))}</span>`
+                   : '<span class="text-muted">—</span>';
+  }
+  function weekCellVal(key, r) {
+    if (key === '_pct') {
+      const ret = r.retailAmount || 0, pay = r.forPay || 0;
+      const pct = ret > 0 ? Math.round(pay / ret * 100) : 0;
+      const clr = pct >= 70 ? '#4ade80' : pct >= 50 ? '#fbbf24' : '#f87171';
+      return `<span style="color:${clr}">${pct}%</span>`;
+    }
+    const v = r[key] || 0;
     const c = COLS.find(c => c.key === key);
     return v ? `<span style="${c && c.color ? 'color:'+c.color : ''}">${fmtRub(v)}</span>` : '<span class="text-muted">—</span>';
   }
@@ -1565,25 +1607,23 @@ function renderFinanceTable() {
 
   months.forEach(mk => {
     const mon = monthMap[mk];
-    const mRows = mon.reports;
     const grpId = 'fin_' + mk.replace('-','');
     html += `<tr style="cursor:pointer;background:#1a1c2a" onclick="toggleFinMonth('${grpId}')">
       <td class="fw-bold text-nowrap">
         <span id="arr-${grpId}" style="font-size:0.7rem;margin-right:4px">▶</span>
         <span style="color:${col}">${mon.label}</span>
-        <span class="text-secondary small ms-1">(${mRows.length} нед.)</span>
+        <span class="text-secondary small ms-1">(${mon.weekRows.length} нед.)</span>
       </td>`;
-    COLS.forEach(c => { html += `<td class="text-end fw-semibold">${cellVal(c.key, mRows, false)}</td>`; });
+    COLS.forEach(c => { html += `<td class="text-end fw-semibold">${monCellVal(c.key, mon.total, true)}</td>`; });
     html += `</tr>`;
 
-    mRows.forEach((r, idx) => {
+    mon.weekRows.forEach((wr, idx) => {
       const bg = idx % 2 === 0 ? 'background:#0d0e1a' : 'background:#111226';
-      const pct = r.retailAmount > 0 ? Math.round(r.forPay / r.retailAmount * 100) : 0;
       html += `<tr class="fin-week-${grpId}" style="${bg};display:none">
         <td class="text-nowrap ps-4 text-secondary" style="font-size:0.78rem">
-          ${r.dateFrom} – ${r.dateTo}
+          ${wr.label}
         </td>`;
-      COLS.forEach(c => { html += `<td class="text-end" style="font-size:0.78rem">${cellVal(c.key, [r], true)}</td>`; });
+      COLS.forEach(c => { html += `<td class="text-end" style="font-size:0.78rem">${weekCellVal(c.key, wr.r)}</td>`; });
       html += `</tr>`;
     });
   });
