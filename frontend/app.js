@@ -1422,7 +1422,7 @@ function renderHistory(d) {
 }
 
 
-// ── Финансы ───────────────────────────────────────────────────────────────────
+// ── Финансы / P&L ────────────────────────────────────────────────────────────
 
 let _financeData = { WB: null, OZON: null, YM: null };
 let _financeMp = 'WB';
@@ -1438,7 +1438,7 @@ function setFinanceMp(mp) {
 
 async function loadFinance() {
   const wrap = document.getElementById('financeTableWrap');
-  if (wrap) wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border"></span></div>';
+  if (wrap) wrap.innerHTML = '<div class="text-center text-secondary py-5"><span class="spinner-border me-2"></span>Загрузка P&L… (может занять до 2 мин)</div>';
   await loadFinanceMp('WB');
   renderFinanceTable();
 }
@@ -1452,12 +1452,13 @@ async function reloadFinance() {
 async function loadFinanceMp(mp) {
   if (_financeData[mp]) return;
   try {
-    const url = mp === 'WB' ? '/api/finance/wb/reports'
-              : mp === 'OZON' ? '/api/finance/ozon/reports'
-              : '/api/finance/ym/reports';
-    _financeData[mp] = await fetchJSON(url);
+    if (mp === 'WB') {
+      _financeData[mp] = await fetchJSON('/api/finance/wb/pnl', 120000);
+    } else {
+      _financeData[mp] = { rows: [], months: [], message: mp + ' финансы будут добавлены позже' };
+    }
   } catch (e) {
-    _financeData[mp] = { reports: [], error: e.message };
+    _financeData[mp] = { rows: [], months: [], error: e.message };
   }
 }
 
@@ -1466,179 +1467,105 @@ function renderFinanceTable() {
   if (!wrap) return;
 
   const mp = _financeMp;
-  // загружаем если нет данных
   if (!_financeData[mp]) {
-    wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border"></span></div>';
+    wrap.innerHTML = '<div class="text-center text-secondary py-5"><span class="spinner-border me-2"></span>Загрузка P&L…</div>';
     loadFinanceMp(mp).then(() => renderFinanceTable());
     return;
   }
 
   const d = _financeData[mp];
-  if (d.message) {
-    wrap.innerHTML = `<div class="alert alert-info">${d.message}</div>`;
-    return;
-  }
-  if (d.error) {
-    wrap.innerHTML = `<div class="alert alert-danger">Ошибка: ${d.error}</div>`;
-    return;
-  }
+  if (d.message) { wrap.innerHTML = `<div class="alert alert-info mt-3">${d.message}</div>`; return; }
+  if (d.error)   { wrap.innerHTML = `<div class="alert alert-danger mt-3">Ошибка: ${d.error}</div>`; return; }
 
-  const reports = d.reports || [];
-  if (!reports.length) {
-    wrap.innerHTML = '<div class="text-secondary text-center py-4">Отчётов нет</div>';
-    return;
-  }
+  const months = d.months || [];
+  const rows   = d.rows   || [];
+  if (!months.length) { wrap.innerHTML = '<div class="text-secondary text-center py-4">Данных нет</div>'; return; }
 
   const MP_COLOR = { WB: '#a855f7', OZON: '#3b82f6', YM: '#eab308' };
-  const col = MP_COLOR[mp];
+  const col = MP_COLOR[mp] || '#a855f7';
+  const SEP = 'border-left:2px solid #3a3f5c;';
 
-  // Сводные карточки
-  const totRetail   = reports.reduce((a, r) => a + r.retailAmount, 0);
-  const totForPay   = reports.reduce((a, r) => a + r.forPay, 0);
-  const totDelivery = reports.reduce((a, r) => a + r.deliveryService, 0);
-  const totStorage  = reports.reduce((a, r) => a + r.paidStorage, 0);
-  const totPenalty  = reports.reduce((a, r) => a + r.penalty, 0);
-  const totBank     = reports.reduce((a, r) => a + r.bankPayment, 0);
-  const marginPct   = totRetail > 0 ? Math.round(totForPay / totRetail * 100) : 0;
+  // Стили строк
+  const ROW_STYLE = {
+    header:   `background:#1a1c2a;font-weight:600`,
+    cost:     `background:#0d0e1a`,
+    subtotal: `background:#1e2035;font-weight:700;border-top:2px solid #3a3f5c`,
+    total:    `background:#0d2010;font-weight:700;border-top:2px solid #16a34a`,
+    pct:      `background:#0a1a0a;font-style:italic`,
+    normal:   `background:#111`,
+  };
+  const COL_COLOR = {
+    retailAmount: col, bankPayment: '#4ade80', gross: '#4ade80',
+    deliveryService: '#f87171', paidStorage: '#f87171', paidAcceptance: '#f87171',
+    penalty: '#fbbf24', deduction: '#fbbf24', cashbackAmount: '#94a3b8',
+    cogs: '#f87171', gross_pct: '#4ade80',
+  };
 
-  const cards = [
-    { label: 'Продажи',       val: fmtRub(totRetail),   color: col },
-    { label: 'К перечислению',val: fmtRub(totForPay),   color: '#4ade80' },
-    { label: '% к перечисл.', val: marginPct + '%',      color: '#4ade80' },
-    { label: 'Логистика',     val: fmtRub(totDelivery), color: '#f87171' },
-    { label: 'Хранение',      val: fmtRub(totStorage),  color: '#f87171' },
-    { label: 'Штрафы',        val: fmtRub(totPenalty),  color: '#fbbf24' },
-    { label: 'Итого выплата', val: fmtRub(totBank),     color: '#4ade80' },
-  ];
+  function cellColor(key, val) {
+    if (val === 0) return '#64748b';
+    return COL_COLOR[key] || '#e2e8f0';
+  }
 
-  let html = `<div class="row g-2 mb-3">`;
-  cards.forEach(c => {
-    html += `<div class="col-6 col-md-3 col-lg-auto">
-      <div class="card border-0 bg-card px-3 py-2 text-nowrap">
-        <div class="text-secondary" style="font-size:0.72rem">${c.label}</div>
-        <div class="fw-bold" style="color:${c.color};font-size:1rem">${c.val}</div>
-      </div></div>`;
+  function fmtCell(key, val, style) {
+    if (key === 'gross_pct') {
+      const clr = val >= 20 ? '#4ade80' : val >= 10 ? '#fbbf24' : '#f87171';
+      return `<span style="color:${clr};font-weight:bold">${val}%</span>`;
+    }
+    if (val === 0) return `<span class="text-muted small">—</span>`;
+    const clr = cellColor(key, val);
+    const sign = val < 0 ? '' : (key !== 'retailAmount' && key !== 'bankPayment' && key !== 'gross' ? '' : '');
+    return `<span style="color:${clr}">${val < 0 ? '−' : ''}${fmtRub(Math.abs(val))}</span>`;
+  }
+
+  // Итоговая колонка (сумма по всем месяцам)
+  function rowTotal(row) {
+    if (row.formula === 'gross_pct') return null; // % не суммируется
+    return Object.values(row.values).reduce((a, v) => a + v, 0);
+  }
+
+  let html = `<div class="table-responsive"><table class="table table-sm align-middle mb-0 text-nowrap" style="font-size:0.83rem">`;
+
+  // thead
+  html += `<thead><tr>
+    <th style="min-width:200px;position:sticky;left:0;background:#181a20;z-index:2">Статья</th>`;
+  months.forEach(m => {
+    html += `<th class="text-end" style="${SEP}min-width:110px">${m.label}</th>`;
   });
-  html += `</div>`;
-
-  // Группировка по месяцам с пропорциональным разбиением пограничных недель
-  const RU_MON = ['Январь','Февраль','Март','Апрель','Май','Июнь',
-                  'Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
-  const NUM_KEYS = ['retailAmount','forPay','deliveryService','paidStorage',
-                    'paidAcceptance','penalty','deduction','cashbackAmount',
-                    'additionalPayment','cashbackDiscount','cashbackCommission','bankPayment'];
-
-  // monthMap: "2025-05" → { label, total: {key→sum}, weekRows: [{label, vals}] }
-  const monthMap = {};
-  function ensureMonth(mk) {
-    if (!monthMap[mk]) {
-      const [y, m] = mk.split('-');
-      const tot = {};
-      NUM_KEYS.forEach(k => { tot[k] = 0; });
-      monthMap[mk] = { label: RU_MON[parseInt(m)-1] + ' ' + y, total: tot, weekRows: [] };
-    }
-    return monthMap[mk];
-  }
-
-  reports.forEach(r => {
-    const df = new Date(r.dateFrom);
-    const dt = new Date(r.dateTo);
-    if (isNaN(df) || isNaN(dt)) return;
-
-    // Определяем все месяцы, которые захватывает неделя
-    const segments = [];  // { mk, days }
-    let cur = new Date(df);
-    while (cur <= dt) {
-      const mk = cur.getFullYear() + '-' + String(cur.getMonth()+1).padStart(2,'0');
-      if (!segments.length || segments[segments.length-1].mk !== mk)
-        segments.push({ mk, days: 0 });
-      segments[segments.length-1].days++;
-      cur.setDate(cur.getDate() + 1);
-    }
-    const totalDays = segments.reduce((a, s) => a + s.days, 0);
-
-    segments.forEach(seg => {
-      const ratio = seg.days / totalDays;
-      const mon = ensureMonth(seg.mk);
-      NUM_KEYS.forEach(k => { mon.total[k] += (r[k] || 0) * ratio; });
-      // Добавляем строку недели только в месяц начала (для раскрытия)
-      if (seg.mk === segments[0].mk) {
-        mon.weekRows.push({ label: r.dateFrom + ' – ' + r.dateTo, r });
-      }
-    });
-  });
-  const months = Object.keys(monthMap).sort().reverse();
-
-  const COLS = [
-    { key: 'retailAmount',   label: 'Продажа ₽',       color: '' },
-    { key: 'forPay',         label: 'К перечисл. ₽',   color: '#4ade80' },
-    { key: '_pct',           label: '% перечисл.',      color: '' },
-    { key: 'deliveryService',label: 'Логистика ₽',      color: '#f87171' },
-    { key: 'paidStorage',    label: 'Хранение ₽',       color: '#f87171' },
-    { key: 'paidAcceptance', label: 'Приёмка ₽',        color: '' },
-    { key: 'penalty',        label: 'Штрафы ₽',         color: '#fbbf24' },
-    { key: 'deduction',      label: 'Удержания ₽',      color: '' },
-    { key: 'cashbackAmount', label: 'Кэшбэк ₽',         color: '' },
-    { key: 'bankPayment',    label: 'Итого выплата ₽',  color: col },
-  ];
-
-  function monCellVal(key, total, isBold) {
-    if (key === '_pct') {
-      const ret = total['retailAmount'] || 0;
-      const pay = total['forPay'] || 0;
-      const pct = ret > 0 ? Math.round(pay / ret * 100) : 0;
-      const clr = pct >= 70 ? '#4ade80' : pct >= 50 ? '#fbbf24' : '#f87171';
-      return `<span style="color:${clr}${isBold?';font-weight:bold':''}">${pct}%</span>`;
-    }
-    const v = total[key] || 0;
-    const c = COLS.find(c => c.key === key);
-    return v > 0.5 ? `<span style="${c && c.color ? 'color:'+c.color : ''}">${fmtRub(Math.round(v))}</span>`
-                   : '<span class="text-muted">—</span>';
-  }
-  function weekCellVal(key, r) {
-    if (key === '_pct') {
-      const ret = r.retailAmount || 0, pay = r.forPay || 0;
-      const pct = ret > 0 ? Math.round(pay / ret * 100) : 0;
-      const clr = pct >= 70 ? '#4ade80' : pct >= 50 ? '#fbbf24' : '#f87171';
-      return `<span style="color:${clr}">${pct}%</span>`;
-    }
-    const v = r[key] || 0;
-    const c = COLS.find(c => c.key === key);
-    return v ? `<span style="${c && c.color ? 'color:'+c.color : ''}">${fmtRub(v)}</span>` : '<span class="text-muted">—</span>';
-  }
-
-  html += `<div class="card border-0 bg-card"><div class="card-body p-0">
-  <div class="table-responsive">
-  <table class="table table-sm align-middle mb-0" style="font-size:0.82rem" id="finTable">
-  <thead><tr>
-    <th style="min-width:140px">Период</th>`;
-  COLS.forEach(c => { html += `<th class="text-end">${c.label}</th>`; });
+  html += `<th class="text-end" style="${SEP}min-width:120px;color:${col}">Итого</th>`;
   html += `</tr></thead><tbody>`;
 
-  months.forEach(mk => {
-    const mon = monthMap[mk];
-    const grpId = 'fin_' + mk.replace('-','');
-    html += `<tr style="cursor:pointer;background:#1a1c2a" onclick="toggleFinMonth('${grpId}')">
-      <td class="fw-bold text-nowrap">
-        <span id="arr-${grpId}" style="font-size:0.7rem;margin-right:4px">▶</span>
-        <span style="color:${col}">${mon.label}</span>
-        <span class="text-secondary small ms-1">(${mon.weekRows.length} нед.)</span>
-      </td>`;
-    COLS.forEach(c => { html += `<td class="text-end fw-semibold">${monCellVal(c.key, mon.total, true)}</td>`; });
-    html += `</tr>`;
-
-    mon.weekRows.forEach((wr, idx) => {
-      const bg = idx % 2 === 0 ? 'background:#0d0e1a' : 'background:#111226';
-      html += `<tr class="fin-week-${grpId}" style="${bg};display:none">
-        <td class="text-nowrap ps-4 text-secondary" style="font-size:0.78rem">
-          ${wr.label}
-        </td>`;
-      COLS.forEach(c => { html += `<td class="text-end" style="font-size:0.78rem">${weekCellVal(c.key, wr.r)}</td>`; });
-      html += `</tr>`;
+  rows.forEach(row => {
+    const st = ROW_STYLE[row.style] || ROW_STYLE.normal;
+    const stickyBg = (row.style === 'total') ? '#0d2010'
+                   : (row.style === 'subtotal') ? '#1e2035'
+                   : (row.style === 'header') ? '#1a1c2a' : '#181a20';
+    html += `<tr style="${st}">`;
+    html += `<td style="position:sticky;left:0;background:${stickyBg};padding:5px 10px">${row.label}</td>`;
+    months.forEach(m => {
+      const v = row.values[m.key] ?? 0;
+      html += `<td class="text-end" style="${SEP}padding:4px 10px">${fmtCell(row.key, v, row.style)}</td>`;
     });
+    // итоговая колонка
+    const tot = rowTotal(row);
+    if (tot !== null) {
+      html += `<td class="text-end fw-bold" style="${SEP}padding:4px 10px">${fmtCell(row.key, tot, row.style)}</td>`;
+    } else {
+      // маржа итого считается от суммарных значений
+      const gross = rows.find(r => r.key === 'gross');
+      const retail = rows.find(r => r.key === 'retailAmount');
+      const gTot = gross ? rowTotal(gross) : 0;
+      const rTot = retail ? rowTotal(retail) : 0;
+      const pct = rTot > 0 ? Math.round(gTot / rTot * 100) : 0;
+      const clr = pct >= 20 ? '#4ade80' : pct >= 10 ? '#fbbf24' : '#f87171';
+      html += `<td class="text-end fw-bold" style="${SEP}padding:4px 10px"><span style="color:${clr}">${pct}%</span></td>`;
+    }
+    html += `</tr>`;
   });
 
-  html += `</tbody></table></div></div></div>`;
+  html += `</tbody></table></div>`;
+  if (!d.cogs_loaded) {
+    html += `<div class="text-warning small mt-2">⚠ Себестоимость не загружена — строка COGS показывает 0. Загрузите справочник через раздел загрузки.</div>`;
+  }
   if (d.fetched_at) html += `<div class="text-secondary text-end small mt-1">Обновлено: ${d.fetched_at}</div>`;
   wrap.innerHTML = html;
 }
