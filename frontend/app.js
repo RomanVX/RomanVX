@@ -3,7 +3,7 @@
 const API = '';
 let charts = {};
 let sortState = {};
-const dirty = { salesan: true, stocks: true, reviews: true, history: true };
+const dirty = { salesan: true, stocks: true, reviews: true, history: true, finance: true };
 let _advertData = [];
 let currentTab = 'finance';
 let prodAllData = [];
@@ -127,7 +127,7 @@ function switchTab(name, linkEl) {
   if (dirty[name]) {
     dirty[name] = false;
     ({ salesan: loadSalesAnalytics, stocks: loadStocks,
-       reviews: loadReviews, history: loadHistory })[name]();
+       reviews: loadReviews, history: loadHistory, finance: loadFinance })[name]();
   }
 }
 
@@ -1420,6 +1420,152 @@ function renderHistory(d) {
   });
 }
 
+
+// ── Финансы ───────────────────────────────────────────────────────────────────
+
+let _financeData = { WB: null, OZON: null, YM: null };
+let _financeMp = 'WB';
+
+function setFinanceMp(mp) {
+  _financeMp = mp;
+  ['WB','OZON','YM'].forEach(m => {
+    const el = document.getElementById('finMp' + m);
+    if (el) el.classList.toggle('active', m === mp);
+  });
+  renderFinanceTable();
+}
+
+async function loadFinance() {
+  const wrap = document.getElementById('financeTableWrap');
+  if (wrap) wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border"></span></div>';
+  await loadFinanceMp('WB');
+  renderFinanceTable();
+}
+
+async function reloadFinance() {
+  _financeData = { WB: null, OZON: null, YM: null };
+  await fetch('/api/finance/wb/reports/invalidate', { method: 'POST' }).catch(() => {});
+  await loadFinance();
+}
+
+async function loadFinanceMp(mp) {
+  if (_financeData[mp]) return;
+  try {
+    const url = mp === 'WB' ? '/api/finance/wb/reports'
+              : mp === 'OZON' ? '/api/finance/ozon/reports'
+              : '/api/finance/ym/reports';
+    _financeData[mp] = await fetchJSON(url);
+  } catch (e) {
+    _financeData[mp] = { reports: [], error: e.message };
+  }
+}
+
+function renderFinanceTable() {
+  const wrap = document.getElementById('financeTableWrap');
+  if (!wrap) return;
+
+  const mp = _financeMp;
+  // загружаем если нет данных
+  if (!_financeData[mp]) {
+    wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border"></span></div>';
+    loadFinanceMp(mp).then(() => renderFinanceTable());
+    return;
+  }
+
+  const d = _financeData[mp];
+  if (d.message) {
+    wrap.innerHTML = `<div class="alert alert-info">${d.message}</div>`;
+    return;
+  }
+  if (d.error) {
+    wrap.innerHTML = `<div class="alert alert-danger">Ошибка: ${d.error}</div>`;
+    return;
+  }
+
+  const reports = d.reports || [];
+  if (!reports.length) {
+    wrap.innerHTML = '<div class="text-secondary text-center py-4">Отчётов нет</div>';
+    return;
+  }
+
+  const MP_COLOR = { WB: '#a855f7', OZON: '#3b82f6', YM: '#eab308' };
+  const col = MP_COLOR[mp];
+
+  // Сводные карточки
+  const totRetail   = reports.reduce((a, r) => a + r.retailAmount, 0);
+  const totForPay   = reports.reduce((a, r) => a + r.forPay, 0);
+  const totDelivery = reports.reduce((a, r) => a + r.deliveryService, 0);
+  const totStorage  = reports.reduce((a, r) => a + r.paidStorage, 0);
+  const totPenalty  = reports.reduce((a, r) => a + r.penalty, 0);
+  const totBank     = reports.reduce((a, r) => a + r.bankPayment, 0);
+  const marginPct   = totRetail > 0 ? Math.round(totForPay / totRetail * 100) : 0;
+
+  const cards = [
+    { label: 'Продажи',       val: fmtRub(totRetail),   color: col },
+    { label: 'К перечислению',val: fmtRub(totForPay),   color: '#4ade80' },
+    { label: '% к перечисл.', val: marginPct + '%',      color: '#4ade80' },
+    { label: 'Логистика',     val: fmtRub(totDelivery), color: '#f87171' },
+    { label: 'Хранение',      val: fmtRub(totStorage),  color: '#f87171' },
+    { label: 'Штрафы',        val: fmtRub(totPenalty),  color: '#fbbf24' },
+    { label: 'Итого выплата', val: fmtRub(totBank),     color: '#4ade80' },
+  ];
+
+  let html = `<div class="row g-2 mb-3">`;
+  cards.forEach(c => {
+    html += `<div class="col-6 col-md-3 col-lg-auto">
+      <div class="card border-0 bg-card px-3 py-2 text-nowrap">
+        <div class="text-secondary" style="font-size:0.72rem">${c.label}</div>
+        <div class="fw-bold" style="color:${c.color};font-size:1rem">${c.val}</div>
+      </div></div>`;
+  });
+  html += `</div>`;
+
+  // Таблица отчётов
+  html += `<div class="card border-0 bg-card"><div class="card-body p-0">
+  <div class="table-responsive">
+  <table class="table table-sm align-middle mb-0" style="font-size:0.82rem">
+  <thead class="sticky-top">
+    <tr>
+      <th>Период</th>
+      <th class="text-end">Продажа ₽</th>
+      <th class="text-end">К перечисл. ₽</th>
+      <th class="text-end">% выкупа</th>
+      <th class="text-end">Логистика ₽</th>
+      <th class="text-end">Хранение ₽</th>
+      <th class="text-end">Приёмка ₽</th>
+      <th class="text-end">Штрафы ₽</th>
+      <th class="text-end">Удержания ₽</th>
+      <th class="text-end">Кэшбэк ₽</th>
+      <th class="text-end" style="color:${col}">Итого выплата ₽</th>
+    </tr>
+  </thead><tbody>`;
+
+  reports.forEach((r, idx) => {
+    const bg = idx % 2 === 0 ? '' : 'background:#0e0f1a';
+    const pct = r.retailAmount > 0 ? Math.round(r.forPay / r.retailAmount * 100) : 0;
+    const pctColor = pct >= 70 ? '#4ade80' : pct >= 50 ? '#fbbf24' : '#f87171';
+    html += `<tr style="${bg}">
+      <td class="text-nowrap">
+        <span class="fw-semibold" style="color:${col}">${r.dateFrom}</span>
+        <span class="text-secondary small"> – ${r.dateTo}</span>
+      </td>
+      <td class="text-end">${fmtRub(r.retailAmount)}</td>
+      <td class="text-end text-success">${fmtRub(r.forPay)}</td>
+      <td class="text-end fw-semibold" style="color:${pctColor}">${pct}%</td>
+      <td class="text-end text-danger">${r.deliveryService ? fmtRub(r.deliveryService) : '—'}</td>
+      <td class="text-end text-danger">${r.paidStorage ? fmtRub(r.paidStorage) : '—'}</td>
+      <td class="text-end">${r.paidAcceptance ? fmtRub(r.paidAcceptance) : '—'}</td>
+      <td class="text-end" style="color:#fbbf24">${r.penalty ? fmtRub(r.penalty) : '—'}</td>
+      <td class="text-end">${r.deduction ? fmtRub(r.deduction) : '—'}</td>
+      <td class="text-end">${r.cashbackAmount ? fmtRub(r.cashbackAmount) : '—'}</td>
+      <td class="text-end fw-bold" style="color:${col}">${fmtRub(r.bankPayment)}</td>
+    </tr>`;
+  });
+
+  html += `</tbody></table></div></div></div>`;
+  if (d.fetched_at) html += `<div class="text-secondary text-end small mt-1">Обновлено: ${d.fetched_at}</div>`;
+  wrap.innerHTML = html;
+}
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 
