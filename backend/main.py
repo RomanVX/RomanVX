@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse
 
 from datetime import datetime, timedelta
 
-from routers import dashboard, upload, advert, reviews
+from routers import dashboard, upload, advert, reviews, finance
 import cache
 import ozon_client
 import reviews_client
@@ -95,6 +95,7 @@ app.include_router(dashboard.router)
 app.include_router(upload.router)
 app.include_router(advert.router)
 app.include_router(reviews.router)
+app.include_router(finance.router)
 
 FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
 

@@ -65,6 +65,7 @@
     <li class="nav-item"><a class="nav-link" href="#" onclick="switchTab('stocks',this);return false">Остатки</a></li>
     <li class="nav-item"><a class="nav-link" href="#" onclick="switchTab('reviews',this);return false">Отзывы</a></li>
     <li class="nav-item"><a class="nav-link" href="#" onclick="switchTab('history',this);return false">История</a></li>
+    <li class="nav-item"><a class="nav-link" href="#" onclick="switchTab('finance',this);return false">Финансы</a></li>
   </ul>
 
   <!-- ── Заказы ── -->
@@ -244,11 +245,32 @@
     </div></div>
   </div><!-- /pane-history -->
 
+  <!-- ── Финансы ── -->
+  <div id="pane-finance" style="display:none">
+    <div class="d-flex gap-2 mb-3 flex-wrap align-items-center">
+      <div id="finMpWB"   class="mp-selector-bloc active" style="--mp-color:#a855f7" onclick="setFinanceMp('WB')">
+        <span class="mp-selector-dot" style="background:#a855f7"></span>WB
+      </div>
+      <div id="finMpOZON" class="mp-selector-bloc" style="--mp-color:#3b82f6" onclick="setFinanceMp('OZON')">
+        <span class="mp-selector-dot" style="background:#3b82f6"></span>Ozon
+      </div>
+      <div id="finMpYM"   class="mp-selector-bloc" style="--mp-color:#eab308" onclick="setFinanceMp('YM')">
+        <span class="mp-selector-dot" style="background:#eab308"></span>ЯМ
+      </div>
+      <button class="btn btn-sm btn-outline-secondary ms-auto" onclick="reloadFinance()">
+        <i class="bi bi-arrow-clockwise"></i> Обновить
+      </button>
+    </div>
+    <div id="financeTableWrap">
+      <div class="text-center text-secondary py-4"><span class="spinner-border"></span></div>
+    </div>
+  </div><!-- /pane-finance -->
+
 </div>
 </div><!-- /mainContent -->
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
-<script src="app.js?v=43"></script>
+<script src="app.js?v=44"></script>
 </body>
 </html>
