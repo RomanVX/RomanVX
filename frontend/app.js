@@ -1565,6 +1565,8 @@ function renderFinanceTable() {
   html += `</tbody></table></div>`;
   if (!d.cogs_loaded) {
     html += `<div class="text-warning small mt-2">⚠ Себестоимость не загружена — строка COGS показывает 0. Загрузите справочник через раздел загрузки.</div>`;
+  } else if (!d.cogs_has_data) {
+    html += `<div class="text-info small mt-2">⏳ Детальный отчёт WB загружается в фоне (1 запрос/мин). Обновите страницу через несколько минут — строка Себестоимость заполнится.</div>`;
   }
   if (d.fetched_at) html += `<div class="text-secondary text-end small mt-1">Обновлено: ${d.fetched_at}</div>`;
   wrap.innerHTML = html;

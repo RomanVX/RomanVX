@@ -111,20 +111,35 @@ _DETAIL_TTL = 86400  # 24ч — детальный отчёт меняется �
 _detail_lock = asyncio.Lock()
 
 
-async def _get_detailed_cached(date_from: str, date_to: str, refresh: bool = False) -> list[dict]:
-    global _detail_cache, _detail_cache_ts
+_detail_fetching: bool = False  # идёт ли фоновая загрузка
+
+
+async def _fetch_detail_bg(date_from: str, date_to: str) -> None:
+    """Фоновая задача: загружает детальный отчёт (медленно, 1 req/min) и кеширует."""
+    global _detail_cache, _detail_cache_ts, _detail_fetching
+    if _detail_fetching:
+        return
+    _detail_fetching = True
+    try:
+        cache_key = f"{date_from}_{date_to}"
+        async with _detail_lock:
+            rows = await wb_finance_client.get_detailed_report(date_from, date_to)
+            _detail_cache = {"key": cache_key, "rows": rows}
+            _detail_cache_ts = _time.monotonic()
+            _log.info("Detail report cached: %d rows", len(rows))
+    except Exception as e:
+        _log.error("Detail report fetch failed: %s", e)
+    finally:
+        _detail_fetching = False
+
+
+def _get_detail_if_ready(date_from: str, date_to: str) -> list[dict]:
+    """Возвращает детальный отчёт из кеша (без ожидания)."""
     cache_key = f"{date_from}_{date_to}"
-    if not refresh and _detail_cache.get("key") == cache_key \
+    if _detail_cache.get("key") == cache_key \
             and _time.monotonic() - _detail_cache_ts < _DETAIL_TTL:
         return _detail_cache.get("rows", [])
-    async with _detail_lock:
-        if not refresh and _detail_cache.get("key") == cache_key \
-                and _time.monotonic() - _detail_cache_ts < _DETAIL_TTL:
-            return _detail_cache.get("rows", [])
-        rows = await wb_finance_client.get_detailed_report(date_from, date_to)
-        _detail_cache = {"key": cache_key, "rows": rows}
-        _detail_cache_ts = _time.monotonic()
-        return rows
+    return []
 
 
 @router.get("/wb/pnl")
@@ -132,7 +147,7 @@ async def get_wb_pnl(
     months: int = Query(default=6, ge=1, le=24),
     refresh: bool = Query(default=False),
 ):
-    """P&L по месяцам: финансовые данные из детального отчёта WB + COGS."""
+    """P&L по месяцам. Сводные данные — сразу, COGS — после фоновой загрузки детального отчёта."""
     global _pnl_cache, _pnl_cache_ts
 
     if not refresh and _pnl_cache and _time.monotonic() - _pnl_cache_ts < _WB_TTL:
@@ -147,11 +162,20 @@ async def get_wb_pnl(
     date_from = dt_from.strftime("%Y-%m-%d")
     date_to   = dt_to.strftime("%Y-%m-%d")
 
-    # Получаем сводные отчёты (для агрегатов которых нет в детальном: хранение, приёмка)
+    # Сводные отчёты — быстро (кеш 1ч)
     summary_reports = await _get_wb_reports_cached(months, refresh)
 
-    # Получаем детальный отчёт (для COGS и точных данных по продажам)
-    detail_rows = await _get_detailed_cached(date_from, date_to, refresh)
+    # Детальный отчёт — берём из кеша если есть, иначе запускаем фоновую загрузку
+    cache_key = f"{date_from}_{date_to}"
+    detail_ready = (_detail_cache.get("key") == cache_key
+                    and _time.monotonic() - _detail_cache_ts < _DETAIL_TTL)
+    if refresh or not detail_ready:
+        if refresh:
+            _detail_cache.clear()
+            _detail_cache_ts = 0.0
+        # Запускаем фоновую загрузку (не блокируем ответ)
+        asyncio.create_task(_fetch_detail_bg(date_from, date_to))
+    detail_rows = _get_detail_if_ready(date_from, date_to)
 
     # ── Агрегируем сводные отчёты по месяцам (пропорционально дням) ────────────
     SUM_KEYS = ["retailAmount","forPay","deliveryService","paidStorage",
