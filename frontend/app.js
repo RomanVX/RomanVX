@@ -119,7 +119,7 @@ function skuName(r) {
 function switchTab(name, linkEl) {
   document.querySelectorAll('#mainTabs .nav-link').forEach(a => a.classList.remove('active'));
   if (linkEl) linkEl.classList.add('active');
-  ['salesan', 'stocks', 'reviews', 'history'].forEach(t => {
+  ['salesan', 'stocks', 'reviews', 'history', 'finance'].forEach(t => {
     const el = document.getElementById('pane-' + t);
     if (el) el.style.display = t === name ? 'block' : 'none';
   });
@@ -156,22 +156,6 @@ async function loadFilters() {
   } catch (e) { console.warn('filters', e); }
 }
 
-// ── Finance / Dashboard ───────────────────────────────────────────────────────
-
-async function loadFinance() {
-  try {
-    const d = await fetchJSON('/api/dashboard/finance');
-    renderCards(d.cards);
-    renderStructure(d.structure);
-    renderTop5(d.top_skus);
-    await loadSalesChart();
-    document.getElementById('lastUpdated').textContent = 'Обновлено: ' + new Date().toLocaleTimeString('ru-RU');
-  } catch (e) {
-    console.error('finance', e);
-    document.getElementById('cardsGrid').innerHTML =
-      `<div class="col-12 text-danger text-center py-3">Ошибка загрузки: ${e.message}</div>`;
-  }
-}
 
 function renderCards(cards) {
   const grid = document.getElementById('cardsGrid');
