@@ -916,21 +916,20 @@ function renderOrdersMonthly() {
 
   // Парсим метки недель в месяц (берём первые 3 символа названия месяца из конца)
   // Формат из бэкенда: "27 мая – 2 июн"  или  "30 июн – 6 июл"
-  const RU_MONTHS = { 'янв':0,'фев':1,'мар':2,'апр':3,'май':4,'июн':5,
-                      'июл':6,'авг':7,'сен':8,'окт':9,'ноя':10,'дек':11 };
   function weekToMonthKey(label) {
-    // берём конец: "2 июн" → "июн"
-    const parts = label.split('–');
-    const end = (parts[1] || parts[0]).trim().toLowerCase();
-    const tok = end.split(/\s+/);
-    const mon = tok.find(t => RU_MONTHS[t.slice(0,3)] !== undefined);
-    if (!mon) return null;
+    // Формат бэкенда: "27.05 - 02.06"
+    // берём правую часть (конец недели), извлекаем месяц
+    const parts = label.split('-');
+    const end = (parts[parts.length - 1] || parts[0]).trim();
+    // ожидаем "DD.MM"
+    const m = end.match(/(\d{2})\.(\d{2})/);
+    if (!m) return null;
+    const month = parseInt(m[2], 10);  // 1-12
     const now = new Date();
     let year = now.getFullYear();
-    const mIdx = RU_MONTHS[mon.slice(0,3)];
-    // если месяц впереди текущего — прошлый год
-    if (mIdx > now.getMonth()) year--;
-    return `${year}-${String(mIdx+1).padStart(2,'0')}`;
+    // если месяц конца недели впереди текущего — это прошлый год
+    if (month > now.getMonth() + 1) year--;
+    return `${year}-${String(month).padStart(2,'0')}`;
   }
 
   const MPs = [
