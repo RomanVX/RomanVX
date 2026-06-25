@@ -1020,20 +1020,31 @@ function _ordersTableHTML() {
   tbody += '</tr>';
 
   orderedGroups.forEach(([grp, grpSkus]) => {
-    // промежуточный итог по группе
-    const bRub = Array(n).fill(0);
-    const bQty = Array(n).fill(0);
+    // промежуточный итог по группе (включая отмены)
+    const bRub       = Array(n).fill(0);
+    const bQty       = Array(n).fill(0);
+    const bCancelRub = Array(n).fill(0);
+    const bCancelQty = Array(n).fill(0);
     grpSkus.forEach(s => {
       s.rub.forEach((v, i) => { bRub[i] += v; });
       s.qty.forEach((v, i) => { bQty[i] += v; });
+      if (s.cancel_rub) s.cancel_rub.forEach((v, i) => { bCancelRub[i] += v; });
+      if (s.cancel_qty) s.cancel_qty.forEach((v, i) => { bCancelQty[i] += v; });
     });
 
-    // белый фон + чёрный текст для строк-категорий (фон нужен на каждом <td>, иначе Bootstrap тёмная тема переопределяет)
+    // % выкупа по видимым неделям (суммарно)
+    const visRub    = vis.reduce((a, i) => a + bRub[i], 0);
+    const visCancel = vis.reduce((a, i) => a + bCancelRub[i], 0);
+    const buyoutPct = visRub > 0 ? Math.round((visRub - visCancel) / visRub * 100) : null;
+    const buyoutTag = buyoutPct !== null
+      ? ` <span class="small ms-2" style="color:#16a34a;font-weight:600">✓ ${buyoutPct}% выкуп</span>`
+      : '';
+
     const GRP_BG = 'background:#f0f0f0;color:#111111;';
     tbody += `<tr data-row="grp" style="border-top:2px solid #3a3f5c">`;
     tbody += `<td class="fw-semibold ps-2" style="${GRP_BG}padding:6px 8px">`
            + `<span class="me-1" style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${_groupColor(grp)}"></span>`
-           + `<strong>${grp}</strong> <span class="small" style="color:#555">(${grpSkus.length} арт.)</span></td>`;
+           + `<strong>${grp}</strong> <span class="small" style="color:#555">(${grpSkus.length} арт.)</span>${buyoutTag}</td>`;
     vis.forEach(i => {
       tbody += _rubCell(bRub, i, 'small fw-semibold', _WEEK_SEP + GRP_BG);
       tbody += _qtyCell(bQty[i], 'small fw-semibold', GRP_BG);
