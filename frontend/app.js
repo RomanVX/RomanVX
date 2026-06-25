@@ -1118,7 +1118,28 @@ function _renderTfootDonuts() {
         responsive: false, cutout: '60%',
         plugins: {
           legend: { display: false },
-          tooltip: { enabled: false },
+          tooltip: {
+            enabled: false,
+            external({ chart, tooltip }) {
+              let el = document.getElementById('ordDonutTooltip');
+              if (!el) {
+                el = document.createElement('div');
+                el.id = 'ordDonutTooltip';
+                el.style.cssText = 'position:fixed;background:#1e2130;color:#e2e8f0;border:1px solid #3a3f5c;border-radius:6px;padding:6px 10px;font-size:0.78rem;pointer-events:none;z-index:9999;white-space:nowrap;transition:opacity .1s';
+                document.body.appendChild(el);
+              }
+              if (tooltip.opacity === 0) { el.style.opacity = '0'; return; }
+              const item = tooltip.dataPoints?.[0];
+              if (!item) return;
+              const pct = sum ? Math.round(item.raw / sum * 100) : 0;
+              el.innerHTML = `<span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${item.dataset.backgroundColor[item.dataIndex]};margin-right:5px"></span>`
+                + `<b>${item.label}</b>: ${fmtRub(item.raw)} (${pct}%)`;
+              const pos = chart.canvas.getBoundingClientRect();
+              el.style.left = (pos.left + tooltip.caretX + 12) + 'px';
+              el.style.top  = (pos.top  + tooltip.caretY - 10) + 'px';
+              el.style.opacity = '1';
+            },
+          },
         },
       },
     });
