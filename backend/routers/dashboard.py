@@ -907,18 +907,45 @@ async def invalidate_weekly_orders():
 
 @router.get("/weekly_orders/debug", include_in_schema=False)
 async def debug_weekly_orders():
-    """Быстрая диагностика: что есть в кеше WB и статус OZON/YM."""
+    """Диагностика: кеш WB + живой тест WB Statistics и Analytics API."""
     import cache as _cache_mod
     import config as _cfg
+    import httpx as _httpx
+
     wb_orders_count = len(_cache_mod._store.orders) if hasattr(_cache_mod._store, 'orders') else -1
     wb_cache_age = round(_wtime.monotonic() - _cache_mod._store.fetched_at, 1) if hasattr(_cache_mod._store, 'fetched_at') else -1
+
+    # Живой тест WB Statistics API (последние 7 дней, limit 1)
+    wb_stats_status, wb_stats_body = None, None
+    if _cfg.WB_API_KEY:
+        date_from = (datetime.utcnow() - timedelta(days=7)).strftime("%Y-%m-%dT00:00:00")
+        try:
+            async with _httpx.AsyncClient(timeout=15) as _c:
+                r = await _c.get(
+                    "https://statistics-api.wildberries.ru/api/v1/supplier/orders",
+                    headers={"Authorization": _cfg.WB_API_KEY},
+                    params={"dateFrom": date_from, "flag": 0},
+                )
+            wb_stats_status = r.status_code
+            body = r.json() if r.headers.get("content-type", "").startswith("application/json") else r.text[:300]
+            if isinstance(body, list):
+                wb_stats_body = f"list[{len(body)}]"
+            else:
+                wb_stats_body = str(body)[:300]
+        except Exception as _e:
+            wb_stats_status = "error"
+            wb_stats_body = str(_e)
+
     return {
         "use_mock": _cfg.USE_MOCK,
         "wb_key_set": bool(_cfg.WB_API_KEY),
+        "wb_key_suffix": _cfg.WB_API_KEY[-6:] if _cfg.WB_API_KEY else "",
         "wb_orders_in_cache": wb_orders_count,
         "wb_cache_age_sec": wb_cache_age,
         "wo_cache_filled": bool(_wo_cache),
         "wo_cache_age_sec": round(_wtime.monotonic() - _wo_cache_ts, 1) if _wo_cache_ts else -1,
+        "wb_stats_api_status": wb_stats_status,
+        "wb_stats_api_body": wb_stats_body,
     }
 
 
