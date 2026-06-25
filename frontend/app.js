@@ -918,54 +918,116 @@ let _monthlyData = null;
 async function loadOrdersMonthly() {
   const wrap = document.getElementById('ordersMonthlyWrap');
   if (!wrap) return;
-  try {
-    _monthlyData = _monthlyData || await fetchJSON('/api/dashboard/monthly_summary');
-    renderOrdersMonthly();
-  } catch (e) { /* тихо */ }
+  renderOrdersMonthly();
 }
 
 function renderOrdersMonthly() {
   const wrap = document.getElementById('ordersMonthlyWrap');
-  if (!wrap || !_monthlyData) return;
-  const { months, rub, qty } = _monthlyData;
-  const n = months.length;
+  if (!wrap || !_ordersData) return;
+
+  // Считаем месяцы из уже загруженных weekly_orders — без доп. запроса
+  // weeks приходят как "27 мая – 2 июн", берём начальную дату из заголовков
+  const weeks = _ordersData.weeks || [];
+  if (!weeks.length) return;
+
+  // Парсим метки недель в месяц (берём первые 3 символа названия месяца из конца)
+  // Формат из бэкенда: "27 мая – 2 июн"  или  "30 июн – 6 июл"
+  const RU_MONTHS = { 'янв':0,'фев':1,'мар':2,'апр':3,'май':4,'июн':5,
+                      'июл':6,'авг':7,'сен':8,'окт':9,'ноя':10,'дек':11 };
+  function weekToMonthKey(label) {
+    // берём конец: "2 июн" → "июн"
+    const parts = label.split('–');
+    const end = (parts[1] || parts[0]).trim().toLowerCase();
+    const tok = end.split(/\s+/);
+    const mon = tok.find(t => RU_MONTHS[t.slice(0,3)] !== undefined);
+    if (!mon) return null;
+    const now = new Date();
+    let year = now.getFullYear();
+    const mIdx = RU_MONTHS[mon.slice(0,3)];
+    // если месяц впереди текущего — прошлый год
+    if (mIdx > now.getMonth()) year--;
+    return `${year}-${String(mIdx+1).padStart(2,'0')}`;
+  }
 
   const MPs = [
     { key: 'WB',   label: 'WB',   color: '#a855f7' },
     { key: 'OZON', label: 'Ozon', color: '#3b82f6' },
     { key: 'YM',   label: 'ЯМ',   color: '#eab308' },
-    { key: 'total',label: 'Итого',color: '#10b981' },
   ];
 
-  let html = `<div class="card border-0 bg-card mt-1">
+  // Собираем по месяцам
+  const monthKeys = [];
+  const monthMap = {};   // monthKey → index
+  weeks.forEach((w, wi) => {
+    const mk = weekToMonthKey(w);
+    if (!mk) return;
+    if (!(mk in monthMap)) { monthMap[mk] = monthKeys.length; monthKeys.push(mk); }
+  });
+  if (!monthKeys.length) return;
+
+  const nm = monthKeys.length;
+  const data = {};
+  MPs.forEach(({ key }) => {
+    data[key] = { rub: Array(nm).fill(0), qty: Array(nm).fill(0),
+                  cancel_rub: Array(nm).fill(0) };
+    const block = _ordersData[key];
+    if (!block) return;
+    (block.skus || []).forEach(s => {
+      weeks.forEach((w, wi) => {
+        const mk = weekToMonthKey(w);
+        if (mk === null || !(mk in monthMap)) return;
+        const mi = monthMap[mk];
+        data[key].rub[mi]        += s.rub[wi] || 0;
+        data[key].qty[mi]        += s.qty[wi] || 0;
+        if (s.cancel_rub) data[key].cancel_rub[mi] += s.cancel_rub[wi] || 0;
+      });
+    });
+  });
+
+  // Итого
+  data['total'] = { rub: Array(nm).fill(0), qty: Array(nm).fill(0), cancel_rub: Array(nm).fill(0) };
+  MPs.forEach(({ key }) => {
+    data[key].rub.forEach((v,i) => { data['total'].rub[i] += v; });
+    data[key].cancel_rub.forEach((v,i) => { data['total'].cancel_rub[i] += v; });
+  });
+
+  const RU_MONTH_NAMES = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
+  const monthLabels = monthKeys.map(mk => {
+    const [y, m] = mk.split('-');
+    return RU_MONTH_NAMES[parseInt(m)-1] + ' ' + y.slice(2);
+  });
+
+  const allMPs = [...MPs, { key: 'total', label: 'Итого', color: '#10b981' }];
+
+  let html = `<div class="card border-0 bg-card mt-2">
     <div class="card-header bg-transparent border-0 py-2 d-flex align-items-center gap-2">
       <span class="fw-semibold small">📅 По месяцам</span>
-      <span class="text-secondary" style="font-size:0.72rem">последние ${n} мес.</span>
     </div>
     <div class="card-body p-0"><div class="table-responsive">
     <table class="table table-sm align-middle mb-0 text-nowrap" style="font-size:0.8rem">
     <thead><tr>
-      <th style="min-width:80px">Площадка</th>`;
-  months.forEach(m => { html += `<th class="text-end" style="${_WEEK_SEP}">${m}</th>`; });
+      <th style="min-width:80px;position:sticky;left:0;background:#181a20">Площадка</th>`;
+  monthLabels.forEach(m => { html += `<th class="text-end" style="${_WEEK_SEP}">${m}</th>`; });
   html += `</tr></thead><tbody>`;
 
-  MPs.forEach(({ key, label, color }) => {
-    const row = rub[key];
-    if (!row) return;
+  allMPs.forEach(({ key, label, color }) => {
+    const d = data[key];
+    if (!d) return;
     const isTotal = key === 'total';
-    const bg = isTotal ? 'background:#f0f0f0;color:#111' : '';
-    html += `<tr style="${bg}">`;
-    html += `<td class="fw-semibold" style="${bg}"><span style="color:${color}">${label}</span> <span class="text-secondary" style="font-size:0.68rem">₽</span></td>`;
-    row.sales.forEach((v, i) => {
-      html += `<td class="text-end" style="${_WEEK_SEP}${bg}">${v ? fmtRub(v) : '<span class="text-muted">—</span>'}`;
-      if (v && row.buyout[i] && row.buyout[i] < v) {
-        const pct = Math.round(row.buyout[i] / v * 100);
-        html += `<div style="font-size:0.6rem;color:#16a34a;line-height:1.1">✓${pct}%</div>`;
-      }
-      html += `</td>`;
+    const bg = isTotal ? 'background:#f0f0f0;color:#111;' : '';
+    const stickyBg = isTotal ? '#f0f0f0' : '#181a20';
+    html += `<tr>`;
+    html += `<td class="fw-semibold" style="${bg}position:sticky;left:0;background:${stickyBg}">` +
+            `<span style="color:${color}">${label}</span></td>`;
+    d.rub.forEach((v, i) => {
+      const pct = v > 0 ? Math.round((v - d.cancel_rub[i]) / v * 100) : null;
+      const buyoutHtml = pct !== null && pct < 100
+        ? `<div style="font-size:0.6rem;color:#16a34a;line-height:1.1">✓${pct}%</div>` : '';
+      html += `<td class="text-end" style="${_WEEK_SEP}${bg}">${v ? fmtRub(v) : '<span class="text-muted">—</span>'}${buyoutHtml}</td>`;
     });
     html += `</tr>`;
   });
+
   html += `</tbody></table></div></div></div>`;
   wrap.innerHTML = html;
 }
