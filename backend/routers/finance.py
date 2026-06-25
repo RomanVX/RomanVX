@@ -162,14 +162,15 @@ async def get_wb_pnl(
 
     if costs:
         try:
+            # sale_date хранится как TEXT "YYYY-MM-DD" → берём первые 7 символов
             rows = db.fetchall(
-                "SELECT strftime('%Y-%m', sale_date), sku, SUM(qty) "
+                "SELECT LEFT(sale_date, 7), sku, SUM(qty) "
                 "FROM sales_daily WHERE platform='WB' "
-                "GROUP BY strftime('%Y-%m', sale_date), sku"
-            ) if not db.IS_PG else db.fetchall(
-                "SELECT TO_CHAR(sale_date, 'YYYY-MM'), sku, SUM(qty) "
+                "GROUP BY LEFT(sale_date, 7), sku"
+            ) if db.IS_PG else db.fetchall(
+                "SELECT substr(sale_date, 1, 7), sku, SUM(qty) "
                 "FROM sales_daily WHERE platform='WB' "
-                "GROUP BY TO_CHAR(sale_date, 'YYYY-MM'), sku"
+                "GROUP BY substr(sale_date, 1, 7), sku"
             )
             for mk, sku, qty in rows:
                 unit_cost = costs.get(sku, 0.0)
@@ -226,10 +227,12 @@ async def get_wb_pnl(
     row("gross",          "✅ Валовая прибыль",           "gross",    "total")
     row("gross_pct",      "   Маржа %",                  "gross_pct","pct")
 
+    cogs_has_data = len(costs) > 0 and any(v > 0 for v in cogs_by_month.values())
     result = {
         "months": months_out,
         "rows":   pnl_rows,
         "cogs_loaded": len(costs) > 0,
+        "cogs_has_data": cogs_has_data,
         "fetched_at": _wb_cache.get("fetched_at", ""),
     }
     _pnl_cache = result
