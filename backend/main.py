@@ -55,6 +55,12 @@ async def _prefetch_weekly():
         except Exception as exc:
             _log.warning("weekly_orders prefetch failed: %s", exc)
         try:
+            _log.info("Prefetching stocks_table...")
+            await dashboard.get_stocks_table()
+            _log.info("stocks_table cache updated")
+        except Exception as exc:
+            _log.warning("stocks_table prefetch failed: %s", exc)
+        try:
             _log.info("Refreshing reviews...")
             await reviews_client.refresh_all()
             _log.info("reviews refreshed")

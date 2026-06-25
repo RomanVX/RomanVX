@@ -1028,14 +1028,15 @@ function _ordersTableHTML() {
       s.qty.forEach((v, i) => { bQty[i] += v; });
     });
 
-    // белый фон + чёрный текст для строк-категорий
-    const dark = 'color:#000000;';
-    tbody += `<tr data-row="grp" style="background:#ffffff;border-top:2px solid #2d3148">`;
-    tbody += `<td class="fw-semibold ps-2" style="${dark}"><span class="me-1" style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${_groupColor(grp)}"></span>`
-           + `<strong>${grp}</strong> <span class="small" style="color:#475569">(${grpSkus.length} арт.)</span></td>`;
+    // белый фон + чёрный текст для строк-категорий (фон нужен на каждом <td>, иначе Bootstrap тёмная тема переопределяет)
+    const GRP_BG = 'background:#f0f0f0;color:#111111;';
+    tbody += `<tr data-row="grp" style="border-top:2px solid #3a3f5c">`;
+    tbody += `<td class="fw-semibold ps-2" style="${GRP_BG}padding:6px 8px">`
+           + `<span class="me-1" style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${_groupColor(grp)}"></span>`
+           + `<strong>${grp}</strong> <span class="small" style="color:#555">(${grpSkus.length} арт.)</span></td>`;
     vis.forEach(i => {
-      tbody += _rubCell(bRub, i, 'small fw-semibold', _WEEK_SEP + dark);
-      tbody += _qtyCell(bQty[i], 'small fw-semibold', dark);
+      tbody += _rubCell(bRub, i, 'small fw-semibold', _WEEK_SEP + GRP_BG);
+      tbody += _qtyCell(bQty[i], 'small fw-semibold', GRP_BG);
     });
     tbody += '</tr>';
 
@@ -1117,8 +1118,7 @@ function _renderTfootDonuts() {
         responsive: false, cutout: '60%',
         plugins: {
           legend: { display: false },
-          tooltip: { callbacks: { label: c =>
-            ` ${c.label}: ${fmtRub(c.raw)} (${sum ? Math.round(c.raw / sum * 100) : 0}%)` } },
+          tooltip: { enabled: false },
         },
       },
     });
@@ -1218,7 +1218,7 @@ function renderHistory(d) {
 
 function initDashboard() {
   switchTab('salesan', document.querySelector('#mainTabs .nav-link'));
-  setInterval(() => { markAllDirty(); switchTab(currentTab); }, 5 * 60 * 1000);
+  setInterval(() => { markAllDirty(); switchTab(currentTab); }, 30 * 60 * 1000);
 }
 
 document.addEventListener('DOMContentLoaded', () => {
