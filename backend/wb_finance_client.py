@@ -63,6 +63,121 @@ async def get_sales_reports(
     return all_records
 
 
+async def get_detailed_report(
+    date_from: str,
+    date_to: str,
+    fields: list[str] | None = None,
+    limit: int = 100000,
+) -> list[dict]:
+    """POST /api/finance/v1/sales-reports/detailed — строчный детальный отчёт.
+
+    Rate limit: 1 req/min. Пагинация по rrdId до ответа 204.
+    Запрашиваем только нужные поля чтобы уменьшить объём.
+    """
+    import asyncio
+
+    if USE_MOCK:
+        return _mock_detailed(date_from, date_to)
+
+    url = f"{FINANCE_BASE}/api/finance/v1/sales-reports/detailed"
+    if fields is None:
+        fields = ["rrdId", "vendorCode", "nmId", "quantity", "docTypeName",
+                  "retailAmount", "forPay", "deliveryService", "paidStorage",
+                  "paidAcceptance", "penalty", "deduction", "cashbackAmount",
+                  "cashbackCommissionChange", "acquiringFee", "rrDate", "saleDt"]
+
+    all_rows: list[dict] = []
+    rrd_id = 0
+
+    while True:
+        body = {
+            "dateFrom": date_from,
+            "dateTo":   date_to,
+            "limit":    limit,
+            "rrdId":    rrd_id,
+            "period":   "weekly",
+            "fields":   fields,
+        }
+        async with httpx.AsyncClient(timeout=60) as client:
+            resp = await client.post(url, headers=_headers(), json=body)
+
+        if resp.status_code == 204:
+            break  # нет данных / конец пагинации
+        if resp.status_code == 429:
+            _log.warning("WB Finance detailed 429 — ждём 62с")
+            await asyncio.sleep(62)
+            continue
+        if not resp.is_success:
+            _log.error("WB Finance detailed %s → %s %s", url, resp.status_code, resp.text[:300])
+            resp.raise_for_status()
+
+        batch = resp.json()
+        if not isinstance(batch, list) or not batch:
+            break
+
+        all_rows.extend(batch)
+        last_rrd = batch[-1].get("rrdId", 0)
+        if last_rrd <= rrd_id or len(batch) < limit:
+            break
+        rrd_id = last_rrd
+        # rate limit: 1 req/min
+        await asyncio.sleep(62)
+
+    return all_rows
+
+
+def _mock_detailed(date_from: str, date_to: str) -> list[dict]:
+    """Mock детального отчёта на основе mock_reports."""
+    import random
+    from datetime import date, timedelta
+    random.seed(42)
+
+    try:
+        df = datetime.strptime(date_from[:10], "%Y-%m-%d").date()
+        dt = datetime.strptime(date_to[:10],   "%Y-%m-%d").date()
+    except ValueError:
+        df = date(2025, 1, 1)
+        dt = date.today()
+
+    SKUS = ["BMN-0035","BMN-0013","BMN-0028","BMN-0002","BMN-0008",
+            "BMN-0036","BMN-0004","BMN-0006","ST-01","ST-07"]
+
+    rows = []
+    rrd = 1
+    cur = df
+    while cur <= dt:
+        for sku in SKUS:
+            for _ in range(random.randint(0, 5)):
+                retail = round(random.uniform(300, 900), 2)
+                rows.append({
+                    "rrdId": rrd, "vendorCode": sku, "nmId": 0,
+                    "quantity": 1, "docTypeName": "Продажа",
+                    "retailAmount": str(retail),
+                    "forPay": str(round(retail * 0.78, 2)),
+                    "deliveryService": str(round(retail * 0.11, 2)),
+                    "paidStorage": str(round(retail * 0.03, 2)),
+                    "paidAcceptance": "0", "penalty": "0", "deduction": "0",
+                    "cashbackAmount": "0", "cashbackCommissionChange": "0",
+                    "acquiringFee": str(round(retail * 0.04, 2)),
+                    "rrDate": cur.isoformat(), "saleDt": cur.isoformat() + "T00:00:00Z",
+                })
+                rrd += 1
+            if random.random() < 0.1:  # ~10% возвраты
+                rows.append({
+                    "rrdId": rrd, "vendorCode": sku, "nmId": 0,
+                    "quantity": 1, "docTypeName": "Возврат",
+                    "retailAmount": str(-round(random.uniform(300, 900), 2)),
+                    "forPay": "0", "deliveryService": "0", "paidStorage": "0",
+                    "paidAcceptance": "0", "penalty": "0", "deduction": "0",
+                    "cashbackAmount": "0", "cashbackCommissionChange": "0",
+                    "acquiringFee": "0",
+                    "rrDate": cur.isoformat(), "saleDt": cur.isoformat() + "T00:00:00Z",
+                })
+                rrd += 1
+        cur += timedelta(days=1)
+    return rows
+
+
 def _mock_reports(date_from: str, date_to: str) -> list[dict]:
     """Generate realistic mock weekly reports for development."""
     from datetime import date

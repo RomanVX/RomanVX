@@ -8,7 +8,6 @@ from fastapi import APIRouter, Query, HTTPException
 
 import wb_finance_client
 import cost_store
-import db
 
 router = APIRouter(prefix="/api/finance", tags=["finance"])
 _log = logging.getLogger(__name__)
@@ -106,39 +105,72 @@ async def invalidate_wb_finance():
     return {"status": "ok"}
 
 
+_detail_cache: dict = {}
+_detail_cache_ts: float = 0.0
+_DETAIL_TTL = 86400  # 24ч — детальный отчёт меняется редко
+_detail_lock = asyncio.Lock()
+
+
+async def _get_detailed_cached(date_from: str, date_to: str, refresh: bool = False) -> list[dict]:
+    global _detail_cache, _detail_cache_ts
+    cache_key = f"{date_from}_{date_to}"
+    if not refresh and _detail_cache.get("key") == cache_key \
+            and _time.monotonic() - _detail_cache_ts < _DETAIL_TTL:
+        return _detail_cache.get("rows", [])
+    async with _detail_lock:
+        if not refresh and _detail_cache.get("key") == cache_key \
+                and _time.monotonic() - _detail_cache_ts < _DETAIL_TTL:
+            return _detail_cache.get("rows", [])
+        rows = await wb_finance_client.get_detailed_report(date_from, date_to)
+        _detail_cache = {"key": cache_key, "rows": rows}
+        _detail_cache_ts = _time.monotonic()
+        return rows
+
+
 @router.get("/wb/pnl")
 async def get_wb_pnl(
     months: int = Query(default=6, ge=1, le=24),
     refresh: bool = Query(default=False),
 ):
-    """P&L по месяцам: финансовые отчёты WB + себестоимость из sales_daily × cogs."""
+    """P&L по месяцам: финансовые данные из детального отчёта WB + COGS."""
     global _pnl_cache, _pnl_cache_ts
 
     if not refresh and _pnl_cache and _time.monotonic() - _pnl_cache_ts < _WB_TTL:
         return _pnl_cache
 
-    reports = await _get_wb_reports_cached(months, refresh)
+    # Диапазон дат
+    dt_to   = datetime.utcnow() + timedelta(hours=3)
+    dt_from = dt_to - timedelta(days=30 * months)
+    min_date = datetime(2025, 1, 1)
+    if dt_from < min_date:
+        dt_from = min_date
+    date_from = dt_from.strftime("%Y-%m-%d")
+    date_to   = dt_to.strftime("%Y-%m-%d")
 
-    # ── группировка отчётов по месяцам (пропорционально дням) ────────────────
-    NUM_KEYS = ["retailAmount","forPay","deliveryService","paidStorage",
+    # Получаем сводные отчёты (для агрегатов которых нет в детальном: хранение, приёмка)
+    summary_reports = await _get_wb_reports_cached(months, refresh)
+
+    # Получаем детальный отчёт (для COGS и точных данных по продажам)
+    detail_rows = await _get_detailed_cached(date_from, date_to, refresh)
+
+    # ── Агрегируем сводные отчёты по месяцам (пропорционально дням) ────────────
+    SUM_KEYS = ["retailAmount","forPay","deliveryService","paidStorage",
                 "paidAcceptance","penalty","deduction","cashbackAmount",
                 "additionalPayment","cashbackCommission","bankPayment"]
 
-    month_totals: dict[str, dict] = {}  # "2025-05" → {key: sum}
+    month_totals: dict[str, dict] = {}
 
     def ensure(mk):
         if mk not in month_totals:
-            month_totals[mk] = {k: 0.0 for k in NUM_KEYS}
+            month_totals[mk] = {k: 0.0 for k in SUM_KEYS}
         return month_totals[mk]
 
-    for r in reports:
+    for r in summary_reports:
         try:
             df = datetime.strptime(r["dateFrom"], "%Y-%m-%d").date()
             dt = datetime.strptime(r["dateTo"],   "%Y-%m-%d").date()
         except (ValueError, KeyError):
             continue
-
-        # разбиваем неделю по месяцам пропорционально дням
         segs: list[tuple[str, int]] = []
         cur = df
         while cur <= dt:
@@ -149,35 +181,41 @@ async def get_wb_pnl(
                 segs.append((mk, 1))
             cur += timedelta(days=1)
         total_days = sum(d for _, d in segs)
-
         for mk, days in segs:
             ratio = days / total_days
             m = ensure(mk)
-            for k in NUM_KEYS:
+            for k in SUM_KEYS:
                 m[k] += r.get(k, 0.0) * ratio
 
-    # ── COGS из sales_daily × cogs таблицы ───────────────────────────────────
-    costs = cost_store.get_costs()  # sku → cost_rub per unit
+    # ── COGS из детального отчёта: vendorCode × unit_cost ────────────────────
+    costs = cost_store.get_costs()
     cogs_by_month: dict[str, float] = {}
+    qty_by_month_sku: dict[str, dict[str, int]] = {}  # mk → {sku: qty}
 
-    if costs:
-        try:
-            # sale_date хранится как TEXT "YYYY-MM-DD" → берём первые 7 символов
-            rows = db.fetchall(
-                "SELECT LEFT(sale_date, 7), sku, SUM(qty) "
-                "FROM sales_daily WHERE platform='WB' "
-                "GROUP BY LEFT(sale_date, 7), sku"
-            ) if db.IS_PG else db.fetchall(
-                "SELECT substr(sale_date, 1, 7), sku, SUM(qty) "
-                "FROM sales_daily WHERE platform='WB' "
-                "GROUP BY substr(sale_date, 1, 7), sku"
-            )
-            for mk, sku, qty in rows:
-                unit_cost = costs.get(sku, 0.0)
-                if unit_cost > 0:
-                    cogs_by_month[mk] = cogs_by_month.get(mk, 0.0) + unit_cost * (qty or 0)
-        except Exception as e:
-            _log.warning("COGS calc failed: %s", e)
+    def _f(v) -> float:
+        try: return float(str(v).replace(",", ".") or 0)
+        except: return 0.0
+
+    for row in detail_rows:
+        doc_type = row.get("docTypeName", "")
+        if doc_type not in ("Продажа", "Корректировка"):
+            continue
+        sku = (row.get("vendorCode") or "").strip()
+        qty = int(row.get("quantity") or 0)
+        if not sku or qty <= 0:
+            continue
+        # дата операции
+        rr = (row.get("rrDate") or row.get("saleDt") or "")[:10]
+        if not rr:
+            continue
+        mk = rr[:7]  # "2025-05"
+        unit_cost = costs.get(sku, 0.0)
+        if unit_cost > 0:
+            cogs_by_month[mk] = cogs_by_month.get(mk, 0.0) + unit_cost * qty
+        # собираем qty для справки
+        if mk not in qty_by_month_sku:
+            qty_by_month_sku[mk] = {}
+        qty_by_month_sku[mk][sku] = qty_by_month_sku[mk].get(sku, 0) + qty
 
     # ── формируем ответ: список месяцев, строки P&L ───────────────────────────
     sorted_months = sorted(month_totals.keys(), reverse=True)
