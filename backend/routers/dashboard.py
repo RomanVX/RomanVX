@@ -830,7 +830,7 @@ async def get_weekly_orders():
                     ozon_client.get_sales_detail(date_from_str, date_to_str),
                     ym_client.get_sales_detail(date_from_str, date_to_str),
                 ),
-                timeout=120,
+                timeout=25,
             )
         except Exception as _exc:
             import logging; logging.getLogger(__name__).warning("weekly_orders OZON/YM: %s", _exc)
@@ -903,6 +903,23 @@ async def invalidate_weekly_orders():
     global _wo_cache, _wo_cache_ts
     _wo_cache = {}; _wo_cache_ts = 0.0
     return {"status": "ok"}
+
+
+@router.get("/weekly_orders/debug", include_in_schema=False)
+async def debug_weekly_orders():
+    """Быстрая диагностика: что есть в кеше WB и статус OZON/YM."""
+    import cache as _cache_mod
+    import config as _cfg
+    wb_orders_count = len(_cache_mod._store.orders) if hasattr(_cache_mod._store, 'orders') else -1
+    wb_cache_age = round(_wtime.monotonic() - _cache_mod._store.fetched_at, 1) if hasattr(_cache_mod._store, 'fetched_at') else -1
+    return {
+        "use_mock": _cfg.USE_MOCK,
+        "wb_key_set": bool(_cfg.WB_API_KEY),
+        "wb_orders_in_cache": wb_orders_count,
+        "wb_cache_age_sec": wb_cache_age,
+        "wo_cache_filled": bool(_wo_cache),
+        "wo_cache_age_sec": round(_wtime.monotonic() - _wo_cache_ts, 1) if _wo_cache_ts else -1,
+    }
 
 
 # ── Помесячная сводка Продажи/Выкупы ──────────────────────────────────────────

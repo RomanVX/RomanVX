@@ -94,8 +94,18 @@ function getParams() {
 
 // ── Fetch ─────────────────────────────────────────────────────────────────────
 
-async function fetchJSON(path) {
-  const r = await fetch(`${API}${path}?${getParams()}`);
+async function fetchJSON(path, timeoutMs = 60000) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  let r;
+  try {
+    r = await fetch(`${API}${path}?${getParams()}`, { signal: ctrl.signal });
+  } catch (e) {
+    clearTimeout(timer);
+    if (e.name === 'AbortError') throw new Error('Таймаут запроса (' + Math.round(timeoutMs/1000) + 'с)');
+    throw e;
+  }
+  clearTimeout(timer);
   if (!r.ok) {
     let detail = `${r.status}`;
     try { const body = await r.json(); detail = body.detail || detail; } catch {}
