@@ -1062,6 +1062,14 @@ function _visWeeks(n) {
   return Array.from({ length: n }, (_, i) => i);
 }
 
+function toggleFinMonth(grpId) {
+  const rows = document.querySelectorAll(`.fin-week-${grpId}`);
+  const arr  = document.getElementById('arr-' + grpId);
+  const expanded = arr && arr.textContent === '▼';
+  rows.forEach(r => { r.style.display = expanded ? 'none' : ''; });
+  if (arr) arr.textContent = expanded ? '▶' : '▼';
+}
+
 function toggleGrpRows(grpId) {
   const rows = document.querySelectorAll(`[data-grp="${grpId}"]`);
   const arr  = document.getElementById('arr-' + grpId);
@@ -1503,46 +1511,81 @@ function renderFinanceTable() {
   });
   html += `</div>`;
 
-  // Таблица отчётов
+  // Группировка по месяцам
+  const RU_MON = ['Январь','Февраль','Март','Апрель','Май','Июнь',
+                  'Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+  const monthMap = {};  // "2025-05" → { label, reports[] }
+  reports.forEach(r => {
+    const mk = (r.dateFrom || '').slice(0, 7);  // "2025-05"
+    if (!mk) return;
+    if (!monthMap[mk]) {
+      const [y, m] = mk.split('-');
+      monthMap[mk] = { label: RU_MON[parseInt(m)-1] + ' ' + y, reports: [] };
+    }
+    monthMap[mk].reports.push(r);
+  });
+  const months = Object.keys(monthMap).sort().reverse();
+
+  const COLS = [
+    { key: 'retailAmount',   label: 'Продажа ₽',       color: '' },
+    { key: 'forPay',         label: 'К перечисл. ₽',   color: '#4ade80' },
+    { key: '_pct',           label: '% перечисл.',      color: '' },
+    { key: 'deliveryService',label: 'Логистика ₽',      color: '#f87171' },
+    { key: 'paidStorage',    label: 'Хранение ₽',       color: '#f87171' },
+    { key: 'paidAcceptance', label: 'Приёмка ₽',        color: '' },
+    { key: 'penalty',        label: 'Штрафы ₽',         color: '#fbbf24' },
+    { key: 'deduction',      label: 'Удержания ₽',      color: '' },
+    { key: 'cashbackAmount', label: 'Кэшбэк ₽',         color: '' },
+    { key: 'bankPayment',    label: 'Итого выплата ₽',  color: col },
+  ];
+
+  function sumRows(rows, key) {
+    return rows.reduce((a, r) => a + (r[key] || 0), 0);
+  }
+  function cellVal(key, rows, isWeek) {
+    if (key === '_pct') {
+      const ret = sumRows(rows, 'retailAmount');
+      const pay = sumRows(rows, 'forPay');
+      const pct = ret > 0 ? Math.round(pay / ret * 100) : 0;
+      const clr = pct >= 70 ? '#4ade80' : pct >= 50 ? '#fbbf24' : '#f87171';
+      return `<span style="color:${clr};font-weight:${isWeek?'':'bold'}">${pct}%</span>`;
+    }
+    const v = sumRows(rows, key);
+    const c = COLS.find(c => c.key === key);
+    return v ? `<span style="${c && c.color ? 'color:'+c.color : ''}">${fmtRub(v)}</span>` : '<span class="text-muted">—</span>';
+  }
+
   html += `<div class="card border-0 bg-card"><div class="card-body p-0">
   <div class="table-responsive">
-  <table class="table table-sm align-middle mb-0" style="font-size:0.82rem">
-  <thead class="sticky-top">
-    <tr>
-      <th>Период</th>
-      <th class="text-end">Продажа ₽</th>
-      <th class="text-end">К перечисл. ₽</th>
-      <th class="text-end">% выкупа</th>
-      <th class="text-end">Логистика ₽</th>
-      <th class="text-end">Хранение ₽</th>
-      <th class="text-end">Приёмка ₽</th>
-      <th class="text-end">Штрафы ₽</th>
-      <th class="text-end">Удержания ₽</th>
-      <th class="text-end">Кэшбэк ₽</th>
-      <th class="text-end" style="color:${col}">Итого выплата ₽</th>
-    </tr>
-  </thead><tbody>`;
+  <table class="table table-sm align-middle mb-0" style="font-size:0.82rem" id="finTable">
+  <thead><tr>
+    <th style="min-width:140px">Период</th>`;
+  COLS.forEach(c => { html += `<th class="text-end">${c.label}</th>`; });
+  html += `</tr></thead><tbody>`;
 
-  reports.forEach((r, idx) => {
-    const bg = idx % 2 === 0 ? '' : 'background:#0e0f1a';
-    const pct = r.retailAmount > 0 ? Math.round(r.forPay / r.retailAmount * 100) : 0;
-    const pctColor = pct >= 70 ? '#4ade80' : pct >= 50 ? '#fbbf24' : '#f87171';
-    html += `<tr style="${bg}">
-      <td class="text-nowrap">
-        <span class="fw-semibold" style="color:${col}">${r.dateFrom}</span>
-        <span class="text-secondary small"> – ${r.dateTo}</span>
-      </td>
-      <td class="text-end">${fmtRub(r.retailAmount)}</td>
-      <td class="text-end text-success">${fmtRub(r.forPay)}</td>
-      <td class="text-end fw-semibold" style="color:${pctColor}">${pct}%</td>
-      <td class="text-end text-danger">${r.deliveryService ? fmtRub(r.deliveryService) : '—'}</td>
-      <td class="text-end text-danger">${r.paidStorage ? fmtRub(r.paidStorage) : '—'}</td>
-      <td class="text-end">${r.paidAcceptance ? fmtRub(r.paidAcceptance) : '—'}</td>
-      <td class="text-end" style="color:#fbbf24">${r.penalty ? fmtRub(r.penalty) : '—'}</td>
-      <td class="text-end">${r.deduction ? fmtRub(r.deduction) : '—'}</td>
-      <td class="text-end">${r.cashbackAmount ? fmtRub(r.cashbackAmount) : '—'}</td>
-      <td class="text-end fw-bold" style="color:${col}">${fmtRub(r.bankPayment)}</td>
-    </tr>`;
+  months.forEach(mk => {
+    const mon = monthMap[mk];
+    const mRows = mon.reports;
+    const grpId = 'fin_' + mk.replace('-','');
+    html += `<tr style="cursor:pointer;background:#1a1c2a" onclick="toggleFinMonth('${grpId}')">
+      <td class="fw-bold text-nowrap">
+        <span id="arr-${grpId}" style="font-size:0.7rem;margin-right:4px">▶</span>
+        <span style="color:${col}">${mon.label}</span>
+        <span class="text-secondary small ms-1">(${mRows.length} нед.)</span>
+      </td>`;
+    COLS.forEach(c => { html += `<td class="text-end fw-semibold">${cellVal(c.key, mRows, false)}</td>`; });
+    html += `</tr>`;
+
+    mRows.forEach((r, idx) => {
+      const bg = idx % 2 === 0 ? 'background:#0d0e1a' : 'background:#111226';
+      const pct = r.retailAmount > 0 ? Math.round(r.forPay / r.retailAmount * 100) : 0;
+      html += `<tr class="fin-week-${grpId}" style="${bg};display:none">
+        <td class="text-nowrap ps-4 text-secondary" style="font-size:0.78rem">
+          ${r.dateFrom} – ${r.dateTo}
+        </td>`;
+      COLS.forEach(c => { html += `<td class="text-end" style="font-size:0.78rem">${cellVal(c.key, [r], true)}</td>`; });
+      html += `</tr>`;
+    });
   });
 
   html += `</tbody></table></div></div></div>`;
