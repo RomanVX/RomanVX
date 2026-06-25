@@ -1,4 +1,5 @@
 import asyncio
+import time as _time
 from datetime import datetime, timedelta
 from typing import Annotated, Optional
 
@@ -125,35 +126,48 @@ async def get_warehouses(
 
 import logging as _logging
 _slog = _logging.getLogger("stocks_table")
+_stocks_cache: dict = {}
+_stocks_cache_ts: float = 0.0
+_STOCKS_TTL = 1800  # 30 минут
+_stocks_lock = asyncio.Lock()
 
 
 @router.get("/stocks_table")
 async def get_stocks_table():
     """Multi-marketplace stock status: WB + Ozon + YM per SKU."""
-    dt_to   = datetime.utcnow()
-    dt_from = dt_to - timedelta(days=28)
+    global _stocks_cache, _stocks_cache_ts
+    if _stocks_cache and _time.monotonic() - _stocks_cache_ts < _STOCKS_TTL:
+        return _stocks_cache
 
-    (wb_sales, _, wb_stocks), oz_stocks, oz_sales, ym_stocks, ym_sales = await asyncio.gather(
-        _fetch(dt_from, dt_to, None, None),
-        ozon_client.get_stocks(),
-        ozon_client.get_sales_28d(),
-        ym_client.get_stocks(),
-        ym_client.get_sales_28d(),
-    )
+    async with _stocks_lock:
+        if _stocks_cache and _time.monotonic() - _stocks_cache_ts < _STOCKS_TTL:
+            return _stocks_cache
 
-    _slog.info("stocks_table: wb_sales=%d wb_stocks=%d oz_stocks=%d oz_sales=%d ym_stocks=%d ym_sales=%d",
-               len(wb_sales), len(wb_stocks), len(oz_stocks), len(oz_sales), len(ym_stocks), len(ym_sales))
+        dt_to   = datetime.utcnow()
+        dt_from = dt_to - timedelta(days=28)
 
-    names = cost_store.get_names()
-    return analytics.stocks_table_multi(
-        wb_sales=wb_sales, wb_stocks=wb_stocks,
-        oz_stocks=oz_stocks, oz_sales=oz_sales,
-        ym_stocks=ym_stocks, ym_sales=ym_sales,
-        names=names, days=28,
-    )
+        (wb_sales, _, wb_stocks), oz_stocks, oz_sales, ym_stocks, ym_sales = await asyncio.gather(
+            _fetch(dt_from, dt_to, None, None),
+            ozon_client.get_stocks(),
+            ozon_client.get_sales_28d(),
+            ym_client.get_stocks(),
+            ym_client.get_sales_28d(),
+        )
 
+        _slog.info("stocks_table: wb_sales=%d wb_stocks=%d oz_stocks=%d oz_sales=%d ym_stocks=%d ym_sales=%d",
+                   len(wb_sales), len(wb_stocks), len(oz_stocks), len(oz_sales), len(ym_stocks), len(ym_sales))
 
-import time as _time
+        names = cost_store.get_names()
+        result = analytics.stocks_table_multi(
+            wb_sales=wb_sales, wb_stocks=wb_stocks,
+            oz_stocks=oz_stocks, oz_sales=oz_sales,
+            ym_stocks=ym_stocks, ym_sales=ym_sales,
+            names=names, days=28,
+        )
+        _stocks_cache = result
+        _stocks_cache_ts = _time.monotonic()
+        return result
+
 _reco_cache: dict = {}
 _reco_cache_ts: float = 0.0
 _RECO_TTL = 3600  # 1 час
