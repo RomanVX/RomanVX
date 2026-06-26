@@ -1577,6 +1577,19 @@ function renderFinanceTable() {
 function initDashboard() {
   switchTab('salesan', document.querySelector('#mainTabs .nav-link'));
   setInterval(() => { markAllDirty(); switchTab(currentTab); }, 30 * 60 * 1000);
+
+  // Preload all other tabs in background so switching feels instant
+  const bgTabs = [
+    { name: 'stocks',  fn: loadStocks },
+    { name: 'history', fn: loadHistory },
+    { name: 'finance', fn: loadFinance },
+    { name: 'reviews', fn: loadReviews },
+  ];
+  bgTabs.forEach(({ name, fn }, i) => {
+    setTimeout(() => {
+      if (dirty[name]) { dirty[name] = false; fn(); }
+    }, (i + 1) * 2000); // stagger: 2s, 4s, 6s, 8s
+  });
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -1602,10 +1615,11 @@ let _allReviews = [];
 let _statsData = {};
 let _dynData = {};
 let _drafts = {};
+let _reviewsRetry = 0;
 
 async function loadReviews() {
   const feedEl = document.getElementById('reviewsFeed');
-  if (feedEl) feedEl.innerHTML = '<p class="text-secondary">Загружаем отзывы...</p>';
+  if (feedEl && !_allReviews.length) feedEl.innerHTML = '<p class="text-secondary">Загружаем отзывы...</p>';
   try {
     const res = await fetch(`${API}/api/reviews/data?limit=5000`);
     const data = await res.json();
@@ -1618,6 +1632,15 @@ async function loadReviews() {
     populateDynFilter(data.ratings || {});
     renderRatingDynamicsFiltered();
     renderReviewsFeed();
+
+    // If backend cache was empty (background refresh in progress), auto-retry
+    if (!_allReviews.length && _reviewsRetry < 5) {
+      _reviewsRetry++;
+      if (feedEl) feedEl.innerHTML = `<p class="text-secondary">Загружаем отзывы с площадок… (попытка ${_reviewsRetry}/5)</p>`;
+      setTimeout(loadReviews, 8000);
+    } else {
+      _reviewsRetry = 0;
+    }
   } catch (e) {
     console.error('loadReviews', e);
     if (feedEl) feedEl.innerHTML = `<p class="text-danger">Ошибка: ${e.message}</p>`;
