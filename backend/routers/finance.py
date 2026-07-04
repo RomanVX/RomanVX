@@ -12,6 +12,17 @@ import cost_store
 router = APIRouter(prefix="/api/finance", tags=["finance"])
 _log = logging.getLogger(__name__)
 
+# Ссылки на фоновые задачи: asyncio держит task'и слабыми ссылками,
+# и create_task без сохранения ссылки может быть убит GC ДО выполнения —
+# из-за этого детальный отчёт WB не загружался вовсе.
+_bg_tasks: set = set()
+
+
+def _spawn(coro) -> None:
+    t = asyncio.create_task(coro)
+    _bg_tasks.add(t)
+    t.add_done_callback(_bg_tasks.discard)
+
 # ── кэш: 60 мин (rate limit WB Finance API — 1 req/min) ──────────────────────
 _wb_cache: dict = {}
 _wb_cache_ts: float = 0.0
@@ -206,6 +217,47 @@ def _get_detail_if_ready(date_from: str, date_to: str) -> list[dict]:
     return []
 
 
+@router.get("/wb/debug", include_in_schema=False)
+async def wb_finance_debug():
+    """Диагностика WB P&L: состояние кешей + живая проба reportDetailByPeriod."""
+    out = {
+        "detail_cache_key": _detail_cache.get("key"),
+        "detail_rows": len(_detail_cache.get("rows", [])),
+        "detail_fetching": _detail_fetching,
+        "detail_error": _detail_last_error,
+        "pnl_cache_source": _pnl_cache.get("source") if _pnl_cache else None,
+        "pnl_cache_age_sec": round(_time.monotonic() - _pnl_cache_ts) if _pnl_cache else None,
+        "wb_summary_cached": len(_wb_cache.get("reports", [])) if _wb_cache else 0,
+    }
+    rows = _detail_cache.get("rows", [])
+    if rows:
+        sample = rows[0]
+        out["detail_sample"] = sample
+        # суммы июня для сверки
+        june = [r for r in rows if (r.get("rrDate") or "").startswith("2026-06")]
+        out["june_rows"] = len(june)
+        out["june_retail_post_spp"] = round(sum(abs(float(r.get("retailAmount") or 0))
+                                                for r in june if r.get("docTypeName") == "Продажа"))
+        out["june_retail_pre_spp"] = round(sum(abs(float(r.get("retailPreSpp") or 0))
+                                               for r in june if r.get("docTypeName") == "Продажа"))
+    # живая проба v5 (7 дней) — какие поля реально приходят
+    try:
+        import wb_client
+        stat = await wb_client.get_report_detail(
+            datetime.utcnow() - timedelta(days=7), datetime.utcnow())
+        out["v5_live_rows"] = len(stat)
+        if stat:
+            r0 = stat[0]
+            out["v5_live_keys"] = sorted(r0.keys())
+            out["v5_live_sample"] = {k: r0.get(k) for k in
+                ["rr_dt", "doc_type_name", "retail_amount", "retail_price_withdisc_rub",
+                 "ppvz_for_pay", "delivery_rub", "storage_fee", "acceptance", "penalty",
+                 "deduction", "sa_name", "nm_id", "quantity", "supplier_oper_name"]}
+    except Exception as e:
+        out["v5_live_error"] = str(e)[:300]
+    return out
+
+
 @router.get("/wb/pnl")
 async def get_wb_pnl(
     months: int = Query(default=6, ge=1, le=24),
@@ -237,7 +289,7 @@ async def get_wb_pnl(
     detail_ready = (_detail_cache.get("key") == cache_key
                     and _time.monotonic() - _detail_cache_ts < _DETAIL_TTL)
     if not detail_ready:
-        asyncio.create_task(_fetch_detail_bg(date_from, date_to))
+        _spawn(_fetch_detail_bg(date_from, date_to))
     detail_rows = _get_detail_if_ready(date_from, date_to)
 
     # ── Агрегируем сводные отчёты по месяцам (пропорционально дням) ────────────
@@ -709,7 +761,7 @@ async def get_ozon_pnl(
         return _oz_pnl_cache
     if refresh:
         _oz_pnl_ts = 0.0
-    asyncio.create_task(_build_ozon_pnl(months))
+    _spawn(_build_ozon_pnl(months))
     if _oz_pnl_cache:
         return _oz_pnl_cache  # отдаём устаревший, свежий соберётся в фоне
     return {"months": [], "rows": [],
