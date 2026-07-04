@@ -129,12 +129,22 @@ async def get_campaign_details(ids: list[int]) -> list[dict]:
     return []
 
 
-async def get_spend_by_month(date_from: datetime, date_to: datetime) -> dict[str, float]:
-    """GET /adv/v1/upd — история списаний за рекламу. Возвращает {YYYY-MM: сумма}.
+def _is_bonus_payment(rec: dict) -> bool:
+    """Списание оплачено промо-бонусами WB (поддержка от площадки)."""
+    for key in ("paymentType", "payment_type", "type"):
+        v = rec.get(key)
+        if isinstance(v, str) and "бонус" in v.lower():
+            return True
+    return False
 
+
+async def get_spend_by_month(date_from: datetime, date_to: datetime) -> dict[str, dict]:
+    """GET /adv/v1/upd — история списаний за рекламу.
+
+    Возвращает {YYYY-MM: {"total": всего, "bonus": из них промо-бонусами}}.
     API отдаёт максимум 31 день за запрос — ходим чанками.
     """
-    spend: dict[str, float] = {}
+    spend: dict[str, dict] = {}
     cur = date_from
     while cur <= date_to:
         chunk_end = min(cur + timedelta(days=30), date_to)
@@ -145,12 +155,18 @@ async def get_spend_by_month(date_from: datetime, date_to: datetime) -> dict[str
             })
             for rec in data if isinstance(data, list) else []:
                 mk = (rec.get("updTime") or "")[:7]
-                if mk:
-                    spend[mk] = spend.get(mk, 0.0) + float(rec.get("updSum") or 0)
+                if not mk:
+                    continue
+                m = spend.setdefault(mk, {"total": 0.0, "bonus": 0.0})
+                amt = float(rec.get("updSum") or 0)
+                m["total"] += amt
+                if _is_bonus_payment(rec):
+                    m["bonus"] += amt
         except Exception as e:
             _log.warning("[ADVERT] upd %s–%s failed: %s", cur.date(), chunk_end.date(), e)
         cur = chunk_end + timedelta(days=1)
-    _log.info("[ADVERT] spend by month: %s", {k: round(v) for k, v in spend.items()})
+    _log.info("[ADVERT] spend by month: %s",
+              {k: (round(v["total"]), round(v["bonus"])) for k, v in spend.items()})
     return spend
 
 

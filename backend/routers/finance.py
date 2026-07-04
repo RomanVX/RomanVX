@@ -346,13 +346,19 @@ async def get_wb_pnl(
     # поэтому выделяем её отдельной строкой и вычитаем из прочих удержаний —
     # без двойного счёта. Если реклама платилась со счёта (не из баланса),
     # прочие удержания просто останутся 0, а расход всё равно виден в P&L.
+    advert_bonus_by_month: dict[str, float] = {}
     for mk, m in month_totals.items():
         m["commission"] = m.get("retailAmount", 0.0) - m.get("forPay", 0.0)
-        adv = advert_by_month.get(mk, 0.0)
+        adv_info = advert_by_month.get(mk) or {}
+        adv_total = adv_info.get("total", 0.0)
+        adv_bonus = adv_info.get("bonus", 0.0)
+        # промо-бонусы WB компенсируют часть рекламы — в затраты идёт чистое
+        # списание, бонусная часть показывается справочной строкой
+        m["advert"] = adv_total - adv_bonus
+        advert_bonus_by_month[mk] = adv_bonus
         deductions_full = (m.get("deduction", 0.0) + m.get("cashbackAmount", 0.0)
                            + m.get("cashbackCommission", 0.0))
-        m["advert"] = adv
-        m["deductions"] = max(deductions_full - adv, 0.0)
+        m["deductions"] = max(deductions_full - adv_total, 0.0)
 
     pnl_rows = _build_pnl_rows(
         month_totals, cogs_by_month,
@@ -364,9 +370,21 @@ async def get_wb_pnl(
             ("paidAcceptance", "  − Приёмка",                   "cost"),
             ("penalty",        "  − Штрафы",                    "cost"),
             ("deductions",     "  − Прочие удержания и кэшбэк", "cost"),
-            ("advert",         "  − Продвижение (реклама)",     "cost"),
+            ("advert",         "  − Продвижение (за вычетом бонусов)", "cost"),
         ],
     )
+
+    # Справочная строка: сколько рекламы компенсировано промо-бонусами WB
+    # (в затратах НЕ учитывается — уже вычтено из строки «Продвижение»)
+    if any(v > 0 for v in advert_bonus_by_month.values()):
+        sorted_mks = sorted(month_totals.keys(), reverse=True)
+        bonus_row = {"key": "advert_bonus",
+                     "label": "      ↳ компенсировано промо-бонусами WB",
+                     "style": "note", "formula": "info",
+                     "values": {mk: round(advert_bonus_by_month.get(mk, 0.0)) for mk in sorted_mks}}
+        adv_idx = next((i for i, r in enumerate(pnl_rows) if r["key"] == "advert"), None)
+        if adv_idx is not None:
+            pnl_rows.insert(adv_idx + 1, bonus_row)
 
     cogs_has_data = len(costs) > 0 and any(v > 0 for v in cogs_by_month.values())
     result = {

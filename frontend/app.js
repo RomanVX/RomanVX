@@ -1557,6 +1557,7 @@ function renderFinanceTable() {
   const ROW_STYLE = {
     header:   `background:#1a1c2a;font-weight:600`,
     cost:     `background:#0d0e1a`,
+    note:     `background:transparent;font-style:italic;font-size:0.78rem`,
     subtotal: `background:#1e2035;font-weight:700;border-top:2px solid #3a3f5c`,
     total:    `background:#0d2010;font-weight:700;border-top:2px solid #16a34a`,
     pct:      `background:#0a1a0a;font-style:italic`,
@@ -1569,7 +1570,7 @@ function renderFinanceTable() {
     acquiring: '#f87171', services: '#f87171', mpCosts: '#f87171',
     penalty: '#fbbf24', deduction: '#fbbf24', deductions: '#fbbf24',
     cashbackAmount: '#94a3b8', otherServices: '#94a3b8',
-    advert: '#c084fc',
+    advert: '#c084fc', advert_bonus: '#86efac',
     cogs: '#f87171', gross_pct: '#4ade80',
   };
 
