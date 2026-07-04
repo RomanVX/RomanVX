@@ -157,6 +157,7 @@ def _normalize_stat_rows(stat_rows: list[dict]) -> list[dict]:
             "penalty":         r.get("penalty") or 0,
             "deduction":       r.get("deduction") or 0,
             "cashbackAmount":  0,
+            "acquiringFee":    r.get("acquiring_fee") or 0,
             "vendorCode":      (r.get("sa_name") or "").strip(),
             "nmId":            r.get("nm_id"),
             "quantity":        qty,
@@ -351,7 +352,8 @@ async def get_wb_pnl(
     # поэтому суммы по артикулам сходятся со строками вкладки Финансы.
     sku_data: dict[str, dict] = {}   # sku → mk → {revenue, forPay, qty, cogs, delivery, storage, acceptance, penalty}
 
-    _SKU_KEYS = ("revenue", "forPay", "qty", "cogs", "delivery", "storage", "acceptance", "penalty")
+    _SKU_KEYS = ("revenue", "forPay", "qty", "cogs", "delivery", "storage",
+                 "acceptance", "penalty", "acquiring")
 
     def s_ensure(sku, mk):
         m = sku_data.setdefault(sku, {})
@@ -433,9 +435,10 @@ async def get_wb_pnl(
                         cogs_by_month[mk_sale] = cogs_by_month.get(mk_sale, 0.0) + sign * uc * qty
                     # SKU-разрез (юнитка)
                     sd = s_ensure(_canon_sku(row), mk_sale)
-                    sd["revenue"] += sign * base
-                    sd["forPay"]  += sign * abs(_f(row.get("forPay")))
-                    sd["qty"]     += sign * qty
+                    sd["revenue"]   += sign * base
+                    sd["forPay"]    += sign * abs(_f(row.get("forPay")))
+                    sd["qty"]       += sign * qty
+                    sd["acquiring"] += sign * abs(_f(row.get("acquiringFee")))
                     if uc > 0 and qty > 0:
                         sd["cogs"] += sign * uc * qty
             # операционные затраты — по дате операции, на любых строках
@@ -655,9 +658,17 @@ async def get_wb_unit(
         for mk in month_keys
     }
 
+    unit_costs = cost_store.get_costs()
+    nmids = cost_store.get_nmids()
+
     for sku, mdata in sku_data.items():
-        name = names.get(sku) or _cat.lookup(sku).get("name", "")
-        row = {"sku": sku, "name": name, "months": {}}
+        cat_info = _cat.lookup(sku)
+        name = names.get(sku) or cat_info.get("name", "")
+        row = {"sku": sku, "name": name,
+               "brand": cat_info.get("brand", ""),
+               "nmId": nmids.get(sku),
+               "unitCost": unit_costs.get(sku, 0),
+               "months": {}}
         for mk in month_keys:
             d = mdata.get(mk)
             if not d:
@@ -668,14 +679,16 @@ async def get_wb_unit(
             ded = deduct_m.get(mk, 0.0) * share
             alloc_sum[mk]["advert"] += adv
             alloc_sum[mk]["deductions"] += ded
-            commission = rev - d["forPay"]
-            costs_sum = (commission + d["delivery"] + d["storage"] + d["acceptance"]
+            commission_full = rev - d["forPay"]      # комиссия WB + эквайринг
+            acq = d.get("acquiring", 0.0)
+            costs_sum = (commission_full + d["delivery"] + d["storage"] + d["acceptance"]
                          + d["penalty"] + adv + ded)
             gross = rev - costs_sum - d["cogs"]
             row["months"][mk] = {
                 "qty":        round(d["qty"]),
                 "revenue":    round(rev),
-                "commission": round(commission),
+                "commission": round(commission_full - acq),
+                "acquiring":  round(acq),
                 "delivery":   round(d["delivery"]),
                 "storage":    round(d["storage"]),
                 "acceptance": round(d["acceptance"]),
@@ -715,14 +728,17 @@ async def get_wb_unit(
     for mk in month_keys:
         t = totals[mk]
         rev = t.get("retailAmount", 0.0)
-        commission = t.get("commission", rev - t.get("forPay", 0.0))
-        costs_sum = (commission + t.get("deliveryService", 0.0) + t.get("paidStorage", 0.0)
+        commission_full = t.get("commission", rev - t.get("forPay", 0.0))
+        acq = sum(m.get(mk, {}).get("acquiring", 0.0) for m in sku_data.values())
+        costs_sum = (commission_full + t.get("deliveryService", 0.0) + t.get("paidStorage", 0.0)
                      + t.get("paidAcceptance", 0.0) + t.get("penalty", 0.0)
                      + t.get("advert", 0.0) + t.get("deductions", 0.0))
-        cg = cogs_month = _wb_unit_totals_cogs(mk)
+        cg = _wb_unit_totals_cogs(mk)
         gross = rev - costs_sum - cg
         totals_out[mk] = {
-            "revenue": round(rev), "commission": round(commission),
+            "revenue": round(rev),
+            "commission": round(commission_full - acq),
+            "acquiring": round(acq),
             "delivery": round(t.get("deliveryService", 0.0)),
             "storage": round(t.get("paidStorage", 0.0)),
             "acceptance": round(t.get("paidAcceptance", 0.0)),

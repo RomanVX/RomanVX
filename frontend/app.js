@@ -1690,7 +1690,28 @@ function renderFinanceTable() {
 
 let _unitData = null;
 let _unitMetric = 'gross';
+let _unitMode = 'month';                       // month — как в Excel; dyn — динамика
+let _unitMonth = null;                         // выбранный месяц или 'ALL'
+let _unitTax = parseFloat(localStorage.getItem('unit_tax_pct') || '7');
 const _unitExpanded = new Set();
+
+function setUnitTax(v) {
+  _unitTax = Math.max(0, parseFloat(v) || 0);
+  localStorage.setItem('unit_tax_pct', String(_unitTax));
+  renderUnitTable();
+}
+
+function toggleUnitMode() {
+  _unitMode = _unitMode === 'month' ? 'dyn' : 'month';
+  const btn = document.getElementById('unitModeBtn');
+  if (btn) btn.textContent = _unitMode === 'month' ? '📈 Динамика по месяцам' : '📋 Помесячная таблица';
+  renderUnitTable();
+}
+
+function setUnitMonth(mk) {
+  _unitMonth = mk;
+  renderUnitTable();
+}
 
 const UNIT_METRICS = [
   ['gross',   'Валовая прибыль'],
@@ -1781,22 +1802,152 @@ function renderUnitTable() {
   const wrap = document.getElementById('unitTableWrap');
   if (!wrap || !_unitData) return;
 
-  // кнопки метрик
-  const btnBox = document.getElementById('unitMetricBtns');
-  if (btnBox && !btnBox.dataset.rendered) {
-    const span = btnBox.querySelector('span');
-    UNIT_METRICS.slice().reverse().forEach(([k, label]) => {
-      const b = document.createElement('button');
-      b.className = 'btn btn-sm btn-outline-info unit-metric-btn';
-      b.dataset.metric = k;
-      b.textContent = label;
-      b.onclick = () => setUnitMetric(k);
-      span.after(b);
-    });
-    btnBox.dataset.rendered = '1';
+  const taxInput = document.getElementById('unitTaxPct');
+  if (taxInput && taxInput.value === '') taxInput.value = _unitTax;
+
+  // пилюли месяцев (для режима «месяц»)
+  const mBox = document.getElementById('unitMonthBtns');
+  if (mBox) {
+    const months = _unitData.months || [];
+    if (!_unitMonth) _unitMonth = months.length ? months[months.length - 1].key : 'ALL';
+    if (_unitMode === 'month') {
+      mBox.innerHTML = months.map(m =>
+        `<button class="btn btn-sm btn-outline-info ${_unitMonth === m.key ? 'active' : ''}"
+                 onclick="setUnitMonth('${m.key}')">${m.label}</button>`).join('') +
+        `<button class="btn btn-sm btn-outline-info ${_unitMonth === 'ALL' ? 'active' : ''}"
+                 onclick="setUnitMonth('ALL')">Σ Период</button>`;
+    } else {
+      mBox.innerHTML = '';
+    }
   }
-  document.querySelectorAll('.unit-metric-btn').forEach(b =>
-    b.classList.toggle('active', b.dataset.metric === _unitMetric));
+
+  if (_unitMode === 'month') { renderUnitMonth(); return; }
+  renderUnitDynamics();
+}
+
+// ── Режим «месяц»: формат управленческой таблицы (как Excel владельца) ────────
+
+function _unitCellSum(cells, months) {
+  // суммирует ячейки выбранных месяцев в один объект
+  const out = {};
+  months.forEach(m => {
+    const c = cells[m.key];
+    if (!c) return;
+    Object.keys(c).forEach(k => { out[k] = (out[k] || 0) + c[k]; });
+  });
+  if (out.revenue) out.margin = Math.round((out.gross || 0) / out.revenue * 100);
+  return out;
+}
+
+function renderUnitMonth() {
+  const wrap = document.getElementById('unitTableWrap');
+  const months = _unitData.months || [];
+  const selMonths = _unitMonth === 'ALL' ? months : months.filter(m => m.key === _unitMonth);
+  const skus = _unitData.skus || [];
+  const totalsCell = _unitCellSum(_unitData.totals || {}, selMonths);
+
+  const COLS = [
+    ['nm',         'Артикул WB'],
+    ['name',       'Название'],
+    ['unitCost',   'Себес. ед.'],
+    ['qty',        'Шт'],
+    ['revenue',    'Выкупы, ₽'],
+    ['cogs',       'Себес., ₽'],
+    ['delivery',   'Логистика'],
+    ['storage',    'Хранение'],
+    ['commission', 'Комиссия WB'],
+    ['acquiring',  'Эквайринг'],
+    ['advert',     'Продвижение'],
+    ['other',      'Удерж./проч.'],
+    ['tax',        `Налог ${_unitTax}%`],
+    ['profit',     'Прибыль/убыток'],
+    ['roi',        'ROI %'],
+  ];
+
+  function derive(c) {
+    if (!c || !Object.keys(c).length) return null;
+    const other = (c.deductions || 0) + (c.penalty || 0) + (c.acceptance || 0);
+    const tax = (c.revenue || 0) * _unitTax / 100;
+    const profit = (c.gross || 0) - tax;
+    const roi = (c.cogs || 0) > 0 ? Math.round(profit / c.cogs * 100) : null;
+    return { ...c, other, tax, profit, roi };
+  }
+
+  function cell(key, d, r) {
+    if (key === 'nm')   return `<td style="padding:5px 10px"><code style="color:#94a3b8">${r?.nmId || '—'}</code></td>`;
+    if (key === 'name') return `<td style="padding:5px 10px;max-width:340px;overflow:hidden;text-overflow:ellipsis">
+        <code style="color:#e2e8f0">${r?.sku || ''}</code> <span class="text-secondary small">${r?.name || ''}</span></td>`;
+    if (key === 'unitCost') {
+      const v = r?.unitCost;
+      return `<td class="text-end" style="padding:5px 10px;background:rgba(201,168,76,.05)">${v ? fmtRub(v) : '—'}</td>`;
+    }
+    if (!d) return `<td class="text-end" style="padding:5px 10px"><span class="text-muted small">—</span></td>`;
+    const v = d[key];
+    if (key === 'qty') return `<td class="text-end" style="padding:5px 10px;color:#eef1f8">${fmt(v || 0)}</td>`;
+    if (key === 'roi') {
+      if (v == null) return `<td class="text-end" style="padding:5px 10px"><span class="text-muted small">—</span></td>`;
+      const clr = v >= 250 ? '#22c55e' : v >= 150 ? '#4ade80' : v >= 80 ? '#fbbf24' : '#f87171';
+      const bg = v >= 150 ? 'rgba(34,197,94,.12)' : v >= 80 ? 'rgba(251,191,36,.08)' : 'rgba(248,113,113,.10)';
+      return `<td class="text-end" style="padding:5px 10px;background:${bg}"><span style="color:${clr};font-weight:700">${fmt(v)}%</span></td>`;
+    }
+    if (key === 'profit') {
+      const clr = v >= 0 ? '#4ade80' : '#f87171';
+      return `<td class="text-end" style="padding:5px 10px"><span style="color:${clr};font-weight:700">${v < 0 ? '−' : ''}${fmtRub(Math.abs(Math.round(v)))}</span></td>`;
+    }
+    if (key === 'revenue') return `<td class="text-end" style="padding:5px 10px"><span style="color:#fff;font-weight:600">${fmtRub(Math.round(v || 0))}</span></td>`;
+    // затратные колонки
+    if (!v) return `<td class="text-end" style="padding:5px 10px"><span class="text-muted small">—</span></td>`;
+    return `<td class="text-end" style="padding:5px 10px;color:#eef1f8"><span style="color:#f87171">−</span>${fmtRub(Math.abs(Math.round(v)))}</td>`;
+  }
+
+  // группировка как в заказах/остатках
+  const groupMap = {};
+  skus.forEach(r => {
+    const c = derive(_unitCellSum(r.months, selMonths));
+    if (!c || (!c.revenue && !c.qty)) return;
+    const g = articleGroup({ supplierArticle: r.sku, brand: r.brand });
+    (groupMap[g] = groupMap[g] || []).push({ r, c });
+  });
+  Object.values(groupMap).forEach(list => list.sort((a, b) => (b.c.revenue || 0) - (a.c.revenue || 0)));
+  const orderedGroups = GROUP_ORDER.filter(g => groupMap[g]).map(g => [g, groupMap[g]]);
+
+  let html = `<div class="table-responsive"><table class="table table-sm align-middle mb-0 text-nowrap" style="font-size:0.83rem">`;
+  html += `<thead><tr>` + COLS.map(([k, label], i) =>
+    `<th class="${i > 1 ? 'text-end' : ''}" style="${i > 2 ? 'border-left:1px solid #23283a;' : ''}min-width:${k === 'name' ? '280' : k === 'nm' ? '110' : '96'}px">${label}</th>`).join('') + `</tr></thead><tbody>`;
+
+  // ИТОГО (сходится со вкладкой Финансы)
+  const T = derive(totalsCell);
+  html += `<tr style="background:#0d2010;border-bottom:2px solid #16a34a;font-weight:700">
+    <td style="padding:6px 10px;color:#fff" colspan="2">ИТОГО WB</td>
+    <td></td>${COLS.slice(3).map(([k]) => cell(k, T, null)).join('')}</tr>`;
+
+  orderedGroups.forEach(([gname, list]) => {
+    const G = derive(list.reduce((acc, { c }) => {
+      Object.keys(c).forEach(k => { if (typeof c[k] === 'number') acc[k] = (acc[k] || 0) + c[k]; });
+      return acc;
+    }, {}));
+    if (G) { G.roi = G.cogs > 0 ? Math.round(G.profit / G.cogs * 100) : null; }
+    html += `<tr style="background:#1f2333;font-weight:600">
+      <td colspan="3" style="padding:6px 10px;color:#fff">${gname} <span class="text-secondary small">(${list.length} арт.)</span></td>
+      ${COLS.slice(3).map(([k]) => cell(k, G, null)).join('')}</tr>`;
+    list.forEach(({ r, c }) => {
+      html += `<tr style="background:#111">${COLS.map(([k]) => cell(k, c, r)).join('')}</tr>`;
+    });
+  });
+
+  html += `</tbody></table></div>`;
+  html += `<div class="text-secondary small mt-2">Продвижение и удержания распределены по SKU пропорционально доле выручки; налог — ${_unitTax}% от выручки (настраивается сверху); ROI = прибыль / себестоимость.` +
+          (_unitData.detail_upto ? ` Отчёт реализации — по ${_unitData.detail_upto}.` : '') + `</div>`;
+  wrap.innerHTML = html;
+}
+
+// ── Режим «динамика»: SKU × месяцы по выбранной метрике ───────────────────────
+
+function renderUnitDynamics() {
+  const wrap = document.getElementById('unitTableWrap');
+  // кнопки метрик — инлайн над таблицей
+  let metricBtns = `<div class="d-flex gap-1 flex-wrap mb-2">` + UNIT_METRICS.map(([k, label]) =>
+    `<button class="btn btn-sm btn-outline-info ${k === _unitMetric ? 'active' : ''}" onclick="setUnitMetric('${k}')">${label}</button>`).join('') + `</div>`;
 
   const months = _unitData.months || [];
   const skus = _unitData.skus || [];
@@ -1864,7 +2015,7 @@ function renderUnitTable() {
   if (_unitData.detail_upto) {
     html += `<div class="text-secondary small mt-2">Продвижение и удержания распределены по SKU пропорционально доле выручки месяца. Отчёт реализации — по ${_unitData.detail_upto}.</div>`;
   }
-  wrap.innerHTML = html;
+  wrap.innerHTML = metricBtns + html;
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────

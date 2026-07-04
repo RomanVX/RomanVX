@@ -301,10 +301,18 @@
 
   <!-- ── Юнит-экономика WB ── -->
   <div id="pane-unit" style="display:none">
-    <div class="d-flex gap-2 mb-3 flex-wrap align-items-center" id="unitMetricBtns">
-      <span class="text-secondary small me-1">Метрика:</span>
-      <!-- кнопки метрик рендерит JS -->
-      <span class="text-secondary small ms-auto">WB · клик по артикулу — полный P&L</span>
+    <div class="d-flex gap-2 mb-3 flex-wrap align-items-center">
+      <div id="unitMonthBtns" class="d-flex gap-1 flex-wrap"></div>
+      <div class="d-flex align-items-center gap-1 ms-2">
+        <span class="text-secondary small">Налог</span>
+        <input id="unitTaxPct" type="number" min="0" max="30" step="0.5"
+               class="form-control form-control-sm bg-dark text-white border-secondary"
+               style="width:72px" onchange="setUnitTax(this.value)">
+        <span class="text-secondary small">% от выручки</span>
+      </div>
+      <button id="unitModeBtn" class="btn btn-sm btn-outline-info ms-auto" onclick="toggleUnitMode()">
+        📈 Динамика по месяцам
+      </button>
       <button class="btn btn-sm btn-outline-secondary" onclick="_unitData=null;loadUnitEconomics()">
         <i class="bi bi-arrow-clockwise"></i> Обновить
       </button>
