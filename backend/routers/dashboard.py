@@ -1020,6 +1020,33 @@ async def invalidate_weekly_orders():
     return {"status": "ok"}
 
 
+@router.get("/ozon_debug", include_in_schema=False)
+async def debug_ozon_fbo():
+    """Живой тест v3/posting/fbo/list — показывает точную ошибку Ozon."""
+    import httpx as _httpx
+    import config as _cfg
+    since = (datetime.utcnow() - timedelta(days=7)).strftime("%Y-%m-%dT00:00:00.000Z")
+    to    = datetime.utcnow().strftime("%Y-%m-%dT23:59:59.000Z")
+    out = {}
+    for limit in (1000, 100):
+        try:
+            async with _httpx.AsyncClient(timeout=30) as c:
+                r = await c.post("https://api-seller.ozon.ru/v3/posting/fbo/list",
+                    headers={"Client-Id": _cfg.OZON_CLIENT_ID, "Api-Key": _cfg.OZON_API_KEY,
+                             "Content-Type": "application/json"},
+                    json={"cursor": "", "filter": {"since": since, "to": to},
+                          "limit": limit, "sort_dir": "ASC",
+                          "with": {"analytics_data": False, "financial_data": False, "legal_info": False}})
+            body = r.json() if "json" in r.headers.get("content-type", "") else r.text[:400]
+            n = len(body.get("postings") or []) if isinstance(body, dict) else None
+            out[f"v3_limit_{limit}"] = {"status": r.status_code,
+                                        "postings": n,
+                                        "body": str(body)[:400] if r.status_code != 200 else f"OK, {n} postings"}
+        except Exception as e:
+            out[f"v3_limit_{limit}"] = {"error": str(e)}
+    return out
+
+
 @router.get("/weekly_orders/debug", include_in_schema=False)
 async def debug_weekly_orders():
     """Диагностика: кеш WB + живой тест WB Statistics и Analytics API."""

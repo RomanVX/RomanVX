@@ -159,19 +159,14 @@ def _price_amount(v) -> float:
         return 0.0
 
 
-async def _fbo_postings(since: str, to: str) -> list[dict]:
-    """Все FBO-отправления за период через POST /v3/posting/fbo/list.
-
-    v2/posting/fbo/list отключается 01.08.2026. В v3 — курсорная пагинация
-    (cursor/has_next) и ответ без обёртки result.
-    """
+async def _fbo_postings_v3(since: str, to: str, limit: int = 1000) -> list[dict]:
     postings: list[dict] = []
     cursor = ""
     while True:
         data = await _post("/v3/posting/fbo/list", {
             "cursor": cursor,
-            "filter": {"since": since, "to": to, "statuses": []},
-            "limit": 1000,
+            "filter": {"since": since, "to": to},
+            "limit": limit,
             "sort_dir": "ASC",
             "with": {"analytics_data": False, "financial_data": False, "legal_info": False},
         })
@@ -181,6 +176,41 @@ async def _fbo_postings(since: str, to: str) -> list[dict]:
         if not data.get("has_next") or not cursor or not batch:
             break
     return postings
+
+
+async def _fbo_postings_v2(since: str, to: str) -> list[dict]:
+    """Старый метод — работает до 01.08.2026, держим как фолбэк."""
+    postings: list[dict] = []
+    offset = 0
+    while True:
+        data = await _post("/v2/posting/fbo/list", {
+            "dir": "ASC",
+            "filter": {"since": since, "to": to, "status": ""},
+            "limit": 1000,
+            "offset": offset,
+        })
+        result = data.get("result") or []
+        if not result:
+            break
+        postings.extend(result)
+        offset += len(result)
+        if len(result) < 1000:
+            break
+    return postings
+
+
+async def _fbo_postings(since: str, to: str) -> list[dict]:
+    """Все FBO-отправления за период: v3 (курсорная пагинация), при ошибке
+    v3 — лимит 100, затем фолбэк на v2 (жив до 01.08.2026)."""
+    try:
+        return await _fbo_postings_v3(since, to)
+    except Exception as e:
+        _log.error("OZON v3/posting/fbo/list (limit 1000) failed: %s — retry limit=100", e)
+    try:
+        return await _fbo_postings_v3(since, to, limit=100)
+    except Exception as e:
+        _log.error("OZON v3/posting/fbo/list (limit 100) failed: %s — fallback v2", e)
+    return await _fbo_postings_v2(since, to)
 
 
 def _posting_rows(postings: list[dict]) -> list[dict]:
