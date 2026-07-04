@@ -348,10 +348,13 @@ async def get_wb_pnl(
 
         import catalog as _cat
 
+        # v5 отдаёт sa_name в нижнем регистре («al-01») — матчим без учёта регистра
+        costs_upper = {k.upper(): v for k, v in costs.items()}
+
         def _unit_cost(row) -> float:
-            """Закупочная цена: сперва по артикулу продавца, иначе по nmId."""
-            sku = (row.get("vendorCode") or "").strip()
-            uc = costs.get(sku, 0.0)
+            """Закупочная цена: по артикулу (без учёта регистра), иначе по nmId."""
+            sku = (row.get("vendorCode") or "").strip().upper()
+            uc = costs_upper.get(sku, 0.0)
             if uc <= 0 and row.get("nmId"):
                 uc = costs.get(_cat.resolve_wb(row.get("nmId")), 0.0)
             return uc
