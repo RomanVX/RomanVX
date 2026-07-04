@@ -64,13 +64,56 @@ async def get_orders(date_from: datetime, date_to: datetime) -> list[dict]:
 
 
 async def get_stocks() -> list[dict]:
+    """Остатки на складах WB.
+
+    Старый GET statistics-api /api/v1/supplier/stocks отключён 23.06.2026.
+    Новый: POST seller-analytics-api /api/analytics/v1/stocks-report/wb-warehouses
+    (лимит 3 req/мин, до 250 тыс. строк, пагинация limit/offset).
+    Ответ не содержит артикула продавца — резолвим nmId через каталог,
+    и приводим строки к формату старого API (supplierArticle/quantity/...).
+    """
     if USE_MOCK:
         return mock_data.generate_stocks()
-    date_from = (datetime.utcnow() - timedelta(days=30)).strftime("%Y-%m-%d")
-    return await _get(
-        f"{STATS_BASE}/supplier/stocks",
-        {"dateFrom": date_from},
-    )
+
+    import catalog as _cat
+
+    url = f"{ANALYTICS_BASE}/api/analytics/v1/stocks-report/wb-warehouses"
+    items: list[dict] = []
+    offset = 0
+    LIMIT = 250_000
+    while True:
+        resp = await _http().post(url, headers=_headers(),
+                                  json={"limit": LIMIT, "offset": offset})
+        if resp.status_code == 429:
+            _log.warning("WB stocks-report 429 — ждём 21с")
+            await asyncio.sleep(21)
+            continue
+        if not resp.is_success:
+            _log.error("WB stocks-report → %s %s", resp.status_code, resp.text[:300])
+            resp.raise_for_status()
+        batch = (resp.json().get("data") or {}).get("items") or []
+        items.extend(batch)
+        if len(batch) < LIMIT:
+            break
+        offset += LIMIT
+        await asyncio.sleep(21)  # rate limit 3 req/мин
+
+    rows = []
+    for it in items:
+        nm = it.get("nmId")
+        art = _cat.resolve_wb(nm) if nm else ""
+        qty = it.get("quantity") or 0
+        rows.append({
+            "supplierArticle":  art,
+            "nmId":             nm,
+            "warehouseName":    it.get("warehouseName", ""),
+            "quantity":         qty,
+            "quantityFull":     qty,
+            "inWayToClient":    it.get("inWayToClient") or 0,
+            "inWayFromClient":  it.get("inWayFromClient") or 0,
+        })
+    _log.info("WB stocks-report: %d строк (%d складских позиций)", len(rows), len(items))
+    return rows
 
 
 _funnel_lock = asyncio.Lock()  # одна загрузка воронки одновременно (prefetch vs прямой запрос)

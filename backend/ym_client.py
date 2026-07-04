@@ -61,7 +61,7 @@ async def _try_stats_orders_post(date_from: str, date_to: str) -> dict[str, int]
     """POST /campaigns/{id}/stats/orders — lightweight stats endpoint."""
     try:
         data = await _post(
-            f"/campaigns/{YM_CAMPAIGN_ID}/stats/orders",
+            f"/v2/campaigns/{YM_CAMPAIGN_ID}/stats/orders",
             {"dateFrom": date_from, "dateTo": date_to, "groupBy": "DAY"},
         )
         totals: dict[str, int] = {}
@@ -83,8 +83,9 @@ async def _try_stats_orders_post(date_from: str, date_to: str) -> dict[str, int]
 async def _try_campaign_orders_stats(date_from: str, date_to: str) -> dict[str, int]:
     """GET /campaigns/{id}/orders/stats — order statistics by period."""
     try:
-        data = await _get(
-            f"/campaigns/{YM_CAMPAIGN_ID}/orders/stats",
+        # NB: отдельного GET orders/stats в v2 нет — используем тот же POST stats/orders
+        data = await _post(
+            f"/v2/campaigns/{YM_CAMPAIGN_ID}/stats/orders",
             {"dateFrom": date_from, "dateTo": date_to, "groupBy": "DAY"},
         )
         totals: dict[str, int] = {}
@@ -117,7 +118,7 @@ async def _try_business_orders_post(date_from: str, date_to: str) -> dict[str, i
             }
             if page_token:
                 body["pageToken"] = page_token
-            data = await _post(f"/businesses/{YM_BUSINESS_ID}/orders", body)
+            data = await _post(f"/v1/businesses/{YM_BUSINESS_ID}/orders", body)
             orders = (data.get("result") or {}).get("orders") or []
             for order in orders:
                 for item in order.get("items") or []:
@@ -280,7 +281,7 @@ async def get_stocks() -> dict[str, int]:
             return dict(_stocks_cache)
         try:
             data = await _post(
-                f"/campaigns/{YM_CAMPAIGN_ID}/offers/stocks",
+                f"/v2/campaigns/{YM_CAMPAIGN_ID}/offers/stocks",
                 {"limit": 100},
             )
             result: dict[str, int] = {}
