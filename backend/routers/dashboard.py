@@ -168,6 +168,79 @@ async def get_stocks_table():
         _stocks_cache_ts = _time.monotonic()
         return result
 
+@router.get("/stocks_export", include_in_schema=False)
+async def export_stocks_excel():
+    """Выгрузка таблицы остатков в Excel: все площадки, скорость продаж, статусы."""
+    import io
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+    from fastapi.responses import Response
+
+    rows = await get_stocks_table()
+
+    wb_x = Workbook()
+    ws = wb_x.active
+    ws.title = "Остатки"
+
+    now_msk = datetime.utcnow() + timedelta(hours=3)
+    ws["A1"] = (f"Остатки по площадкам на {now_msk.strftime('%d.%m.%Y %H:%M')} МСК "
+                "(скорость продаж — среднее за 28 дней)")
+    ws["A1"].font = Font(bold=True, size=12)
+    ws.merge_cells("A1:N1")
+
+    headers = ["Артикул", "Название", "Бренд",
+               "WB остаток", "WB шт/день", "WB дней",
+               "Ozon остаток", "Ozon шт/день", "Ozon дней",
+               "ЯМ остаток", "ЯМ шт/день", "ЯМ дней",
+               "Мин. дней", "Статус"]
+    for col, h in enumerate(headers, 1):
+        c = ws.cell(row=2, column=col, value=h)
+        c.font = Font(bold=True, color="FFFFFF")
+        c.fill = PatternFill("solid", start_color="374151")
+        c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    STATUS_RU   = {"red": "СРОЧНО ≤20 дн", "yellow": "Внимание 21-45 дн", "green": "OK >45 дн"}
+    STATUS_FILL = {"red": "FFC7CE", "yellow": "FFEB9C", "green": "C6EFCE"}
+    STATUS_FONT = {"red": "9C0006", "yellow": "9C6500", "green": "006100"}
+
+    def _days(d):
+        return "—" if d is None or d >= 999 else d
+
+    r = 3
+    for row in rows:
+        vals = [row.get("supplierArticle", ""), row.get("name", ""), row.get("brand", ""),
+                row.get("wb_qty", 0), row.get("wb_per_day", 0), _days(row.get("wb_days")),
+                row.get("oz_qty", 0), row.get("oz_per_day", 0), _days(row.get("oz_days")),
+                row.get("ym_qty", 0), row.get("ym_per_day", 0), _days(row.get("ym_days")),
+                _days(row.get("min_days")), STATUS_RU.get(row.get("status"), row.get("status", ""))]
+        for col, v in enumerate(vals, 1):
+            c = ws.cell(row=r, column=col, value=v)
+            if col in (5, 8, 11):
+                c.number_format = "0.00"
+        st = row.get("status", "")
+        sc = ws.cell(row=r, column=14)
+        sc.fill = PatternFill("solid", start_color=STATUS_FILL.get(st, "FFFFFF"))
+        sc.font = Font(color=STATUS_FONT.get(st, "000000"), bold=(st == "red"))
+        sc.alignment = Alignment(horizontal="center")
+        r += 1
+
+    widths = [14, 44, 15, 11, 11, 9, 12, 12, 10, 11, 11, 9, 10, 18]
+    for i, w in enumerate(widths, 1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+    ws.freeze_panes = "C3"          # шапка + артикул/название всегда видны
+    ws.auto_filter.ref = f"A2:N{max(r - 1, 2)}"
+
+    buf = io.BytesIO()
+    wb_x.save(buf)
+    fname = f"ostatki_{now_msk.strftime('%Y-%m-%d')}.xlsx"
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
 _reco_cache: dict = {}
 _reco_cache_ts: float = 0.0
 _RECO_TTL = 3600  # 1 час

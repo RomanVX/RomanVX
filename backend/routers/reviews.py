@@ -1,4 +1,5 @@
 """Reviews endpoints — auto-fetch from WB / Ozon / YM APIs."""
+import asyncio
 import logging
 
 from fastapi import APIRouter, BackgroundTasks, Body, Query
@@ -8,6 +9,8 @@ import review_ai
 
 router = APIRouter(prefix="/api/reviews", tags=["reviews"])
 _log = logging.getLogger(__name__)
+
+_bg_tasks: set = set()  # ссылки на фоновые задачи, чтобы их не собрал GC
 
 
 @router.get("/data")
@@ -28,10 +31,17 @@ async def get_reviews_data(
 
 
 @router.post("/refresh")
-async def force_refresh():
-    """Force refresh from all platforms now."""
-    await rc.refresh_all(force=True)
-    return {"ok": True, "stats": rc.get_stats()}
+async def force_refresh(force: bool = Query(True)):
+    """Запускает обновление с площадок в фоне и сразу отвечает.
+
+    Полная синхронизация (WB+Ozon+YM с пагинацией) занимает десятки секунд —
+    Render обрывает запросы на ~30с, поэтому ждать её в запросе нельзя.
+    Фронт поллит /data и подхватывает данные по мере готовности.
+    """
+    t = asyncio.create_task(rc.refresh_all(force=force))
+    _bg_tasks.add(t)
+    t.add_done_callback(_bg_tasks.discard)
+    return {"ok": True, "scheduled": True, "stats": rc.get_stats()}
 
 
 @router.get("/answer-stats")

@@ -250,8 +250,11 @@ def get_rating_table() -> list[dict]:
     # per article
     # MAX(name/brand/grp): эти поля одинаковы в рамках sku, но Postgres требует
     # их в GROUP BY либо под агрегатом (SQLite такой строгости не имеет).
+    # SUM(rating) нужен калькулятору рейтинга: по avg×count сумму точно не
+    # восстановить (avg округлён до 2 знаков), а формула «сколько 5★ до цели»
+    # требует точных S и N.
     art_rows = db.fetchall(
-        "SELECT platform, sku, MAX(name), MAX(brand), MAX(grp), ROUND(AVG(rating),2), COUNT(*) "
+        "SELECT platform, sku, MAX(name), MAX(brand), MAX(grp), ROUND(AVG(rating),2), COUNT(*), SUM(rating) "
         "FROM reviews WHERE rating > 0 GROUP BY platform, sku ORDER BY sku"
     )
     # per group
@@ -262,16 +265,18 @@ def get_rating_table() -> list[dict]:
 
     # Pivot articles
     art_table: dict[str, dict] = {}
-    for platform, sku, name, brand, grp, avg, cnt in art_rows:
+    for platform, sku, name, brand, grp, avg, cnt, rsum in art_rows:
         avg = float(avg) if avg is not None else None
         if sku not in art_table:
             art_table[sku] = {"sku": sku, "name": name or sku, "brand": brand or "",
                                "group": grp or "",
                                "ozon": None, "wb": None, "ym": None,
-                               "ozon_cnt": 0, "wb_cnt": 0, "ym_cnt": 0}
+                               "ozon_cnt": 0, "wb_cnt": 0, "ym_cnt": 0,
+                               "ozon_sum": 0, "wb_sum": 0, "ym_sum": 0}
         key = platform.lower()
         art_table[sku][key] = avg
         art_table[sku][f"{key}_cnt"] = cnt
+        art_table[sku][f"{key}_sum"] = int(rsum or 0)
 
     # Pivot groups
     grp_table: dict[str, dict] = {}
@@ -544,7 +549,7 @@ async def fetch_ym_reviews():
 
 _last_refresh = 0.0
 _refresh_lock = asyncio.Lock()
-REFRESH_INTERVAL = 3600  # 1 hour
+REFRESH_INTERVAL = 900  # 15 мин — отзывы подтягиваются сами при открытии вкладки
 
 
 async def refresh_all(force=False):

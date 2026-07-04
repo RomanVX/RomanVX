@@ -367,6 +367,11 @@ async function loadStocks() {
   }
 }
 
+function exportStocksExcel() {
+  // сервер отдаёт готовый .xlsx с Content-Disposition: attachment
+  window.location.href = `${API}/api/dashboard/stocks_export`;
+}
+
 function _stocksSort(col) {
   if (_stocksSortCol === col) {
     _stocksSortAsc = !_stocksSortAsc;
@@ -1615,35 +1620,69 @@ let _allReviews = [];
 let _statsData = {};
 let _dynData = {};
 let _drafts = {};
-let _reviewsRetry = 0;
+let _reviewsSig = '';      // сигнатура данных — чтобы не перерисовывать без изменений
+let _reviewsPolling = false;
+
+function _reviewsSignature(data) {
+  const s = data.stats || {};
+  return `${(data.reviews || []).length}|${JSON.stringify(s)}|${Object.keys(data.drafts || {}).length}`;
+}
+
+async function _fetchReviewsData() {
+  const res = await fetch(`${API}/api/reviews/data?limit=5000`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+function _applyReviewsData(data) {
+  _allReviews = data.reviews || [];
+  _statsData = data.stats || {};
+  _dynData = data.dynamics || {};
+  _drafts = data.drafts || {};
+  renderRatingsTable(data.ratings || {});
+  renderStats(_statsData);
+  populateDynFilter(data.ratings || {});
+  renderRatingDynamicsFiltered();
+  renderReviewsFeed();
+  populateRatingCalc((data.ratings || {}).articles || []);
+}
 
 async function loadReviews() {
   const feedEl = document.getElementById('reviewsFeed');
   if (feedEl && !_allReviews.length) feedEl.innerHTML = '<p class="text-secondary">Загружаем отзывы...</p>';
   try {
-    const res = await fetch(`${API}/api/reviews/data?limit=5000`);
-    const data = await res.json();
-    _allReviews = data.reviews || [];
-    _statsData = data.stats || {};
-    _dynData = data.dynamics || {};
-    _drafts = data.drafts || {};
-    renderRatingsTable(data.ratings || {});
-    renderStats(_statsData);
-    populateDynFilter(data.ratings || {});
-    renderRatingDynamicsFiltered();
-    renderReviewsFeed();
-
-    // If backend cache was empty (background refresh in progress), auto-retry
-    if (!_allReviews.length && _reviewsRetry < 5) {
-      _reviewsRetry++;
-      if (feedEl) feedEl.innerHTML = `<p class="text-secondary">Загружаем отзывы с площадок… (попытка ${_reviewsRetry}/5)</p>`;
-      setTimeout(loadReviews, 8000);
-    } else {
-      _reviewsRetry = 0;
-    }
+    const data = await _fetchReviewsData();
+    _reviewsSig = _reviewsSignature(data);
+    _applyReviewsData(data);
   } catch (e) {
     console.error('loadReviews', e);
     if (feedEl) feedEl.innerHTML = `<p class="text-danger">Ошибка: ${e.message}</p>`;
+  }
+  // /data сам запускает фоновую синхронизацию на бэке (TTL 15 мин) —
+  // поллим результат и перерисовываем, когда придут новые данные
+  pollReviewsUpdates();
+}
+
+async function pollReviewsUpdates(times = 8, intervalMs = 7000) {
+  if (_reviewsPolling) return;
+  _reviewsPolling = true;
+  const note = document.getElementById('reviewsSyncNote');
+  if (note) note.textContent = '⏳ синхронизация с площадками…';
+  try {
+    for (let i = 0; i < times; i++) {
+      await new Promise(r => setTimeout(r, intervalMs));
+      try {
+        const data = await _fetchReviewsData();
+        const sig = _reviewsSignature(data);
+        if (sig !== _reviewsSig) {
+          _reviewsSig = sig;
+          _applyReviewsData(data);
+        }
+      } catch (e) { console.error('pollReviews', e); }
+    }
+  } finally {
+    _reviewsPolling = false;
+    if (note) note.textContent = '';
   }
 }
 
@@ -1651,10 +1690,92 @@ async function forceRefreshReviews() {
   const btn = document.getElementById('refreshReviewsBtn');
   if (btn) btn.textContent = 'Обновляем...';
   try {
-    await fetch(`${API}/api/reviews/refresh`, { method: 'POST' });
-    await loadReviews();
+    // бэк запускает обновление в фоне и сразу отвечает; результат подхватит поллинг
+    await fetch(`${API}/api/reviews/refresh?force=true`, { method: 'POST' });
+    await pollReviewsUpdates();
   } catch (e) { console.error('refreshReviews', e); }
   if (btn) btn.textContent = '🔄 Обновить';
+}
+
+// ── Калькулятор рейтинга: сколько 5★ нужно до цели ───────────────────────────
+
+let _ratingsArticles = [];
+
+function populateRatingCalc(articles) {
+  _ratingsArticles = articles || [];
+  const sel = document.getElementById('calcSku');
+  if (!sel) return;
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">— выберите артикул —</option>' +
+    _ratingsArticles.map(a => {
+      const label = a.name && a.name !== a.sku ? `${a.sku} — ${a.name}` : a.sku;
+      return `<option value="${a.sku}">${label}</option>`;
+    }).join('');
+  if (cur && _ratingsArticles.some(a => a.sku === cur)) sel.value = cur;
+  renderRatingCalc();
+}
+
+function renderRatingCalc() {
+  const out = document.getElementById('ratingCalcOut');
+  if (!out) return;
+  const sku  = (document.getElementById('calcSku')  || {}).value || '';
+  const plat = (document.getElementById('calcPlatform') || {}).value || 'wb';
+  const art = _ratingsArticles.find(a => a.sku === sku);
+  if (!art) {
+    out.innerHTML = '<span class="text-secondary">Выберите артикул, чтобы рассчитать</span>';
+    return;
+  }
+  const n = art[plat + '_cnt'] || 0;
+  const s = art[plat + '_sum'] || 0;
+  const PLAT_NAME = { wb: 'WB', ozon: 'Ozon', ym: 'ЯМ' };
+  if (!n) {
+    out.innerHTML = `<span class="text-secondary">По этому артикулу нет оценок на ${PLAT_NAME[plat]}</span>`;
+    return;
+  }
+  const cur = s / n;
+
+  const targets = [4.5, 4.6, 4.7, 4.8, 4.9];
+  let rows = '';
+  targets.forEach(t => {
+    let needHtml, afterHtml;
+    if (cur >= t) {
+      needHtml  = '<span class="text-success">✓ достигнуто</span>';
+      afterHtml = '';
+    } else {
+      const need = Math.ceil((t * n - s) / (5 - t));
+      const after = (s + 5 * need) / (n + need);
+      needHtml  = `<span class="fw-bold" style="color:#4ade80">+${fmt(need)}</span> оценок 5★`;
+      afterHtml = `<span class="text-secondary">итог ${after.toFixed(2)} при ${fmt(n + need)} оценках</span>`;
+    }
+    rows += `<tr>
+      <td class="fw-semibold">${t.toFixed(1)}</td>
+      <td>${needHtml}</td>
+      <td>${afterHtml}</td>
+    </tr>`;
+  });
+
+  // Влияние одной плохой оценки
+  const drop1 = (s + 1) / (n + 1);
+
+  out.innerHTML = `
+    <div class="mb-2">
+      Текущий рейтинг на <b>${PLAT_NAME[plat]}</b>:
+      <span class="fw-bold" style="color:#fbbf24;font-size:1.1rem">${cur.toFixed(2)}★</span>
+      <span class="text-secondary">(${fmt(n)} оценок, сумма ${fmt(s)})</span>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-sm table-dark align-middle mb-2" style="max-width:640px">
+        <thead><tr class="text-secondary small">
+          <th>Цель</th><th>Сколько нужно</th><th>Результат</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <div class="text-secondary small">
+      ⚠ Одна новая оценка 1★ уронит рейтинг до <b>${drop1.toFixed(2)}</b>.
+      Расчёт по всем собранным отзывам — площадки могут учитывать только недавние оценки,
+      поэтому реальная цифра в карточке может отличаться.
+    </div>`;
 }
 
 async function analyzeStyle() {
