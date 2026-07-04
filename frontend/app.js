@@ -1639,6 +1639,9 @@ function renderFinanceTable() {
   } else if (!d.cogs_has_data) {
     html += `<div class="text-info small mt-2">⏳ Детальный отчёт WB загружается в фоне (1 запрос/мин). Обновите страницу через несколько минут — строка Себестоимость заполнится.</div>`;
   }
+  if (d.source === 'weekly') {
+    html += `<div class="text-info small mt-2">⏳ Пока показаны данные недельных отчётов (недели, попавшие в два месяца, разделены пропорционально). После загрузки детального отчёта цифры пересчитаются по точным датам операций — как в кабинете WB.</div>`;
+  }
   if (d.fetched_at) html += `<div class="text-secondary text-end small mt-1">Обновлено: ${d.fetched_at}</div>`;
   wrap.innerHTML = html;
 }

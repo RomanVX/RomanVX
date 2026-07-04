@@ -148,7 +148,7 @@ async def get_wb_pnl(
     refresh: bool = Query(default=False),
 ):
     """P&L по месяцам. Сводные данные — сразу, COGS — после фоновой загрузки детального отчёта."""
-    global _pnl_cache, _pnl_cache_ts
+    global _pnl_cache, _pnl_cache_ts, _detail_cache_ts
 
     if not refresh and _pnl_cache and _time.monotonic() - _pnl_cache_ts < _WB_TTL:
         return _pnl_cache
@@ -211,47 +211,74 @@ async def get_wb_pnl(
             for k in SUM_KEYS:
                 m[k] += r.get(k, 0.0) * ratio
 
-    # ── COGS из детального отчёта: vendorCode × unit_cost ────────────────────
+    # ── Детальный отчёт: точные месяцы по датам операций (как в кабинете WB) ──
+    # Если детальный отчёт загружен — пересобираем ВСЕ строки из него: недельный
+    # отчёт размазывается по месяцам пропорционально дням и даёт расхождения
+    # с финансовой аналитикой кабинета.
     costs = cost_store.get_costs()
     cogs_by_month: dict[str, float] = {}
-    qty_by_month_sku: dict[str, dict[str, int]] = {}  # mk → {sku: qty}
+    source = "weekly"
 
     def _f(v) -> float:
         try: return float(str(v).replace(",", ".") or 0)
         except: return 0.0
 
-    for row in detail_rows:
-        doc_type = row.get("docTypeName", "")
-        if doc_type not in ("Продажа", "Корректировка"):
-            continue
-        sku = (row.get("vendorCode") or "").strip()
-        qty = int(row.get("quantity") or 0)
-        if not sku or qty <= 0:
-            continue
-        # дата операции
-        rr = (row.get("rrDate") or row.get("saleDt") or "")[:10]
-        if not rr:
-            continue
-        mk = rr[:7]  # "2025-05"
-        unit_cost = costs.get(sku, 0.0)
-        if unit_cost > 0:
-            cogs_by_month[mk] = cogs_by_month.get(mk, 0.0) + unit_cost * qty
-        # собираем qty для справки
-        if mk not in qty_by_month_sku:
-            qty_by_month_sku[mk] = {}
-        qty_by_month_sku[mk][sku] = qty_by_month_sku[mk].get(sku, 0) + qty
+    if detail_rows:
+        detail_totals: dict[str, dict] = {}
+
+        def d_ensure(mk):
+            if mk not in detail_totals:
+                detail_totals[mk] = {k: 0.0 for k in SUM_KEYS}
+            return detail_totals[mk]
+
+        for row in detail_rows:
+            rr = (row.get("rrDate") or row.get("saleDt") or "")[:10]
+            if not rr:
+                continue
+            mk = rr[:7]
+            m = d_ensure(mk)
+            doc_type = row.get("docTypeName", "")
+            sign = 1
+            if doc_type == "Возврат":
+                sign = -1
+            if doc_type in ("Продажа", "Возврат", "Корректировка"):
+                m["retailAmount"] += sign * abs(_f(row.get("retailAmount")))
+                m["forPay"]       += sign * abs(_f(row.get("forPay")))
+            # операционные затраты лежат в своих полях на любых строках
+            m["deliveryService"] += _f(row.get("deliveryService"))
+            m["paidStorage"]     += _f(row.get("paidStorage"))
+            m["paidAcceptance"]  += _f(row.get("paidAcceptance"))
+            m["penalty"]         += _f(row.get("penalty"))
+            m["deduction"]       += _f(row.get("deduction"))
+            m["cashbackAmount"]  += _f(row.get("cashbackAmount"))
+            # COGS: количество проданного × закупочная цена
+            if doc_type in ("Продажа", "Корректировка"):
+                sku = (row.get("vendorCode") or "").strip()
+                qty = int(row.get("quantity") or 0)
+                uc = costs.get(sku, 0.0)
+                if uc > 0 and qty > 0:
+                    cogs_by_month[mk] = cogs_by_month.get(mk, 0.0) + uc * qty
+
+        if detail_totals:
+            month_totals = detail_totals
+            source = "detail"
 
     # ── Реклама (продвижение): списания из advert API по месяцам ──────────────
     advert_by_month = await _get_wb_advert_cached(dt_from, dt_to)
 
     # ── Единая структура P&L ──────────────────────────────────────────────────
     # Комиссия WB (вкл. эквайринг) = выручка − «к перечислению за товар» (forPay).
-    # Удержания объединяют deduction + кэшбэк-программы WB.
+    # Реклама с оплатой «с баланса продаж» уже сидит в deduction («удержания»),
+    # поэтому выделяем её отдельной строкой и вычитаем из прочих удержаний —
+    # без двойного счёта. Если реклама платилась со счёта (не из баланса),
+    # прочие удержания просто останутся 0, а расход всё равно виден в P&L.
     for mk, m in month_totals.items():
         m["commission"] = m.get("retailAmount", 0.0) - m.get("forPay", 0.0)
-        m["deductions"] = (m.get("deduction", 0.0) + m.get("cashbackAmount", 0.0)
+        adv = advert_by_month.get(mk, 0.0)
+        deductions_full = (m.get("deduction", 0.0) + m.get("cashbackAmount", 0.0)
                            + m.get("cashbackCommission", 0.0))
-        m["advert"] = advert_by_month.get(mk, 0.0)
+        m["advert"] = adv
+        m["deductions"] = max(deductions_full - adv, 0.0)
 
     pnl_rows = _build_pnl_rows(
         month_totals, cogs_by_month,
@@ -262,7 +289,7 @@ async def get_wb_pnl(
             ("paidStorage",    "  − Хранение",                  "cost"),
             ("paidAcceptance", "  − Приёмка",                   "cost"),
             ("penalty",        "  − Штрафы",                    "cost"),
-            ("deductions",     "  − Удержания и кэшбэк",        "cost"),
+            ("deductions",     "  − Прочие удержания и кэшбэк", "cost"),
             ("advert",         "  − Продвижение (реклама)",     "cost"),
         ],
     )
@@ -273,6 +300,7 @@ async def get_wb_pnl(
         "rows":   pnl_rows,
         "cogs_loaded": len(costs) > 0,
         "cogs_has_data": cogs_has_data,
+        "source": source,
         "fetched_at": _wb_cache.get("fetched_at", ""),
     }
     _pnl_cache = result
