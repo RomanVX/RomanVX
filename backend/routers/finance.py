@@ -345,6 +345,8 @@ async def get_wb_pnl(
     costs = cost_store.get_costs()
     cogs_by_month: dict[str, float] = {}
     source = "weekly"
+    last_detail_sale = ""
+    tail_days = 0
 
     def _f(v) -> float:
         try: return float(str(v).replace(",", ".") or 0)
@@ -372,6 +374,7 @@ async def get_wb_pnl(
             return uc
 
         min_mk = date_from[:7]  # хвосты недель прошлого периода отсекаем
+        last_detail_sale = ""   # последняя дата продажи в отчёте реализации
 
         for row in detail_rows:
             rr = (row.get("rrDate") or row.get("saleDt") or "")[:10]
@@ -394,7 +397,10 @@ async def get_wb_pnl(
             if has_sale_amount:
                 # продажи кабинет группирует по ДАТЕ ПРОДАЖИ (sale_dt), а не по
                 # дате операции — иначе недели на стыке месяцев уезжают не туда
-                mk_sale = (row.get("saleDate") or rr)[:7]
+                sale_date = (row.get("saleDate") or rr)[:10]
+                if not is_return and sale_date > last_detail_sale:
+                    last_detail_sale = sale_date
+                mk_sale = sale_date[:7]
                 if mk_sale >= min_mk:
                     ms = d_ensure(mk_sale)
                     base = abs(_f(row.get("retailPreSpp"))) or abs(_f(row.get("retailAmount")))
@@ -415,6 +421,42 @@ async def get_wb_pnl(
             m["penalty"]         += _f(row.get("penalty"))
             m["deduction"]       += _f(row.get("deduction"))
             m["cashbackAmount"]  += _f(row.get("cashbackAmount"))
+
+        # ── Хвост месяца: дни после последней сформированной недели отчёта
+        # реализации дополняем ОПЕРАТИВНЫМИ продажами statistics-api (кабинетная
+        # финаналитика делает так же — поэтому у неё месяц полный сразу).
+        tail_days = 0
+        if detail_totals and last_detail_sale:
+            try:
+                import cache as _wb_cache_mod
+                import analytics as _an
+                op_sales, _, _ = await _wb_cache_mod.get_raw_data(dt_from, dt_to)
+                tail_dates = set()
+                for s in op_sales:
+                    d = (s.get("date") or "")[:10]
+                    if not d or d <= last_detail_sale:
+                        continue
+                    mk = d[:7]
+                    if mk < min_mk:
+                        continue
+                    sale_id = str(s.get("saleID") or "")
+                    neg = -1 if sale_id.startswith("R") else 1   # R* = возврат
+                    pre = _f(s.get("priceWithDisc")) or _f(s.get("finishedPrice"))
+                    fp = _f(s.get("forPay")) or pre * 0.7
+                    m = d_ensure(mk)
+                    m["retailAmount"] += neg * pre
+                    m["forPay"]       += neg * fp
+                    raw = s.get("supplierArticle") or s.get("nmId") or ""
+                    uc = _unit_cost({"vendorCode": str(raw), "nmId": s.get("nmId")})
+                    if uc > 0:
+                        cogs_by_month[mk] = cogs_by_month.get(mk, 0.0) + neg * uc
+                    tail_dates.add(d)
+                tail_days = len(tail_dates)
+                if tail_days:
+                    _log.info("WB P&L: хвост из оперативных продаж — %d дней после %s",
+                              tail_days, last_detail_sale)
+            except Exception as e:
+                _log.warning("WB tail sales failed: %s", e)
 
         if detail_totals:
             month_totals = detail_totals
@@ -476,6 +518,8 @@ async def get_wb_pnl(
         "cogs_loaded": len(costs) > 0,
         "cogs_has_data": cogs_has_data,
         "source": source,
+        "detail_upto": last_detail_sale,
+        "tail_days": tail_days,
         "detail_fetching": _detail_fetching,
         "detail_error": _detail_last_error,
         "fetched_at": _wb_cache.get("fetched_at", ""),

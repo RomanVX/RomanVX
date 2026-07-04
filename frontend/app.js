@@ -1672,8 +1672,11 @@ function renderFinanceTable() {
   if (!d.cogs_loaded) {
     html += `<div class="text-warning small mt-2">⚠ Себестоимость не загружена — строка COGS показывает 0. Загрузите справочник через раздел загрузки.</div>`;
   }
-  if (mp === 'WB') {
-    html += `<div class="text-secondary small mt-2">Последние дни месяца появляются после формирования недельного отчёта WB (задержка до 7 дней).</div>`;
+  if (mp === 'WB' && d.detail_upto) {
+    const tail = d.tail_days
+      ? ` Продажи после этой даты (${d.tail_days} дн.) добавлены из оперативных данных — комиссия и логистика по ним уточнятся после формирования недельного отчёта WB.`
+      : '';
+    html += `<div class="text-secondary small mt-2">Отчёт реализации WB сформирован по ${d.detail_upto}.${tail}</div>`;
   }
   if (d.fetched_at) html += `<div class="text-secondary text-end small mt-1">Обновлено: ${d.fetched_at}</div>`;
   wrap.innerHTML = html;
