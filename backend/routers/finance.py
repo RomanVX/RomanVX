@@ -128,10 +128,15 @@ def _normalize_stat_rows(stat_rows: list[dict]) -> list[dict]:
     """
     out = []
     for r in stat_rows:
+        qty = r.get("quantity") or 0
+        # «до СПП»: retail_amount в v5 — фактическая сумма ПОСЛЕ СПП;
+        # цена продавца до СПП — retail_price_withdisc_rub (за единицу)
+        pre_spp = (r.get("retail_price_withdisc_rub") or 0) * (qty or 1)
         out.append({
             "rrDate":          (r.get("rr_dt") or r.get("sale_dt") or "")[:10],
             "docTypeName":     r.get("doc_type_name") or "",
             "retailAmount":    r.get("retail_amount") or 0,
+            "retailPreSpp":    pre_spp,
             "forPay":          r.get("ppvz_for_pay") or 0,
             "deliveryService": r.get("delivery_rub") or 0,
             "paidStorage":     r.get("storage_fee") or 0,
@@ -140,7 +145,8 @@ def _normalize_stat_rows(stat_rows: list[dict]) -> list[dict]:
             "deduction":       r.get("deduction") or 0,
             "cashbackAmount":  0,
             "vendorCode":      (r.get("sa_name") or "").strip(),
-            "quantity":        r.get("quantity") or 0,
+            "nmId":            r.get("nm_id"),
+            "quantity":        qty,
         })
     return out
 
@@ -288,6 +294,16 @@ async def get_wb_pnl(
                 detail_totals[mk] = {k: 0.0 for k in SUM_KEYS}
             return detail_totals[mk]
 
+        import catalog as _cat
+
+        def _unit_cost(row) -> float:
+            """Закупочная цена: сперва по артикулу продавца, иначе по nmId."""
+            sku = (row.get("vendorCode") or "").strip()
+            uc = costs.get(sku, 0.0)
+            if uc <= 0 and row.get("nmId"):
+                uc = costs.get(_cat.resolve_wb(row.get("nmId")), 0.0)
+            return uc
+
         for row in detail_rows:
             rr = (row.get("rrDate") or row.get("saleDt") or "")[:10]
             if not rr:
@@ -299,7 +315,9 @@ async def get_wb_pnl(
             if doc_type == "Возврат":
                 sign = -1
             if doc_type in ("Продажа", "Возврат", "Корректировка"):
-                m["retailAmount"] += sign * abs(_f(row.get("retailAmount")))
+                # выручка «до СПП» (цена продавца); fallback — фактическая сумма
+                base = abs(_f(row.get("retailPreSpp"))) or abs(_f(row.get("retailAmount")))
+                m["retailAmount"] += sign * base
                 m["forPay"]       += sign * abs(_f(row.get("forPay")))
             # операционные затраты лежат в своих полях на любых строках
             m["deliveryService"] += _f(row.get("deliveryService"))
@@ -308,13 +326,12 @@ async def get_wb_pnl(
             m["penalty"]         += _f(row.get("penalty"))
             m["deduction"]       += _f(row.get("deduction"))
             m["cashbackAmount"]  += _f(row.get("cashbackAmount"))
-            # COGS: количество проданного × закупочная цена
-            if doc_type in ("Продажа", "Корректировка"):
-                sku = (row.get("vendorCode") or "").strip()
+            # COGS: количество проданного × закупочная (возврат — минус)
+            if doc_type in ("Продажа", "Возврат", "Корректировка"):
                 qty = int(row.get("quantity") or 0)
-                uc = costs.get(sku, 0.0)
+                uc = _unit_cost(row)
                 if uc > 0 and qty > 0:
-                    cogs_by_month[mk] = cogs_by_month.get(mk, 0.0) + uc * qty
+                    cogs_by_month[mk] = cogs_by_month.get(mk, 0.0) + sign * uc * qty
 
         if detail_totals:
             month_totals = detail_totals
