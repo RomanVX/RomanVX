@@ -302,6 +302,168 @@ async def get_wb_pnl(
     return result
 
 
+RU_MON = ["", "Янв", "Фев", "Мар", "Апр", "Май", "Июн",
+          "Июл", "Авг", "Сен", "Окт", "Ноя", "Дек"]
+
+
+def _months_out(month_keys) -> list[dict]:
+    out = []
+    for mk in sorted(month_keys, reverse=True):
+        y, m = mk.split("-")
+        out.append({"key": mk, "label": RU_MON[int(m)] + " " + y})
+    return out
+
+
+def _month_range(months: int) -> tuple[str, str]:
+    dt_to = datetime.utcnow() + timedelta(hours=3)
+    dt_from = (dt_to - timedelta(days=30 * months)).replace(day=1)
+    return dt_from.strftime("%Y-%m-%d"), dt_to.strftime("%Y-%m-%d")
+
+
+# ══ YM P&L ═════════════════════════════════════════════════════════════════════
+
+_ym_pnl_cache: dict = {}
+_ym_pnl_ts: float = 0.0
+_YM_PNL_TTL = 3600
+
+# Типы комиссий YM → строки P&L
+_YM_FEE_GROUPS = {
+    "commission": {"FEE"},
+    "acquiring":  {"AGENCY", "PAYMENT_TRANSFER"},
+    "delivery":   {"DELIVERY_TO_CUSTOMER", "EXPRESS_DELIVERY_TO_CUSTOMER", "CROSSREGIONAL_DELIVERY"},
+    "processing": {"SORTING", "INTAKE_SORTING", "RETURN_PROCESSING", "RETURNED_ORDERS_STORAGE"},
+}
+
+
+@router.get("/ym/pnl")
+async def get_ym_pnl(
+    months: int = Query(default=6, ge=1, le=12),
+    refresh: bool = Query(default=False),
+):
+    """P&L Яндекс Маркета по месяцам из stats/orders (выкупленные заказы)."""
+    global _ym_pnl_cache, _ym_pnl_ts
+    if not refresh and _ym_pnl_cache and _time.monotonic() - _ym_pnl_ts < _YM_PNL_TTL:
+        return _ym_pnl_cache
+
+    import ym_client
+    import catalog as _cat
+
+    date_from, date_to = _month_range(months)
+    # захватываем заказы, созданные до начала периода, но доставленные внутри него
+    pad_from = (datetime.strptime(date_from, "%Y-%m-%d") - timedelta(days=45)).strftime("%Y-%m-%d")
+    try:
+        orders = await ym_client.get_orders_stats(
+            pad_from, date_to,
+            statuses=["DELIVERED", "PARTIALLY_DELIVERED", "PARTIALLY_RETURNED"],
+        )
+    except Exception as exc:
+        _log.error("YM stats/orders error: %s", exc)
+        raise HTTPException(status_code=502, detail=f"YM API: {exc}")
+
+    costs = cost_store.get_costs()
+    KEYS = ["retailAmount", "commission", "acquiring", "delivery", "processing", "otherServices"]
+    mt: dict[str, dict] = {}
+    cogs_by_month: dict[str, float] = {}
+
+    def ensure(mk):
+        if mk not in mt:
+            mt[mk] = {k: 0.0 for k in KEYS}
+        return mt[mk]
+
+    min_mk = date_from[:7]
+    for o in orders:
+        # месяц реализации = дата последнего статуса (доставки), fallback — создание
+        d = (o.get("statusUpdateDate") or o.get("creationDate") or "")[:7]
+        if not d or d < min_mk:
+            continue
+        m = ensure(d)
+        for it in o.get("items") or []:
+            for p in it.get("prices") or []:
+                if p.get("type") in ("BUYER", "CASHBACK", "MARKETPLACE"):
+                    m["retailAmount"] += float(p.get("total") or 0)
+            sku = _cat.resolve_ym(it.get("shopSku") or "")
+            qty = int(it.get("count") or 0)
+            uc = costs.get(sku, 0.0)
+            if uc > 0 and qty > 0:
+                cogs_by_month[d] = cogs_by_month.get(d, 0.0) + uc * qty
+        for c in o.get("commissions") or []:
+            amt = float(c.get("actual") or 0)
+            ctype = c.get("type") or ""
+            for line, types in _YM_FEE_GROUPS.items():
+                if ctype in types:
+                    m[line] += amt
+                    break
+            else:
+                m["otherServices"] += amt
+
+    pnl_rows = _build_pnl_rows(
+        mt, cogs_by_month,
+        [
+            ("retailAmount",  "📦 Выручка (выкупы)",      "header"),
+            ("commission",    "  − Комиссия размещения",   "cost"),
+            ("acquiring",     "  − Приём и перевод платежа","cost"),
+            ("delivery",      "  − Логистика",             "cost"),
+            ("processing",    "  − Обработка и возвраты",  "cost"),
+            ("otherServices", "  − Прочие услуги",         "cost"),
+        ],
+    )
+
+    cogs_has_data = len(costs) > 0 and any(v > 0 for v in cogs_by_month.values())
+    result = {
+        "months": _months_out(mt.keys()),
+        "rows": pnl_rows,
+        "cogs_loaded": len(costs) > 0,
+        "cogs_has_data": cogs_has_data,
+        "fetched_at": datetime.utcnow().strftime("%d.%m.%Y %H:%M UTC"),
+    }
+    _ym_pnl_cache = result
+    _ym_pnl_ts = _time.monotonic()
+    return result
+
+
+def _build_pnl_rows(month_totals: dict, cogs_by_month: dict, cost_lines: list) -> list[dict]:
+    """Единый скелет P&L: выручка → затраты → к перечислению → COGS → валовая → маржа.
+
+    cost_lines: [(key, label, style)], первая строка — выручка (header),
+    остальные — затраты (вычитаются из выручки для строки bankPayment).
+    """
+    sorted_months = sorted(month_totals.keys(), reverse=True)
+    rows = []
+
+    def add(key, label, style, vals):
+        rows.append({"key": key, "label": label, "style": style,
+                     "formula": "direct", "values": vals})
+
+    revenue_key = cost_lines[0][0]
+    add(revenue_key, cost_lines[0][1], cost_lines[0][2],
+        {mk: round(month_totals[mk].get(revenue_key, 0.0)) for mk in sorted_months})
+
+    for key, label, style in cost_lines[1:]:
+        add(key, label, style,
+            {mk: -round(month_totals[mk].get(key, 0.0)) for mk in sorted_months})
+
+    payout = {}
+    for mk in sorted_months:
+        m = month_totals[mk]
+        payout[mk] = round(m.get(revenue_key, 0.0)
+                           - sum(m.get(k, 0.0) for k, _, _ in cost_lines[1:]))
+    add("bankPayment", "💳 К перечислению", "subtotal", payout)
+
+    add("cogs", "  − Себестоимость", "cost",
+        {mk: -round(cogs_by_month.get(mk, 0.0)) for mk in sorted_months})
+
+    gross = {mk: payout[mk] - round(cogs_by_month.get(mk, 0.0)) for mk in sorted_months}
+    add("gross", "✅ Валовая прибыль", "total", gross)
+
+    pct = {}
+    for mk in sorted_months:
+        rev = month_totals[mk].get(revenue_key, 0.0)
+        pct[mk] = round(gross[mk] / rev * 100) if rev else 0
+    rows.append({"key": "gross_pct", "label": "   Маржа %", "style": "pct",
+                 "formula": "gross_pct", "values": pct})
+    return rows
+
+
 @router.get("/ozon/reports")
 async def get_ozon_reports():
     return {"reports": [], "message": "OZON финансовые отчёты будут добавлены позже"}

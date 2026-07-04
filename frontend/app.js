@@ -1426,12 +1426,12 @@ function renderHistory(d) {
 
 // ── Финансы / P&L ────────────────────────────────────────────────────────────
 
-let _financeData = { WB: null, OZON: null, YM: null };
+let _financeData = { WB: null, OZON: null, YM: null, TOTAL: null };
 let _financeMp = 'WB';
 
 function setFinanceMp(mp) {
   _financeMp = mp;
-  ['WB','OZON','YM'].forEach(m => {
+  ['WB','OZON','YM','TOTAL'].forEach(m => {
     const el = document.getElementById('finMp' + m);
     if (el) el.classList.toggle('active', m === mp);
   });
@@ -1443,25 +1443,79 @@ async function loadFinance() {
   if (wrap) wrap.innerHTML = '<div class="text-center text-secondary py-5"><span class="spinner-border me-2"></span>Загрузка P&L… (может занять до 2 мин)</div>';
   await loadFinanceMp('WB');
   renderFinanceTable();
+  // остальные площадки подтягиваем в фоне, чтобы переключение было мгновенным
+  loadFinanceMp('OZON');
+  loadFinanceMp('YM');
 }
 
 async function reloadFinance() {
-  _financeData = { WB: null, OZON: null, YM: null };
+  _financeData = { WB: null, OZON: null, YM: null, TOTAL: null };
   await fetch('/api/finance/wb/reports/invalidate', { method: 'POST' }).catch(() => {});
   await loadFinance();
 }
 
+const _FIN_URLS = {
+  WB:   '/api/finance/wb/pnl',
+  OZON: '/api/finance/ozon/pnl',
+  YM:   '/api/finance/ym/pnl',
+};
+
 async function loadFinanceMp(mp) {
   if (_financeData[mp]) return;
   try {
-    if (mp === 'WB') {
-      _financeData[mp] = await fetchJSON('/api/finance/wb/pnl', 120000);
+    if (mp === 'TOTAL') {
+      await Promise.all([loadFinanceMp('WB'), loadFinanceMp('OZON'), loadFinanceMp('YM')]);
+      _financeData.TOTAL = buildFinanceTotal();
     } else {
-      _financeData[mp] = { rows: [], months: [], message: mp + ' финансы будут добавлены позже' };
+      _financeData[mp] = await fetchJSON(_FIN_URLS[mp], 120000);
     }
   } catch (e) {
     _financeData[mp] = { rows: [], months: [], error: e.message };
   }
+}
+
+// Тотал: суммируем платформы по общим ключам (выручка/к перечислению/COGS/валовая)
+function buildFinanceTotal() {
+  const plats = ['WB', 'OZON', 'YM'].map(m => _financeData[m]).filter(d => d && (d.months || []).length);
+  if (!plats.length) return { rows: [], months: [], message: 'Нет данных ни по одной площадке' };
+
+  const monthLabels = {};
+  plats.forEach(d => d.months.forEach(m => { monthLabels[m.key] = m.label; }));
+  const monthKeys = Object.keys(monthLabels).sort().reverse();
+
+  function sumKey(key) {
+    const vals = {};
+    monthKeys.forEach(mk => {
+      vals[mk] = plats.reduce((a, d) => {
+        const row = (d.rows || []).find(r => r.key === key);
+        return a + (row && row.values ? (row.values[mk] || 0) : 0);
+      }, 0);
+    });
+    return vals;
+  }
+
+  const revenue = sumKey('retailAmount');
+  const payout  = sumKey('bankPayment');
+  const cogs    = sumKey('cogs');    // уже отрицательные
+  const gross   = sumKey('gross');
+  const mpCosts = {};
+  monthKeys.forEach(mk => { mpCosts[mk] = payout[mk] - revenue[mk]; }); // отрицательное
+
+  const pct = {};
+  monthKeys.forEach(mk => { pct[mk] = revenue[mk] ? Math.round(gross[mk] / revenue[mk] * 100) : 0; });
+
+  return {
+    months: monthKeys.map(mk => ({ key: mk, label: monthLabels[mk] })),
+    rows: [
+      { key: 'retailAmount', label: '📦 Выручка (все площадки)', style: 'header',   formula: 'direct', values: revenue },
+      { key: 'mpCosts',      label: '  − Затраты площадок',      style: 'cost',     formula: 'direct', values: mpCosts },
+      { key: 'bankPayment',  label: '💳 К перечислению',          style: 'subtotal', formula: 'direct', values: payout },
+      { key: 'cogs',         label: '  − Себестоимость',          style: 'cost',     formula: 'direct', values: cogs },
+      { key: 'gross',        label: '✅ Валовая прибыль',          style: 'total',    formula: 'direct', values: gross },
+      { key: 'gross_pct',    label: '   Маржа %',                 style: 'pct',      formula: 'gross_pct', values: pct },
+    ],
+    fetched_at: plats[0].fetched_at || '',
+  };
 }
 
 function renderFinanceTable() {

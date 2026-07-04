@@ -268,6 +268,37 @@ async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
     return rows
 
 
+async def get_orders_stats(date_from: str, date_to: str,
+                           statuses: list[str] | None = None) -> list[dict]:
+    """POST /v2/campaigns/{id}/stats/orders — детальная статистика заказов.
+
+    Содержит items (shopSku, count, prices BUYER/CASHBACK/MARKETPLACE),
+    commissions (FEE, AGENCY, DELIVERY_TO_CUSTOMER, ...) — база для P&L.
+    Пагинация query-параметрами limit/page_token (до 200 заказов за запрос),
+    лимит 10 000 req/час.
+    """
+    if not YM_API_KEY or not YM_CAMPAIGN_ID:
+        return []
+    body: dict = {"dateFrom": date_from, "dateTo": date_to}
+    if statuses:
+        body["statuses"] = statuses
+    orders: list[dict] = []
+    page_token = ""
+    while True:
+        params = {"limit": 200}
+        if page_token:
+            params["pageToken"] = page_token
+        data = await _post(f"/v2/campaigns/{YM_CAMPAIGN_ID}/stats/orders", body, params=params)
+        result = data.get("result") or {}
+        batch = result.get("orders") or []
+        orders.extend(batch)
+        page_token = (result.get("paging") or {}).get("nextPageToken") or ""
+        if not batch or not page_token:
+            break
+    _log.info("[YM] stats/orders: %d orders for %s–%s", len(orders), date_from, date_to)
+    return orders
+
+
 async def get_stocks() -> dict[str, int]:
     """Return {offer_id: FIT count} — cached 1 hour."""
     global _stocks_cache, _stocks_ts
