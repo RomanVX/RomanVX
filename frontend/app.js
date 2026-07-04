@@ -446,7 +446,7 @@ function renderStocksTable() {
       ${thSort('supplierArticle','Артикул')}
       ${thSort('name','Название')}
       ${thSort('brand','Бренд')}
-      <th class="text-center" colspan="3" style="background:#6b21a8;color:#fff;border-left:2px solid #2a2a2a">WB</th>
+      <th class="text-center" colspan="3" style="background:#a21caf;color:#fff;border-left:2px solid #2a2a2a">WB</th>
       <th class="text-center" colspan="3" style="background:#1d4ed8;color:#fff;border-left:2px solid #2a2a2a">OZON</th>
       <th class="text-center" colspan="3" style="background:#854d0e;color:#fff;border-left:2px solid #2a2a2a">YM</th>
     </tr>
@@ -874,7 +874,7 @@ let _ordersData = null;
 let _ordersMp = 'WB';
 let _ordersCompact = false;   // true → показываем только текущую и прошлую неделю
 
-const _MP_COLORS = { WB: '#a855f7', OZON: '#3b82f6', YM: '#eab308', TOTAL: '#10b981' };
+const _MP_COLORS = { WB: '#c026d3', OZON: '#3b82f6', YM: '#b45309', TOTAL: '#059669' };
 const _MP_LABEL  = { WB: 'WB (Wildberries)', OZON: 'Ozon', YM: 'Яндекс Маркет', TOTAL: 'Все площадки' };
 
 async function loadSalesAnalytics() {
@@ -945,9 +945,9 @@ function renderOrdersMonthly() {
   }
 
   const MPs = [
-    { key: 'WB',   label: 'WB',   color: '#a855f7' },
+    { key: 'WB',   label: 'WB',   color: '#c026d3' },
     { key: 'OZON', label: 'Ozon', color: '#3b82f6' },
-    { key: 'YM',   label: 'ЯМ',   color: '#eab308' },
+    { key: 'YM',   label: 'ЯМ',   color: '#b45309' },
   ];
 
   // Собираем по месяцам
@@ -992,7 +992,7 @@ function renderOrdersMonthly() {
     return RU_MONTH_NAMES[parseInt(m)-1] + ' ' + y.slice(2);
   });
 
-  const allMPs = [...MPs, { key: 'total', label: 'Итого', color: '#10b981' }];
+  const allMPs = [...MPs, { key: 'total', label: 'Итого', color: '#059669' }];
 
   let html = `<div class="card border-0 bg-card mt-2">
     <div class="card-header bg-transparent border-0 py-2 d-flex align-items-center gap-2">
@@ -1361,7 +1361,7 @@ async function loadHistory() {
   }
 }
 
-const _PLAT_COLORS = { wb: '#a855f7', ozon: '#3b82f6', ym: '#eab308' };
+const _PLAT_COLORS = { wb: '#c026d3', ozon: '#3b82f6', ym: '#b45309' };
 const _PLAT_NAMES  = { wb: 'WB', ozon: 'Ozon', ym: 'YM' };
 
 function renderHistory(d) {
@@ -1483,8 +1483,8 @@ function renderFinanceTable() {
   const rows   = d.rows   || [];
   if (!months.length) { wrap.innerHTML = '<div class="text-secondary text-center py-4">Данных нет</div>'; return; }
 
-  const MP_COLOR = { WB: '#a855f7', OZON: '#3b82f6', YM: '#eab308' };
-  const col = MP_COLOR[mp] || '#a855f7';
+  const MP_COLOR = { WB: '#c026d3', OZON: '#3b82f6', YM: '#b45309' };
+  const col = MP_COLOR[mp] || '#c026d3';
   const SEP = 'border-left:2px solid #3a3f5c;';
 
   // Стили строк
@@ -1973,7 +1973,7 @@ function renderRatingDynamics(dyn, artLabel) {
     data: { labels, datasets: [
       mk('ozon', 'Ozon', '#6366f1'),
       mk('wb', 'WB', '#ef4444'),
-      mk('ym', 'YM', '#eab308'),
+      mk('ym', 'YM', '#b45309'),
     ] },
     options: {
       responsive: true, maintainAspectRatio: false,

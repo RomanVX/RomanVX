@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 380 120" width="380" height="120">
   <rect x="2" y="2" width="376" height="116" rx="6" fill="none" stroke="#c9a84c" stroke-width="2.5"/>
-  <text x="190" y="54" font-family="Segoe UI, Arial, sans-serif" font-size="30" font-weight="700"
-        text-anchor="middle" letter-spacing="6" fill="#e8d28a">MARKET PARTNERS</text>
+  <text x="190" y="54" font-family="Segoe UI, Arial, sans-serif" font-size="26" font-weight="700"
+        text-anchor="middle" letter-spacing="4" fill="#e8d28a">MARKET PARTNERS</text>
   <line x1="24" y1="66" x2="356" y2="66" stroke="#c9a84c" stroke-width="1" opacity="0.5"/>
   <text x="190" y="92" font-family="Segoe UI, Arial, sans-serif" font-size="13" font-weight="400"
         text-anchor="middle" letter-spacing="3" fill="#888">MANAGEMENT ANALYTICS &amp; MEDIA</text>
