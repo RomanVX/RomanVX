@@ -1747,22 +1747,26 @@ function renderRatingCalc() {
     return;
   }
   const cur = s / n;
+  // Клиент видит рейтинг с одной цифрой после запятой: 4.551 показывается как 4.6.
+  // Значит цель «4.8» достигнута уже при среднем ≥ 4.75 (порог округления).
+  const shown = Math.round(cur * 10) / 10;
 
   const targets = [4.5, 4.6, 4.7, 4.8, 4.9];
   let rows = '';
   targets.forEach(t => {
+    const threshold = t - 0.05;  // минимальное среднее, при котором показывается t
     let needHtml, afterHtml;
-    if (cur >= t) {
+    if (cur >= threshold) {
       needHtml  = '<span class="text-success">✓ достигнуто</span>';
-      afterHtml = '';
+      afterHtml = `<span class="text-secondary">показывается ${shown.toFixed(1)}★</span>`;
     } else {
-      const need = Math.ceil((t * n - s) / (5 - t));
+      const need = Math.ceil((threshold * n - s) / (5 - threshold));
       const after = (s + 5 * need) / (n + need);
       needHtml  = `<span class="fw-bold" style="color:#4ade80">+${fmt(need)}</span> оценок 5★`;
-      afterHtml = `<span class="text-secondary">итог ${after.toFixed(2)} при ${fmt(n + need)} оценках</span>`;
+      afterHtml = `<span class="text-secondary">среднее станет ${after.toFixed(3)} → покажет ${t.toFixed(1)}★</span>`;
     }
     rows += `<tr>
-      <td class="fw-semibold">${t.toFixed(1)}</td>
+      <td class="fw-semibold">${t.toFixed(1)}★</td>
       <td>${needHtml}</td>
       <td>${afterHtml}</td>
     </tr>`;
@@ -1770,25 +1774,27 @@ function renderRatingCalc() {
 
   // Влияние одной плохой оценки
   const drop1 = (s + 1) / (n + 1);
+  const drop1Shown = Math.round(drop1 * 10) / 10;
 
   out.innerHTML = `
     <div class="mb-2">
       Текущий рейтинг на <b>${PLAT_NAME[plat]}</b>:
-      <span class="fw-bold" style="color:#fbbf24;font-size:1.1rem">${cur.toFixed(2)}★</span>
-      <span class="text-secondary">(${fmt(n)} оценок, сумма ${fmt(s)})</span>
+      <span class="fw-bold" style="color:#fbbf24;font-size:1.1rem">${shown.toFixed(1)}★</span>
+      <span class="text-secondary">(точное среднее ${cur.toFixed(3)}, ${fmt(n)} оценок)</span>
     </div>
     <div class="table-responsive">
-      <table class="table table-sm table-dark align-middle mb-2" style="max-width:640px">
+      <table class="table table-sm table-dark align-middle mb-2" style="max-width:680px">
         <thead><tr class="text-secondary small">
-          <th>Цель</th><th>Сколько нужно</th><th>Результат</th>
+          <th>Цель (на витрине)</th><th>Сколько нужно</th><th>Результат</th>
         </tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>
     <div class="text-secondary small">
-      ⚠ Одна новая оценка 1★ уронит рейтинг до <b>${drop1.toFixed(2)}</b>.
-      Расчёт по всем собранным отзывам — площадки могут учитывать только недавние оценки,
-      поэтому реальная цифра в карточке может отличаться.
+      Расчёт учитывает округление витрины: например, для «4.8★» достаточно среднего 4.75.
+      ⚠ Одна новая оценка 1★ уронит среднее до <b>${drop1.toFixed(3)}</b>
+      (на витрине — ${drop1Shown.toFixed(1)}★).
+      Площадки могут учитывать только недавние оценки, поэтому цифра в карточке может отличаться.
     </div>`;
 }
 
