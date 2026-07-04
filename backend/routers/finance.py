@@ -241,57 +241,35 @@ async def get_wb_pnl(
             qty_by_month_sku[mk] = {}
         qty_by_month_sku[mk][sku] = qty_by_month_sku[mk].get(sku, 0) + qty
 
-    # ── формируем ответ: список месяцев, строки P&L ───────────────────────────
-    sorted_months = sorted(month_totals.keys(), reverse=True)
+    # ── Реклама (продвижение): списания из advert API по месяцам ──────────────
+    advert_by_month = await _get_wb_advert_cached(dt_from, dt_to)
 
-    RU_MON = ["","Янв","Фев","Мар","Апр","Май","Июн",
-               "Июл","Авг","Сен","Окт","Ноя","Дек"]
+    # ── Единая структура P&L ──────────────────────────────────────────────────
+    # Комиссия WB (вкл. эквайринг) = выручка − «к перечислению за товар» (forPay).
+    # Удержания объединяют deduction + кэшбэк-программы WB.
+    for mk, m in month_totals.items():
+        m["commission"] = m.get("retailAmount", 0.0) - m.get("forPay", 0.0)
+        m["deductions"] = (m.get("deduction", 0.0) + m.get("cashbackAmount", 0.0)
+                           + m.get("cashbackCommission", 0.0))
+        m["advert"] = advert_by_month.get(mk, 0.0)
 
-    months_out = []
-    for mk in sorted_months:
-        y, m = mk.split("-")
-        months_out.append({"key": mk, "label": RU_MON[int(m)] + " " + y})
-
-    def mval(mk, key):
-        return round(month_totals.get(mk, {}).get(key, 0.0))
-
-    pnl_rows = []
-
-    def row(key, label, formula, style="normal", sign=1):
-        vals = {}
-        for mk in sorted_months:
-            if formula == "direct":
-                vals[mk] = round(mval(mk, key) * sign)
-            elif formula == "cogs":
-                vals[mk] = -round(cogs_by_month.get(mk, 0.0))
-            elif formula == "gross":
-                bank = mval(mk, "bankPayment")
-                cogs = round(cogs_by_month.get(mk, 0.0))
-                vals[mk] = round(bank - cogs)
-            elif formula == "gross_pct":
-                bank = mval(mk, "bankPayment")
-                retail = mval(mk, "retailAmount")
-                cogs = round(cogs_by_month.get(mk, 0.0))
-                gross = bank - cogs
-                vals[mk] = round(gross / retail * 100) if retail else 0
-        pnl_rows.append({"key": key, "label": label, "style": style,
-                         "formula": formula, "values": vals})
-
-    row("retailAmount",   "📦 Выручка (розн.)",         "direct",   "header")
-    row("deliveryService","  − Логистика",               "direct",   "cost",  -1)
-    row("paidStorage",    "  − Хранение",                "direct",   "cost",  -1)
-    row("paidAcceptance", "  − Приёмка",                 "direct",   "cost",  -1)
-    row("penalty",        "  − Штрафы",                  "direct",   "cost",  -1)
-    row("deduction",      "  − Удержания",               "direct",   "cost",  -1)
-    row("cashbackAmount", "  − Кэшбэк WB",               "direct",   "cost",  -1)
-    row("bankPayment",    "💳 Поступление от WB",         "direct",   "subtotal")
-    row("cogs",           "  − Себестоимость",            "cogs",     "cost")
-    row("gross",          "✅ Валовая прибыль",           "gross",    "total")
-    row("gross_pct",      "   Маржа %",                  "gross_pct","pct")
+    pnl_rows = _build_pnl_rows(
+        month_totals, cogs_by_month,
+        [
+            ("retailAmount",   "📦 Выручка (до СПП)",          "header"),
+            ("commission",     "  − Комиссия WB и эквайринг",   "cost"),
+            ("deliveryService","  − Логистика",                 "cost"),
+            ("paidStorage",    "  − Хранение",                  "cost"),
+            ("paidAcceptance", "  − Приёмка",                   "cost"),
+            ("penalty",        "  − Штрафы",                    "cost"),
+            ("deductions",     "  − Удержания и кэшбэк",        "cost"),
+            ("advert",         "  − Продвижение (реклама)",     "cost"),
+        ],
+    )
 
     cogs_has_data = len(costs) > 0 and any(v > 0 for v in cogs_by_month.values())
     result = {
-        "months": months_out,
+        "months": _months_out(month_totals.keys()),
         "rows":   pnl_rows,
         "cogs_loaded": len(costs) > 0,
         "cogs_has_data": cogs_has_data,
@@ -300,6 +278,29 @@ async def get_wb_pnl(
     _pnl_cache = result
     _pnl_cache_ts = _time.monotonic()
     return result
+
+
+# кеш рекламных списаний WB (advert API, 6ч)
+_wb_advert_cache: dict = {}
+_wb_advert_ts: float = 0.0
+
+
+async def _get_wb_advert_cached(dt_from: datetime, dt_to: datetime) -> dict[str, float]:
+    global _wb_advert_cache, _wb_advert_ts
+    if _wb_advert_cache and _time.monotonic() - _wb_advert_ts < 6 * 3600:
+        return _wb_advert_cache
+    try:
+        from config import USE_ADVERT_MOCK
+        if USE_ADVERT_MOCK:
+            return {}
+        import advert_client
+        spend = await advert_client.get_spend_by_month(dt_from, dt_to)
+        _wb_advert_cache = spend
+        _wb_advert_ts = _time.monotonic()
+        return spend
+    except Exception as e:
+        _log.warning("WB advert spend failed: %s", e)
+        return _wb_advert_cache or {}
 
 
 RU_MON = ["", "Янв", "Фев", "Мар", "Апр", "Май", "Июн",
@@ -332,6 +333,7 @@ _YM_FEE_GROUPS = {
     "acquiring":  {"AGENCY", "PAYMENT_TRANSFER"},
     "delivery":   {"DELIVERY_TO_CUSTOMER", "EXPRESS_DELIVERY_TO_CUSTOMER", "CROSSREGIONAL_DELIVERY"},
     "processing": {"SORTING", "INTAKE_SORTING", "RETURN_PROCESSING", "RETURNED_ORDERS_STORAGE"},
+    "advert":     {"AUCTION_PROMOTION", "LOYALTY_PARTICIPATION_FEE"},
 }
 
 
@@ -361,7 +363,7 @@ async def get_ym_pnl(
         raise HTTPException(status_code=502, detail=f"YM API: {exc}")
 
     costs = cost_store.get_costs()
-    KEYS = ["retailAmount", "commission", "acquiring", "delivery", "processing", "otherServices"]
+    KEYS = ["retailAmount", "commission", "acquiring", "delivery", "processing", "advert", "otherServices"]
     mt: dict[str, dict] = {}
     cogs_by_month: dict[str, float] = {}
 
@@ -399,12 +401,13 @@ async def get_ym_pnl(
     pnl_rows = _build_pnl_rows(
         mt, cogs_by_month,
         [
-            ("retailAmount",  "📦 Выручка (выкупы)",      "header"),
-            ("commission",    "  − Комиссия размещения",   "cost"),
-            ("acquiring",     "  − Приём и перевод платежа","cost"),
-            ("delivery",      "  − Логистика",             "cost"),
-            ("processing",    "  − Обработка и возвраты",  "cost"),
-            ("otherServices", "  − Прочие услуги",         "cost"),
+            ("retailAmount",  "📦 Выручка (выкупы)",           "header"),
+            ("commission",    "  − Комиссия размещения",        "cost"),
+            ("acquiring",     "  − Приём и перевод платежа",    "cost"),
+            ("delivery",      "  − Логистика",                  "cost"),
+            ("processing",    "  − Обработка и возвраты",       "cost"),
+            ("advert",        "  − Продвижение и лояльность",   "cost"),
+            ("otherServices", "  − Прочие услуги",              "cost"),
         ],
     )
 
@@ -550,10 +553,10 @@ async def _build_ozon_pnl(months: int) -> None:
         pnl_rows = _build_pnl_rows(
             mt, cogs_by_month,
             [
-                ("retailAmount", "📦 Выручка (реализация)", "header"),
-                ("commission",   "  − Комиссия Ozon",        "cost"),
-                ("delivery",     "  − Логистика и возвраты", "cost"),
-                ("services",     "  − Услуги Ozon",          "cost"),
+                ("retailAmount", "📦 Выручка (до соинвеста, реализация)", "header"),
+                ("commission",   "  − Комиссия Ozon",                     "cost"),
+                ("delivery",     "  − Логистика и возвраты",              "cost"),
+                ("services",     "  − Услуги Ozon (вкл. продвижение)",    "cost"),
             ],
         )
         cogs_has_data = len(costs) > 0 and any(v > 0 for v in cogs_by_month.values())

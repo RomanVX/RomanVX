@@ -129,6 +129,31 @@ async def get_campaign_details(ids: list[int]) -> list[dict]:
     return []
 
 
+async def get_spend_by_month(date_from: datetime, date_to: datetime) -> dict[str, float]:
+    """GET /adv/v1/upd — история списаний за рекламу. Возвращает {YYYY-MM: сумма}.
+
+    API отдаёт максимум 31 день за запрос — ходим чанками.
+    """
+    spend: dict[str, float] = {}
+    cur = date_from
+    while cur <= date_to:
+        chunk_end = min(cur + timedelta(days=30), date_to)
+        try:
+            data = await _get("/adv/v1/upd", {
+                "from": cur.strftime("%Y-%m-%d"),
+                "to":   chunk_end.strftime("%Y-%m-%d"),
+            })
+            for rec in data if isinstance(data, list) else []:
+                mk = (rec.get("updTime") or "")[:7]
+                if mk:
+                    spend[mk] = spend.get(mk, 0.0) + float(rec.get("updSum") or 0)
+        except Exception as e:
+            _log.warning("[ADVERT] upd %s–%s failed: %s", cur.date(), chunk_end.date(), e)
+        cur = chunk_end + timedelta(days=1)
+    _log.info("[ADVERT] spend by month: %s", {k: round(v) for k, v in spend.items()})
+    return spend
+
+
 async def get_fullstats(ids: list[int], date_from: datetime, date_to: datetime) -> list[dict]:
     """POST /adv/v2/fullstats — per-campaign aggregated stats."""
     if not ids:

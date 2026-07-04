@@ -1563,8 +1563,12 @@ function renderFinanceTable() {
   };
   const COL_COLOR = {
     retailAmount: col, bankPayment: '#4ade80', gross: '#4ade80',
-    deliveryService: '#f87171', paidStorage: '#f87171', paidAcceptance: '#f87171',
-    penalty: '#fbbf24', deduction: '#fbbf24', cashbackAmount: '#94a3b8',
+    commission: '#f87171', deliveryService: '#f87171', delivery: '#f87171',
+    paidStorage: '#f87171', paidAcceptance: '#f87171', processing: '#f87171',
+    acquiring: '#f87171', services: '#f87171', mpCosts: '#f87171',
+    penalty: '#fbbf24', deduction: '#fbbf24', deductions: '#fbbf24',
+    cashbackAmount: '#94a3b8', otherServices: '#94a3b8',
+    advert: '#c084fc',
     cogs: '#f87171', gross_pct: '#4ade80',
   };
 
