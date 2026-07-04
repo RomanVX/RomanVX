@@ -159,7 +159,8 @@ def _price_amount(v) -> float:
         return 0.0
 
 
-async def _fbo_postings_v3(since: str, to: str, limit: int = 1000) -> list[dict]:
+async def _fbo_postings_v3(since: str, to: str, limit: int = 100) -> list[dict]:
+    # max limit у v3 — 100 (у v2 был 1000): value must be inside range (0, 100]
     postings: list[dict] = []
     cursor = ""
     while True:
@@ -200,16 +201,12 @@ async def _fbo_postings_v2(since: str, to: str) -> list[dict]:
 
 
 async def _fbo_postings(since: str, to: str) -> list[dict]:
-    """Все FBO-отправления за период: v3 (курсорная пагинация), при ошибке
-    v3 — лимит 100, затем фолбэк на v2 (жив до 01.08.2026)."""
+    """Все FBO-отправления за период: v3 (курсорная пагинация, limit ≤ 100),
+    при ошибке — фолбэк на v2 (жив до 01.08.2026)."""
     try:
         return await _fbo_postings_v3(since, to)
     except Exception as e:
-        _log.error("OZON v3/posting/fbo/list (limit 1000) failed: %s — retry limit=100", e)
-    try:
-        return await _fbo_postings_v3(since, to, limit=100)
-    except Exception as e:
-        _log.error("OZON v3/posting/fbo/list (limit 100) failed: %s — fallback v2", e)
+        _log.error("OZON v3/posting/fbo/list failed: %s — fallback v2", e)
     return await _fbo_postings_v2(since, to)
 
 
