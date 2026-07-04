@@ -206,7 +206,7 @@ async def get_report_detail(date_from: datetime, date_to: datetime) -> list[dict
             resp = await _http().get(
                 f"{REPORT_BASE}/api/v5/supplier/reportDetailByPeriod",
                 headers=_headers(),
-                params={"dateFrom": df_str, "dateto": dt_str, "limit": 100_000, "rrdid": rrdid},
+                params={"dateFrom": df_str, "dateTo": dt_str, "limit": 100_000, "rrdid": rrdid},
             )
             if resp.status_code == 429:
                 _log.warning("reportDetailByPeriod 429 — ждём 62с (%d/3)", attempt + 1)
