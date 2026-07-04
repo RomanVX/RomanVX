@@ -1485,8 +1485,9 @@ async function loadFinanceMp(mp) {
 
 // Тотал: суммируем платформы по общим ключам (выручка/к перечислению/COGS/валовая)
 function buildFinanceTotal() {
-  const plats = ['WB', 'OZON', 'YM'].map(m => _financeData[m]).filter(d => d && (d.months || []).length);
-  if (!plats.length) return { rows: [], months: [], message: 'Нет данных ни по одной площадке' };
+  const plats = ['WB', 'OZON', 'YM'].map(m => _financeData[m])
+    .filter(d => d && (d.months || []).length && d.source !== 'weekly'); // WB только с точными данными
+  if (!plats.length) return { rows: [], months: [], message: '⏳ Точные данные площадок ещё собираются — Тотал появится через минуту' };
 
   const monthLabels = {};
   plats.forEach(d => d.months.forEach(m => { monthLabels[m.key] = m.label; }));
@@ -1552,6 +1553,31 @@ function renderFinanceTable() {
     return;
   }
   if (d.error)   { wrap.innerHTML = `<div class="alert alert-danger mt-3">Ошибка: ${d.error}</div>`; return; }
+
+  // WB: пока точный (детальный) отчёт не собран — не показываем приблизительные
+  // недельные цифры вовсе: либо правильные данные, либо экран загрузки
+  if (mp === 'WB' && d.source === 'weekly') {
+    if (d.detail_error) {
+      wrap.innerHTML = `<div class="alert alert-danger mt-3">⚠ Не удалось загрузить детальный отчёт WB: ${d.detail_error}<br>
+        <span class="small text-secondary">Повторная попытка выполняется автоматически.</span></div>`;
+    } else {
+      wrap.innerHTML = `<div class="text-center text-secondary py-5">
+        <div class="spinner-border mb-3" style="color:#c026d3"></div>
+        <div class="fw-semibold text-white mb-1">Собираем точный отчёт WB</div>
+        <div class="small">Загружаем детализацию по датам операций (обычно 1-2 минуты).<br>
+        Страница обновится автоматически.</div></div>`;
+    }
+    if (!_wbPnlPolling) {
+      _wbPnlPolling = true;
+      setTimeout(() => {
+        _wbPnlPolling = false;
+        _financeData.WB = null;
+        _financeData.TOTAL = null;
+        if (_financeMp === 'WB') renderFinanceTable(); else loadFinanceMp('WB');
+      }, 20000);
+    }
+    return;
+  }
 
   const rows = d.rows || [];
   // Хронология слева направо (как в заказах): старые месяцы слева, свежие справа
@@ -1645,25 +1671,9 @@ function renderFinanceTable() {
   html += `</tbody></table></div>`;
   if (!d.cogs_loaded) {
     html += `<div class="text-warning small mt-2">⚠ Себестоимость не загружена — строка COGS показывает 0. Загрузите справочник через раздел загрузки.</div>`;
-  } else if (!d.cogs_has_data) {
-    html += `<div class="text-info small mt-2">⏳ Детальный отчёт WB загружается в фоне (1 запрос/мин). Обновите страницу через несколько минут — строка Себестоимость заполнится.</div>`;
   }
-  if (d.source === 'weekly') {
-    if (d.detail_error) {
-      html += `<div class="text-danger small mt-2">⚠ Детальный отчёт WB не загрузился: ${d.detail_error}. Показаны приблизительные недельные данные. Повторная попытка при следующем запросе.</div>`;
-    } else {
-      html += `<div class="text-info small mt-2">⏳ Детальный отчёт WB загружается (лимит 1 запрос/мин, обычно 2-5 минут). Пока показаны недельные данные — после загрузки цифры пересчитаются по точным датам операций, как в кабинете WB. Страница обновится сама.</div>`;
-    }
-    // автоматически перепроверяем, пересобрался ли отчёт по деталям
-    if (mp === 'WB' && !_wbPnlPolling) {
-      _wbPnlPolling = true;
-      setTimeout(() => {
-        _wbPnlPolling = false;
-        _financeData.WB = null;
-        _financeData.TOTAL = null;
-        if (_financeMp === 'WB') renderFinanceTable(); else loadFinanceMp('WB');
-      }, 30000);
-    }
+  if (mp === 'WB') {
+    html += `<div class="text-secondary small mt-2">Последние дни месяца появляются после формирования недельного отчёта WB (задержка до 7 дней).</div>`;
   }
   if (d.fetched_at) html += `<div class="text-secondary text-end small mt-1">Обновлено: ${d.fetched_at}</div>`;
   wrap.innerHTML = html;
