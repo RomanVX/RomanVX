@@ -130,10 +130,15 @@ async def get_campaign_details(ids: list[int]) -> list[dict]:
 
 
 def _is_bonus_payment(rec: dict) -> bool:
-    """Списание оплачено промо-бонусами WB (поддержка от площадки)."""
+    """Списание компенсировано WB (промо-бонусы / кэшбэк — поддержка площадки).
+
+    Реальные значения paymentType в /adv/v1/upd: «Счет», «Баланс»,
+    «Кэшбэк», «Бонусы» — компенсация приходит как Кэшбэк/Бонусы.
+    """
     for key in ("paymentType", "payment_type", "type"):
         v = rec.get(key)
-        if isinstance(v, str) and "бонус" in v.lower():
+        if isinstance(v, str) and ("бонус" in v.lower() or "кэшбэк" in v.lower()
+                                   or "кешбэк" in v.lower()):
             return True
     return False
 
