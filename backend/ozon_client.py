@@ -149,6 +149,62 @@ async def get_stocks() -> dict[str, int]:
         return dict(_stocks_cache)
 
 
+def _price_amount(v) -> float:
+    """v3 отдаёт price объектом {amount, currency}, v2 отдавал строку."""
+    if isinstance(v, dict):
+        v = v.get("amount")
+    try:
+        return float(v or 0)
+    except (ValueError, TypeError):
+        return 0.0
+
+
+async def _fbo_postings(since: str, to: str) -> list[dict]:
+    """Все FBO-отправления за период через POST /v3/posting/fbo/list.
+
+    v2/posting/fbo/list отключается 01.08.2026. В v3 — курсорная пагинация
+    (cursor/has_next) и ответ без обёртки result.
+    """
+    postings: list[dict] = []
+    cursor = ""
+    while True:
+        data = await _post("/v3/posting/fbo/list", {
+            "cursor": cursor,
+            "filter": {"since": since, "to": to, "statuses": []},
+            "limit": 1000,
+            "sort_dir": "ASC",
+            "with": {"analytics_data": False, "financial_data": False, "legal_info": False},
+        })
+        batch = data.get("postings") or (data.get("result") or {}).get("postings") or []
+        postings.extend(batch)
+        cursor = data.get("cursor") or ""
+        if not data.get("has_next") or not cursor or not batch:
+            break
+    return postings
+
+
+def _posting_rows(postings: list[dict]) -> list[dict]:
+    rows: list[dict] = []
+    for posting in postings:
+        order_date = (posting.get("created_at") or "")[:10]
+        # в v3 нет delivered_at; fact_delivery_date есть в живых ответах
+        delivered_date = ((posting.get("fact_delivery_date") or posting.get("delivered_at") or "")[:10]
+                          or order_date)
+        status = posting.get("status", "")
+        for prod in posting.get("products") or []:
+            oid = prod.get("offer_id", "")
+            qty = prod.get("quantity") or 0
+            price = _price_amount(prod.get("price"))
+            if oid and qty:
+                rows.append({
+                    "date": order_date,
+                    "delivered_date": delivered_date,
+                    "offer_id": oid, "qty": qty,
+                    "revenue": price * qty, "status": status,
+                })
+    return rows
+
+
 async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
     """Return [{date, offer_id, qty, revenue, status}] for given range — no cache."""
     if not OZON_CLIENT_ID or not OZON_API_KEY:
@@ -156,36 +212,8 @@ async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
     since = f"{date_from}T00:00:00.000Z"
     to    = f"{date_to}T23:59:59.000Z"
     rows: list[dict] = []
-    offset = 0
     try:
-        while True:
-            data = await _post("/v2/posting/fbo/list", {
-                "dir": "ASC",
-                "filter": {"since": since, "to": to, "status": ""},
-                "limit": 1000,
-                "offset": offset,
-            })
-            result = data.get("result") or []
-            if not result:
-                break
-            for posting in result:
-                order_date    = (posting.get("created_at")  or "")[:10]
-                delivered_date = (posting.get("delivered_at") or "")[:10] or order_date
-                status = posting.get("status", "")
-                for prod in posting.get("products") or []:
-                    oid = prod.get("offer_id", "")
-                    qty = prod.get("quantity") or 0
-                    price = float(prod.get("price") or 0)
-                    if oid and qty:
-                        rows.append({
-                            "date": order_date,
-                            "delivered_date": delivered_date,
-                            "offer_id": oid, "qty": qty,
-                            "revenue": price * qty, "status": status,
-                        })
-            offset += len(result)
-            if len(result) < 1000:
-                break
+        rows = _posting_rows(await _fbo_postings(since, to))
     except Exception as e:
         _log.warning("OZON get_sales_detail error: %s", e)
     _log.info("OZON sales_detail: %d rows for %s–%s", len(rows), date_from, date_to)
@@ -215,26 +243,12 @@ async def get_sales_28d() -> dict[str, float]:
             to    = dt_to.strftime("%Y-%m-%dT23:59:59.000Z")
 
             totals: dict[str, int] = {}
-            offset = 0
-            while True:
-                data = await _post("/v2/posting/fbo/list", {
-                    "dir": "ASC",
-                    "filter": {"since": since, "to": to, "status": ""},
-                    "limit": 1000,
-                    "offset": offset,
-                })
-                result = data.get("result") or []
-                if not result:
-                    break
-                for posting in result:
-                    for prod in posting.get("products") or []:
-                        oid = prod.get("offer_id", "")
-                        qty = prod.get("quantity") or 0
-                        if oid:
-                            totals[oid] = totals.get(oid, 0) + qty
-                offset += len(result)
-                if len(result) < 1000:
-                    break
+            for posting in await _fbo_postings(since, to):
+                for prod in posting.get("products") or []:
+                    oid = prod.get("offer_id", "")
+                    qty = prod.get("quantity") or 0
+                    if oid:
+                        totals[oid] = totals.get(oid, 0) + qty
 
             _sales_cache = {k: round(v / 28, 2) for k, v in totals.items()}
             _sales_ts = time.monotonic()
