@@ -1530,7 +1530,18 @@ function renderFinanceTable() {
   }
 
   const d = _financeData[mp];
-  if (d.message) { wrap.innerHTML = `<div class="alert alert-info mt-3">${d.message}</div>`; return; }
+  if (d.message) {
+    wrap.innerHTML = `<div class="alert alert-info mt-3">${d.message}</div>`;
+    if (d.message.includes('⏳')) {
+      // отчёт собирается на бэке — перепроверяем через 20с
+      setTimeout(() => {
+        _financeData[mp] = null;
+        _financeData.TOTAL = null;
+        if (_financeMp === mp) renderFinanceTable(); else loadFinanceMp(mp);
+      }, 20000);
+    }
+    return;
+  }
   if (d.error)   { wrap.innerHTML = `<div class="alert alert-danger mt-3">Ошибка: ${d.error}</div>`; return; }
 
   const months = d.months || [];

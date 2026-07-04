@@ -464,6 +464,133 @@ def _build_pnl_rows(month_totals: dict, cogs_by_month: dict, cost_lines: list) -
     return rows
 
 
+# ══ Ozon P&L ══════════════════════════════════════════════════════════════════
+
+_oz_pnl_cache: dict = {}
+_oz_pnl_ts: float = 0.0
+_OZ_PNL_TTL = 6 * 3600
+_oz_pnl_building: bool = False
+
+
+def _last_months(n: int) -> list[tuple[int, int]]:
+    """[(year, month)] — последние n месяцев включая текущий, новые первыми."""
+    d = datetime.utcnow() + timedelta(hours=3)
+    out = []
+    y, m = d.year, d.month
+    for _ in range(n):
+        out.append((y, m))
+        m -= 1
+        if m == 0:
+            y, m = y - 1, 12
+    return out
+
+
+async def _build_ozon_pnl(months: int) -> None:
+    """Фоновая сборка P&L Ozon: /v2/finance/realization по месяцам + cash-flow."""
+    global _oz_pnl_cache, _oz_pnl_ts, _oz_pnl_building
+    if _oz_pnl_building:
+        return
+    _oz_pnl_building = True
+    try:
+        import ozon_client
+        import catalog as _cat
+
+        costs = cost_store.get_costs()
+        KEYS = ["retailAmount", "commission", "delivery", "services"]
+        mt: dict[str, dict] = {}
+        cogs_by_month: dict[str, float] = {}
+
+        for (y, m) in _last_months(months):
+            mk = f"{y}-{m:02d}"
+            month_start = f"{mk}-01"
+            month_end = (datetime(y + (m == 12), m % 12 + 1, 1) - timedelta(days=1)).strftime("%Y-%m-%d")
+
+            # 1) Отчёт о реализации (продажи − возвраты, комиссия, qty→COGS)
+            realization_ok = False
+            try:
+                res = await ozon_client.get_realization_report(y, m)
+                rows = res.get("rows") or []
+                if rows:
+                    t = {k: 0.0 for k in KEYS}
+                    cogs = 0.0
+                    for r in rows:
+                        dc = r.get("delivery_commission") or {}
+                        rc = r.get("return_commission") or {}
+                        t["retailAmount"] += float(dc.get("amount") or 0) - float(rc.get("amount") or 0)
+                        t["commission"]   += float(dc.get("commission") or 0) - float(rc.get("commission") or 0)
+                        qty = int(dc.get("quantity") or 0) - int(rc.get("quantity") or 0)
+                        offer = ((r.get("item") or {}).get("offer_id") or "").strip()
+                        sku = _cat.resolve_ozon(offer)
+                        uc = costs.get(sku, 0.0)
+                        if uc > 0 and qty > 0:
+                            cogs += uc * qty
+                    mt[mk] = t
+                    cogs_by_month[mk] = cogs
+                    realization_ok = True
+            except Exception as e:
+                _log.warning("Ozon realization %s: %s", mk, e)
+
+            # 2) Cash-flow: логистика и услуги (в отчёте реализации их нет)
+            try:
+                flows = await ozon_client.get_cash_flow(month_start, month_end)
+                if flows:
+                    if mk not in mt:
+                        mt[mk] = {k: 0.0 for k in KEYS}
+                    for f in flows:
+                        mt[mk]["delivery"] += float(f.get("item_delivery_and_return_amount") or 0)
+                        mt[mk]["services"] += float(f.get("services_amount") or 0)
+                        if not realization_ok:
+                            # текущий месяц: реализации ещё нет — берём выручку из cash-flow
+                            mt[mk]["retailAmount"] += (float(f.get("orders_amount") or 0)
+                                                       + float(f.get("returns_amount") or 0))
+                            mt[mk]["commission"]   += float(f.get("commission_amount") or 0)
+            except Exception as e:
+                _log.warning("Ozon cash-flow %s: %s", mk, e)
+
+        pnl_rows = _build_pnl_rows(
+            mt, cogs_by_month,
+            [
+                ("retailAmount", "📦 Выручка (реализация)", "header"),
+                ("commission",   "  − Комиссия Ozon",        "cost"),
+                ("delivery",     "  − Логистика и возвраты", "cost"),
+                ("services",     "  − Услуги Ozon",          "cost"),
+            ],
+        )
+        cogs_has_data = len(costs) > 0 and any(v > 0 for v in cogs_by_month.values())
+        _oz_pnl_cache = {
+            "months": _months_out(mt.keys()),
+            "rows": pnl_rows,
+            "cogs_loaded": len(costs) > 0,
+            "cogs_has_data": cogs_has_data,
+            "fetched_at": datetime.utcnow().strftime("%d.%m.%Y %H:%M UTC"),
+        }
+        _oz_pnl_ts = _time.monotonic()
+        _log.info("Ozon P&L built: %d months", len(mt))
+    except Exception as e:
+        _log.error("Ozon P&L build failed: %s", e)
+    finally:
+        _oz_pnl_building = False
+
+
+@router.get("/ozon/pnl")
+async def get_ozon_pnl(
+    months: int = Query(default=6, ge=1, le=12),
+    refresh: bool = Query(default=False),
+):
+    """P&L Ozon по месяцам. Сборка в фоне (несколько запросов к API)."""
+    global _oz_pnl_ts
+    fresh = _oz_pnl_cache and _time.monotonic() - _oz_pnl_ts < _OZ_PNL_TTL
+    if not refresh and fresh:
+        return _oz_pnl_cache
+    if refresh:
+        _oz_pnl_ts = 0.0
+    asyncio.create_task(_build_ozon_pnl(months))
+    if _oz_pnl_cache:
+        return _oz_pnl_cache  # отдаём устаревший, свежий соберётся в фоне
+    return {"months": [], "rows": [],
+            "message": "⏳ Отчёт Ozon собирается в фоне — обновите вкладку через 1-2 минуты"}
+
+
 @router.get("/ozon/reports")
 async def get_ozon_reports():
     return {"reports": [], "message": "OZON финансовые отчёты будут добавлены позже"}

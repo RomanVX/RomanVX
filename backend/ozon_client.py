@@ -252,6 +252,44 @@ async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
     return rows
 
 
+async def get_realization_report(year: int, month: int) -> dict:
+    """POST /v2/finance/realization — отчёт о реализации за месяц.
+
+    Возвращает result: {header, rows[]} — продажи/возвраты по SKU с комиссиями.
+    Отчёт за месяц доступен ~с 5-го числа следующего месяца.
+    """
+    if not OZON_CLIENT_ID or not OZON_API_KEY:
+        return {}
+    data = await _post("/v2/finance/realization", {"year": year, "month": month})
+    return data.get("result") or {}
+
+
+async def get_cash_flow(date_from: str, date_to: str) -> list[dict]:
+    """POST /v1/finance/cash-flow-statement/list — движение ДС по полупериодам.
+
+    cash_flows[]: orders_amount, returns_amount, commission_amount,
+    item_delivery_and_return_amount (логистика), services_amount (услуги).
+    """
+    if not OZON_CLIENT_ID or not OZON_API_KEY:
+        return []
+    flows: list[dict] = []
+    page = 1
+    while True:
+        data = await _post("/v1/finance/cash-flow-statement/list", {
+            "date": {"from": f"{date_from}T00:00:00.000Z", "to": f"{date_to}T23:59:59.000Z"},
+            "with_details": False,
+            "page": page,
+            "page_size": 10,
+        })
+        result = data.get("result") or {}
+        batch = result.get("cash_flows") or []
+        flows.extend(batch)
+        if page >= int(data.get("page_count") or 1) or not batch:
+            break
+        page += 1
+    return flows
+
+
 async def get_sales_28d() -> dict[str, float]:
     """Return {offer_id: avg_daily_qty} — cached 1 hour."""
     global _sales_cache, _sales_ts
