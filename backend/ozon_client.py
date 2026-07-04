@@ -29,14 +29,24 @@ def _headers() -> dict:
     }
 
 
+# Общий клиент с keep-alive (без него каждый запрос = новый TLS handshake)
+_client: httpx.AsyncClient | None = None
+
+
+def _http() -> httpx.AsyncClient:
+    global _client
+    if _client is None or _client.is_closed:
+        _client = httpx.AsyncClient(timeout=60)
+    return _client
+
+
 async def _post(path: str, body: dict) -> dict:
-    async with httpx.AsyncClient(timeout=60) as c:
-        r = await c.post(f"{_BASE}{path}", headers=_headers(), json=body)
-        _log.debug("OZON POST %s → %s", path, r.status_code)
-        if not r.is_success:
-            _log.error("OZON %s → %s %s", path, r.status_code, r.text[:300])
-            r.raise_for_status()
-        return r.json()
+    r = await _http().post(f"{_BASE}{path}", headers=_headers(), json=body)
+    _log.debug("OZON POST %s → %s", path, r.status_code)
+    if not r.is_success:
+        _log.error("OZON %s → %s %s", path, r.status_code, r.text[:300])
+        r.raise_for_status()
+    return r.json()
 
 
 async def _get_all_skus() -> list[dict]:

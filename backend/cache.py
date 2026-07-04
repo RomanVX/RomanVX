@@ -37,13 +37,21 @@ def _filter(records: list, date_from: datetime, date_to: datetime) -> list:
     return [r for r in records if lo <= r.get("date", "")[:10] <= hi]
 
 
+def _is_stale() -> bool:
+    # fetched_at == 0.0 значит «ещё не загружали». Нельзя сравнивать только age:
+    # monotonic() — это uptime системы, и на свежем контейнере (cold start Render)
+    # age = monotonic() - 0 < TTL, из-за чего пустой кеш считался «свежим»
+    # и WB-данные не грузились первые 10 минут после пробуждения.
+    if _store.fetched_at == 0.0:
+        return True
+    return time.monotonic() - _store.fetched_at >= TTL
+
+
 async def get_raw_data(date_from: datetime, date_to: datetime) -> tuple[list, list, list]:
     global _store
-    age = time.monotonic() - _store.fetched_at
-    if age >= TTL:
+    if _is_stale():
         async with _lock:
-            age = time.monotonic() - _store.fetched_at
-            if age >= TTL:
+            if _is_stale():
                 await _refresh()
 
     sales  = _filter(_store.sales,  date_from, date_to)
@@ -57,9 +65,11 @@ async def _refresh() -> None:
     fetch_to   = datetime.utcnow()
     _log.info("Fetching WB API: last %d days", MAX_DAYS)
     try:
-        sales  = await wb_client.get_sales(fetch_from, fetch_to)
-        orders = await wb_client.get_orders(fetch_from, fetch_to)
-        stocks = await wb_client.get_stocks()
+        sales, orders, stocks = await asyncio.gather(
+            wb_client.get_sales(fetch_from, fetch_to),
+            wb_client.get_orders(fetch_from, fetch_to),
+            wb_client.get_stocks(),
+        )
         _store.sales      = sales
         _store.orders     = orders
         _store.stocks     = stocks

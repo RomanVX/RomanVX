@@ -97,9 +97,18 @@ def execute(sql: str, params=()):
 
 
 def executemany(sql: str, seq):
+    rows = list(seq)
+    if not rows:
+        return
     with _conn() as con:
         cur = con.cursor()
-        cur.executemany(_tr(sql), list(seq))
+        if IS_PG:
+            # executemany у psycopg2 = 1 round-trip на строку (до Neon это ~50-100мс
+            # каждая); execute_batch склеивает сотни statements в один round-trip
+            from psycopg2.extras import execute_batch
+            execute_batch(cur, _tr(sql), rows, page_size=500)
+        else:
+            cur.executemany(sql, rows)
         con.commit()
 
 

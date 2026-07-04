@@ -6,6 +6,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
@@ -28,9 +29,10 @@ async def _accumulate_sales():
     dt_to   = datetime.utcnow()
     dt_from = dt_to - timedelta(days=30)
     df, dt = dt_from.strftime("%Y-%m-%d"), dt_to.strftime("%Y-%m-%d")
-    # WB — через cache._refresh (persist_wb внутри)
+    # WB — persist_wb срабатывает write-through при каждом реальном обновлении
+    # кеша (weekly_orders/stocks_table только что его загрузили), поэтому
+    # принудительный invalidate() здесь означал бы двойную выкачку 90 дней.
     try:
-        cache.invalidate()
         await cache.get_raw_data(dt_from, dt_to)
     except Exception as exc:
         _log.warning("accumulate WB failed: %s", exc)
@@ -92,6 +94,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# JSON с отзывами/заказами весит сотни КБ — gzip ужимает в 5-10 раз
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 app.include_router(dashboard.router)
 app.include_router(upload.router)

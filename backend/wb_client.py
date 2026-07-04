@@ -25,13 +25,24 @@ def _headers() -> dict:
     return {"Authorization": WB_API_KEY}
 
 
+# Общий клиент с keep-alive: новый AsyncClient на каждый запрос платит
+# ~100-300мс за TCP+TLS handshake, переиспользуемый — нет.
+_client: httpx.AsyncClient | None = None
+
+
+def _http() -> httpx.AsyncClient:
+    global _client
+    if _client is None or _client.is_closed:
+        _client = httpx.AsyncClient(timeout=60)
+    return _client
+
+
 async def _get(url: str, params: dict) -> list[dict]:
-    async with httpx.AsyncClient(timeout=60) as client:
-        resp = await client.get(url, headers=_headers(), params=params)
-        if not resp.is_success:
-            _log.error("WB API %s → %s %s", url, resp.status_code, resp.text[:300])
-            resp.raise_for_status()
-        return resp.json()
+    resp = await _http().get(url, headers=_headers(), params=params)
+    if not resp.is_success:
+        _log.error("WB API %s → %s %s", url, resp.status_code, resp.text[:300])
+        resp.raise_for_status()
+    return resp.json()
 
 
 async def get_sales(date_from: datetime, date_to: datetime) -> list[dict]:
@@ -84,8 +95,7 @@ async def _nm_report_week_single(date_from: str, date_to: str) -> dict:
         # запрос одной страницы с retry на 429
         resp = None
         for attempt in range(4):
-            async with httpx.AsyncClient(timeout=30) as client:
-                resp = await client.post(FUNNEL_URL, headers=_headers(), json={**body_base, "offset": offset})
+            resp = await _http().post(FUNNEL_URL, headers=_headers(), json={**body_base, "offset": offset})
             if resp.status_code == 429:
                 _log.warning("WB funnel %s–%s → 429, retry %d/3 через 21с", date_from, date_to, attempt + 1)
                 await asyncio.sleep(21)

@@ -29,23 +29,32 @@ def _headers() -> dict:
     }
 
 
+# Общий клиент с keep-alive (без него каждый запрос = новый TLS handshake)
+_client: httpx.AsyncClient | None = None
+
+
+def _http() -> httpx.AsyncClient:
+    global _client
+    if _client is None or _client.is_closed:
+        _client = httpx.AsyncClient(timeout=60)
+    return _client
+
+
 async def _post(path: str, body: dict, params: dict | None = None) -> dict:
-    async with httpx.AsyncClient(timeout=60) as c:
-        r = await c.post(f"{_BASE}{path}", headers=_headers(), json=body, params=params or {})
-        if not r.is_success:
-            _log.warning("[YM] POST %s → %s | resp[:300]=%s", path, r.status_code, r.text[:300])
-            r.raise_for_status()
-        return r.json()
+    r = await _http().post(f"{_BASE}{path}", headers=_headers(), json=body, params=params or {})
+    if not r.is_success:
+        _log.warning("[YM] POST %s → %s | resp[:300]=%s", path, r.status_code, r.text[:300])
+        r.raise_for_status()
+    return r.json()
 
 
 async def _get(path: str, params: dict) -> dict:
-    async with httpx.AsyncClient(timeout=60) as c:
-        r = await c.get(f"{_BASE}{path}", headers=_headers(), params=params)
-        _log.info("[YM] GET %s params=%s → %s | resp[:400]=%s",
-                  path, params, r.status_code, r.text[:400])
-        if not r.is_success:
-            r.raise_for_status()
-        return r.json()
+    r = await _http().get(f"{_BASE}{path}", headers=_headers(), params=params)
+    _log.info("[YM] GET %s params=%s → %s | resp[:400]=%s",
+              path, params, r.status_code, r.text[:400])
+    if not r.is_success:
+        r.raise_for_status()
+    return r.json()
 
 
 async def _try_stats_orders_post(date_from: str, date_to: str) -> dict[str, int]:

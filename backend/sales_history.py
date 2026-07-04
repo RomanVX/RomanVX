@@ -140,19 +140,35 @@ def get_history(date_from=None, date_to=None, platform=None) -> list[dict]:
 
 
 def get_summary(date_from=None, date_to=None) -> dict:
-    """Накопленная история: итоги по площадкам и по дням."""
-    rows = get_history(date_from, date_to)
-    by_platform: dict = {}
+    """Накопленная история: итоги по площадкам и по дням.
+
+    Агрегируем в SQL — тянуть все строки sale_date × platform × sku из Neon
+    и складывать в Python на порядок медленнее из-за объёма передачи.
+    """
+    where, params = ["1=1"], []
+    if date_from:
+        where.append("sale_date >= ?"); params.append(date_from)
+    if date_to:
+        where.append("sale_date <= ?"); params.append(date_to)
+    cond = " AND ".join(where)
+
+    plat_rows = db.fetchall(
+        f"SELECT platform, SUM(qty), SUM(revenue) FROM sales_daily WHERE {cond} GROUP BY platform",
+        tuple(params),
+    )
+    by_platform = {r[0]: {"qty": int(r[1] or 0), "revenue": round(float(r[2] or 0), 2)}
+                   for r in plat_rows}
+
+    day_rows = db.fetchall(
+        f"SELECT sale_date, platform, SUM(revenue) FROM sales_daily WHERE {cond} "
+        "GROUP BY sale_date, platform ORDER BY sale_date",
+        tuple(params),
+    )
     by_day: dict = {}
-    for r in rows:
-        p = by_platform.setdefault(r["platform"], {"qty": 0, "revenue": 0.0})
-        p["qty"] += r["qty"]
-        p["revenue"] += r["revenue"]
-        d = by_day.setdefault(r["date"], {"date": r["date"]})
-        key = r["platform"].lower()
-        d[key] = round(d.get(key, 0.0) + r["revenue"], 2)
-    for v in by_platform.values():
-        v["revenue"] = round(v["revenue"], 2)
+    for d, platform, rev in day_rows:
+        row = by_day.setdefault(d, {"date": d})
+        row[platform.lower()] = round(float(rev or 0), 2)
+
     bounds = db.fetchone("SELECT MIN(sale_date), MAX(sale_date) FROM sales_daily") or (None, None)
     return {
         "by_platform": by_platform,
