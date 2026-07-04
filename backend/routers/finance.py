@@ -347,6 +347,17 @@ async def get_wb_pnl(
     source = "weekly"
     last_detail_sale = ""
     tail_days = 0
+    # SKU-разрез для юнит-экономики: собирается тем же проходом, что и P&L,
+    # поэтому суммы по артикулам сходятся со строками вкладки Финансы.
+    sku_data: dict[str, dict] = {}   # sku → mk → {revenue, forPay, qty, cogs, delivery, storage, acceptance, penalty}
+
+    _SKU_KEYS = ("revenue", "forPay", "qty", "cogs", "delivery", "storage", "acceptance", "penalty")
+
+    def s_ensure(sku, mk):
+        m = sku_data.setdefault(sku, {})
+        if mk not in m:
+            m[mk] = {k: 0.0 for k in _SKU_KEYS}
+        return m[mk]
 
     def _f(v) -> float:
         try: return float(str(v).replace(",", ".") or 0)
@@ -361,6 +372,15 @@ async def get_wb_pnl(
             return detail_totals[mk]
 
         import catalog as _cat
+
+        def _canon_sku(row) -> str:
+            """Каноничный артикул: через nmId по каталогу, иначе sa_name."""
+            nm = row.get("nmId")
+            if nm:
+                r = _cat.resolve_wb(nm)
+                if r and not str(r).isdigit():
+                    return r
+            return (row.get("vendorCode") or "").strip().upper() or "—"
 
         # v5 отдаёт sa_name в нижнем регистре («al-01») — матчим без учёта регистра
         costs_upper = {k.upper(): v for k, v in costs.items()}
@@ -411,6 +431,13 @@ async def get_wb_pnl(
                     uc = _unit_cost(row)
                     if uc > 0 and qty > 0:
                         cogs_by_month[mk_sale] = cogs_by_month.get(mk_sale, 0.0) + sign * uc * qty
+                    # SKU-разрез (юнитка)
+                    sd = s_ensure(_canon_sku(row), mk_sale)
+                    sd["revenue"] += sign * base
+                    sd["forPay"]  += sign * abs(_f(row.get("forPay")))
+                    sd["qty"]     += sign * qty
+                    if uc > 0 and qty > 0:
+                        sd["cogs"] += sign * uc * qty
             # операционные затраты — по дате операции, на любых строках
             if mk < min_mk:
                 continue
@@ -421,6 +448,13 @@ async def get_wb_pnl(
             m["penalty"]         += _f(row.get("penalty"))
             m["deduction"]       += _f(row.get("deduction"))
             m["cashbackAmount"]  += _f(row.get("cashbackAmount"))
+            # SKU-разрез операционных затрат (строки несут артикул)
+            if any(_f(row.get(k)) for k in ("deliveryService", "paidStorage", "paidAcceptance", "penalty")):
+                sd = s_ensure(_canon_sku(row), mk)
+                sd["delivery"]   += _f(row.get("deliveryService"))
+                sd["storage"]    += _f(row.get("paidStorage"))
+                sd["acceptance"] += _f(row.get("paidAcceptance"))
+                sd["penalty"]    += _f(row.get("penalty"))
 
         # ── Хвост месяца: дни после последней сформированной недели отчёта
         # реализации дополняем ОПЕРАТИВНЫМИ продажами statistics-api (кабинетная
@@ -450,6 +484,12 @@ async def get_wb_pnl(
                     uc = _unit_cost({"vendorCode": str(raw), "nmId": s.get("nmId")})
                     if uc > 0:
                         cogs_by_month[mk] = cogs_by_month.get(mk, 0.0) + neg * uc
+                    sd = s_ensure(_canon_sku({"vendorCode": str(raw), "nmId": s.get("nmId")}), mk)
+                    sd["revenue"] += neg * pre
+                    sd["forPay"]  += neg * fp
+                    sd["qty"]     += neg
+                    if uc > 0:
+                        sd["cogs"] += neg * uc
                     tail_dates.add(d)
                 tail_days = len(tail_dates)
                 if tail_days:
@@ -546,6 +586,20 @@ async def get_wb_pnl(
         "detail_error": _detail_last_error,
         "fetched_at": _wb_cache.get("fetched_at", ""),
     }
+
+    # SKU-разрез для юнит-экономики — из этого же прохода (суммы сходятся с P&L)
+    global _wb_unit_data
+    if source == "detail":
+        _wb_unit_data = {
+            "sku": sku_data,
+            "totals": month_totals,
+            "advert": {mk: (advert_by_month.get(mk) or {}).get("total", 0.0)
+                            - (advert_by_month.get(mk) or {}).get("bonus", 0.0)
+                       for mk in month_totals},
+            "deductions": {mk: month_totals[mk].get("deductions", 0.0) for mk in month_totals},
+            "detail_upto": last_detail_sale,
+            "fetched_at": result["fetched_at"],
+        }
     _pnl_cache = result
     _pnl_cache_ts = _time.monotonic()
     return result
@@ -554,6 +608,146 @@ async def get_wb_pnl(
 # кеш рекламных списаний WB (advert API, 6ч)
 _wb_advert_cache: dict = {}
 _wb_advert_ts: float = 0.0
+
+# SKU-разрез для юнит-экономики (наполняется при сборке P&L из деталей)
+_wb_unit_data: dict = {}
+
+
+@router.get("/wb/unit")
+async def get_wb_unit(
+    months: int = Query(default=6, ge=1, le=12),
+    refresh: bool = Query(default=False),
+):
+    """Юнит-экономика WB по SKU × месяц.
+
+    Собирается из того же прохода, что и P&L — суммы столбцов сходятся
+    со вкладкой Финансы. Продвижение и прочие удержания распределяются
+    по SKU пропорционально доле выручки месяца (остаток округления —
+    крупнейшему SKU, чтобы итог бился рубль в рубль).
+    """
+    # гарантируем свежую сборку P&L (она наполняет _wb_unit_data)
+    pnl = await get_wb_pnl(months=months, refresh=refresh)
+    if pnl.get("source") != "detail" or not _wb_unit_data:
+        return {"months": [], "skus": [],
+                "message": "⏳ Точные данные WB ещё собираются — юнитка появится через минуту"}
+
+    sku_data   = _wb_unit_data["sku"]
+    totals     = _wb_unit_data["totals"]
+    advert_m   = _wb_unit_data["advert"]
+    deduct_m   = _wb_unit_data["deductions"]
+    month_keys = sorted(totals.keys())
+
+    names = cost_store.get_names()
+    import catalog as _cat
+
+    # выручка месяца по SKU (только положительная — база распределения)
+    rev_by_month: dict[str, float] = {
+        mk: sum(max(m.get(mk, {}).get("revenue", 0.0), 0.0) for m in sku_data.values())
+        for mk in month_keys
+    }
+
+    skus_out = []
+    # аллокация с корректировкой остатка: крупнейший SKU месяца добирает разницу
+    alloc_sum = {mk: {"advert": 0.0, "deductions": 0.0} for mk in month_keys}
+    top_sku_by_month = {
+        mk: max(sku_data.items(),
+                key=lambda kv: kv[1].get(mk, {}).get("revenue", 0.0), default=(None,))[0]
+        for mk in month_keys
+    }
+
+    for sku, mdata in sku_data.items():
+        name = names.get(sku) or _cat.lookup(sku).get("name", "")
+        row = {"sku": sku, "name": name, "months": {}}
+        for mk in month_keys:
+            d = mdata.get(mk)
+            if not d:
+                continue
+            rev = d["revenue"]
+            share = (max(rev, 0.0) / rev_by_month[mk]) if rev_by_month[mk] > 0 else 0.0
+            adv = advert_m.get(mk, 0.0) * share
+            ded = deduct_m.get(mk, 0.0) * share
+            alloc_sum[mk]["advert"] += adv
+            alloc_sum[mk]["deductions"] += ded
+            commission = rev - d["forPay"]
+            costs_sum = (commission + d["delivery"] + d["storage"] + d["acceptance"]
+                         + d["penalty"] + adv + ded)
+            gross = rev - costs_sum - d["cogs"]
+            row["months"][mk] = {
+                "qty":        round(d["qty"]),
+                "revenue":    round(rev),
+                "commission": round(commission),
+                "delivery":   round(d["delivery"]),
+                "storage":    round(d["storage"]),
+                "acceptance": round(d["acceptance"]),
+                "penalty":    round(d["penalty"]),
+                "advert":     round(adv),
+                "deductions": round(ded),
+                "cogs":       round(d["cogs"]),
+                "payout":     round(rev - costs_sum),
+                "gross":      round(gross),
+                "margin":     round(gross / rev * 100) if rev > 0 else 0,
+            }
+        if row["months"]:
+            skus_out.append(row)
+
+    # добор остатка распределения крупнейшему SKU месяца (итог = P&L)
+    for mk in month_keys:
+        top = top_sku_by_month.get(mk)
+        if not top:
+            continue
+        row = next((r for r in skus_out if r["sku"] == top), None)
+        if not row or mk not in row["months"]:
+            continue
+        cell = row["months"][mk]
+        d_adv = round(advert_m.get(mk, 0.0) - alloc_sum[mk]["advert"])
+        d_ded = round(deduct_m.get(mk, 0.0) - alloc_sum[mk]["deductions"])
+        if d_adv or d_ded:
+            cell["advert"] += d_adv
+            cell["deductions"] += d_ded
+            cell["payout"] -= d_adv + d_ded
+            cell["gross"] -= d_adv + d_ded
+            cell["margin"] = round(cell["gross"] / cell["revenue"] * 100) if cell["revenue"] else 0
+
+    skus_out.sort(key=lambda r: -sum(m["revenue"] for m in r["months"].values()))
+
+    # итоги месяца — прямо из P&L-агрегации (сходимость с Финансами)
+    totals_out = {}
+    for mk in month_keys:
+        t = totals[mk]
+        rev = t.get("retailAmount", 0.0)
+        commission = t.get("commission", rev - t.get("forPay", 0.0))
+        costs_sum = (commission + t.get("deliveryService", 0.0) + t.get("paidStorage", 0.0)
+                     + t.get("paidAcceptance", 0.0) + t.get("penalty", 0.0)
+                     + t.get("advert", 0.0) + t.get("deductions", 0.0))
+        cg = cogs_month = _wb_unit_totals_cogs(mk)
+        gross = rev - costs_sum - cg
+        totals_out[mk] = {
+            "revenue": round(rev), "commission": round(commission),
+            "delivery": round(t.get("deliveryService", 0.0)),
+            "storage": round(t.get("paidStorage", 0.0)),
+            "acceptance": round(t.get("paidAcceptance", 0.0)),
+            "penalty": round(t.get("penalty", 0.0)),
+            "advert": round(t.get("advert", 0.0)),
+            "deductions": round(t.get("deductions", 0.0)),
+            "cogs": round(cg),
+            "payout": round(rev - costs_sum),
+            "gross": round(gross),
+            "margin": round(gross / rev * 100) if rev else 0,
+            "qty": round(sum(m.get(mk, {}).get("qty", 0) for m in sku_data.values())),
+        }
+
+    return {
+        "months": [{"key": mk, "label": RU_MON[int(mk[5:7])] + " " + mk[:4]} for mk in month_keys],
+        "skus": skus_out,
+        "totals": totals_out,
+        "detail_upto": _wb_unit_data.get("detail_upto", ""),
+        "fetched_at": _wb_unit_data.get("fetched_at", ""),
+    }
+
+
+def _wb_unit_totals_cogs(mk: str) -> float:
+    sku_data = _wb_unit_data.get("sku", {})
+    return sum(m.get(mk, {}).get("cogs", 0.0) for m in sku_data.values())
 
 
 async def _get_wb_advert_cached(dt_from: datetime, dt_to: datetime) -> dict[str, float]:

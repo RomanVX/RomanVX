@@ -69,6 +69,7 @@
     <li class="nav-item"><a class="nav-link" href="#" onclick="switchTab('reviews',this);return false">Отзывы</a></li>
     <li class="nav-item"><a class="nav-link" href="#" onclick="switchTab('history',this);return false">История</a></li>
     <li class="nav-item"><a class="nav-link" href="#" onclick="switchTab('finance',this);return false">Финансы</a></li>
+    <li class="nav-item"><a class="nav-link" href="#" onclick="switchTab('unit',this);return false">Юнитка</a></li>
   </ul>
 
   <!-- ── Заказы ── -->
@@ -298,11 +299,26 @@
     </div>
   </div><!-- /pane-finance -->
 
+  <!-- ── Юнит-экономика WB ── -->
+  <div id="pane-unit" style="display:none">
+    <div class="d-flex gap-2 mb-3 flex-wrap align-items-center" id="unitMetricBtns">
+      <span class="text-secondary small me-1">Метрика:</span>
+      <!-- кнопки метрик рендерит JS -->
+      <span class="text-secondary small ms-auto">WB · клик по артикулу — полный P&L</span>
+      <button class="btn btn-sm btn-outline-secondary" onclick="_unitData=null;loadUnitEconomics()">
+        <i class="bi bi-arrow-clockwise"></i> Обновить
+      </button>
+    </div>
+    <div id="unitTableWrap">
+      <div class="text-center text-secondary py-4"><span class="spinner-border"></span></div>
+    </div>
+  </div><!-- /pane-unit -->
+
 </div>
 </div><!-- /mainContent -->
 
 <script src="vendor/bootstrap.bundle.min.js"></script>
 <script src="vendor/chart.umd.min.js"></script>
-<script src="app.js?v=66"></script>
+<script src="app.js?v=67"></script>
 </body>
 </html>

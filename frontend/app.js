@@ -3,7 +3,7 @@
 const API = '';
 let charts = {};
 let sortState = {};
-const dirty = { salesan: true, stocks: true, reviews: true, history: true, finance: true };
+const dirty = { salesan: true, stocks: true, reviews: true, history: true, finance: true, unit: true };
 let _advertData = [];
 let currentTab = 'finance';
 let prodAllData = [];
@@ -129,7 +129,7 @@ function skuName(r) {
 function switchTab(name, linkEl) {
   document.querySelectorAll('#mainTabs .nav-link').forEach(a => a.classList.remove('active'));
   if (linkEl) linkEl.classList.add('active');
-  ['salesan', 'stocks', 'reviews', 'history', 'finance'].forEach(t => {
+  ['salesan', 'stocks', 'reviews', 'history', 'finance', 'unit'].forEach(t => {
     const el = document.getElementById('pane-' + t);
     if (el) el.style.display = t === name ? 'block' : 'none';
   });
@@ -137,7 +137,8 @@ function switchTab(name, linkEl) {
   if (dirty[name]) {
     dirty[name] = false;
     ({ salesan: loadSalesAnalytics, stocks: loadStocks,
-       reviews: loadReviews, history: loadHistory, finance: loadFinance })[name]();
+       reviews: loadReviews, history: loadHistory, finance: loadFinance,
+       unit: loadUnitEconomics })[name]();
   }
 }
 
@@ -1682,6 +1683,187 @@ function renderFinanceTable() {
     html += `<div class="text-secondary small mt-2">Отчёт реализации WB сформирован по ${d.detail_upto}.${tail}</div>`;
   }
   if (d.fetched_at) html += `<div class="text-secondary text-end small mt-1">Обновлено: ${d.fetched_at}</div>`;
+  wrap.innerHTML = html;
+}
+
+// ── Юнит-экономика WB ─────────────────────────────────────────────────────────
+
+let _unitData = null;
+let _unitMetric = 'gross';
+const _unitExpanded = new Set();
+
+const UNIT_METRICS = [
+  ['gross',   'Валовая прибыль'],
+  ['margin',  'Маржа %'],
+  ['revenue', 'Выручка'],
+  ['qty',     'Штуки'],
+  ['advert',  'Продвижение'],
+  ['cogs',    'Себестоимость'],
+];
+
+// строки развёрнутого P&L артикула
+const UNIT_PNL_ROWS = [
+  ['revenue',    'Выручка (до СПП)',        '#fff'],
+  ['commission', '− Комиссия и эквайринг',  '#f87171'],
+  ['delivery',   '− Логистика',             '#f87171'],
+  ['storage',    '− Хранение',              '#f87171'],
+  ['penalty',    '− Штрафы',                '#fbbf24'],
+  ['deductions', '− Удержания (распр.)',    '#fbbf24'],
+  ['advert',     '− Продвижение (распр.)',  '#c084fc'],
+  ['payout',     'К перечислению',          '#4ade80'],
+  ['cogs',       '− Себестоимость',         '#f87171'],
+  ['gross',      'Валовая прибыль',         '#4ade80'],
+  ['margin',     'Маржа %',                 '#4ade80'],
+  ['qty',        'Штук',                    '#aab2c8'],
+];
+
+async function loadUnitEconomics() {
+  const wrap = document.getElementById('unitTableWrap');
+  if (_unitData) { renderUnitTable(); return; }
+  if (wrap) wrap.innerHTML = '<div class="text-center text-secondary py-5"><span class="spinner-border me-2"></span>Собираем юнит-экономику…</div>';
+  try {
+    const d = await fetchJSON('/api/finance/wb/unit', 120000);
+    if (d.message) {
+      if (wrap) wrap.innerHTML = `<div class="alert alert-info mt-3">${d.message}</div>`;
+      setTimeout(() => { if (currentTab === 'unit') loadUnitEconomics(); }, 20000);
+      return;
+    }
+    _unitData = d;
+    renderUnitTable();
+  } catch (e) {
+    if (wrap) wrap.innerHTML = `<div class="alert alert-danger mt-3">Ошибка: ${e.message}</div>`;
+  }
+}
+
+function setUnitMetric(m) {
+  _unitMetric = m;
+  renderUnitTable();
+}
+
+function toggleUnitSku(sku) {
+  if (_unitExpanded.has(sku)) _unitExpanded.delete(sku); else _unitExpanded.add(sku);
+  renderUnitTable();
+}
+
+function _unitFmt(key, v) {
+  if (v == null) return '<span class="text-muted small">—</span>';
+  if (key === 'margin') {
+    const clr = v >= 20 ? '#4ade80' : v >= 10 ? '#fbbf24' : '#f87171';
+    return `<span style="color:${clr};font-weight:600">${v}%</span>`;
+  }
+  if (key === 'qty') return `<span style="color:#eef1f8">${fmt(v)}</span>`;
+  if (v === 0) return '<span class="text-muted small">—</span>';
+  const isCost = ['commission','delivery','storage','acceptance','penalty','advert','deductions','cogs'].includes(key);
+  if (isCost) return `<span style="color:#eef1f8"><span style="color:#f87171">−</span>${fmtRub(Math.abs(v))}</span>`;
+  const clr = (key === 'gross' || key === 'payout') ? (v >= 0 ? '#4ade80' : '#f87171') : '#fff';
+  return `<span style="color:${clr};font-weight:600">${v < 0 ? '−' : ''}${fmtRub(Math.abs(v))}</span>`;
+}
+
+function _momBadge(key, cur, prev) {
+  if (prev == null || cur == null) return '';
+  if (key === 'margin') {
+    const d = cur - prev;
+    if (!d) return '';
+    const up = d > 0;
+    return ` <span class="small" style="color:${up ? '#4ade80' : '#f87171'}">${up ? '▲' : '▼'}${Math.abs(d)}пп</span>`;
+  }
+  if (!prev) return '';
+  const pct = Math.round((cur - prev) / Math.abs(prev) * 100);
+  if (!pct) return '';
+  // для затрат рост — плохо (красный)
+  const isCost = ['advert','cogs','commission','delivery','deductions'].includes(key);
+  const up = pct > 0;
+  const good = isCost ? !up : up;
+  return ` <span class="small" style="color:${good ? '#4ade80' : '#f87171'}">${up ? '▲' : '▼'}${Math.abs(pct)}%</span>`;
+}
+
+function renderUnitTable() {
+  const wrap = document.getElementById('unitTableWrap');
+  if (!wrap || !_unitData) return;
+
+  // кнопки метрик
+  const btnBox = document.getElementById('unitMetricBtns');
+  if (btnBox && !btnBox.dataset.rendered) {
+    const span = btnBox.querySelector('span');
+    UNIT_METRICS.slice().reverse().forEach(([k, label]) => {
+      const b = document.createElement('button');
+      b.className = 'btn btn-sm btn-outline-info unit-metric-btn';
+      b.dataset.metric = k;
+      b.textContent = label;
+      b.onclick = () => setUnitMetric(k);
+      span.after(b);
+    });
+    btnBox.dataset.rendered = '1';
+  }
+  document.querySelectorAll('.unit-metric-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.metric === _unitMetric));
+
+  const months = _unitData.months || [];
+  const skus = _unitData.skus || [];
+  const totals = _unitData.totals || {};
+  const SEP = 'border-left:2px solid #2a2a3e;';
+
+  let html = `<div class="table-responsive"><table class="table table-sm align-middle mb-0 text-nowrap" style="font-size:0.85rem">`;
+  html += `<thead><tr>
+    <th style="min-width:250px;position:sticky;left:0;background:#181a20;z-index:2">Артикул</th>`;
+  months.forEach(m => { html += `<th class="text-end" style="${SEP}min-width:120px">${m.label}</th>`; });
+  html += `<th class="text-end" style="${SEP}min-width:124px;color:#c026d3">Итого</th></tr></thead><tbody>`;
+
+  function metricTotal(cells, key) {
+    if (key === 'margin') {
+      const g = months.reduce((a, m) => a + (cells[m.key]?.gross || 0), 0);
+      const r = months.reduce((a, m) => a + (cells[m.key]?.revenue || 0), 0);
+      return r > 0 ? Math.round(g / r * 100) : null;
+    }
+    return months.reduce((a, m) => a + (cells[m.key]?.[key] || 0), 0);
+  }
+
+  function rowCells(cells, emphasize) {
+    let out = '';
+    months.forEach((m, i) => {
+      const cur = cells[m.key]?.[_unitMetric];
+      const prev = i > 0 ? cells[months[i - 1].key]?.[_unitMetric] : null;
+      out += `<td class="text-end" style="${SEP}padding:5px 12px">${_unitFmt(_unitMetric, cur)}${_momBadge(_unitMetric, cur, prev)}</td>`;
+    });
+    const tot = metricTotal(cells, _unitMetric);
+    out += `<td class="text-end" style="${SEP}padding:5px 12px;background:rgba(201,168,76,.04)">${_unitFmt(_unitMetric, tot)}</td>`;
+    return out;
+  }
+
+  // ИТОГО (сходится со вкладкой Финансы)
+  html += `<tr style="background:#0d2010;border-bottom:2px solid #16a34a">
+    <td style="position:sticky;left:0;background:#0d2010;padding:6px 12px;color:#fff;font-weight:700">ИТОГО WB</td>
+    ${rowCells(totals, true)}</tr>`;
+
+  skus.forEach(r => {
+    const expanded = _unitExpanded.has(r.sku);
+    html += `<tr style="background:#111;cursor:pointer" onclick="toggleUnitSku('${r.sku}')">
+      <td style="position:sticky;left:0;background:#181a20;padding:6px 12px">
+        <span style="color:#94a3b8">${expanded ? '▼' : '▶'}</span>
+        <code style="color:#e2e8f0">${r.sku}</code>
+        <span class="text-secondary small">${r.name || ''}</span></td>
+      ${rowCells(r.months)}</tr>`;
+    if (expanded) {
+      UNIT_PNL_ROWS.forEach(([key, label, clr]) => {
+        html += `<tr style="background:#0d0e1a;font-size:0.8rem">
+          <td style="position:sticky;left:0;background:#12131f;padding:3px 12px 3px 34px;color:${clr}">${label}</td>`;
+        months.forEach(m => {
+          html += `<td class="text-end" style="${SEP}padding:3px 12px">${_unitFmt(key, r.months[m.key]?.[key])}</td>`;
+        });
+        const tot = key === 'margin'
+          ? (() => { const g = months.reduce((a, m) => a + (r.months[m.key]?.gross || 0), 0);
+                     const rv = months.reduce((a, m) => a + (r.months[m.key]?.revenue || 0), 0);
+                     return rv > 0 ? Math.round(g / rv * 100) : null; })()
+          : months.reduce((a, m) => a + (r.months[m.key]?.[key] || 0), 0);
+        html += `<td class="text-end" style="${SEP}padding:3px 12px">${_unitFmt(key, tot)}</td></tr>`;
+      });
+    }
+  });
+
+  html += `</tbody></table></div>`;
+  if (_unitData.detail_upto) {
+    html += `<div class="text-secondary small mt-2">Продвижение и удержания распределены по SKU пропорционально доле выручки месяца. Отчёт реализации — по ${_unitData.detail_upto}.</div>`;
+  }
   wrap.innerHTML = html;
 }
 
