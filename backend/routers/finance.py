@@ -276,7 +276,11 @@ async def get_wb_pnl(
     global _pnl_cache, _pnl_cache_ts, _detail_cache_ts
 
     if not refresh and _pnl_cache and _time.monotonic() - _pnl_cache_ts < _WB_TTL:
-        return _pnl_cache
+        # ГОНКА: P&L мог закешироваться как weekly, пока детали ещё качались.
+        # Если детальный кеш уже готов — не отдаём устаревший weekly, пересобираем.
+        if _pnl_cache.get("source") == "detail" or not _detail_cache.get("rows"):
+            return _pnl_cache
+        _log.info("P&L cache is weekly but detail is ready — rebuilding")
 
     # Диапазон дат
     dt_to   = datetime.utcnow() + timedelta(hours=3)
