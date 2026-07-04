@@ -112,11 +112,13 @@ _detail_lock = asyncio.Lock()
 
 
 _detail_fetching: bool = False  # идёт ли фоновая загрузка
+_detail_last_error: str = ""
 
 
 async def _fetch_detail_bg(date_from: str, date_to: str) -> None:
     """Фоновая задача: загружает детальный отчёт (медленно, 1 req/min) и кеширует."""
-    global _detail_cache, _detail_cache_ts, _detail_fetching
+    global _detail_cache, _detail_cache_ts, _detail_fetching, _detail_last_error
+    global _pnl_cache, _pnl_cache_ts
     if _detail_fetching:
         return
     _detail_fetching = True
@@ -126,8 +128,14 @@ async def _fetch_detail_bg(date_from: str, date_to: str) -> None:
             rows = await wb_finance_client.get_detailed_report(date_from, date_to)
             _detail_cache = {"key": cache_key, "rows": rows}
             _detail_cache_ts = _time.monotonic()
+            _detail_last_error = ""
             _log.info("Detail report cached: %d rows", len(rows))
+        # детали готовы → сбрасываем P&L-кэш, чтобы следующий запрос пересобрал
+        # отчёт по точным датам (иначе weekly-версия жила бы до конца TTL)
+        _pnl_cache = {}
+        _pnl_cache_ts = 0.0
     except Exception as e:
+        _detail_last_error = str(e)[:300]
         _log.error("Detail report fetch failed: %s", e)
     finally:
         _detail_fetching = False
@@ -165,15 +173,14 @@ async def get_wb_pnl(
     # Сводные отчёты — быстро (кеш 1ч)
     summary_reports = await _get_wb_reports_cached(months, refresh)
 
-    # Детальный отчёт — берём из кеша если есть, иначе запускаем фоновую загрузку
+    # Детальный отчёт — берём из кеша если есть, иначе запускаем фоновую загрузку.
+    # ВАЖНО: refresh НЕ сбрасывает детальный кеш — его загрузка идёт с лимитом
+    # 1 запрос/мин и занимает минуты; сброс возвращал бы weekly-цифры и
+    # перезапускал загрузку по кругу. Детали протухают сами по TTL (24ч).
     cache_key = f"{date_from}_{date_to}"
     detail_ready = (_detail_cache.get("key") == cache_key
                     and _time.monotonic() - _detail_cache_ts < _DETAIL_TTL)
-    if refresh or not detail_ready:
-        if refresh:
-            _detail_cache.clear()
-            _detail_cache_ts = 0.0
-        # Запускаем фоновую загрузку (не блокируем ответ)
+    if not detail_ready:
         asyncio.create_task(_fetch_detail_bg(date_from, date_to))
     detail_rows = _get_detail_if_ready(date_from, date_to)
 
@@ -301,6 +308,8 @@ async def get_wb_pnl(
         "cogs_loaded": len(costs) > 0,
         "cogs_has_data": cogs_has_data,
         "source": source,
+        "detail_fetching": _detail_fetching,
+        "detail_error": _detail_last_error,
         "fetched_at": _wb_cache.get("fetched_at", ""),
     }
     _pnl_cache = result

@@ -1428,6 +1428,7 @@ function renderHistory(d) {
 
 let _financeData = { WB: null, OZON: null, YM: null, TOTAL: null };
 let _financeMp = 'WB';
+let _wbPnlPolling = false;
 
 function setFinanceMp(mp) {
   _financeMp = mp;
@@ -1640,7 +1641,21 @@ function renderFinanceTable() {
     html += `<div class="text-info small mt-2">⏳ Детальный отчёт WB загружается в фоне (1 запрос/мин). Обновите страницу через несколько минут — строка Себестоимость заполнится.</div>`;
   }
   if (d.source === 'weekly') {
-    html += `<div class="text-info small mt-2">⏳ Пока показаны данные недельных отчётов (недели, попавшие в два месяца, разделены пропорционально). После загрузки детального отчёта цифры пересчитаются по точным датам операций — как в кабинете WB.</div>`;
+    if (d.detail_error) {
+      html += `<div class="text-danger small mt-2">⚠ Детальный отчёт WB не загрузился: ${d.detail_error}. Показаны приблизительные недельные данные. Повторная попытка при следующем запросе.</div>`;
+    } else {
+      html += `<div class="text-info small mt-2">⏳ Детальный отчёт WB загружается (лимит 1 запрос/мин, обычно 2-5 минут). Пока показаны недельные данные — после загрузки цифры пересчитаются по точным датам операций, как в кабинете WB. Страница обновится сама.</div>`;
+    }
+    // автоматически перепроверяем, пересобрался ли отчёт по деталям
+    if (mp === 'WB' && !_wbPnlPolling) {
+      _wbPnlPolling = true;
+      setTimeout(() => {
+        _wbPnlPolling = false;
+        _financeData.WB = null;
+        _financeData.TOTAL = null;
+        if (_financeMp === 'WB') renderFinanceTable(); else loadFinanceMp('WB');
+      }, 30000);
+    }
   }
   if (d.fetched_at) html += `<div class="text-secondary text-end small mt-1">Обновлено: ${d.fetched_at}</div>`;
   wrap.innerHTML = html;
