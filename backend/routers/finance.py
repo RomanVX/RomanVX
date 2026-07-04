@@ -145,6 +145,7 @@ def _normalize_stat_rows(stat_rows: list[dict]) -> list[dict]:
         pre_spp = (r.get("retail_price_withdisc_rub") or 0) * (qty or 1)
         out.append({
             "rrDate":          (r.get("rr_dt") or r.get("sale_dt") or "")[:10],
+            "saleDate":        (r.get("sale_dt") or r.get("rr_dt") or "")[:10],
             "docTypeName":     r.get("doc_type_name") or "",
             "retailAmount":    r.get("retail_amount") or 0,
             "retailPreSpp":    pre_spp,
@@ -285,12 +286,16 @@ async def get_wb_pnl(
     # ВАЖНО: refresh НЕ сбрасывает детальный кеш — его загрузка идёт с лимитом
     # 1 запрос/мин и занимает минуты; сброс возвращал бы weekly-цифры и
     # перезапускал загрузку по кругу. Детали протухают сами по TTL (24ч).
-    cache_key = f"{date_from}_{date_to}"
+    # dateTo сдвигаем на неделю вперёд: отчёт реализации отдаёт только
+    # СФОРМИРОВАННЫЕ недели, и хвост месяца появляется в отчёте следующей
+    # недели — так он подтянется сразу после формирования.
+    detail_to = (dt_to + timedelta(days=7)).strftime("%Y-%m-%d")
+    cache_key = f"{date_from}_{detail_to}"
     detail_ready = (_detail_cache.get("key") == cache_key
                     and _time.monotonic() - _detail_cache_ts < _DETAIL_TTL)
     if not detail_ready:
-        _spawn(_fetch_detail_bg(date_from, date_to))
-    detail_rows = _get_detail_if_ready(date_from, date_to)
+        _spawn(_fetch_detail_bg(date_from, detail_to))
+    detail_rows = _get_detail_if_ready(date_from, detail_to)
 
     # ── Агрегируем сводные отчёты по месяцам (пропорционально дням) ────────────
     SUM_KEYS = ["retailAmount","forPay","deliveryService","paidStorage",
@@ -363,30 +368,32 @@ async def get_wb_pnl(
             rr = (row.get("rrDate") or row.get("saleDt") or "")[:10]
             if not rr:
                 continue
-            mk = rr[:7]
-            m = d_ensure(mk)
+            mk = rr[:7]                       # месяц операции (затраты)
             doc_type = row.get("docTypeName", "")
             sign = 1
             if doc_type == "Возврат":
                 sign = -1
             if doc_type in ("Продажа", "Возврат", "Корректировка"):
-                # выручка «до СПП» (цена продавца); fallback — фактическая сумма
+                # продажи кабинет группирует по ДАТЕ ПРОДАЖИ (sale_dt), а не по
+                # дате операции — иначе недели на стыке месяцев уезжают не туда
+                mk_sale = (row.get("saleDate") or rr)[:7]
+                ms = d_ensure(mk_sale)
                 base = abs(_f(row.get("retailPreSpp"))) or abs(_f(row.get("retailAmount")))
-                m["retailAmount"] += sign * base
-                m["forPay"]       += sign * abs(_f(row.get("forPay")))
-            # операционные затраты лежат в своих полях на любых строках
+                ms["retailAmount"] += sign * base
+                ms["forPay"]       += sign * abs(_f(row.get("forPay")))
+                # COGS: количество проданного × закупочная (возврат — минус)
+                qty = int(row.get("quantity") or 0)
+                uc = _unit_cost(row)
+                if uc > 0 and qty > 0:
+                    cogs_by_month[mk_sale] = cogs_by_month.get(mk_sale, 0.0) + sign * uc * qty
+            # операционные затраты — по дате операции, на любых строках
+            m = d_ensure(mk)
             m["deliveryService"] += _f(row.get("deliveryService"))
             m["paidStorage"]     += _f(row.get("paidStorage"))
             m["paidAcceptance"]  += _f(row.get("paidAcceptance"))
             m["penalty"]         += _f(row.get("penalty"))
             m["deduction"]       += _f(row.get("deduction"))
             m["cashbackAmount"]  += _f(row.get("cashbackAmount"))
-            # COGS: количество проданного × закупочная (возврат — минус)
-            if doc_type in ("Продажа", "Возврат", "Корректировка"):
-                qty = int(row.get("quantity") or 0)
-                uc = _unit_cost(row)
-                if uc > 0 and qty > 0:
-                    cogs_by_month[mk] = cogs_by_month.get(mk, 0.0) + sign * uc * qty
 
         if detail_totals:
             month_totals = detail_totals
