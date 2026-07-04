@@ -9,14 +9,14 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" />
-  <link rel="stylesheet" href="style.css?v=6" />
+  <link rel="stylesheet" href="style.css?v=7" />
 </head>
 <body>
 
 <!-- ══ LOGIN OVERLAY ══ -->
 <div id="loginOverlay" class="mp-overlay">
   <div class="mp-box">
-    <img src="/static/mp_logo_light.svg" alt="Market Partners" class="mp-logo" />
+    <img src="/static/mp_logo_mono.svg" alt="Market Partners" class="mp-logo" />
     <h2 class="mp-title">Вход в систему</h2>
     <input id="loginUser" type="text" class="mp-input" placeholder="Логин" autocomplete="username" />
     <input id="loginPass" type="password" class="mp-input" placeholder="Пароль" autocomplete="current-password" />
@@ -28,7 +28,7 @@
 <!-- ══ CABINET OVERLAY ══ -->
 <div id="cabinetOverlay" class="mp-overlay" style="display:none">
   <div class="mp-box" style="max-width:540px">
-    <img src="/static/mp_logo_light.svg" alt="Market Partners" class="mp-logo" />
+    <img src="/static/mp_logo_mono.svg" alt="Market Partners" class="mp-logo" />
     <h2 class="mp-title">Выберите кабинет</h2>
     <div class="mp-cab-grid">
       <div id="cabBiomed" class="mp-cab-card" onclick="enterCabinet()">
@@ -42,9 +42,7 @@
 <!-- ══ NAVBAR ══ -->
 <nav class="navbar navbar-dark px-3" id="mainNav" style="display:none">
   <div class="d-flex align-items-center gap-3">
-    <span class="brand-chip">
-      <img src="/static/mp_logo_light.svg" alt="Market Partners" />
-    </span>
+    <span class="brand-text">MARKET PARTNERS</span>
     <span class="navbar-brand fw-bold fs-6 mb-0 d-none d-md-inline">
       <img src="/static/lion_logo.svg" alt="" style="width:26px;height:26px;margin-right:8px;vertical-align:-6px" />Biomed Nutrition — аналитика
     </span>

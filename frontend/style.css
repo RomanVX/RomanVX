@@ -62,16 +62,14 @@ body {
 
 .navbar .navbar-brand { letter-spacing: .02em; }
 
-/* белая плашка под логотип в шапке */
-.brand-chip {
-  display: inline-flex;
-  align-items: center;
-  background: #fff;
-  border-radius: 10px;
-  padding: 5px 12px;
-  box-shadow: 0 2px 10px rgba(0,0,0,.4);
+/* название компании в шапке — просто белым */
+.brand-text {
+  color: #fff;
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 3px;
+  white-space: nowrap;
 }
-.brand-chip img { height: 30px; display: block; }
 
 /* ══ Вкладки ══ */
 .nav-tabs {
@@ -199,13 +197,11 @@ body {
 ::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: #454e6e; }
 
-/* ══ Логин / выбор кабинета ══ */
+/* ══ Логин / выбор кабинета — строго чёрно-белые ══ */
 .mp-overlay {
   position: fixed;
   inset: 0;
-  background:
-    radial-gradient(900px 460px at 50% -10%, rgba(201,168,76,.10), transparent 60%),
-    #0a0b10;
+  background: #0a0a0a;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -219,9 +215,9 @@ body {
   text-align: center;
   padding: 46px 42px 38px;
   background: #ffffff;
-  border: 1px solid #e8e4d8;
+  border: 1px solid #e5e5e5;
   border-radius: 22px;
-  box-shadow: 0 30px 90px rgba(0,0,0,.65), 0 0 0 1px rgba(201,168,76,.25);
+  box-shadow: 0 30px 90px rgba(0,0,0,.7);
 }
 
 .mp-logo {
@@ -233,7 +229,7 @@ body {
 .mp-title {
   font-size: 13px;
   font-weight: 600;
-  color: #8a8266;
+  color: #6b6b6b;
   margin: 0 0 22px;
   letter-spacing: 2px;
   text-transform: uppercase;
@@ -244,19 +240,19 @@ body {
   width: 100%;
   padding: 14px 18px;
   margin-bottom: 12px;
-  background: #f7f5ef;
-  color: #1c1c1c;
-  border: 1px solid #ddd8c8;
+  background: #f5f5f5;
+  color: #111;
+  border: 1px solid #dcdcdc;
   border-radius: 12px;
   font-size: 15px;
   font-family: inherit;
   outline: none;
   transition: border-color .2s, box-shadow .2s;
 }
-.mp-input::placeholder { color: #a09a86; }
+.mp-input::placeholder { color: #9a9a9a; }
 .mp-input:focus {
-  border-color: var(--gold);
-  box-shadow: 0 0 0 3px rgba(201,168,76,.22);
+  border-color: #111;
+  box-shadow: 0 0 0 3px rgba(0,0,0,.1);
   background: #fff;
 }
 
@@ -270,14 +266,14 @@ body {
   font-weight: 700;
   font-family: inherit;
   letter-spacing: .5px;
-  color: #14110a;
-  background: var(--gold-grad);
+  color: #fff;
+  background: #111;
   cursor: pointer;
-  transition: transform .15s, box-shadow .15s, filter .15s;
-  box-shadow: 0 6px 22px rgba(201,168,76,.35);
+  transition: transform .15s, box-shadow .15s, background .15s;
+  box-shadow: 0 6px 22px rgba(0,0,0,.25);
 }
-.mp-btn:hover  { filter: brightness(1.07); transform: translateY(-2px); box-shadow: 0 12px 34px rgba(201,168,76,.45); }
-.mp-btn:active { transform: translateY(0); filter: brightness(.95); }
+.mp-btn:hover  { background: #2b2b2b; transform: translateY(-2px); box-shadow: 0 12px 30px rgba(0,0,0,.35); }
+.mp-btn:active { transform: translateY(0); background: #000; }
 
 .mp-error { color: #c0392b; min-height: 20px; margin-top: 12px; font-size: 13px; }
 
@@ -291,8 +287,8 @@ body {
 .mp-cab-card {
   width: 180px;
   height: 180px;
-  background: #faf9f5;
-  border: 1px solid #e3ddcb;
+  background: #fafafa;
+  border: 1px solid #e0e0e0;
   border-radius: 16px;
   display: flex;
   flex-direction: column;
@@ -302,14 +298,14 @@ body {
   cursor: pointer;
   transition: all .25s;
   padding: 16px;
-  color: #2a2a2a;
+  color: #1c1c1c;
   font-weight: 600;
   font-size: 14px;
 }
 .mp-cab-card:hover {
   transform: translateY(-6px);
-  border-color: var(--gold);
-  box-shadow: 0 12px 36px rgba(201,168,76,.3);
+  border-color: #111;
+  box-shadow: 0 12px 36px rgba(0,0,0,.25);
 }
 
 /* ══ Метрики (P&L карточки) ══ */
