@@ -459,6 +459,14 @@ async def get_wb_pnl(
                 _log.warning("WB tail sales failed: %s", e)
 
         if detail_totals:
+            # Удержания (Джем, списания за отзывы, «другие») в детальном отчёте
+            # ОТСУТСТВУЮТ — WB отдаёт их только в недельных сводных отчётах.
+            # Переносим их из weekly-агрегации (месяцы разбиты пропорционально).
+            for mk, dm in detail_totals.items():
+                wm = month_totals.get(mk) or {}
+                dm["deduction"]      = wm.get("deduction", 0.0)
+                dm["cashbackAmount"] = wm.get("cashbackAmount", 0.0)
+                dm["cashbackCommission"] = wm.get("cashbackCommission", 0.0)
             month_totals = detail_totals
             source = "detail"
 
@@ -475,15 +483,19 @@ async def get_wb_pnl(
     for mk, m in month_totals.items():
         m["commission"] = m.get("retailAmount", 0.0) - m.get("forPay", 0.0)
         adv_info = advert_by_month.get(mk) or {}
-        adv_total = adv_info.get("total", 0.0)
-        adv_bonus = adv_info.get("bonus", 0.0)
+        adv_total   = adv_info.get("total", 0.0)
+        adv_bonus   = adv_info.get("bonus", 0.0)
+        adv_balance = adv_info.get("balance", 0.0)
         # промо-бонусы WB компенсируют часть рекламы — в затраты идёт чистое
         # списание, бонусная часть показывается справочной строкой
         m["advert"] = adv_total - adv_bonus
         advert_bonus_by_month[mk] = adv_bonus
+        # В «Удержаниях» WB сидит реклама, оплаченная С БАЛАНСА продаж —
+        # вычитаем ровно её (не всю), чтобы не задвоить. Остаток — Джем,
+        # списания за отзывы и прочие удержания.
         deductions_full = (m.get("deduction", 0.0) + m.get("cashbackAmount", 0.0)
                            + m.get("cashbackCommission", 0.0))
-        m["deductions"] = max(deductions_full - adv_total, 0.0)
+        m["deductions"] = max(deductions_full - adv_balance, 0.0)
 
     pnl_rows = _build_pnl_rows(
         month_totals, cogs_by_month,
@@ -494,7 +506,7 @@ async def get_wb_pnl(
             ("paidStorage",    "  − Хранение",                  "cost"),
             ("paidAcceptance", "  − Приёмка",                   "cost"),
             ("penalty",        "  − Штрафы",                    "cost"),
-            ("deductions",     "  − Прочие удержания и кэшбэк", "cost"),
+            ("deductions",     "  − Прочие удержания (Джем, отзывы и др.)", "cost"),
             ("advert",         "  − Продвижение (за вычетом бонусов)", "cost"),
         ],
     )

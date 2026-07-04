@@ -162,11 +162,16 @@ async def get_spend_by_month(date_from: datetime, date_to: datetime) -> dict[str
                 mk = (rec.get("updTime") or "")[:7]
                 if not mk:
                     continue
-                m = spend.setdefault(mk, {"total": 0.0, "bonus": 0.0})
+                m = spend.setdefault(mk, {"total": 0.0, "bonus": 0.0, "balance": 0.0})
                 amt = float(rec.get("updSum") or 0)
                 m["total"] += amt
                 if _is_bonus_payment(rec):
                     m["bonus"] += amt
+                else:
+                    pt = str(rec.get("paymentType") or "").lower()
+                    if "баланс" in pt:
+                        # списано с баланса продаж — в кабинете сидит в «Удержаниях»
+                        m["balance"] += amt
         except Exception as e:
             _log.warning("[ADVERT] upd %s–%s failed: %s", cur.date(), chunk_end.date(), e)
         cur = chunk_end + timedelta(days=1)
