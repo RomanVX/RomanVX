@@ -120,8 +120,38 @@ _detail_fetching: bool = False  # идёт ли фоновая загрузка
 _detail_last_error: str = ""
 
 
+def _normalize_stat_rows(stat_rows: list[dict]) -> list[dict]:
+    """statistics-api reportDetailByPeriod (v5) → формат finance-api detailed.
+
+    Кабинетная «Финансовая аналитика» строится из этого же отчёта,
+    поэтому цифры сходятся с ЛК.
+    """
+    out = []
+    for r in stat_rows:
+        out.append({
+            "rrDate":          (r.get("rr_dt") or r.get("sale_dt") or "")[:10],
+            "docTypeName":     r.get("doc_type_name") or "",
+            "retailAmount":    r.get("retail_amount") or 0,
+            "forPay":          r.get("ppvz_for_pay") or 0,
+            "deliveryService": r.get("delivery_rub") or 0,
+            "paidStorage":     r.get("storage_fee") or 0,
+            "paidAcceptance":  r.get("acceptance") or 0,
+            "penalty":         r.get("penalty") or 0,
+            "deduction":       r.get("deduction") or 0,
+            "cashbackAmount":  0,
+            "vendorCode":      (r.get("sa_name") or "").strip(),
+            "quantity":        r.get("quantity") or 0,
+        })
+    return out
+
+
 async def _fetch_detail_bg(date_from: str, date_to: str) -> None:
-    """Фоновая задача: загружает детальный отчёт (медленно, 1 req/min) и кеширует."""
+    """Фоновая задача: детальные строки для P&L.
+
+    Основной источник — statistics-api reportDetailByPeriod (отдельный
+    rate-limit, весь период за 1-2 запроса). Фолбэк — finance-api
+    detailed (общий лимит 1 req/мин, загрузка занимает минуты).
+    """
     global _detail_cache, _detail_cache_ts, _detail_fetching, _detail_last_error
     global _pnl_cache, _pnl_cache_ts
     if _detail_fetching:
@@ -130,11 +160,26 @@ async def _fetch_detail_bg(date_from: str, date_to: str) -> None:
     try:
         cache_key = f"{date_from}_{date_to}"
         async with _detail_lock:
-            rows = await wb_finance_client.get_detailed_report(date_from, date_to)
+            rows: list[dict] = []
+            try:
+                import wb_client
+                stat_rows = await wb_client.get_report_detail(
+                    datetime.strptime(date_from, "%Y-%m-%d"),
+                    datetime.strptime(date_to, "%Y-%m-%d"),
+                )
+                rows = _normalize_stat_rows(stat_rows)
+                if rows:
+                    _log.info("Detail via statistics-api: %d rows", len(rows))
+            except Exception as e:
+                _log.warning("statistics-api detail failed (%s) — пробуем finance-api", e)
+
+            if not rows:
+                rows = await wb_finance_client.get_detailed_report(date_from, date_to)
+                _log.info("Detail via finance-api: %d rows", len(rows))
+
             _detail_cache = {"key": cache_key, "rows": rows}
             _detail_cache_ts = _time.monotonic()
             _detail_last_error = ""
-            _log.info("Detail report cached: %d rows", len(rows))
         # детали готовы → сбрасываем P&L-кэш, чтобы следующий запрос пересобрал
         # отчёт по точным датам (иначе weekly-версия жила бы до конца TTL)
         _pnl_cache = {}

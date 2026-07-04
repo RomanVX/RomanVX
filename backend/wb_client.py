@@ -200,10 +200,23 @@ async def get_report_detail(date_from: datetime, date_to: datetime) -> list[dict
     dt_str = date_to.strftime("%Y-%m-%d")
 
     while True:
-        data = await _get(
-            f"{REPORT_BASE}/api/v5/supplier/reportDetailByPeriod",
-            {"dateFrom": df_str, "dateto": dt_str, "limit": 100_000, "rrdid": rrdid},
-        )
+        # 429-retry: лимит 1 req/мин на метод
+        data = None
+        for attempt in range(4):
+            resp = await _http().get(
+                f"{REPORT_BASE}/api/v5/supplier/reportDetailByPeriod",
+                headers=_headers(),
+                params={"dateFrom": df_str, "dateto": dt_str, "limit": 100_000, "rrdid": rrdid},
+            )
+            if resp.status_code == 429:
+                _log.warning("reportDetailByPeriod 429 — ждём 62с (%d/3)", attempt + 1)
+                await asyncio.sleep(62)
+                continue
+            if not resp.is_success:
+                _log.error("reportDetailByPeriod → %s %s", resp.status_code, resp.text[:300])
+                resp.raise_for_status()
+            data = resp.json()
+            break
         if not data:
             break
         all_records.extend(data)
@@ -211,5 +224,6 @@ async def get_report_detail(date_from: datetime, date_to: datetime) -> list[dict
         if len(data) < 100_000:
             break
         rrdid = data[-1]["rrd_id"]
+        await asyncio.sleep(62)  # лимит между страницами
 
     return all_records
