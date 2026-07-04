@@ -480,6 +480,7 @@ async def get_wb_pnl(
     # без двойного счёта. Если реклама платилась со счёта (не из баланса),
     # прочие удержания просто останутся 0, а расход всё равно виден в P&L.
     advert_bonus_by_month: dict[str, float] = {}
+    advert_balance_by_month: dict[str, float] = {}
     for mk, m in month_totals.items():
         m["commission"] = m.get("retailAmount", 0.0) - m.get("forPay", 0.0)
         adv_info = advert_by_month.get(mk) or {}
@@ -490,6 +491,7 @@ async def get_wb_pnl(
         # списание, бонусная часть показывается справочной строкой
         m["advert"] = adv_total - adv_bonus
         advert_bonus_by_month[mk] = adv_bonus
+        advert_balance_by_month[mk] = adv_balance
         # В «Удержаниях» WB сидит реклама, оплаченная С БАЛАНСА продаж —
         # вычитаем ровно её (не всю), чтобы не задвоить. Остаток — Джем,
         # списания за отзывы и прочие удержания.
@@ -511,17 +513,25 @@ async def get_wb_pnl(
         ],
     )
 
-    # Справочная строка: сколько рекламы компенсировано промо-бонусами WB
-    # (в затратах НЕ учитывается — уже вычтено из строки «Продвижение»)
-    if any(v > 0 for v in advert_bonus_by_month.values()):
-        sorted_mks = sorted(month_totals.keys(), reverse=True)
-        bonus_row = {"key": "advert_bonus",
-                     "label": "      ↳ компенсировано промо-бонусами WB",
-                     "style": "note", "formula": "info",
-                     "values": {mk: round(advert_bonus_by_month.get(mk, 0.0)) for mk in sorted_mks}}
-        adv_idx = next((i for i, r in enumerate(pnl_rows) if r["key"] == "advert"), None)
-        if adv_idx is not None:
-            pnl_rows.insert(adv_idx + 1, bonus_row)
+    # Справочные строки под «Продвижением» (в затратах не задваиваются):
+    #  - сколько списано с баланса продаж (= строка «Продвижение» в удержаниях кабинета)
+    #  - сколько компенсировано промо-бонусами WB (уже вычтено из затрат)
+    sorted_mks = sorted(month_totals.keys(), reverse=True)
+    adv_idx = next((i for i, r in enumerate(pnl_rows) if r["key"] == "advert"), None)
+    if adv_idx is not None:
+        extra_rows = []
+        if any(v > 0 for v in advert_balance_by_month.values()):
+            extra_rows.append({"key": "advert_balance",
+                               "label": "      ↳ из них с баланса продаж (в кабинете — «Продвижение» в удержаниях)",
+                               "style": "note", "formula": "info",
+                               "values": {mk: round(advert_balance_by_month.get(mk, 0.0)) for mk in sorted_mks}})
+        if any(v > 0 for v in advert_bonus_by_month.values()):
+            extra_rows.append({"key": "advert_bonus",
+                               "label": "      ↳ компенсировано промо-бонусами WB",
+                               "style": "note", "formula": "info",
+                               "values": {mk: round(advert_bonus_by_month.get(mk, 0.0)) for mk in sorted_mks}})
+        for j, er in enumerate(extra_rows):
+            pnl_rows.insert(adv_idx + 1 + j, er)
 
     cogs_has_data = len(costs) > 0 and any(v > 0 for v in cogs_by_month.values())
     result = {

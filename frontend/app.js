@@ -1609,6 +1609,9 @@ function renderFinanceTable() {
     if (key === 'advert_bonus') {
       return `<span style="color:#86efac">${fmtRub(Math.abs(val))}</span>`;
     }
+    if (key === 'advert_balance') {
+      return `<span style="color:#94a3b8">${fmtRub(Math.abs(val))}</span>`;
+    }
     // ключевые строки — белым жирным, затраты — светлым с красным минусом
     const emphasized = style === 'header' || style === 'subtotal' || style === 'total';
     if (emphasized) {
