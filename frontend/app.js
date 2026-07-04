@@ -1429,6 +1429,14 @@ function renderHistory(d) {
 let _financeData = { WB: null, OZON: null, YM: null, TOTAL: null };
 let _financeMp = 'WB';
 let _wbPnlPolling = false;
+let _finCompact = false;
+
+function toggleFinCompact() {
+  _finCompact = !_finCompact;
+  const btn = document.getElementById('finCompactBtn');
+  if (btn) btn.classList.toggle('active', _finCompact);
+  renderFinanceTable();
+}
 
 function setFinanceMp(mp) {
   _financeMp = mp;
@@ -1545,66 +1553,63 @@ function renderFinanceTable() {
   }
   if (d.error)   { wrap.innerHTML = `<div class="alert alert-danger mt-3">Ошибка: ${d.error}</div>`; return; }
 
-  const months = d.months || [];
-  const rows   = d.rows   || [];
+  const rows = d.rows || [];
+  // Хронология слева направо (как в заказах): старые месяцы слева, свежие справа
+  let months = [...(d.months || [])].sort((a, b) => a.key.localeCompare(b.key));
+  if (_finCompact && months.length > 2) months = months.slice(-2);
   if (!months.length) { wrap.innerHTML = '<div class="text-secondary text-center py-4">Данных нет</div>'; return; }
 
-  const MP_COLOR = { WB: '#c026d3', OZON: '#3b82f6', YM: '#b45309' };
+  const MP_COLOR = { WB: '#c026d3', OZON: '#3b82f6', YM: '#b45309', TOTAL: '#059669' };
   const col = MP_COLOR[mp] || '#c026d3';
-  const SEP = 'border-left:2px solid #3a3f5c;';
+  const SEP = 'border-left:2px solid #2a2a3e;';
 
-  // Стили строк
+  // Стили строк — читаемо, как в заказах: белые жирные цифры на ключевых строках
   const ROW_STYLE = {
-    header:   `background:#1a1c2a;font-weight:600`,
+    header:   `background:#1a1c2a`,
     cost:     `background:#0d0e1a`,
-    note:     `background:transparent;font-style:italic;font-size:0.78rem`,
-    subtotal: `background:#1e2035;font-weight:700;border-top:2px solid #3a3f5c`,
-    total:    `background:#0d2010;font-weight:700;border-top:2px solid #16a34a`,
+    note:     `background:transparent;font-style:italic`,
+    subtotal: `background:#1e2035;border-top:2px solid #3a3f5c`,
+    total:    `background:#0d2010;border-top:2px solid #16a34a`,
     pct:      `background:#0a1a0a;font-style:italic`,
     normal:   `background:#111`,
   };
-  const COL_COLOR = {
-    retailAmount: col, bankPayment: '#4ade80', gross: '#4ade80',
-    commission: '#f87171', deliveryService: '#f87171', delivery: '#f87171',
-    paidStorage: '#f87171', paidAcceptance: '#f87171', processing: '#f87171',
-    acquiring: '#f87171', services: '#f87171', mpCosts: '#f87171',
-    penalty: '#fbbf24', deduction: '#fbbf24', deductions: '#fbbf24',
-    cashbackAmount: '#94a3b8', otherServices: '#94a3b8',
-    advert: '#c084fc', advert_bonus: '#86efac',
-    cogs: '#f87171', gross_pct: '#4ade80',
-  };
-
-  function cellColor(key, val) {
-    if (val === 0) return '#64748b';
-    return COL_COLOR[key] || '#e2e8f0';
-  }
 
   function fmtCell(key, val, style) {
     if (key === 'gross_pct') {
       const clr = val >= 20 ? '#4ade80' : val >= 10 ? '#fbbf24' : '#f87171';
-      return `<span style="color:${clr};font-weight:bold">${val}%</span>`;
+      return `<span style="color:${clr};font-weight:700">${val}%</span>`;
     }
     if (val === 0) return `<span class="text-muted small">—</span>`;
-    const clr = cellColor(key, val);
-    const sign = val < 0 ? '' : (key !== 'retailAmount' && key !== 'bankPayment' && key !== 'gross' ? '' : '');
-    return `<span style="color:${clr}">${val < 0 ? '−' : ''}${fmtRub(Math.abs(val))}</span>`;
+    if (key === 'advert_bonus') {
+      return `<span style="color:#86efac">${fmtRub(Math.abs(val))}</span>`;
+    }
+    // ключевые строки — белым жирным, затраты — светлым с красным минусом
+    const emphasized = style === 'header' || style === 'subtotal' || style === 'total';
+    if (emphasized) {
+      const c = key === 'gross' || key === 'bankPayment' ? '#4ade80' : '#ffffff';
+      return `<span style="color:${c};font-weight:700">${val < 0 ? '−' : ''}${fmtRub(Math.abs(val))}</span>`;
+    }
+    if (val < 0) {
+      return `<span style="color:#eef1f8"><span style="color:#f87171">−</span>${fmtRub(Math.abs(val))}</span>`;
+    }
+    return `<span style="color:#eef1f8">${fmtRub(val)}</span>`;
   }
 
-  // Итоговая колонка (сумма по всем месяцам)
+  // Итоговая колонка — по видимым месяцам
   function rowTotal(row) {
     if (row.formula === 'gross_pct') return null; // % не суммируется
-    return Object.values(row.values).reduce((a, v) => a + v, 0);
+    return months.reduce((a, m) => a + (row.values[m.key] || 0), 0);
   }
 
-  let html = `<div class="table-responsive"><table class="table table-sm align-middle mb-0 text-nowrap" style="font-size:0.83rem">`;
+  let html = `<div class="table-responsive"><table class="table table-sm align-middle mb-0 text-nowrap" style="font-size:0.85rem">`;
 
   // thead
   html += `<thead><tr>
-    <th style="min-width:200px;position:sticky;left:0;background:#181a20;z-index:2">Статья</th>`;
+    <th style="min-width:230px;position:sticky;left:0;background:#181a20;z-index:2">Статья</th>`;
   months.forEach(m => {
-    html += `<th class="text-end" style="${SEP}min-width:110px">${m.label}</th>`;
+    html += `<th class="text-end" style="${SEP}min-width:112px">${m.label}</th>`;
   });
-  html += `<th class="text-end" style="${SEP}min-width:120px;color:${col}">Итого</th>`;
+  html += `<th class="text-end" style="${SEP}min-width:124px;color:${col}">Итого</th>`;
   html += `</tr></thead><tbody>`;
 
   rows.forEach(row => {
@@ -1612,16 +1617,18 @@ function renderFinanceTable() {
     const stickyBg = (row.style === 'total') ? '#0d2010'
                    : (row.style === 'subtotal') ? '#1e2035'
                    : (row.style === 'header') ? '#1a1c2a' : '#181a20';
+    const labelStyle = (row.style === 'note') ? 'color:#86efac;font-size:0.78rem' :
+                       (row.style === 'cost') ? 'color:#aab2c8' : 'color:#fff;font-weight:600';
     html += `<tr style="${st}">`;
-    html += `<td style="position:sticky;left:0;background:${stickyBg};padding:5px 10px">${row.label}</td>`;
+    html += `<td style="position:sticky;left:0;background:${stickyBg};padding:6px 12px;${labelStyle}">${row.label}</td>`;
     months.forEach(m => {
       const v = row.values[m.key] ?? 0;
-      html += `<td class="text-end" style="${SEP}padding:4px 10px">${fmtCell(row.key, v, row.style)}</td>`;
+      html += `<td class="text-end" style="${SEP}padding:5px 12px">${fmtCell(row.key, v, row.style)}</td>`;
     });
     // итоговая колонка
     const tot = rowTotal(row);
     if (tot !== null) {
-      html += `<td class="text-end fw-bold" style="${SEP}padding:4px 10px">${fmtCell(row.key, tot, row.style)}</td>`;
+      html += `<td class="text-end" style="${SEP}padding:5px 12px;background:rgba(201,168,76,.04)">${fmtCell(row.key, tot, row.style === 'cost' ? 'cost' : row.style)}</td>`;
     } else {
       // маржа итого считается от суммарных значений
       const gross = rows.find(r => r.key === 'gross');
@@ -1630,7 +1637,7 @@ function renderFinanceTable() {
       const rTot = retail ? rowTotal(retail) : 0;
       const pct = rTot > 0 ? Math.round(gTot / rTot * 100) : 0;
       const clr = pct >= 20 ? '#4ade80' : pct >= 10 ? '#fbbf24' : '#f87171';
-      html += `<td class="text-end fw-bold" style="${SEP}padding:4px 10px"><span style="color:${clr}">${pct}%</span></td>`;
+      html += `<td class="text-end fw-bold" style="${SEP}padding:5px 12px"><span style="color:${clr}">${pct}%</span></td>`;
     }
     html += `</tr>`;
   });

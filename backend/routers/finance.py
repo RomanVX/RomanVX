@@ -147,6 +147,7 @@ def _normalize_stat_rows(stat_rows: list[dict]) -> list[dict]:
             "rrDate":          (r.get("rr_dt") or r.get("sale_dt") or "")[:10],
             "saleDate":        (r.get("sale_dt") or r.get("rr_dt") or "")[:10],
             "docTypeName":     r.get("doc_type_name") or "",
+            "operName":        r.get("supplier_oper_name") or "",
             "retailAmount":    r.get("retail_amount") or 0,
             "retailPreSpp":    pre_spp,
             "forPay":          r.get("ppvz_for_pay") or 0,
@@ -232,15 +233,21 @@ async def wb_finance_debug():
     }
     rows = _detail_cache.get("rows", [])
     if rows:
-        sample = rows[0]
-        out["detail_sample"] = sample
-        # суммы июня для сверки
-        june = [r for r in rows if (r.get("rrDate") or "").startswith("2026-06")]
+        # разбивка июня по типам операций: что входит в выручку, а что пропускается
+        june = [r for r in rows if (r.get("saleDate") or r.get("rrDate") or "").startswith("2026-06")]
         out["june_rows"] = len(june)
-        out["june_retail_post_spp"] = round(sum(abs(float(r.get("retailAmount") or 0))
-                                                for r in june if r.get("docTypeName") == "Продажа"))
-        out["june_retail_pre_spp"] = round(sum(abs(float(r.get("retailPreSpp") or 0))
-                                               for r in june if r.get("docTypeName") == "Продажа"))
+        by_oper: dict = {}
+        for r in june:
+            key = f"{r.get('docTypeName') or '—'} / {r.get('operName') or '—'}"
+            b = by_oper.setdefault(key, {"rows": 0, "qty": 0, "pre_spp": 0.0, "post_spp": 0.0, "forPay": 0.0})
+            b["rows"] += 1
+            b["qty"] += int(r.get("quantity") or 0)
+            b["pre_spp"] += abs(float(r.get("retailPreSpp") or 0))
+            b["post_spp"] += abs(float(r.get("retailAmount") or 0))
+            b["forPay"] += float(r.get("forPay") or 0)
+        out["june_by_oper"] = {k: {kk: round(vv) if isinstance(vv, float) else vv
+                                   for kk, vv in v.items()}
+                               for k, v in sorted(by_oper.items())}
     # живая проба v5 (7 дней) — какие поля реально приходят
     try:
         import wb_client
@@ -364,29 +371,43 @@ async def get_wb_pnl(
                 uc = costs.get(_cat.resolve_wb(row.get("nmId")), 0.0)
             return uc
 
+        min_mk = date_from[:7]  # хвосты недель прошлого периода отсекаем
+
         for row in detail_rows:
             rr = (row.get("rrDate") or row.get("saleDt") or "")[:10]
             if not rr:
                 continue
             mk = rr[:7]                       # месяц операции (затраты)
             doc_type = row.get("docTypeName", "")
-            sign = 1
-            if doc_type == "Возврат":
-                sign = -1
-            if doc_type in ("Продажа", "Возврат", "Корректировка"):
+            oper = (row.get("operName") or "").lower()
+            # Продажи бывают с разными операциями (в т.ч. ВБ Клуб) и иногда с
+            # пустым doc_type — определяем по сумме продажи, а не только по типу
+            is_return = doc_type == "Возврат" or "возврат" in oper
+            if "сторно возврат" in oper:
+                is_return = False   # сторно возврата = отмена возврата → плюс
+            elif "сторно продаж" in oper:
+                is_return = True    # сторно продажи = минус
+            has_sale_amount = (_f(row.get("retailPreSpp")) != 0
+                               or (_f(row.get("retailAmount")) != 0
+                                   and int(row.get("quantity") or 0) > 0))
+            sign = -1 if is_return else 1
+            if has_sale_amount:
                 # продажи кабинет группирует по ДАТЕ ПРОДАЖИ (sale_dt), а не по
                 # дате операции — иначе недели на стыке месяцев уезжают не туда
                 mk_sale = (row.get("saleDate") or rr)[:7]
-                ms = d_ensure(mk_sale)
-                base = abs(_f(row.get("retailPreSpp"))) or abs(_f(row.get("retailAmount")))
-                ms["retailAmount"] += sign * base
-                ms["forPay"]       += sign * abs(_f(row.get("forPay")))
-                # COGS: количество проданного × закупочная (возврат — минус)
-                qty = int(row.get("quantity") or 0)
-                uc = _unit_cost(row)
-                if uc > 0 and qty > 0:
-                    cogs_by_month[mk_sale] = cogs_by_month.get(mk_sale, 0.0) + sign * uc * qty
+                if mk_sale >= min_mk:
+                    ms = d_ensure(mk_sale)
+                    base = abs(_f(row.get("retailPreSpp"))) or abs(_f(row.get("retailAmount")))
+                    ms["retailAmount"] += sign * base
+                    ms["forPay"]       += sign * abs(_f(row.get("forPay")))
+                    # COGS: количество проданного × закупочная (возврат — минус)
+                    qty = int(row.get("quantity") or 0)
+                    uc = _unit_cost(row)
+                    if uc > 0 and qty > 0:
+                        cogs_by_month[mk_sale] = cogs_by_month.get(mk_sale, 0.0) + sign * uc * qty
             # операционные затраты — по дате операции, на любых строках
+            if mk < min_mk:
+                continue
             m = d_ensure(mk)
             m["deliveryService"] += _f(row.get("deliveryService"))
             m["paidStorage"]     += _f(row.get("paidStorage"))
