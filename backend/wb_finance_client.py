@@ -1,9 +1,11 @@
 """Client for WB Finance API — sales reports list.
 
-Rate limit: 1 req/min per seller account.
+Rate limit: 1 req/min per seller account — ОБЩИЙ на все методы finance-api.
 Data available from 2025-01-01.
 """
+import asyncio
 import logging
+import time as _t
 from datetime import datetime, timedelta
 
 import httpx
@@ -14,9 +16,40 @@ _log = logging.getLogger(__name__)
 
 FINANCE_BASE = "https://finance-api.wildberries.ru"
 
+# Глобальный ограничитель: сводный список и детальный отчёт бьют в один
+# rate-limit — без координации они выбивают друг другу 429.
+_rate_lock = asyncio.Lock()
+_last_call: float = -1e9
+_MIN_INTERVAL = 62.0
+
+
+async def _rate_limit() -> None:
+    global _last_call
+    async with _rate_lock:
+        wait = _MIN_INTERVAL - (_t.monotonic() - _last_call)
+        if wait > 0:
+            _log.info("WB Finance rate-limit: пауза %.0fс", wait)
+            await asyncio.sleep(wait)
+        _last_call = _t.monotonic()
+
 
 def _headers() -> dict:
     return {"Authorization": WB_API_KEY, "Content-Type": "application/json"}
+
+
+async def _finance_post(url: str, body: dict, timeout: int = 60,
+                        retries: int = 3) -> httpx.Response:
+    """POST к finance-api с глобальным rate-limit и ретраями на 429."""
+    for attempt in range(retries + 1):
+        await _rate_limit()
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(url, headers=_headers(), json=body)
+        if resp.status_code != 429:
+            return resp
+        _log.warning("WB Finance 429 (%s), попытка %d/%d — ждём %.0fс",
+                     url.rsplit('/', 1)[-1], attempt + 1, retries, _MIN_INTERVAL)
+        await asyncio.sleep(_MIN_INTERVAL)
+    return resp
 
 
 async def get_sales_reports(
@@ -41,8 +74,7 @@ async def get_sales_reports(
             "limit": min(limit, 1000),
             "offset": offset,
         }
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(url, headers=_headers(), json=body)
+        resp = await _finance_post(url, body, timeout=30)
 
         if not resp.is_success:
             _log.error("WB Finance API %s → %s %s", url, resp.status_code, resp.text[:300])
@@ -74,8 +106,6 @@ async def get_detailed_report(
     Rate limit: 1 req/min. Пагинация по rrdId до ответа 204.
     Запрашиваем только нужные поля чтобы уменьшить объём.
     """
-    import asyncio
-
     if USE_MOCK:
         return _mock_detailed(date_from, date_to)
 
@@ -98,15 +128,10 @@ async def get_detailed_report(
             "period":   "weekly",
             "fields":   fields,
         }
-        async with httpx.AsyncClient(timeout=60) as client:
-            resp = await client.post(url, headers=_headers(), json=body)
+        resp = await _finance_post(url, body, timeout=60)
 
         if resp.status_code == 204:
             break  # нет данных / конец пагинации
-        if resp.status_code == 429:
-            _log.warning("WB Finance detailed 429 — ждём 62с")
-            await asyncio.sleep(62)
-            continue
         if not resp.is_success:
             _log.error("WB Finance detailed %s → %s %s", url, resp.status_code, resp.text[:300])
             resp.raise_for_status()
@@ -120,8 +145,7 @@ async def get_detailed_report(
         if last_rrd <= rrd_id or len(batch) < limit:
             break
         rrd_id = last_rrd
-        # rate limit: 1 req/min
-        await asyncio.sleep(62)
+        # пауза между страницами обеспечивается _rate_limit()
 
     return all_rows
 

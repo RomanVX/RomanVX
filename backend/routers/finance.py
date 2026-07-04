@@ -54,6 +54,11 @@ async def _get_wb_reports_cached(months: int = 6, refresh: bool = False) -> list
             raw = await wb_finance_client.get_sales_reports(date_from, date_to)
         except Exception as exc:
             _log.error("WB Finance API error: %s", exc)
+            # есть устаревший кеш — отдаём его вместо ошибки (429 пройдёт сам)
+            if _wb_cache.get("reports"):
+                _log.warning("WB Finance: отдаём устаревший кеш (%d отчётов)",
+                             len(_wb_cache["reports"]))
+                return _wb_cache["reports"]
             raise HTTPException(status_code=502, detail=f"WB Finance API: {exc}")
 
         rows = []
