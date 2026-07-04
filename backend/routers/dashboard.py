@@ -168,9 +168,27 @@ async def get_stocks_table():
         _stocks_cache_ts = _time.monotonic()
         return result
 
+# Группировка остатков как в UI: спец-подгруппы по SKU, затем бренд, иначе «Прочее»
+_STOCK_SUBGROUPS = [
+    ("Фисты",            {"BMN-0013", "BMN-0028", "BMN-0035", "BMN-0036", "ST-07"}),
+    ("Спреи для минета", {"BMN-0115", "BMN-0116", "BMN-0110"}),
+]
+_STOCK_BRANDS = ["Джага", "Satisfucktion", "Aloe"]
+_STOCK_GROUP_ORDER = ["Фисты", "Aloe", "Спреи для минета", "Satisfucktion", "Джага", "Прочее"]
+
+
+def _stock_group(row: dict) -> str:
+    sku = row.get("supplierArticle", "")
+    for gname, skus in _STOCK_SUBGROUPS:
+        if sku in skus:
+            return gname
+    brand = row.get("brand", "")
+    return brand if brand in _STOCK_BRANDS else "Прочее"
+
+
 @router.get("/stocks_export", include_in_schema=False)
 async def export_stocks_excel():
-    """Выгрузка таблицы остатков в Excel: все площадки, скорость продаж, статусы."""
+    """Выгрузка остатков в Excel: группы как в UI, все площадки, цветные «дней до OOS»."""
     import io
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Font, PatternFill
@@ -179,57 +197,81 @@ async def export_stocks_excel():
 
     rows = await get_stocks_table()
 
+    # группируем и сортируем как в UI (внутри группы — по средней скорости продаж)
+    groups: dict[str, list] = {}
+    for row in rows:
+        groups.setdefault(_stock_group(row), []).append(row)
+    for g in groups.values():
+        g.sort(key=lambda r: -(r.get("wb_per_day", 0) + r.get("oz_per_day", 0) + r.get("ym_per_day", 0)) / 3)
+
     wb_x = Workbook()
     ws = wb_x.active
     ws.title = "Остатки"
 
     now_msk = datetime.utcnow() + timedelta(hours=3)
+    N_COLS = 12
     ws["A1"] = (f"Остатки по площадкам на {now_msk.strftime('%d.%m.%Y %H:%M')} МСК "
                 "(скорость продаж — среднее за 28 дней)")
     ws["A1"].font = Font(bold=True, size=12)
-    ws.merge_cells("A1:N1")
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=N_COLS)
 
     headers = ["Артикул", "Название", "Бренд",
                "WB остаток", "WB шт/день", "WB дней",
                "Ozon остаток", "Ozon шт/день", "Ozon дней",
-               "ЯМ остаток", "ЯМ шт/день", "ЯМ дней",
-               "Мин. дней", "Статус"]
+               "ЯМ остаток", "ЯМ шт/день", "ЯМ дней"]
     for col, h in enumerate(headers, 1):
         c = ws.cell(row=2, column=col, value=h)
         c.font = Font(bold=True, color="FFFFFF")
         c.fill = PatternFill("solid", start_color="374151")
         c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
-    STATUS_RU   = {"red": "СРОЧНО ≤20 дн", "yellow": "Внимание 21-45 дн", "green": "OK >45 дн"}
-    STATUS_FILL = {"red": "FFC7CE", "yellow": "FFEB9C", "green": "C6EFCE"}
-    STATUS_FONT = {"red": "9C0006", "yellow": "9C6500", "green": "006100"}
+    DAYS_FILL = {"red": "FFC7CE", "yellow": "FFEB9C", "green": "C6EFCE"}
+    DAYS_FONT = {"red": "9C0006", "yellow": "9C6500", "green": "006100"}
+    GROUP_FILL = PatternFill("solid", start_color="D9D9D9")
 
-    def _days(d):
+    def _days_val(d):
         return "—" if d is None or d >= 999 else d
 
+    def _days_status(d):
+        if d is None or d >= 999:
+            return None
+        return "red" if d <= 20 else "yellow" if d <= 45 else "green"
+
     r = 3
-    for row in rows:
-        vals = [row.get("supplierArticle", ""), row.get("name", ""), row.get("brand", ""),
-                row.get("wb_qty", 0), row.get("wb_per_day", 0), _days(row.get("wb_days")),
-                row.get("oz_qty", 0), row.get("oz_per_day", 0), _days(row.get("oz_days")),
-                row.get("ym_qty", 0), row.get("ym_per_day", 0), _days(row.get("ym_days")),
-                _days(row.get("min_days")), STATUS_RU.get(row.get("status"), row.get("status", ""))]
-        for col, v in enumerate(vals, 1):
-            c = ws.cell(row=r, column=col, value=v)
-            if col in (5, 8, 11):
-                c.number_format = "0.00"
-        st = row.get("status", "")
-        sc = ws.cell(row=r, column=14)
-        sc.fill = PatternFill("solid", start_color=STATUS_FILL.get(st, "FFFFFF"))
-        sc.font = Font(color=STATUS_FONT.get(st, "000000"), bold=(st == "red"))
-        sc.alignment = Alignment(horizontal="center")
+    for gname in _STOCK_GROUP_ORDER:
+        grp_rows = groups.get(gname)
+        if not grp_rows:
+            continue
+        # строка-заголовок группы
+        gc = ws.cell(row=r, column=1, value=f"{gname} ({len(grp_rows)} арт.)")
+        gc.font = Font(bold=True, size=11)
+        for col in range(1, N_COLS + 1):
+            ws.cell(row=r, column=col).fill = GROUP_FILL
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=N_COLS)
         r += 1
 
-    widths = [14, 44, 15, 11, 11, 9, 12, 12, 10, 11, 11, 9, 10, 18]
+        for row in grp_rows:
+            vals = [row.get("supplierArticle", ""), row.get("name", ""), row.get("brand", ""),
+                    row.get("wb_qty", 0), row.get("wb_per_day", 0), _days_val(row.get("wb_days")),
+                    row.get("oz_qty", 0), row.get("oz_per_day", 0), _days_val(row.get("oz_days")),
+                    row.get("ym_qty", 0), row.get("ym_per_day", 0), _days_val(row.get("ym_days"))]
+            for col, v in enumerate(vals, 1):
+                c = ws.cell(row=r, column=col, value=v)
+                if col in (5, 8, 11):
+                    c.number_format = "0.00"
+            # подсветка «дней до OOS» цветом статуса — вместо отдельного столбца
+            for col, dkey in ((6, "wb_days"), (9, "oz_days"), (12, "ym_days")):
+                st = _days_status(row.get(dkey))
+                if st:
+                    dc = ws.cell(row=r, column=col)
+                    dc.fill = PatternFill("solid", start_color=DAYS_FILL[st])
+                    dc.font = Font(color=DAYS_FONT[st], bold=(st == "red"))
+            r += 1
+
+    widths = [14, 44, 15, 11, 11, 9, 12, 12, 10, 11, 11, 9]
     for i, w in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(i)].width = w
     ws.freeze_panes = "C3"          # шапка + артикул/название всегда видны
-    ws.auto_filter.ref = f"A2:N{max(r - 1, 2)}"
 
     buf = io.BytesIO()
     wb_x.save(buf)

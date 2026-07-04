@@ -449,7 +449,6 @@ function renderStocksTable() {
       <th class="text-center" colspan="3" style="background:#6b21a8;color:#fff;border-left:2px solid #2a2a2a">WB</th>
       <th class="text-center" colspan="3" style="background:#1d4ed8;color:#fff;border-left:2px solid #2a2a2a">OZON</th>
       <th class="text-center" colspan="3" style="background:#854d0e;color:#fff;border-left:2px solid #2a2a2a">YM</th>
-      ${thSort('status','Статус')}
     </tr>
     <tr class="small" style="background:#1a1a1a;color:#9ca3af">
       <th></th><th></th><th></th>
@@ -462,13 +461,12 @@ function renderStocksTable() {
       <th class="text-end" style="border-left:2px solid #2a2a2a" title="Остаток YM">Ост</th>
       <th class="text-end" title="Продаж/день YM">Пр/д</th>
       <th class="text-end" title="Дней до OOS">Дней</th>
-      <th></th>
     </tr>
   </thead>`;
 
   const bodyRows = orderedGroups.map(([grp, rows]) => {
     const grpRow = `<tr class="table-secondary">
-      <td colspan="13"><strong>${grp}</strong> <span class="text-secondary small">(${rows.length} арт.)</span></td>
+      <td colspan="12"><strong>${grp}</strong> <span class="text-secondary small">(${rows.length} арт.)</span></td>
     </tr>`;
     const itemRows = rows.map(r => `<tr style="font-size:14px">
       <td><code style="color:#e2e8f0">${r.supplierArticle}</code></td>
@@ -477,7 +475,6 @@ function renderStocksTable() {
       ${cell(r.wb_qty, r.wb_per_day, r.wb_days)}
       ${cell(r.oz_qty, r.oz_per_day, r.oz_days)}
       ${cell(r.ym_qty, r.ym_per_day, r.ym_days)}
-      <td>${STATUS_ICON[r.status]}</td>
     </tr>`).join('');
     return grpRow + itemRows;
   }).join('');
@@ -1644,7 +1641,7 @@ function _applyReviewsData(data) {
   populateDynFilter(data.ratings || {});
   renderRatingDynamicsFiltered();
   renderReviewsFeed();
-  populateRatingCalc((data.ratings || {}).articles || []);
+  populateRatingCalc((data.ratings || {}).articles || [], (data.ratings || {}).groups || []);
 }
 
 async function loadReviews() {
@@ -1700,36 +1697,53 @@ async function forceRefreshReviews() {
 // ── Калькулятор рейтинга: сколько 5★ нужно до цели ───────────────────────────
 
 let _ratingsArticles = [];
+let _ratingsGroups = [];
 
-function populateRatingCalc(articles) {
+function populateRatingCalc(articles, groups) {
   _ratingsArticles = articles || [];
+  _ratingsGroups = groups || [];
   const sel = document.getElementById('calcSku');
   if (!sel) return;
   const cur = sel.value;
-  sel.innerHTML = '<option value="">— выберите артикул —</option>' +
+  let html = '<option value="">— выберите артикул или группу —</option>';
+  if (_ratingsGroups.length) {
+    html += '<optgroup label="Группы">' +
+      _ratingsGroups.map(g => `<option value="grp:${g.group}">📦 ${g.group}</option>`).join('') +
+      '</optgroup>';
+  }
+  html += '<optgroup label="Артикулы">' +
     _ratingsArticles.map(a => {
       const label = a.name && a.name !== a.sku ? `${a.sku} — ${a.name}` : a.sku;
       return `<option value="${a.sku}">${label}</option>`;
-    }).join('');
-  if (cur && _ratingsArticles.some(a => a.sku === cur)) sel.value = cur;
+    }).join('') + '</optgroup>';
+  sel.innerHTML = html;
+  if (cur && [...sel.options].some(o => o.value === cur)) sel.value = cur;
   renderRatingCalc();
 }
 
 function renderRatingCalc() {
   const out = document.getElementById('ratingCalcOut');
   if (!out) return;
-  const sku  = (document.getElementById('calcSku')  || {}).value || '';
+  const val  = (document.getElementById('calcSku')  || {}).value || '';
   const plat = (document.getElementById('calcPlatform') || {}).value || 'wb';
-  const art = _ratingsArticles.find(a => a.sku === sku);
+  let art, entityLabel;
+  if (val.startsWith('grp:')) {
+    const gname = val.slice(4);
+    art = _ratingsGroups.find(g => g.group === gname);
+    entityLabel = `группе «${gname}»`;
+  } else {
+    art = _ratingsArticles.find(a => a.sku === val);
+    entityLabel = 'этому артикулу';
+  }
   if (!art) {
-    out.innerHTML = '<span class="text-secondary">Выберите артикул, чтобы рассчитать</span>';
+    out.innerHTML = '<span class="text-secondary">Выберите артикул или группу, чтобы рассчитать</span>';
     return;
   }
   const n = art[plat + '_cnt'] || 0;
   const s = art[plat + '_sum'] || 0;
   const PLAT_NAME = { wb: 'WB', ozon: 'Ozon', ym: 'ЯМ' };
   if (!n) {
-    out.innerHTML = `<span class="text-secondary">По этому артикулу нет оценок на ${PLAT_NAME[plat]}</span>`;
+    out.innerHTML = `<span class="text-secondary">По ${entityLabel} нет оценок на ${PLAT_NAME[plat]}</span>`;
     return;
   }
   const cur = s / n;

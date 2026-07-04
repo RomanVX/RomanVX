@@ -259,7 +259,7 @@ def get_rating_table() -> list[dict]:
     )
     # per group
     grp_rows = db.fetchall(
-        "SELECT platform, grp, ROUND(AVG(rating),2), COUNT(*) "
+        "SELECT platform, grp, ROUND(AVG(rating),2), COUNT(*), SUM(rating) "
         "FROM reviews WHERE rating > 0 AND grp != '' GROUP BY platform, grp ORDER BY grp"
     )
 
@@ -280,14 +280,16 @@ def get_rating_table() -> list[dict]:
 
     # Pivot groups
     grp_table: dict[str, dict] = {}
-    for platform, grp, avg, cnt in grp_rows:
+    for platform, grp, avg, cnt, rsum in grp_rows:
         avg = float(avg) if avg is not None else None
         if grp not in grp_table:
             grp_table[grp] = {"group": grp, "ozon": None, "wb": None, "ym": None,
-                               "ozon_cnt": 0, "wb_cnt": 0, "ym_cnt": 0}
+                               "ozon_cnt": 0, "wb_cnt": 0, "ym_cnt": 0,
+                               "ozon_sum": 0, "wb_sum": 0, "ym_sum": 0}
         key = platform.lower()
         grp_table[grp][key] = avg
         grp_table[grp][f"{key}_cnt"] = cnt
+        grp_table[grp][f"{key}_sum"] = int(rsum or 0)
 
     return {
         "articles": sorted(art_table.values(), key=lambda x: x["sku"]),
