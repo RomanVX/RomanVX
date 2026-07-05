@@ -2306,8 +2306,12 @@ async def get_payouts(refresh: bool = Query(default=False)):
                     wb["for_withdraw"] = round(wd)
         except Exception as e:
             _log.warning("WB balance: %s", e)
-        wb["upcoming"] = round(_row_val(_pnl_cache, "bankPayment", cur_mk))
-        wb["note"] = "Баланс — из API WB (к выводу = ещё не выплачено). Выплаты еженедельно."
+        # WB не платит сам: деньги копятся на балансе, вывод — вручную кнопкой
+        # в кабинете, зачисление ~неделя. «Ожидается» = весь баланс.
+        wb["upcoming"] = wb.get("balance") if wb.get("balance") is not None \
+            else round(_row_val(_pnl_cache, "bankPayment", cur_mk))
+        wb["note"] = ("Баланс — из API WB. Деньги копятся на балансе, вывод — вручную "
+                      "в кабинете («Вывести»), зачисление ~неделя после заявки.")
         items.append(wb)
 
     # Обе площадки платят еженедельно с отсрочкой ~4 недели (сверено с

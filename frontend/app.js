@@ -1770,8 +1770,9 @@ function manualCostsPanel(months) {
       </div>`).join('') + `</div>`;
   }
   return `
-  <div class="card bg-card mt-3 p-3">
-    <div class="fw-semibold mb-2" style="color:var(--ink)">➕ Ручные статьи затрат <span class="text-secondary small fw-normal">(аренда, зарплаты, фф и т.д. — вычитаются из валовой в «Финансовый итог месяца»)</span></div>
+  <details class="rev-fold mt-3">
+    <summary>➕ Ручные статьи затрат <span class="text-secondary small fw-normal">(аренда, зарплаты и т.д. — вычитаются из валовой в «Финансовый итог месяца»)</span></summary>
+    <div class="card bg-card mt-2 p-3">
     <div class="d-flex gap-1 flex-wrap align-items-center mb-2">
       <span class="text-secondary small me-1">Месяцы (можно несколько):</span>${monthChips}
     </div>
@@ -1781,7 +1782,8 @@ function manualCostsPanel(months) {
       <button class="btn btn-sm btn-outline-success" onclick="addManualCost()">Добавить</button>
     </div>
     ${list}
-  </div>`;
+    </div>
+  </details>`;
 }
 
 function renderFinanceTable() {
@@ -2082,7 +2084,13 @@ function renderUnitTable() {
   const mBox = document.getElementById('unitMonthBtns');
   if (mBox) {
     const months = _unitData.months || [];
-    if (!_unitMonth) _unitMonth = months.length ? months[months.length - 1].key : 'ALL';
+    if (!_unitMonth) {
+      // по умолчанию — прошлый (полный) месяц, а не текущий незавершённый
+      const now = new Date();
+      const prevKey = `${now.getFullYear() - (now.getMonth() === 0 ? 1 : 0)}-${String(now.getMonth() === 0 ? 12 : now.getMonth()).padStart(2, '0')}`;
+      _unitMonth = months.find(m => m.key === prevKey) ? prevKey
+                 : (months.length ? months[months.length - 1].key : 'ALL');
+    }
     if (_unitMode === 'month') {
       mBox.innerHTML = months.map(m =>
         `<button class="btn btn-sm btn-outline-info ${_unitMonth === m.key ? 'active' : ''}"
