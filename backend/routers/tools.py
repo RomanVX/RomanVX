@@ -575,7 +575,9 @@ async def _wb_preset_catalog(client, preset_id: str) -> dict | None:
     """Товары пресетной категории: WB перенаправляет широкие запросы
     («шторы») из поиска в каталог. Пробуем известные пути."""
     base_params = {"appType": 1, "curr": "rub", "dest": -1257786,
-                   "sort": "popular", "spp": 30, "page": 1}
+                   "sort": "popular", "spp": 30, "page": 1,
+                   "lang": "ru", "locale": "ru", "reg": 1,
+                   "regions": "80,38,83,4,64,33,68,70,30,40,86,75,69,1,66,110,22,31,48,71,114"}
     candidates = [
         ("https://catalog.wb.ru/catalog/preset/v2/catalog",
          {**base_params, "preset": preset_id}),
@@ -607,6 +609,8 @@ async def _wb_public_search(query: str, limit: int = 60) -> tuple[list[dict], in
     import httpx
     params = {"ab_testing": "false", "appType": 1, "curr": "rub", "dest": -1257786,
               "sort": "popular", "resultset": "catalog", "page": 1, "spp": 30,
+              "lang": "ru", "locale": "ru", "reg": 1,
+              "regions": "80,38,83,4,64,33,68,70,30,40,86,75,69,1,66,110,22,31,48,71,114",
               "suppressSpellcheck": "false", "query": query}
     global _niche_last_err
     _niche_last_err = ""
@@ -709,7 +713,10 @@ async def niche_debug(query: str = Query(default="крем для лица"),
     proxy = os.getenv("WB_SEARCH_PROXY", "").strip() or None
     out = {"proxy": "настроен" if proxy else "нет"}
     params = {"ab_testing": "false", "appType": 1, "curr": "rub", "dest": -1257786,
-              "sort": "popular", "resultset": "catalog", "page": 1, "spp": 30, "query": query}
+              "sort": "popular", "resultset": "catalog", "page": 1, "spp": 30,
+              "lang": "ru", "locale": "ru", "reg": 1,
+              "regions": "80,38,83,4,64,33,68,70,30,40,86,75,69,1,66,110,22,31,48,71,114",
+              "query": query}
     async with httpx.AsyncClient(timeout=20, proxy=proxy, headers={
             "User-Agent": "Mozilla/5.0", "Referer": "https://www.wildberries.ru/",
             "Accept-Encoding": "gzip, deflate"}) as client:
