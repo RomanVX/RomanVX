@@ -252,6 +252,35 @@ async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
     return rows
 
 
+async def get_accrual_types() -> list[dict]:
+    """POST /v1/finance/accrual/types — справочник типов начислений."""
+    if not OZON_CLIENT_ID or not OZON_API_KEY:
+        return []
+    data = await _post("/v1/finance/accrual/types", {})
+    return data.get("accrual_types") or data.get("result") or []
+
+
+async def get_accruals_day(date: str) -> list[dict]:
+    """POST /v1/finance/accrual/by-day — начисления за день (пагинация last_id).
+
+    Это источник кабинетной «Детализации начислений»: продажи, вознаграждение
+    Ozon, доставка, FBO, продвижение, компенсации — построчно с типами.
+    """
+    if not OZON_CLIENT_ID or not OZON_API_KEY:
+        return []
+    out: list[dict] = []
+    last_id = ""
+    while True:
+        data = await _post("/v1/finance/accrual/by-day", {"date": date, "last_id": last_id})
+        batch = data.get("accruals") or data.get("result") or []
+        out.extend(batch)
+        new_last = data.get("last_id") or ""
+        if not batch or not new_last or new_last == last_id:
+            break
+        last_id = new_last
+    return out
+
+
 async def get_realization_report(year: int, month: int) -> dict:
     """POST /v2/finance/realization — отчёт о реализации за месяц.
 

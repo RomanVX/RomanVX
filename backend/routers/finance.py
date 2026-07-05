@@ -1148,8 +1148,80 @@ def _last_months(n: int) -> list[tuple[int, int]]:
     return out
 
 
+def _accrual_amount(a: dict) -> float:
+    v = a.get("total_amount")
+    if isinstance(v, dict):
+        v = v.get("amount")
+    try:
+        return float(v or 0)
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def _accrual_type_id(a: dict):
+    return a.get("type_id") or a.get("accrual_id") or a.get("type")
+
+
+async def _fetch_ozon_accruals_month(y: int, m: int, today) -> dict[str, float]:
+    """Суммы начислений месяца по названиям типов (как «Группа услуг» в кабинете)."""
+    import ozon_client
+    types = {t.get("id"): (t.get("name") or t.get("description") or f"Тип {t.get('id')}")
+             for t in await ozon_client.get_accrual_types()}
+    sums: dict[str, float] = {}
+    last_day = (datetime(y + (m == 12), m % 12 + 1, 1) - timedelta(days=1)).date()
+    d = datetime(y, m, 1).date()
+    while d <= min(last_day, today):
+        try:
+            for a in await ozon_client.get_accruals_day(d.isoformat()):
+                amt = _accrual_amount(a)
+                if not amt:
+                    continue
+                name = types.get(_accrual_type_id(a)) or a.get("accrued_category") or "Прочее"
+                sums[name] = sums.get(name, 0.0) + amt
+        except Exception as e:
+            _log.warning("Ozon accruals %s: %s", d, e)
+        d += timedelta(days=1)
+    return sums
+
+
+@router.get("/ozon/accrual_debug", include_in_schema=False)
+async def ozon_accrual_debug(date: str = Query(default="")):
+    """Живая проба accruals API: справочник типов + один день начислений."""
+    import ozon_client
+    out: dict = {}
+    try:
+        types = await ozon_client.get_accrual_types()
+        out["types_count"] = len(types)
+        out["types_sample"] = types[:25]
+    except Exception as e:
+        out["types_error"] = str(e)[:300]
+    probe = date or (datetime.utcnow() + timedelta(hours=3) - timedelta(days=3)).strftime("%Y-%m-%d")
+    try:
+        rows = await ozon_client.get_accruals_day(probe)
+        out["day"] = probe
+        out["rows"] = len(rows)
+        if rows:
+            out["row_keys"] = sorted(rows[0].keys())
+            out["samples"] = rows[:3]
+            agg: dict = {}
+            for a in rows:
+                key = f"{a.get('accrued_category')}/{_accrual_type_id(a)}"
+                agg[key] = round(agg.get(key, 0.0) + _accrual_amount(a))
+            out["day_by_type"] = agg
+    except Exception as e:
+        out["day_error"] = str(e)[:300]
+    return out
+
+
 async def _build_ozon_pnl(months: int) -> None:
-    """Фоновая сборка P&L Ozon: /v2/finance/realization по месяцам + cash-flow."""
+    """Фоновая сборка P&L Ozon.
+
+    Статьи — из «Детализации начислений» (accruals API): динамические группы
+    ровно как в кабинете («Вознаграждение Ozon», «Услуги доставки», «Услуги
+    FBO», «Продвижение и реклама», ...). Фолбэк для месяцев без начислений —
+    отчёт о реализации + cash-flow. Себестоимость: qty из отчёта о реализации,
+    для текущего месяца — из доставленных отправлений.
+    """
     global _oz_pnl_cache, _oz_pnl_ts, _oz_pnl_building
     if _oz_pnl_building:
         return
@@ -1159,8 +1231,8 @@ async def _build_ozon_pnl(months: int) -> None:
         import catalog as _cat
 
         costs = cost_store.get_costs()
-        KEYS = ["retailAmount", "commission", "delivery", "services"]
-        mt: dict[str, dict] = {}
+        today = (datetime.utcnow() + timedelta(hours=3)).date()
+        month_groups: dict[str, dict[str, float]] = {}   # mk → {группа: сумма}
         cogs_by_month: dict[str, float] = {}
 
         for (y, m) in _last_months(months):
@@ -1168,67 +1240,130 @@ async def _build_ozon_pnl(months: int) -> None:
             month_start = f"{mk}-01"
             month_end = (datetime(y + (m == 12), m % 12 + 1, 1) - timedelta(days=1)).strftime("%Y-%m-%d")
 
-            # 1) Отчёт о реализации (продажи − возвраты, комиссия, qty→COGS)
+            # ── COGS: отчёт о реализации (официальные количества по SKU) ──
             realization_ok = False
             try:
                 res = await ozon_client.get_realization_report(y, m)
                 rows = res.get("rows") or []
                 if rows:
-                    t = {k: 0.0 for k in KEYS}
                     cogs = 0.0
                     for r in rows:
                         dc = r.get("delivery_commission") or {}
                         rc = r.get("return_commission") or {}
-                        t["retailAmount"] += float(dc.get("amount") or 0) - float(rc.get("amount") or 0)
-                        t["commission"]   += float(dc.get("commission") or 0) - float(rc.get("commission") or 0)
                         qty = int(dc.get("quantity") or 0) - int(rc.get("quantity") or 0)
                         offer = ((r.get("item") or {}).get("offer_id") or "").strip()
-                        sku = _cat.resolve_ozon(offer)
-                        uc = costs.get(sku, 0.0)
+                        uc = costs.get(_cat.resolve_ozon(offer), 0.0)
                         if uc > 0 and qty > 0:
                             cogs += uc * qty
-                    mt[mk] = t
                     cogs_by_month[mk] = cogs
                     realization_ok = True
             except Exception as e:
                 _log.warning("Ozon realization %s: %s", mk, e)
 
-            # 2) Cash-flow: логистика и услуги (в отчёте реализации их нет)
-            try:
-                flows = await ozon_client.get_cash_flow(month_start, month_end)
-                if flows:
-                    if mk not in mt:
-                        mt[mk] = {k: 0.0 for k in KEYS}
-                    for f in flows:
-                        mt[mk]["delivery"] += float(f.get("item_delivery_and_return_amount") or 0)
-                        mt[mk]["services"] += float(f.get("services_amount") or 0)
-                        if not realization_ok:
-                            # текущий месяц: реализации ещё нет — берём выручку из cash-flow
-                            mt[mk]["retailAmount"] += (float(f.get("orders_amount") or 0)
-                                                       + float(f.get("returns_amount") or 0))
-                            mt[mk]["commission"]   += float(f.get("commission_amount") or 0)
-            except Exception as e:
-                _log.warning("Ozon cash-flow %s: %s", mk, e)
+            # текущий месяц: COGS из доставленных отправлений
+            if not realization_ok:
+                try:
+                    rows = await ozon_client.get_sales_detail(month_start, month_end)
+                    cogs = 0.0
+                    for r in rows:
+                        if (r.get("status") or "").lower() != "delivered":
+                            continue
+                        dd = (r.get("delivered_date") or r.get("date") or "")[:7]
+                        if dd != mk:
+                            continue
+                        uc = costs.get(_cat.resolve_ozon(r.get("offer_id") or ""), 0.0)
+                        if uc > 0:
+                            cogs += uc * int(r.get("qty") or 0)
+                    cogs_by_month[mk] = cogs
+                except Exception as e:
+                    _log.warning("Ozon delivered COGS %s: %s", mk, e)
 
-        pnl_rows = _build_pnl_rows(
-            mt, cogs_by_month,
-            [
-                ("retailAmount", "📦 Выручка (до соинвеста, реализация)", "header"),
-                ("commission",   "  − Комиссия Ozon",                     "cost"),
-                ("delivery",     "  − Логистика и возвраты",              "cost"),
-                ("services",     "  − Услуги Ozon (вкл. продвижение)",    "cost"),
-            ],
-        )
+            # ── Статьи: детализация начислений (как в кабинете) ──
+            accr = await _fetch_ozon_accruals_month(y, m, today)
+            if accr:
+                month_groups[mk] = accr
+                continue
+
+            # фолбэк: реализация + cash-flow старыми строками
+            fb: dict[str, float] = {}
+            try:
+                if realization_ok:
+                    rev = comm = 0.0
+                    for r in (res.get("rows") or []):
+                        dc = r.get("delivery_commission") or {}
+                        rc = r.get("return_commission") or {}
+                        rev  += float(dc.get("amount") or 0) - float(rc.get("amount") or 0)
+                        comm += float(dc.get("commission") or 0) - float(rc.get("commission") or 0)
+                    fb["Выручка (реализация)"] = rev
+                    fb["Вознаграждение Ozon"] = -comm
+                flows = await ozon_client.get_cash_flow(month_start, month_end)
+                for f in flows or []:
+                    fb["Услуги доставки"] = fb.get("Услуги доставки", 0.0) - float(f.get("item_delivery_and_return_amount") or 0)
+                    fb["Услуги Ozon"] = fb.get("Услуги Ozon", 0.0) - float(f.get("services_amount") or 0)
+                    if not realization_ok:
+                        fb["Выручка (реализация)"] = fb.get("Выручка (реализация)", 0.0) + \
+                            float(f.get("orders_amount") or 0) + float(f.get("returns_amount") or 0)
+                        fb["Вознаграждение Ozon"] = fb.get("Вознаграждение Ozon", 0.0) - float(f.get("commission_amount") or 0)
+            except Exception as e:
+                _log.warning("Ozon fallback %s: %s", mk, e)
+            if fb:
+                month_groups[mk] = fb
+
+        # ── Динамические строки: группы как в кабинете ──
+        month_keys = sorted(month_groups.keys(), reverse=True)
+        all_groups: dict[str, float] = {}
+        for mk in month_keys:
+            for g, v in month_groups[mk].items():
+                all_groups[g] = all_groups.get(g, 0.0) + v
+        revenue_groups = sorted((g for g, v in all_groups.items() if v > 0),
+                                key=lambda g: -all_groups[g])
+        cost_groups = sorted((g for g, v in all_groups.items() if v <= 0),
+                             key=lambda g: all_groups[g])
+
+        pnl_rows = []
+        for i, g in enumerate(revenue_groups):
+            pnl_rows.append({"key": f"rev_{i}", "label": ("📦 " if i == 0 else "  + ") + g,
+                             "style": "header" if i == 0 else "normal",
+                             "formula": "direct",
+                             "values": {mk: round(month_groups[mk].get(g, 0.0)) for mk in month_keys}})
+        for i, g in enumerate(cost_groups):
+            pnl_rows.append({"key": f"cost_{i}", "label": f"  − {g}", "style": "cost",
+                             "formula": "direct",
+                             "values": {mk: round(month_groups[mk].get(g, 0.0)) for mk in month_keys}})
+        payout = {mk: round(sum(month_groups[mk].values())) for mk in month_keys}
+        pnl_rows.append({"key": "bankPayment", "label": "💳 Итого начислено (к перечислению)",
+                         "style": "subtotal", "formula": "direct", "values": payout})
+        pnl_rows.append({"key": "cogs", "label": "  − Себестоимость", "style": "cost",
+                         "formula": "direct",
+                         "values": {mk: -round(cogs_by_month.get(mk, 0.0)) for mk in month_keys}})
+        gross = {mk: payout[mk] - round(cogs_by_month.get(mk, 0.0)) for mk in month_keys}
+        pnl_rows.append({"key": "gross", "label": "✅ Валовая прибыль", "style": "total",
+                         "formula": "direct", "values": gross})
+        # маржа — от выручки (крупнейшая положительная группа)
+        rev_key = revenue_groups[0] if revenue_groups else None
+        pct = {}
+        for mk in month_keys:
+            rev = month_groups[mk].get(rev_key, 0.0) if rev_key else 0.0
+            pct[mk] = round(gross[mk] / rev * 100) if rev > 0 else 0
+        pnl_rows.append({"key": "gross_pct", "label": "   Маржа %", "style": "pct",
+                         "formula": "gross_pct", "values": pct})
+        # retailAmount для Тотала (фронт суммирует по этому ключу)
+        if rev_key:
+            for r in pnl_rows:
+                if r["key"] == "rev_0":
+                    r["key"] = "retailAmount"
+                    break
+
         cogs_has_data = len(costs) > 0 and any(v > 0 for v in cogs_by_month.values())
         _oz_pnl_cache = {
-            "months": _months_out(mt.keys()),
+            "months": _months_out(month_groups.keys()),
             "rows": pnl_rows,
             "cogs_loaded": len(costs) > 0,
             "cogs_has_data": cogs_has_data,
             "fetched_at": datetime.utcnow().strftime("%d.%m.%Y %H:%M UTC"),
         }
         _oz_pnl_ts = _time.monotonic()
-        _log.info("Ozon P&L built: %d months", len(mt))
+        _log.info("Ozon P&L built: %d months (accrual groups: %d)", len(month_groups), len(all_groups))
     except Exception as e:
         _log.error("Ozon P&L build failed: %s", e)
     finally:
