@@ -1591,14 +1591,20 @@ function buildFinanceTotal() {
 
 // ── Ручные статьи затрат (Тотал) ──────────────────────────────────────────────
 
+const _manCostMks = new Set();   // выбранные месяцы для новой статьи
+
+function toggleManCostMk(mk, btn) {
+  if (_manCostMks.has(mk)) { _manCostMks.delete(mk); btn.classList.remove('active'); }
+  else { _manCostMks.add(mk); btn.classList.add('active'); }
+}
+
 async function addManualCost() {
-  const mk = document.getElementById('manCostMonth')?.value;
   const label = (document.getElementById('manCostLabel')?.value || '').trim();
   const amount = parseFloat(document.getElementById('manCostAmount')?.value || '0');
-  if (!mk || !label || !amount) return;
+  if (!_manCostMks.size || !label || !amount) return;
   await fetch('/api/finance/manual_costs', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ mk, label, amount }),
+    body: JSON.stringify({ mks: [..._manCostMks], label, amount }),
   });
   _manualCosts = null;
   _financeData.TOTAL = null;
@@ -1615,8 +1621,11 @@ async function delManualCost(id) {
 function manualCostsPanel(months) {
   const items = ((_manualCosts && _manualCosts.items) || [])
     .slice().sort((a, b) => b.mk.localeCompare(a.mk) || a.label.localeCompare(b.label));
-  const monthOpts = [...months].sort((a, b) => b.key.localeCompare(a.key))
-    .map(m => `<option value="${m.key}">${m.label}</option>`).join('');
+  // месяцы — кликабельные чипы, можно выбрать сразу несколько
+  [..._manCostMks].forEach(mk => { if (!months.find(m => m.key === mk)) _manCostMks.delete(mk); });
+  const monthChips = [...months].sort((a, b) => a.key.localeCompare(b.key))
+    .map(m => `<button class="btn btn-sm btn-outline-info ${_manCostMks.has(m.key) ? 'active' : ''}"
+                       onclick="toggleManCostMk('${m.key}', this)">${m.label}</button>`).join('');
   const mLabel = mk => (months.find(m => m.key === mk) || {}).label || mk;
   let list = '';
   if (items.length) {
@@ -1632,10 +1641,12 @@ function manualCostsPanel(months) {
   return `
   <div class="card bg-card mt-3 p-3">
     <div class="fw-semibold mb-2" style="color:var(--ink)">➕ Ручные статьи затрат <span class="text-secondary small fw-normal">(аренда, зарплаты, фф и т.д. — вычитаются из валовой в «Финансовый итог месяца»)</span></div>
+    <div class="d-flex gap-1 flex-wrap align-items-center mb-2">
+      <span class="text-secondary small me-1">Месяцы (можно несколько):</span>${monthChips}
+    </div>
     <div class="d-flex gap-2 flex-wrap align-items-center">
-      <select id="manCostMonth" class="form-select form-select-sm bg-dark text-white border-secondary" style="width:130px">${monthOpts}</select>
       <input id="manCostLabel" class="form-control form-control-sm bg-dark text-white border-secondary" style="width:260px" placeholder="Название (напр. Аренда склада)">
-      <input id="manCostAmount" type="number" min="0" step="100" class="form-control form-control-sm bg-dark text-white border-secondary" style="width:130px" placeholder="Сумма ₽">
+      <input id="manCostAmount" type="number" min="0" step="100" class="form-control form-control-sm bg-dark text-white border-secondary" style="width:130px" placeholder="Сумма ₽/мес">
       <button class="btn btn-sm btn-outline-success" onclick="addManualCost()">Добавить</button>
     </div>
     ${list}

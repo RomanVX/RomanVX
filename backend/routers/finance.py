@@ -2258,23 +2258,25 @@ async def get_manual_costs():
 
 @router.post("/manual_costs")
 async def add_manual_cost(payload: dict):
-    """Добавить статью: {mk: '2026-06', label: 'Аренда склада', amount: 15000}."""
-    mk = str(payload.get("mk") or "").strip()
+    """Добавить статью на один или несколько месяцев:
+    {mk: '2026-06', ...} или {mks: ['2026-05', '2026-06'], label, amount}."""
+    mks = payload.get("mks") or ([payload.get("mk")] if payload.get("mk") else [])
+    mks = [str(m).strip() for m in mks if m and len(str(m).strip()) == 7]
     label = str(payload.get("label") or "").strip()
     try:
         amount = float(payload.get("amount") or 0)
     except (ValueError, TypeError):
         amount = 0.0
-    if not mk or len(mk) != 7 or not label or not amount:
-        raise HTTPException(status_code=400, detail="Нужны месяц (ГГГГ-ММ), название и сумма")
+    if not mks or not label or not amount:
+        raise HTTPException(status_code=400, detail="Нужны месяцы (ГГГГ-ММ), название и сумма")
     import db
     def _save():
         _manual_costs_init()
-        db.execute("INSERT INTO manual_costs (mk, label, amount) VALUES (?,?,?)",
-                   (mk, label, amount))
+        db.executemany("INSERT INTO manual_costs (mk, label, amount) VALUES (?,?,?)",
+                       [(mk, label, amount) for mk in mks])
         return db.fetchall("SELECT MAX(id) FROM manual_costs")[0][0]
     new_id = await asyncio.to_thread(_save)
-    return {"id": new_id}
+    return {"id": new_id, "added": len(mks)}
 
 
 @router.delete("/manual_costs/{cost_id}")
