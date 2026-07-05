@@ -45,22 +45,34 @@ async def _get(url: str, params: dict) -> list[dict]:
     return resp.json()
 
 
+def _learn_sku_map(rows: list[dict]) -> list[dict]:
+    """Выучиваем связки nmId→артикул (нужны для остатков, где артикула нет)."""
+    try:
+        import catalog as _cat
+        _cat.learn_wb(rows)
+    except Exception as e:
+        _log.debug("learn_wb failed: %s", e)
+    return rows
+
+
 async def get_sales(date_from: datetime, date_to: datetime) -> list[dict]:
     if USE_MOCK:
         return mock_data.generate_sales(date_from, date_to)
-    return await _get(
+    rows = await _get(
         f"{STATS_BASE}/supplier/sales",
         {"dateFrom": date_from.strftime("%Y-%m-%dT00:00:00"), "flag": 0},
     )
+    return await asyncio.to_thread(_learn_sku_map, rows)
 
 
 async def get_orders(date_from: datetime, date_to: datetime) -> list[dict]:
     if USE_MOCK:
         return mock_data.generate_orders(date_from, date_to)
-    return await _get(
+    rows = await _get(
         f"{STATS_BASE}/supplier/orders",
         {"dateFrom": date_from.strftime("%Y-%m-%dT00:00:00"), "flag": 0},
     )
+    return await asyncio.to_thread(_learn_sku_map, rows)
 
 
 async def get_stocks() -> list[dict]:

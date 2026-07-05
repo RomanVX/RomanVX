@@ -195,10 +195,62 @@ def _norm(s) -> str:
     return str(s).strip()
 
 
+# ── Самообучение связок nmId → артикул ──────────────────────────────────────
+# Новый API остатков WB отдаёт только nmId; связку с артикулом продавца
+# выучиваем из заказов/продаж (там есть оба поля) и храним в БД.
+_LEARNED_WB: dict[str, str] = {}
+_learned_loaded = False
+
+
+def _load_learned():
+    global _learned_loaded
+    if _learned_loaded:
+        return
+    _learned_loaded = True
+    try:
+        import db
+        db.execute("CREATE TABLE IF NOT EXISTS sku_map "
+                   "(mp TEXT, ext_id TEXT, art TEXT, PRIMARY KEY (mp, ext_id))")
+        for mp, ext, art in db.fetchall("SELECT mp, ext_id, art FROM sku_map"):
+            if mp == "wb":
+                _LEARNED_WB[str(ext)] = art
+    except Exception:
+        pass
+
+
+def learn_wb(rows) -> None:
+    """Выучивает nmId→артикул из строк заказов/продаж WB (nmId + supplierArticle)."""
+    _load_learned()
+    new: dict[str, str] = {}
+    for r in rows or []:
+        nm = _norm(r.get("nmId") or "")
+        art = _norm(r.get("supplierArticle") or "")
+        if not nm or not art or art.isdigit() or nm in WB_ID_TO_ART:
+            continue
+        c = canon(art)
+        if _LEARNED_WB.get(nm) != c:
+            new[nm] = c
+    if not new:
+        return
+    _LEARNED_WB.update(new)
+    try:
+        import db
+        db.executemany(
+            "INSERT INTO sku_map (mp, ext_id, art) VALUES ('wb', ?, ?) "
+            "ON CONFLICT (mp, ext_id) DO UPDATE SET art = excluded.art",
+            list(new.items()))
+    except Exception:
+        pass
+
+
 def resolve_wb(nm_id) -> str:
     """WB nmId (int or str) → internal article."""
     s = _norm(nm_id)
-    return WB_ID_TO_ART.get(s, SKU_ALIASES.get(s, s))
+    hit = WB_ID_TO_ART.get(s)
+    if hit:
+        return hit
+    _load_learned()
+    return _LEARNED_WB.get(s) or SKU_ALIASES.get(s, s)
 
 
 def resolve_ozon(sku) -> str:

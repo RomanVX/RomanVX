@@ -548,6 +548,30 @@ html[data-theme="light"] .text-info { color: #0369a1 !important; }
 /* кнопка переключения темы */
 #themeBtn { min-width: 38px; }
 
+/* сворачиваемые блоки на вкладке Отзывы */
+.rev-fold > summary {
+  cursor: pointer;
+  user-select: none;
+  font-weight: 600;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 16px;
+  list-style: none;
+  transition: border-color .15s, background .15s;
+}
+.rev-fold > summary::-webkit-details-marker { display: none; }
+.rev-fold > summary::before {
+  content: '▸';
+  display: inline-block;
+  margin-right: 10px;
+  color: var(--muted);
+  transition: transform .15s;
+}
+.rev-fold[open] > summary::before { transform: rotate(90deg); }
+.rev-fold > summary:hover { border-color: var(--gold); background: var(--surface-2); }
+
 /* монограмма кабинета — в стиле квадрата BN (тёмный скруглённый, золотые буквы) */
 .cab-mono {
   width: 64px; height: 64px;
