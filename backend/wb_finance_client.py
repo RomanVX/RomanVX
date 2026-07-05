@@ -259,3 +259,24 @@ def _mock_reports(date_from: str, date_to: str) -> list[dict]:
         d += timedelta(weeks=1)
 
     return reports
+
+
+async def get_balance() -> dict:
+    """Баланс продавца WB: GET /api/v1/account/balance.
+
+    Возвращает {"currency": "RUB", "current": ..., "for_withdraw": ...}
+    (имена полей у WB менялись — отдаём как есть)."""
+    url = f"{FINANCE_BASE}/api/v1/account/balance"
+    for attempt in range(3):
+        await _rate_limit()
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(url, headers=_headers())
+        if resp.status_code == 429:
+            await asyncio.sleep(_MIN_INTERVAL)
+            continue
+        if not resp.is_success:
+            _log.warning("WB balance → %s %s", resp.status_code, resp.text[:200])
+            return {}
+        data = resp.json()
+        return data.get("data") or data or {}
+    return {}

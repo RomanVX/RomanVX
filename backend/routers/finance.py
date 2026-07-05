@@ -2233,6 +2233,91 @@ async def get_ozon_unit(
     }
 
 
+# ══ График выплат (вкладка Тотал) ══════════════════════════════════════════════
+
+_payouts_cache: dict = {}
+_payouts_ts: float = 0.0
+
+
+def _row_val(cache: dict, key: str, mk: str) -> float:
+    for r in (cache or {}).get("rows") or []:
+        if r.get("key") == key:
+            return float((r.get("values") or {}).get(mk) or 0)
+    return 0.0
+
+
+@router.get("/payouts")
+async def get_payouts(refresh: bool = Query(default=False)):
+    """Балансы кабинетов и предстоящие поступления по площадкам.
+
+    WB — живой баланс продавца из finance-api (к выводу = невыплаченное).
+    Ozon и YM публичного баланса в API не имеют — показываем оценку:
+    «к перечислению», начисленное в текущем месяце (и хвост прошлого),
+    с пояснением графика выплат площадки."""
+    global _payouts_cache, _payouts_ts
+    if not refresh and _payouts_cache and _time.monotonic() - _payouts_ts < 1800:
+        return _payouts_cache
+
+    from config import CABINET_MARKETPLACES
+    today = (datetime.utcnow() + timedelta(hours=3)).date()
+    cur_mk = today.strftime("%Y-%m")
+    prev_mk = (today.replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
+    items = []
+
+    # ── WB: реальный баланс ──
+    if "WB" in CABINET_MARKETPLACES:
+        wb: dict = {"mp": "WB", "color": "#c026d3"}
+        try:
+            import wb_finance_client
+            bal = await wb_finance_client.get_balance()
+            # имена полей варьируются: current/balance, for_withdraw/forWithdraw
+            cur = next((float(bal[k]) for k in ("current", "balance", "value") if bal.get(k) is not None), None)
+            wd = next((float(bal[k]) for k in ("for_withdraw", "forWithdraw", "forwithdraw") if bal.get(k) is not None), None)
+            if cur is not None or wd is not None:
+                wb["balance"] = round(cur if cur is not None else wd)
+                if wd is not None:
+                    wb["for_withdraw"] = round(wd)
+        except Exception as e:
+            _log.warning("WB balance: %s", e)
+        wb["upcoming"] = round(_row_val(_pnl_cache, "bankPayment", cur_mk))
+        wb["note"] = "Баланс — из API WB (к выводу = ещё не выплачено). Выплаты еженедельно."
+        items.append(wb)
+
+    # ── Ozon: оценка по начислениям ──
+    if "OZON" in CABINET_MARKETPLACES:
+        upcoming = _row_val(_oz_pnl_cache, "bankPayment", cur_mk)
+        # выплаты 2 раза в месяц: вторая половина прошлого месяца обычно
+        # приходит ~10-го числа — до этого добавляем её в «ожидается»
+        if today.day < 12:
+            upcoming += _row_val(_oz_pnl_cache, "bankPayment", prev_mk) / 2
+        items.append({
+            "mp": "Ozon", "color": "#3b82f6",
+            "upcoming": round(upcoming),
+            "note": "Оценка: начислено и ещё не выплачено (выплаты ~10-го и ~25-го числа).",
+        })
+
+    # ── YM: оценка по начислениям (отсрочка 4 недели) ──
+    if "YM" in CABINET_MARKETPLACES:
+        upcoming = _row_val(_ym_pnl_cache, "bankPayment", cur_mk)
+        # отсрочка ~4 недели: хвост прошлого месяца ещё едет пропорционально
+        upcoming += _row_val(_ym_pnl_cache, "bankPayment", prev_mk) * min(1.0, (28 - min(today.day, 28)) / 28)
+        items.append({
+            "mp": "ЯМ", "color": "#b45309",
+            "upcoming": round(upcoming),
+            "note": "Оценка: начисления последних ~4 недель (выплаты раз в неделю с отсрочкой 4 недели).",
+        })
+
+    result = {
+        "items": items,
+        "total_upcoming": round(sum(i.get("upcoming") or 0 for i in items)),
+        "total_balance": round(sum(i.get("balance") or 0 for i in items)),
+        "fetched_at": datetime.utcnow().strftime("%d.%m.%Y %H:%M UTC"),
+    }
+    _payouts_cache = result
+    _payouts_ts = _time.monotonic()
+    return result
+
+
 # ══ Ручные статьи затрат (вкладка Тотал) ═══════════════════════════════════════
 
 def _manual_costs_init():

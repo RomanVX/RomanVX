@@ -1667,6 +1667,57 @@ async function delManualCost(id) {
   renderFinanceTable();
 }
 
+// ── График выплат (Тотал) ────────────────────────────────────────────────────
+
+let _payoutsData = null;
+
+async function loadPayouts(force) {
+  const box = document.getElementById('payoutsBody');
+  if (!box) return;
+  if (_payoutsData && !force) { renderPayouts(); return; }
+  box.innerHTML = '<div class="text-center text-secondary py-3"><span class="spinner-border spinner-border-sm me-2"></span>Загружаем балансы…</div>';
+  try {
+    _payoutsData = await fetchJSON('/api/finance/payouts' + (force ? '?refresh=true' : ''), 60000);
+    renderPayouts();
+  } catch (e) {
+    box.innerHTML = `<div class="text-danger small">Ошибка: ${e.message}</div>`;
+  }
+}
+
+function renderPayouts() {
+  const box = document.getElementById('payoutsBody');
+  if (!box || !_payoutsData) return;
+  const d = _payoutsData;
+  let html = `<div class="d-flex flex-column gap-2">`;
+  (d.items || []).forEach(it => {
+    html += `<div class="d-flex align-items-start gap-2 flex-wrap" style="border-bottom:1px solid var(--border);padding-bottom:8px">
+      <span class="mp-selector-dot mt-1" style="background:${it.color}"></span>
+      <span class="fw-semibold" style="min-width:52px;color:var(--ink)">${it.mp}</span>
+      <div class="d-flex gap-4 flex-wrap">
+        ${it.balance != null ? `<span><span class="text-secondary small">Баланс кабинета:</span> <b style="color:var(--val)">${fmtRub(it.balance)}</b></span>` : ''}
+        ${it.for_withdraw != null && it.for_withdraw !== it.balance ? `<span><span class="text-secondary small">К выводу:</span> <b style="color:var(--pos)">${fmtRub(it.for_withdraw)}</b></span>` : ''}
+        <span><span class="text-secondary small">Ожидается к поступлению:</span> <b style="color:var(--pos)">~${fmtRub(it.upcoming || 0)}</b></span>
+      </div>
+      <div class="text-secondary small w-100" style="margin-left:24px">${it.note || ''}</div>
+    </div>`;
+  });
+  html += `<div class="d-flex gap-4 flex-wrap pt-1">
+    <span class="fw-semibold" style="color:var(--ink)">Итого ожидается: <span style="color:var(--pos)">~${fmtRub(d.total_upcoming || 0)}</span></span>
+    ${d.total_balance ? `<span class="text-secondary">балансы (где доступны): ${fmtRub(d.total_balance)}</span>` : ''}
+    <button class="btn btn-sm btn-outline-secondary py-0 ms-auto" onclick="loadPayouts(true)">↻ Обновить</button>
+  </div>
+  <div class="text-secondary small text-end">${d.fetched_at || ''}</div></div>`;
+  box.innerHTML = html;
+}
+
+function payoutsPanel() {
+  return `
+  <details class="rev-fold mt-3" ontoggle="if(this.open)loadPayouts()">
+    <summary>💸 График выплат — балансы кабинетов и предстоящие поступления</summary>
+    <div class="card bg-card mt-2 p-3" id="payoutsBody"></div>
+  </details>`;
+}
+
 function manualCostsPanel(months) {
   const items = ((_manualCosts && _manualCosts.items) || [])
     .slice().sort((a, b) => b.mk.localeCompare(a.mk) || a.label.localeCompare(b.label));
@@ -1856,7 +1907,7 @@ function renderFinanceTable() {
     html += `<div class="text-secondary small mt-2">Отчёт реализации WB сформирован по ${d.detail_upto}.${tail}</div>`;
   }
   if (d.fetched_at) html += `<div class="text-secondary text-end small mt-1">Обновлено: ${d.fetched_at}</div>`;
-  if (mp === 'TOTAL') html += manualCostsPanel(d.months || []);
+  if (mp === 'TOTAL') html += manualCostsPanel(d.months || []) + payoutsPanel();
   wrap.innerHTML = html;
 }
 
