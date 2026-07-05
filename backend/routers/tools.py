@@ -189,3 +189,120 @@ async def get_productolog(refresh: bool = Query(default=False)):
         _spawn(_build_bg(force=False))
     return {"items": items, "building": _building, "progress": _progress,
             "error": _error, "pending": pending}
+
+
+# ══ Остатки по кластерам (федеральным округам) ════════════════════════════════
+
+_CLUSTER_KEYS = [
+    ("Центральный",      ["колед", "подольск", "электрост", "тула", "белые столбы",
+                          "радумл", "вёшки", "вешки", "обухово", "чехов", "рязан",
+                          "котовск", "голицын", "пушкино", "внуково", "москв",
+                          "иваново", "ярослав", "воронеж", "белгород", "домодедово",
+                          "сабурово", "черная грязь", "чёрная грязь", "щербинка"]),
+    ("Северо-Западный",  ["санкт", "уткина", "шушары", "псков", "спб", "новосаратовка",
+                          "петербург", "калининград", "мурманс"]),
+    ("Южный",            ["краснодар", "тихорецк", "невинномыс", "волгоград", "ростов",
+                          "астрахан", "крым", "симферопол", "ставропол"]),
+    ("Приволжский",      ["казан", "самара", "новосемейкино", "сарапул", "уфа",
+                          "нижний новгород", "пенза", "саратов", "чебоксар", "оренбург",
+                          "киров", "перм", "ижевск"]),
+    ("Уральский",        ["екатеринбург", "испытателей", "перспективн", "челябинск",
+                          "тюмен", "курган", "сургут"]),
+    ("Сибирский",        ["новосибир", "омск", "красноярск", "кемеров", "иркутск",
+                          "барнаул", "томск"]),
+    ("Дальневосточный",  ["хабаровск", "владивосток", "артём", "артем", "благовещенск"]),
+]
+_CLUSTER_ORDER = [c for c, _ in _CLUSTER_KEYS] + ["Прочее"]
+
+
+def _cluster_of(name: str) -> str:
+    low = (name or "").lower()
+    for cluster, keys in _CLUSTER_KEYS:
+        if any(k in low for k in keys):
+            return cluster
+    return "Прочее"
+
+
+def _okrug_cluster(okrug: str) -> str:
+    """«Центральный федеральный округ» → «Центральный»."""
+    low = (okrug or "").lower()
+    for cluster, _ in _CLUSTER_KEYS:
+        if low.startswith(cluster.lower().split("-")[0][:6]):
+            return cluster
+    for cluster, _ in _CLUSTER_KEYS:
+        if cluster.lower() in low:
+            return cluster
+    return "Прочее"
+
+
+_clusters_cache: dict = {}
+_clusters_ts: float = 0.0
+
+
+@router.get("/clusters")
+async def get_clusters(refresh: bool = Query(default=False)):
+    """Остатки и продажи WB по кластерам (федеральным округам складов)."""
+    import time as _time
+    global _clusters_cache, _clusters_ts
+    if not refresh and _clusters_cache and _time.monotonic() - _clusters_ts < 1800:
+        return _clusters_cache
+
+    from datetime import timedelta
+    import analytics
+    import cache
+    DAYS = 28
+    dt_to = datetime.utcnow()
+    sales, _orders, stocks = await cache.get_raw_data(dt_to - timedelta(days=DAYS), dt_to)
+
+    agg: dict[str, dict] = {c: {"stock": 0, "sold": 0, "loc_hit": 0, "loc_total": 0}
+                            for c in _CLUSTER_ORDER}
+    for s in stocks or []:
+        agg[_cluster_of(s.get("warehouseName"))]["stock"] += int(s.get("quantity") or 0)
+    for r in sales or []:
+        if not analytics._is_sale(r):
+            continue
+        wh_cl = _cluster_of(r.get("warehouseName"))
+        agg[wh_cl]["sold"] += 1
+        buyer = _okrug_cluster(r.get("oblastOkrugName") or r.get("regionName") or "")
+        if buyer != "Прочее":
+            agg[buyer]["loc_total"] += 1
+            if buyer == wh_cl:
+                agg[buyer]["loc_hit"] += 1
+
+    TARGET_DAYS = 30
+    items = []
+    for c in _CLUSTER_ORDER:
+        a = agg[c]
+        if a["stock"] == 0 and a["sold"] == 0:
+            continue
+        spd = round(a["sold"] / DAYS, 2)
+        coverage = round(a["stock"] / spd, 1) if spd > 0 else None
+        need = max(0, round((TARGET_DAYS - (coverage or 0)) * spd)) if spd > 0 else 0
+        if spd == 0:
+            status = "no_sales"
+        elif coverage < 7:
+            status = "urgent"
+        elif coverage < 15:
+            status = "warn"
+        elif coverage > 90:
+            status = "over"
+        else:
+            status = "ok"
+        loc = round(a["loc_hit"] / a["loc_total"] * 100) if a["loc_total"] else None
+        items.append({"cluster": c, "stock": a["stock"], "spd": spd,
+                      "coverage": coverage, "need": need, "status": status,
+                      "localization": loc, "demand": a["loc_total"]})
+
+    total_hit = sum(a["loc_hit"] for a in agg.values())
+    total_dem = sum(a["loc_total"] for a in agg.values())
+    result = {
+        "items": items,
+        "days": DAYS,
+        "target_days": TARGET_DAYS,
+        "localization_total": round(total_hit / total_dem * 100, 1) if total_dem else None,
+        "weak": sum(1 for it in items if it["status"] in ("urgent", "warn")),
+        "fetched_at": datetime.utcnow().strftime("%d.%m.%Y %H:%M UTC"),
+    }
+    _clusters_cache = result
+    _clusters_ts = _time.monotonic()
+    return result

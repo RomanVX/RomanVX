@@ -238,7 +238,7 @@ function switchTab(name, linkEl) {
   if (dirty[name]) {
     dirty[name] = false;
     ({ salesan: loadSalesAnalytics, stocks: loadStocks,
-       reviews: loadReviews, finance: loadFinance, tools: loadProductolog,
+       reviews: loadReviews, finance: loadFinance, tools: loadTools,
        unit: loadUnitEconomics })[name]();
   }
 }
@@ -2408,6 +2408,84 @@ function renderUnitDynamics() {
     html += `<div class="text-secondary small mt-2">Продвижение и удержания распределены по SKU пропорционально доле выручки месяца. Отчёт реализации — по ${_unitData.detail_upto}.</div>`;
   }
   wrap.innerHTML = metricBtns + html;
+}
+
+// ── Инструменты WB ────────────────────────────────────────────────────────────
+
+let _toolActive = 'prod';   // prod | clusters
+
+function setTool(t) {
+  if (_toolActive === t) return;
+  _toolActive = t;
+  document.getElementById('toolProd')?.classList.toggle('active', t === 'prod');
+  document.getElementById('toolClusters')?.classList.toggle('active', t === 'clusters');
+  const hint = document.getElementById('toolHint');
+  if (hint) hint.textContent = t === 'prod'
+    ? 'Анализ отзывов WB по каждому артикулу'
+    : 'Сток и продажи по федеральным округам складов WB, локализация и дозаказ';
+  loadTools();
+}
+
+function reloadTool() { _toolActive === 'prod' ? loadProductolog(true) : loadClusters(true); }
+function loadTools() { _toolActive === 'prod' ? loadProductolog() : loadClusters(); }
+
+// ── Остатки по кластерам ──────────────────────────────────────────────────────
+
+let _clustersData = null;
+
+async function loadClusters(refresh) {
+  const wrap = document.getElementById('toolsWrap');
+  if (!wrap) return;
+  if (_clustersData && !refresh) { renderClusters(); return; }
+  wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>Считаем кластеры…</div>';
+  try {
+    _clustersData = await fetchJSON('/api/tools/clusters' + (refresh ? '?refresh=true' : ''), 120000);
+    renderClusters();
+  } catch (e) {
+    wrap.innerHTML = `<div class="alert alert-danger mt-3">Ошибка: ${e.message}</div>`;
+  }
+}
+
+const _CL_STATUS = {
+  urgent:   ['🔴 Срочно — требует пополнения', 'var(--neg)'],
+  warn:     ['🟡 Скоро закончится',            'var(--warn-c)'],
+  ok:       ['🟢 Всё хорошо',                  'var(--pos)'],
+  over:     ['⚫ Перегруз',                    'var(--dim)'],
+  no_sales: ['◽ Нет продаж',                  'var(--muted)'],
+};
+
+function renderClusters() {
+  const wrap = document.getElementById('toolsWrap');
+  if (!wrap || !_clustersData) return;
+  const d = _clustersData;
+  let html = `<div class="d-flex gap-3 flex-wrap mb-3">
+    <div class="metric-card" style="min-width:160px"><div class="mc-head">📍 Локализация (всего)</div>
+      <div class="mc-val">${d.localization_total != null ? d.localization_total + '%' : '—'}</div>
+      <div class="mc-sub">доля продаж, отгруженных из округа покупателя</div></div>
+    <div class="metric-card" style="min-width:160px"><div class="mc-head">⚠ Слабых кластеров</div>
+      <div class="mc-val" style="color:${d.weak ? 'var(--warn-c)' : 'var(--pos)'}">${d.weak}</div>
+      <div class="mc-sub">покрытие меньше 15 дней</div></div>
+  </div><div class="row g-3">`;
+  (d.items || []).forEach(it => {
+    const [label, clr] = _CL_STATUS[it.status] || _CL_STATUS.ok;
+    html += `<div class="col-12 col-md-6 col-xl-4"><div class="metric-card h-100" style="border-left:3px solid ${clr}">
+      <div class="d-flex justify-content-between align-items-start">
+        <b style="color:var(--ink);font-size:15px">${it.cluster}</b>
+        <span class="small" style="color:${clr}">${label}</span>
+      </div>
+      <div class="small mb-2" style="color:${it.need ? 'var(--neg)' : 'var(--muted)'}">К заказу у поставщика: ${it.need ? fmt(it.need) + ' шт' : 'не требуется'}</div>
+      <div class="d-flex gap-4">
+        <div><div style="font-size:20px;font-weight:700;color:var(--val)">${it.spd.toLocaleString('ru-RU')}</div><div class="text-secondary" style="font-size:11px">продаж/день</div></div>
+        <div><div style="font-size:20px;font-weight:700;color:var(--val)">${fmt(it.stock)}</div><div class="text-secondary" style="font-size:11px">остаток, шт</div></div>
+      </div>
+      <div class="small mt-2" style="color:var(--ink-2)">
+        Покрытие: <b style="color:${clr}">${it.coverage != null ? it.coverage + ' дн' : '—'}</b>
+        ${it.localization != null ? ` · Локализация: <b>${it.localization}%</b> <span class="text-secondary">(спрос ${fmt(it.demand)})</span>` : ''}
+      </div>
+    </div></div>`;
+  });
+  html += `</div><div class="text-secondary small mt-3">Продажи/день — среднее за ${d.days} дн. по складам округа (только выкупы). Покрытие = остаток / скорость. Дозаказ — до ${d.target_days} дней покрытия. Локализация — доля заказов покупателей округа, отгруженных со складов этого же округа (выше — дешевле логистика WB). Обновлено: ${d.fetched_at}</div>`;
+  wrap.innerHTML = html;
 }
 
 // ── Инструменты WB: Продуктолог ───────────────────────────────────────────────
