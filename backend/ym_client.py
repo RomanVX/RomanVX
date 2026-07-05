@@ -369,3 +369,63 @@ async def get_sales_28d() -> dict[str, float]:
         except Exception as e:
             _log.warning("YM get_sales_28d error: %s — returning stale cache (%d)", e, len(_sales_cache))
             return dict(_sales_cache)
+
+
+# ══ Отчёт по стоимости услуг (Reports API) ══════════════════════════════════
+# Официальный источник ВСЕХ затрат YM: комиссия размещения, буст продаж,
+# доставка, приём/перевод платежа, хранение, обработка — то же, что XLSX
+# «Отчёт о стоимости услуг» в кабинете.
+
+async def get_services_report_month(year: int, month: int) -> bytes | None:
+    """Генерирует «Отчёт по стоимости услуг» за месяц и скачивает XLSX.
+
+    POST /reports/united-marketplace-services/generate → reportId,
+    затем поллинг GET /reports/info/{reportId} до DONE и скачивание файла.
+    """
+    if not YM_API_KEY or not YM_BUSINESS_ID:
+        return None
+    from calendar import monthrange
+    last = monthrange(year, month)[1]
+    body_variants = [
+        # вариант с помесячными полями (кабинетный financial_month)
+        {"businessId": int(YM_BUSINESS_ID),
+         "yearFrom": year, "monthFrom": month, "yearTo": year, "monthTo": month},
+        # вариант с датами
+        {"businessId": int(YM_BUSINESS_ID),
+         "dateFrom": f"{year}-{month:02d}-01",
+         "dateTo": f"{year}-{month:02d}-{last:02d}"},
+    ]
+    report_id = None
+    last_err = None
+    for body in body_variants:
+        try:
+            r = await _post("/reports/united-marketplace-services/generate",
+                            body, params={"format": "FILE"})
+            report_id = (r.get("result") or {}).get("reportId")
+            if report_id:
+                break
+        except Exception as e:
+            last_err = e
+    if not report_id:
+        raise RuntimeError(f"YM services report: не удалось сгенерировать ({last_err})")
+
+    # поллинг статуса (генерация обычно 10-60 сек)
+    file_url = None
+    for _ in range(60):
+        await asyncio.sleep(5)
+        info = await _get(f"/reports/info/{report_id}", {})
+        res = info.get("result") or {}
+        status = res.get("status") or ""
+        if status == "DONE":
+            file_url = res.get("file")
+            break
+        if status in ("FAILED", "NO_DATA"):
+            if status == "NO_DATA":
+                return None
+            raise RuntimeError(f"YM services report {year}-{month:02d}: {res.get('subStatus') or status}")
+    if not file_url:
+        raise RuntimeError(f"YM services report {year}-{month:02d}: таймаут генерации")
+
+    r = await _http().get(file_url, follow_redirects=True, timeout=120)
+    r.raise_for_status()
+    return r.content

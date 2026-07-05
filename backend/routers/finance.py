@@ -1004,15 +1004,131 @@ def _month_range(months: int) -> tuple[str, str]:
 _ym_pnl_cache: dict = {}
 _ym_pnl_ts: float = 0.0
 _YM_PNL_TTL = 3600
+_ym_srv_cache: dict = {}      # mk → {группа: ₽} из «Отчёта по стоимости услуг»
+_ym_srv_building: bool = False
+_ym_srv_error: str = ""
 
-# Типы комиссий YM → строки P&L
-_YM_FEE_GROUPS = {
-    "commission": {"FEE"},
-    "acquiring":  {"AGENCY", "PAYMENT_TRANSFER"},
-    "delivery":   {"DELIVERY_TO_CUSTOMER", "EXPRESS_DELIVERY_TO_CUSTOMER", "CROSSREGIONAL_DELIVERY"},
-    "processing": {"SORTING", "INTAKE_SORTING", "RETURN_PROCESSING", "RETURNED_ORDERS_STORAGE"},
-    "advert":     {"AUCTION_PROMOTION", "LOYALTY_PARTICIPATION_FEE"},
-}
+# лист XLSX «Отчёта по стоимости услуг» → строка P&L (по ключевым словам)
+_YM_SHEET_GROUPS = [
+    ("commission", ("размещение товаров",)),
+    ("acquiring",  ("приём платежа", "прием платежа", "перевод платежа")),
+    ("delivery",   ("доставка",)),                    # покупателю + средняя миля
+    ("advert",     ("буст",)),
+    ("loyalty",    ("лояльност",)),
+    ("storage",    ("хранение",)),
+    ("processing", ("транзит", "обработка заказов", "возврат", "утилизац")),
+]
+
+
+def _ym_parse_services_xlsx(data: bytes) -> dict[str, float]:
+    """Суммирует «Стоимость услуги, ₽» по листам отчёта → {группа: ₽}.
+
+    Берётся последняя колонка «Стоимость …, ₽» листа — это итог по акту
+    после скидок и наценок (в кабинетном XLSX ровно она)."""
+    import io
+    import openpyxl
+    # ВАЖНО: не read_only — у кабинетного XLSX битые metadata размеров листов,
+    # в read_only-режиме каждый лист выглядит как 1×1
+    wb = openpyxl.load_workbook(io.BytesIO(data), data_only=True)
+    out: dict[str, float] = {}
+    for sh in wb.sheetnames:
+        low = sh.lower()
+        if low.startswith("сводка"):
+            continue
+        grp = next((g for g, keys in _YM_SHEET_GROUPS
+                    if any(k in low for k in keys)), "otherServices")
+        cost_idx = None
+        total = 0.0
+        for r in wb[sh].iter_rows(values_only=True):
+            if cost_idx is None:
+                if r and any(c and str(c).strip().startswith("Стоимость") for c in r):
+                    idxs = [j for j, c in enumerate(r)
+                            if c and str(c).strip().startswith("Стоимость") and "₽" in str(c)]
+                    if idxs:
+                        cost_idx = idxs[-1]
+                continue
+            v = r[cost_idx] if len(r) > cost_idx else None
+            if isinstance(v, (int, float)):
+                total += float(v)
+        if total:
+            out[grp] = out.get(grp, 0.0) + total
+    wb.close()
+    return out
+
+
+def _ym_srv_save_db(mk: str, groups: dict) -> None:
+    import db
+    db.execute("CREATE TABLE IF NOT EXISTS ym_srv_groups "
+               "(mk TEXT, grp TEXT, amount REAL, PRIMARY KEY (mk, grp))")
+    db.execute("DELETE FROM ym_srv_groups WHERE mk = ?", (mk,))
+    rows = [(mk, g, float(v)) for g, v in groups.items()]
+    rows.append((mk, "__built__", 1.0))
+    db.executemany("INSERT INTO ym_srv_groups (mk, grp, amount) VALUES (?,?,?)", rows)
+
+
+def _ym_srv_load_db() -> dict:
+    import db
+    try:
+        rows = db.fetchall("SELECT mk, grp, amount FROM ym_srv_groups")
+    except Exception:
+        return {}
+    out: dict = {}
+    for mk, g, v in rows:
+        if g == "__built__":
+            out.setdefault(mk, {})
+            continue
+        out.setdefault(mk, {})[g] = float(v or 0)
+    return out
+
+
+async def _build_ym_srv_bg(months: int) -> None:
+    """Фоново тянет «Отчёт по стоимости услуг» помесячно (свежие — первыми)."""
+    global _ym_srv_building, _ym_srv_error, _ym_pnl_ts
+    if _ym_srv_building:
+        return
+    _ym_srv_building = True
+    _ym_srv_error = ""
+    try:
+        import ym_client
+        if not _ym_srv_cache:
+            _ym_srv_cache.update(await asyncio.to_thread(_ym_srv_load_db))
+        today = (datetime.utcnow() + timedelta(hours=3)).date()
+        cur_mk = today.strftime("%Y-%m")
+        prev_mk = (today.replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
+        for (y, m) in _last_months(months):
+            mk = f"{y}-{m:02d}"
+            if mk in _ym_srv_cache and mk not in (cur_mk, prev_mk):
+                continue
+            try:
+                data = await ym_client.get_services_report_month(y, m)
+            except Exception as e:
+                _ym_srv_error = str(e)[:300]
+                _log.warning("YM services report %s: %s", mk, e)
+                continue
+            if not data:
+                _ym_srv_cache.setdefault(mk, {})
+                continue
+            groups = await asyncio.to_thread(_ym_parse_services_xlsx, data)
+            _ym_srv_cache[mk] = groups
+            try:
+                await asyncio.to_thread(_ym_srv_save_db, mk, groups)
+            except Exception as e:
+                _log.warning("YM srv save %s: %s", mk, e)
+            _ym_pnl_ts = 0.0   # готовый месяц сразу виден при следующем запросе
+            _log.info("YM services %s: %s", mk, {k: round(v) for k, v in groups.items()})
+    finally:
+        _ym_srv_building = False
+
+
+@router.get("/ym/srv_debug", include_in_schema=False)
+async def ym_srv_debug():
+    """Состояние сборки «Отчёта по стоимости услуг» YM."""
+    return {
+        "building": _ym_srv_building,
+        "error": _ym_srv_error,
+        "months": {mk: {k: round(v) for k, v in g.items()}
+                   for mk, g in sorted(_ym_srv_cache.items(), reverse=True)},
+    }
 
 
 @router.get("/ym/pnl")
@@ -1020,13 +1136,21 @@ async def get_ym_pnl(
     months: int = Query(default=6, ge=1, le=12),
     refresh: bool = Query(default=False),
 ):
-    """P&L Яндекс Маркета по месяцам из stats/orders (выкупленные заказы)."""
+    """P&L Яндекс Маркета: выручка из stats/orders (выкупы), затраты — из
+    официального «Отчёта по стоимости услуг» (там ВСЁ: комиссия, буст,
+    доставка, приём/перевод платежа, хранение, обработка)."""
     global _ym_pnl_cache, _ym_pnl_ts
     if not refresh and _ym_pnl_cache and _time.monotonic() - _ym_pnl_ts < _YM_PNL_TTL:
         return _ym_pnl_cache
 
     import ym_client
     import catalog as _cat
+
+    # затраты: из БД + фоновая сборка отчётов по месяцам
+    if not _ym_srv_cache:
+        _ym_srv_cache.update(await asyncio.to_thread(_ym_srv_load_db))
+    if not _ym_srv_building:
+        _spawn(_build_ym_srv_bg(months))
 
     date_from, date_to = _month_range(months)
     # захватываем заказы, созданные до начала периода, но доставленные внутри него
@@ -1041,7 +1165,8 @@ async def get_ym_pnl(
         raise HTTPException(status_code=502, detail=f"YM API: {exc}")
 
     costs = cost_store.get_costs()
-    KEYS = ["retailAmount", "commission", "acquiring", "delivery", "processing", "advert", "otherServices"]
+    KEYS = ["retailAmount", "commission", "acquiring", "delivery", "processing",
+            "advert", "loyalty", "storage", "otherServices"]
     mt: dict[str, dict] = {}
     cogs_by_month: dict[str, float] = {}
 
@@ -1066,35 +1191,44 @@ async def get_ym_pnl(
             uc = costs.get(sku, 0.0)
             if uc > 0 and qty > 0:
                 cogs_by_month[d] = cogs_by_month.get(d, 0.0) + uc * qty
-        for c in o.get("commissions") or []:
-            amt = float(c.get("actual") or 0)
-            ctype = c.get("type") or ""
-            for line, types in _YM_FEE_GROUPS.items():
-                if ctype in types:
-                    m[line] += amt
-                    break
-            else:
-                m["otherServices"] += amt
+
+    # «точные или никакие»: месяц показываем, когда собрался отчёт услуг
+    shown = {mk: v for mk, v in mt.items() if mk in _ym_srv_cache}
+    if not shown:
+        msg = (f"⚠ Отчёт услуг YM не собрался: {_ym_srv_error}"
+               if _ym_srv_error and not _ym_srv_building else
+               "⏳ Тянем «Отчёт по стоимости услуг» YM по месяцам (генерация ~минута на месяц) — страница обновится сама")
+        return {"months": [], "rows": [], "message": msg}
+    for mk in shown:
+        for g, v in (_ym_srv_cache.get(mk) or {}).items():
+            shown[mk][g] = v
 
     pnl_rows = _build_pnl_rows(
-        mt, cogs_by_month,
+        shown, {mk: v for mk, v in cogs_by_month.items() if mk in shown},
         [
-            ("retailAmount",  "📦 Выручка (выкупы)",           "header"),
-            ("commission",    "  − Комиссия размещения",        "cost"),
-            ("acquiring",     "  − Приём и перевод платежа",    "cost"),
-            ("delivery",      "  − Логистика",                  "cost"),
-            ("processing",    "  − Обработка и возвраты",       "cost"),
-            ("advert",        "  − Продвижение и лояльность",   "cost"),
-            ("otherServices", "  − Прочие услуги",              "cost"),
+            ("retailAmount",  "📦 Выручка (выкупы)",             "header"),
+            ("commission",    "  − Комиссия размещения",          "cost"),
+            ("acquiring",     "  − Приём и перевод платежа",      "cost"),
+            ("delivery",      "  − Доставка (вкл. среднюю милю)", "cost"),
+            ("advert",        "  − Буст продаж",                  "cost"),
+            ("loyalty",       "  − Лояльность и отзывы",          "cost"),
+            ("storage",       "  − Платное хранение",             "cost"),
+            ("processing",    "  − Обработка и поставки",         "cost"),
+            ("otherServices", "  − Прочие услуги",                "cost"),
         ],
     )
 
+    pending = sorted(mk for mk in mt if mk not in shown)
     cogs_has_data = len(costs) > 0 and any(v > 0 for v in cogs_by_month.values())
     result = {
-        "months": _months_out(mt.keys()),
+        "months": _months_out(shown.keys()),
         "rows": pnl_rows,
         "cogs_loaded": len(costs) > 0,
         "cogs_has_data": cogs_has_data,
+        "building": _ym_srv_building,
+        "months_pending": pending,
+        "note": "Затраты — из официального «Отчёта по стоимости услуг» YM"
+                + (f"; месяцы {', '.join(pending)} ещё собираются" if pending else ""),
         "fetched_at": datetime.utcnow().strftime("%d.%m.%Y %H:%M UTC"),
     }
     _ym_pnl_cache = result
