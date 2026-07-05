@@ -75,6 +75,16 @@ async def _prefetch_weekly():
             _log.info("sales history accumulated")
         except Exception as exc:
             _log.warning("sales accumulation failed: %s", exc)
+        # прогрев финансов: сборки идут в фоне и уважают свои TTL/кэши в БД,
+        # так что к заходу пользователя P&L всех площадок уже готов
+        try:
+            from routers import finance as _fin
+            await _fin.get_wb_pnl(months=6, refresh=False)
+            await _fin.get_ozon_pnl(months=6, refresh=False)
+            await _fin.get_ym_pnl(months=6, refresh=False)
+            _log.info("finance caches warmed")
+        except Exception as exc:
+            _log.warning("finance warm failed: %s", exc)
         await asyncio.sleep(_PREFETCH_INTERVAL)
 
 

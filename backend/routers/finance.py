@@ -1608,13 +1608,23 @@ async def _build_ozon_pnl(months: int) -> None:
         cogs_by_month: dict[str, float] = {}
         sku_by_month: dict[str, dict] = {}               # mk → {sku: {col: сумма}}
 
+        # stale-while-revalidate: сразу публикуем ВСЁ, что есть в БД (включая
+        # свежие месяцы прошлой сборки) — страница открывается мгновенно,
+        # а текущий/прошлый месяц тихо пересобираются ниже
+        want = {f"{y}-{m:02d}" for (y, m) in _last_months(months)}
+        for mk in sorted(db_groups.keys() & want, reverse=True):
+            month_groups[mk] = db_groups[mk]
+            cogs_by_month[mk] = db_cogs.get(mk, 0.0)
+            sku_by_month[mk] = db_sku.get(mk, {})
+        if month_groups:
+            _oz_pnl_partial(month_groups, cogs_by_month, costs)
+            _oz_unit_state.update(groups=dict(month_groups), sku=dict(sku_by_month),
+                                  cogs=dict(cogs_by_month))
+
         for (y, m) in _last_months(months):
             mk = f"{y}-{m:02d}"
             if mk in db_groups and mk not in (cur_mk, prev_mk):
-                month_groups[mk] = db_groups[mk]
-                cogs_by_month[mk] = db_cogs.get(mk, 0.0)
-                sku_by_month[mk] = db_sku.get(mk, {})
-                continue
+                continue   # уже опубликован из БД, пересборка не нужна
             _oz_pnl_progress = mk
             month_start = f"{mk}-01"
             month_end = (datetime(y + (m == 12), m % 12 + 1, 1) - timedelta(days=1)).strftime("%Y-%m-%d")
