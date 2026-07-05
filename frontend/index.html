@@ -17,7 +17,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" />
-  <link rel="stylesheet" href="style.css?v=12" />
+  <link rel="stylesheet" href="style.css?v=13" />
 </head>
 <body>
 
@@ -60,13 +60,13 @@
       <i class="bi bi-sun"></i>
     </button>
     <button class="btn btn-sm btn-outline-light" onclick="loadAll()">
-      <i class="bi bi-arrow-clockwise"></i> Обновить
+      <i class="bi bi-arrow-clockwise"></i><span class="btn-label"> Обновить</span>
     </button>
     <button id="changeCabBtn" class="btn btn-sm btn-outline-warning" onclick="changeCabinet()">
-      <i class="bi bi-person-circle"></i> Сменить кабинет
+      <i class="bi bi-person-circle"></i><span class="btn-label"> Сменить кабинет</span>
     </button>
     <button id="usersBtn" class="btn btn-sm btn-outline-info" style="display:none" onclick="openUsers()">
-      <i class="bi bi-people"></i> Доступы
+      <i class="bi bi-people"></i><span class="btn-label"> Доступы</span>
     </button>
     <button class="btn btn-sm btn-outline-secondary" onclick="doLogout()" title="Выйти">
       <i class="bi bi-box-arrow-right"></i>

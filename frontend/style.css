@@ -586,3 +586,38 @@ html[data-theme="light"] .text-info { color: #0369a1 !important; }
   flex-shrink: 0;
 }
 .cab-mono.cab-mono-sm { width: 26px; height: 26px; border-radius: 7px; font-size: 11px; letter-spacing: 0; display: inline-flex; margin-right: 8px; vertical-align: middle; position: relative; top: -1px; }
+
+/* ═══ Мобильная адаптация ═══ */
+@media (max-width: 768px) {
+  .navbar { padding: .35rem .5rem !important; }
+  .navbar .btn { padding: 4px 8px; font-size: .78rem; }
+  .navbar .btn-label { display: none; }          /* только иконки */
+  #lastUpdated { display: none; }
+  .brand-text { font-size: 12px; letter-spacing: 2px; }
+  .navbar .d-flex.gap-3 { gap: .5rem !important; }
+
+  .container-fluid { padding-left: 8px; padding-right: 8px; }
+
+  /* вкладки — одна строка со скроллом */
+  .nav-tabs { flex-wrap: nowrap; overflow-x: auto; max-width: 100%;
+              scrollbar-width: none; }
+  .nav-tabs::-webkit-scrollbar { display: none; }
+  .nav-tabs .nav-link { padding: 6px 12px; font-size: .84rem; white-space: nowrap; }
+
+  .mp-selector-bloc { padding: 6px 11px; font-size: .8rem; gap: 6px; }
+  .btn-sm { font-size: .76rem; }
+
+  .table td { font-size: .78rem; padding-top: .3rem; padding-bottom: .3rem; }
+  .table thead th { font-size: .64rem; }
+
+  .metric-card { padding: 10px 12px; }
+  .mc-val { font-size: 16px; }
+
+  .rev-fold > summary { font-size: .85rem; padding: 9px 12px; }
+
+  /* экран выбора кабинета */
+  .mp-box { padding: 30px 20px 26px; }
+  .mp-logo { width: 220px; margin-bottom: 22px; }
+  .mp-cab-card { width: 136px; height: 136px; font-size: 12px; gap: 10px; }
+  .mp-cab-card img, .mp-cab-card .cab-mono { width: 52px !important; height: 52px !important; }
+}
