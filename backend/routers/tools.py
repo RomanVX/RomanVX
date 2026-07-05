@@ -604,16 +604,19 @@ async def _wb_preset_catalog(client, preset_id: str) -> dict | None:
         ("https://search.wb.ru/exactmatch/ru/common/v13/search",
          {**base_params, "resultset": "catalog", "preset": preset_id}),
     ]
+    global _niche_last_body
     for url, prm in candidates:
         try:
             await _wb_throttle()
             r = await client.get(url, params=prm)
+            _niche_last_body += f"\n\n=== PRESET {url} → HTTP {r.status_code} ===\n" + r.text[:1500]
             if not r.is_success:
                 continue
             payload = r.json()
             if ((payload.get("data") or {}).get("products")):
                 return payload
-        except Exception:
+        except Exception as e:
+            _niche_last_body += f"\n\n=== PRESET {url} → EXC {str(e)[:200]} ==="
             continue
     return None
 
