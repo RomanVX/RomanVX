@@ -589,68 +589,63 @@ async def _wb_public_search(query: str, limit: int = 60) -> tuple[list[dict], in
             "Accept": "application/json", "Origin": "https://www.wildberries.ru",
             "Referer": "https://www.wildberries.ru/",
             "Accept-Encoding": "gzip, deflate"}) as client:
-        # v13 — актуальная выдача; v4 отвечает всегда, но отдаёт мусорные
-        # «пресеты» (1-2 нерелевантных товара) — принимаем её только если
-        # ничего лучше нет и товаров достаточно. 429 = рейт-лимит WB на IP.
-        best: tuple[list, int] | None = None
-        for ver in ("v13", "v9", "v5", "v4"):
-            r = None
-            for attempt in range(4):
-                try:
-                    r = await client.get(
-                        f"https://search.wb.ru/exactmatch/ru/common/{ver}/search", params=params)
-                except Exception as e:
-                    _niche_last_err = f"{ver}: {str(e)[:120]}"
-                    r = None
-                    break
-                if r.status_code == 429:
-                    _niche_last_err = f"{ver}: HTTP 429"
-                    await asyncio.sleep(4 * (attempt + 1))
-                    continue
+        # Одна версия (v13), терпеливые ретраи: каскад версий с ретраями
+        # сам выжигает рейт-лимит WB на IP (даже на свежем прокси).
+        r = None
+        for attempt in range(5):
+            try:
+                r = await client.get(
+                    "https://search.wb.ru/exactmatch/ru/common/v13/search", params=params)
+            except Exception as e:
+                _niche_last_err = f"v13: {str(e)[:120]}"
+                r = None
                 break
-            if r is None:
+            if r.status_code == 429:
+                _niche_last_err = "v13: HTTP 429"
+                await asyncio.sleep(6 * (attempt + 1))
                 continue
+            break
+        if r is not None:
             try:
                 if not r.is_success:
-                    _niche_last_err = f"{ver}: HTTP {r.status_code}"
-                    continue
-                data = r.json().get("data") or {}
+                    _niche_last_err = f"v13: HTTP {r.status_code}"
+                    raise ValueError(_niche_last_err)
+                try:
+                    payload = r.json()
+                except ValueError:
+                    _niche_last_err = f"v13: не-JSON ответ: {r.text[:100]!r}"
+                    raise
+                data = payload.get("data") or {}
                 products = data.get("products") or []
-                if not products:
-                    continue
-                total = int(data.get("total") or len(products))
-                out = []
-                for p in products[:limit]:
-                    price = None
-                    # цена: v5 sizes[0].price.product, v4 salePriceU
-                    for sz in p.get("sizes") or []:
-                        pr = (sz.get("price") or {}).get("product")
-                        if pr:
-                            price = pr / 100
-                            break
-                    if price is None and p.get("salePriceU"):
-                        price = p["salePriceU"] / 100
-                    out.append({
-                        "nm": p.get("id"),
-                        "name": p.get("name") or "",
-                        "brand": p.get("brand") or "",
-                        "price": round(price) if price else None,
-                        "rating": p.get("reviewRating") or p.get("rating") or 0,
-                        "feedbacks": int(p.get("feedbacks") or 0),
-                        "subject_id": p.get("subjectId"),
-                        "supplier": p.get("supplier") or "",
-                    })
-                if len(out) >= 5:
-                    return out, total
-                # подозрительно короткая выдача (пресет v4) — запомним как запасную
-                if best is None or len(out) > len(best[0]):
-                    best = (out, total)
-                _niche_last_err = f"{ver}: только {len(out)} товаров"
+                if products:
+                    total = int(data.get("total") or len(products))
+                    out = []
+                    for p in products[:limit]:
+                        price = None
+                        for sz in p.get("sizes") or []:
+                            pr = (sz.get("price") or {}).get("product")
+                            if pr:
+                                price = pr / 100
+                                break
+                        if price is None and p.get("salePriceU"):
+                            price = p["salePriceU"] / 100
+                        out.append({
+                            "nm": p.get("id"),
+                            "name": p.get("name") or "",
+                            "brand": p.get("brand") or "",
+                            "price": round(price) if price else None,
+                            "rating": p.get("reviewRating") or p.get("rating") or 0,
+                            "feedbacks": int(p.get("feedbacks") or 0),
+                            "subject_id": p.get("subjectId"),
+                            "supplier": p.get("supplier") or "",
+                        })
+                    if out:
+                        return out, total
+                    _niche_last_err = "v13: пустая выдача"
+                else:
+                    _niche_last_err = "v13: пустая выдача"
             except Exception as e:
-                _log.warning("wb public search %s: %s", ver, e)
-                _niche_last_err = f"{ver}: {str(e)[:120]}"
-    if best and len(best[0]) >= 5:
-        return best
+                _log.warning("wb public search v13: %s", e)
     return [], 0
 
 
