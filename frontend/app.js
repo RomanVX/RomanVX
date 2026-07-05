@@ -100,7 +100,20 @@ function avgPerDay(r) {
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
-const CREDS = { user: 'admin', pass: 'admin' };
+let _me = null;   // {login, role} — текущий пользователь (серверная сессия)
+
+function applyRole() {
+  if (!_me) return;
+  // менеджеру скрываем вкладку Финансы (юнитка остаётся)
+  if (_me.role === 'manager') {
+    document.querySelectorAll('#mainTabs .nav-link').forEach(a => {
+      if (a.textContent.trim() === 'Финансы') a.closest('li').style.display = 'none';
+    });
+  }
+  // владельцу — кнопка управления доступами
+  const btn = document.getElementById('usersBtn');
+  if (btn) btn.style.display = _me.role === 'owner' ? '' : 'none';
+}
 
 function showOverlay(name) {
   document.getElementById('loginOverlay').style.display   = name === 'login'   ? 'flex' : 'none';
@@ -110,16 +123,33 @@ function showOverlay(name) {
   document.getElementById('mainContent').style.display = showApp ? 'block' : 'none';
 }
 
-function doLogin() {
+async function doLogin() {
   const u = document.getElementById('loginUser').value.trim();
   const p = document.getElementById('loginPass').value;
-  if (u === CREDS.user && p === CREDS.pass) {
-    localStorage.setItem('mp_auth', '1');
-    document.getElementById('loginError').textContent = '';
+  const err = document.getElementById('loginError');
+  err.textContent = '';
+  try {
+    const r = await fetch('/api/auth/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ login: u, password: p }),
+    });
+    if (!r.ok) {
+      err.textContent = (await r.json().catch(() => ({}))).detail || 'Неверный логин или пароль';
+      return;
+    }
+    _me = await r.json();
+    applyRole();
     showOverlay('cabinet');
-  } else {
-    document.getElementById('loginError').textContent = 'Неверный логин или пароль';
+  } catch (e) {
+    err.textContent = 'Сервер недоступен: ' + e.message;
   }
+}
+
+async function doLogout() {
+  await fetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
+  _me = null;
+  localStorage.removeItem('mp_cabinet');
+  location.reload();
 }
 
 function enterCabinet() {
@@ -176,6 +206,7 @@ async function fetchJSON(path, timeoutMs = 60000) {
     throw e;
   }
   clearTimeout(timer);
+  if (r.status === 401) { showOverlay('login'); throw new Error('Не авторизован'); }
   if (!r.ok) {
     let detail = `${r.status}`;
     try { const body = await r.json(); detail = body.detail || detail; } catch {}
@@ -2307,22 +2338,72 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById(id).addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); })
   );
 
-  // переход по карточке с другого кабинета (?enter=1) — сразу внутрь, без повторного выбора
-  if (new URLSearchParams(location.search).has('enter') && localStorage.getItem('mp_auth') === '1') {
-    localStorage.setItem('mp_cabinet', 'auto');
-    history.replaceState(null, '', location.pathname);
-  }
-  if (localStorage.getItem('mp_auth') === '1') {
+  // серверная сессия: спрашиваем /api/auth/me
+  fetch('/api/auth/me').then(async r => {
+    if (!r.ok) { showOverlay('login'); return; }
+    _me = await r.json();
+    applyRole();
+    // переход по карточке с другого кабинета (?enter=1) — сразу внутрь
+    if (new URLSearchParams(location.search).has('enter')) {
+      localStorage.setItem('mp_cabinet', 'auto');
+      history.replaceState(null, '', location.pathname);
+    }
     if (localStorage.getItem('mp_cabinet')) {
       showOverlay('app');
       initDashboard();
     } else {
       showOverlay('cabinet');
     }
-  } else {
-    showOverlay('login');
-  }
+  }).catch(() => showOverlay('login'));
 });
+
+// ── Управление доступами (владелец) ──────────────────────────────────────────
+
+async function openUsers() {
+  const modal = new bootstrap.Modal(document.getElementById('usersModal'));
+  modal.show();
+  await renderUsers();
+}
+
+async function renderUsers() {
+  const box = document.getElementById('usersList');
+  if (!box) return;
+  try {
+    const d = await (await fetch('/api/users')).json();
+    const ROLE_RU = { owner: 'Владелец', director: 'Директор', manager: 'Менеджер' };
+    box.innerHTML = (d.users || []).map(u => `
+      <div class="d-flex align-items-center gap-3 py-1" style="border-bottom:1px solid var(--border)">
+        <b style="min-width:140px;color:var(--ink)">${esc(u.login)}</b>
+        <span class="text-secondary small" style="min-width:90px">${ROLE_RU[u.role] || u.role}</span>
+        ${u.login !== (_me && _me.login) ? `<button class="btn btn-sm btn-outline-danger py-0 ms-auto" onclick="deleteUser('${esc(u.login)}')">✕ Удалить</button>` : '<span class="text-secondary small ms-auto">это вы</span>'}
+      </div>`).join('') || '<div class="text-secondary small">Пока никого</div>';
+  } catch (e) {
+    box.innerHTML = `<div class="text-danger small">${e.message}</div>`;
+  }
+}
+
+async function addUser() {
+  const login = document.getElementById('nuLogin').value.trim();
+  const password = document.getElementById('nuPass').value;
+  const role = document.getElementById('nuRole').value;
+  const err = document.getElementById('nuError');
+  err.textContent = '';
+  const r = await fetch('/api/users', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ login, password, role }),
+  });
+  if (!r.ok) { err.textContent = (await r.json().catch(() => ({}))).detail || 'Ошибка'; return; }
+  document.getElementById('nuLogin').value = '';
+  document.getElementById('nuPass').value = '';
+  renderUsers();
+}
+
+async function deleteUser(login) {
+  if (!confirm(`Удалить пользователя ${login}?`)) return;
+  const r = await fetch(`/api/users/${encodeURIComponent(login)}`, { method: 'DELETE' });
+  if (!r.ok) alert((await r.json().catch(() => ({}))).detail || 'Ошибка');
+  renderUsers();
+}
 
 
 // === REVIEWS TAB (auto-fetch from WB / Ozon / YM APIs) ===

@@ -100,6 +100,7 @@ async def _warm_finance():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     cost_store.init()
+    _auth.ensure_bootstrap()
     task = asyncio.create_task(_prefetch_weekly())
     task2 = asyncio.create_task(_warm_finance())
     yield
@@ -123,6 +124,18 @@ app.include_router(upload.router)
 app.include_router(advert.router)
 app.include_router(reviews.router)
 app.include_router(finance.router)
+
+import auth as _auth
+app.include_router(_auth.router)
+app.include_router(_auth.users_router)
+
+
+@app.middleware("http")
+async def _auth_middleware(request, call_next):
+    denied = _auth.check_request(request)
+    if denied is not None:
+        return denied
+    return await call_next(request)
 
 
 @app.get("/api/cabinet")
