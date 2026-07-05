@@ -351,3 +351,50 @@ async def get_sales_28d() -> dict[str, float]:
         except Exception as e:
             _log.warning("OZON get_sales_28d error: %s — returning stale cache (%d)", e, len(_sales_cache))
             return dict(_sales_cache)
+
+
+# ══ Сертификаты и документы товаров ══════════════════════════════════════════
+
+async def get_certificates(page_size: int = 200) -> list[dict]:
+    """POST /v1/product/certificate/list — загруженные сертификаты продавца.
+
+    Поля ответа у Ozon менялись — отдаём записи как есть (парсит вызывающий)."""
+    if not OZON_CLIENT_ID or not OZON_API_KEY:
+        return []
+    out: list[dict] = []
+    page = 1
+    while True:
+        try:
+            data = await _post("/v1/product/certificate/list",
+                               {"page": page, "page_size": page_size})
+        except Exception as e:
+            _log.warning("OZON certificate/list: %s", e)
+            break
+        res = data.get("result") or {}
+        certs = res.get("certificates") or res.get("items") or []
+        out.extend(certs)
+        if len(certs) < page_size:
+            break
+        page += 1
+    return out
+
+
+async def get_certificate_products(cert_number: str, page_size: int = 200) -> list[dict]:
+    """POST /v1/product/certificate/products/list — товары, привязанные к сертификату."""
+    out: list[dict] = []
+    page = 1
+    while True:
+        try:
+            data = await _post("/v1/product/certificate/products/list",
+                               {"certificate_number": cert_number,
+                                "page": page, "page_size": page_size})
+        except Exception as e:
+            _log.warning("OZON certificate/products %s: %s", cert_number, e)
+            break
+        res = data.get("result") or {}
+        items = res.get("items") or []
+        out.extend(items)
+        if len(items) < page_size:
+            break
+        page += 1
+    return out

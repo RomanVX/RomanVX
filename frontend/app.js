@@ -25,7 +25,7 @@ document.addEventListener('DOMContentLoaded', _initThemeBtn);
 const API = '';
 let charts = {};
 let sortState = {};
-const dirty = { salesan: true, stocks: true, reviews: true, finance: true, unit: true, tools: true };
+const dirty = { salesan: true, stocks: true, reviews: true, finance: true, unit: true, tools: true, docs: true };
 let _advertData = [];
 let currentTab = 'finance';
 let prodAllData = [];
@@ -230,7 +230,7 @@ function skuName(r) {
 function switchTab(name, linkEl) {
   document.querySelectorAll('#mainTabs .nav-link').forEach(a => a.classList.remove('active'));
   if (linkEl) linkEl.classList.add('active');
-  ['salesan', 'stocks', 'reviews', 'finance', 'unit', 'tools'].forEach(t => {
+  ['salesan', 'stocks', 'reviews', 'finance', 'unit', 'tools', 'docs'].forEach(t => {
     const el = document.getElementById('pane-' + t);
     if (el) el.style.display = t === name ? 'block' : 'none';
   });
@@ -238,7 +238,7 @@ function switchTab(name, linkEl) {
   if (dirty[name]) {
     dirty[name] = false;
     ({ salesan: loadSalesAnalytics, stocks: loadStocks,
-       reviews: loadReviews, finance: loadFinance, tools: loadTools,
+       reviews: loadReviews, finance: loadFinance, tools: loadTools, docs: loadDocs,
        unit: loadUnitEconomics })[name]();
   }
 }
@@ -2408,6 +2408,133 @@ function renderUnitDynamics() {
     html += `<div class="text-secondary small mt-2">Продвижение и удержания распределены по SKU пропорционально доле выручки месяца. Отчёт реализации — по ${_unitData.detail_upto}.</div>`;
   }
   wrap.innerHTML = metricBtns + html;
+}
+
+// ── Документы (сертификаты/декларации) ───────────────────────────────────────
+
+let _docsData = null;
+
+async function loadDocs(refresh) {
+  const wrap = document.getElementById('docsWrap');
+  if (!wrap) return;
+  if (_docsData && !refresh) { renderDocs(); return; }
+  wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>Загружаем документы…</div>';
+  try {
+    _docsData = await fetchJSON('/api/docs/summary' + (refresh === true ? '?refresh=true' : ''), 120000);
+    renderDocs();
+  } catch (e) {
+    wrap.innerHTML = `<div class="alert alert-danger mt-3">Ошибка: ${e.message}</div>`;
+  }
+}
+
+const _DOC_EXP = {
+  expired: ['🔴 истёк',     'var(--neg)'],
+  soon:    ['🟡 истекает',  'var(--warn-c)'],
+  ok:      ['🟢 действует', 'var(--pos)'],
+  unknown: ['— без срока',  'var(--muted)'],
+};
+
+function renderDocs() {
+  const wrap = document.getElementById('docsWrap');
+  if (!wrap || !_docsData) return;
+  const d = _docsData;
+  let html = '';
+
+  // ── Ozon из API ──
+  const oz = d.ozon || {};
+  html += `<div class="card bg-card p-3 mb-3">
+    <div class="fw-semibold mb-2" style="color:var(--ink)">🔵 Ozon — сертификаты из API</div>`;
+  if (oz.error) html += `<div class="alert alert-warning py-2 small">⚠ ${esc(oz.error)}</div>`;
+  if ((oz.certs || []).length) {
+    html += `<div class="table-responsive"><table class="table table-sm mb-2" style="font-size:.82rem"><thead><tr>
+      <th>Документ</th><th>Тип</th><th>Статус Ozon</th><th>Действует до</th><th>Срок</th><th>Товары</th>
+    </tr></thead><tbody>`;
+    oz.certs.forEach(c => {
+      const [lbl, clr] = _DOC_EXP[c.expiry] || _DOC_EXP.unknown;
+      html += `<tr>
+        <td><code style="color:var(--val-soft)">${esc(c.number)}</code> <span class="text-secondary small">${esc(c.name !== c.number ? c.name : '')}</span></td>
+        <td class="small">${esc(String(c.type || ''))}</td>
+        <td class="small">${esc(String(c.status || ''))}</td>
+        <td>${esc(c.valid_to || '—')}</td>
+        <td><span style="color:${clr}">${lbl}</span></td>
+        <td class="small" style="max-width:340px">${(c.products || []).map(p => `<code style="color:var(--dim)">${esc(p)}</code>`).join(' ') || '<span class="text-secondary">нет привязок</span>'}</td>
+      </tr>`;
+    });
+    html += `</tbody></table></div>`;
+    if ((oz.uncovered || []).length) {
+      html += `<div class="small" style="color:var(--warn-c)">⚠ Без действующего документа (${oz.uncovered.length} из ${oz.total_products}): ${oz.uncovered.map(a => `<code>${esc(a)}</code>`).join(' ')}</div>`;
+    } else {
+      html += `<div class="small" style="color:var(--pos)">✓ Все ${oz.total_products} товаров Ozon покрыты действующими документами</div>`;
+    }
+  } else if (!oz.error) {
+    html += `<div class="text-secondary small">Ozon не вернул сертификаты — либо они не загружены в кабинет, либо у токена нет прав на раздел «Сертификаты».</div>`;
+  }
+  html += `</div>`;
+
+  // ── Ручной реестр ──
+  html += `<div class="card bg-card p-3">
+    <div class="fw-semibold mb-2" style="color:var(--ink)">📄 Реестр документов (WB и общие) <span class="text-secondary small fw-normal">— заносится вручную, система следит за сроками и покрытием</span></div>
+    <div class="d-flex gap-2 flex-wrap align-items-center mb-2">
+      <select id="docType" class="form-select form-select-sm w-auto bg-dark text-white border-secondary">
+        <option>Декларация</option><option>Сертификат</option><option>Отказное письмо</option><option>СГР</option><option>Другое</option>
+      </select>
+      <input id="docNumber" class="form-control form-control-sm bg-dark text-white border-secondary" style="width:220px" placeholder="Номер (ЕАЭС N RU Д-RU…)">
+      <input id="docTitle" class="form-control form-control-sm bg-dark text-white border-secondary" style="width:200px" placeholder="Название (необязательно)">
+      <input id="docValidTo" type="date" class="form-control form-control-sm bg-dark text-white border-secondary" style="width:150px">
+      <input id="docSkus" class="form-control form-control-sm bg-dark text-white border-secondary" style="width:260px" placeholder="Артикулы через запятую">
+      <button class="btn btn-sm btn-outline-success" onclick="addDoc()">Добавить</button>
+    </div>
+    <div id="docError" class="text-danger small mb-2"></div>`;
+
+  if ((d.manual || []).length) {
+    html += `<div class="table-responsive"><table class="table table-sm mb-2" style="font-size:.82rem"><thead><tr>
+      <th>Тип</th><th>Номер / название</th><th>Действует до</th><th>Срок</th><th>Артикулы</th><th></th>
+    </tr></thead><tbody>`;
+    d.manual.forEach(m => {
+      const [lbl, clr] = _DOC_EXP[m.expiry] || _DOC_EXP.unknown;
+      html += `<tr>
+        <td class="small">${esc(m.doc_type)}</td>
+        <td><code style="color:var(--val-soft)">${esc(m.number || '')}</code> <span class="text-secondary small">${esc(m.title || '')}</span></td>
+        <td>${esc(m.valid_to || '—')}</td>
+        <td><span style="color:${clr}">${lbl}</span></td>
+        <td class="small" style="max-width:380px">${(m.skus || []).map(s => `<code style="color:var(--dim)">${esc(s)}</code>`).join(' ') || '—'}</td>
+        <td><button class="btn btn-sm btn-outline-danger py-0 px-1" style="font-size:.7rem" onclick="delDoc(${m.id})">✕</button></td>
+      </tr>`;
+    });
+    html += `</tbody></table></div>`;
+  } else {
+    html += `<div class="text-secondary small mb-2">Документов пока нет — добавь первую декларацию выше.</div>`;
+  }
+  if ((d.manual_uncovered || []).length && (d.manual || []).length) {
+    html += `<div class="small" style="color:var(--warn-c)">⚠ Артикулы без покрытия в реестре (${d.manual_uncovered.length} из ${d.catalog_total}): ${d.manual_uncovered.slice(0, 60).map(a => `<code>${esc(a)}</code>`).join(' ')}${d.manual_uncovered.length > 60 ? ' …' : ''}</div>`;
+  }
+  html += `</div>`;
+  wrap.innerHTML = html;
+}
+
+async function addDoc() {
+  const payload = {
+    doc_type: document.getElementById('docType').value,
+    number: document.getElementById('docNumber').value.trim(),
+    title: document.getElementById('docTitle').value.trim(),
+    valid_to: document.getElementById('docValidTo').value,
+    skus: document.getElementById('docSkus').value.trim(),
+  };
+  const r = await fetch('/api/docs/manual', { method: 'POST',
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  if (!r.ok) {
+    document.getElementById('docError').textContent = (await r.json().catch(() => ({}))).detail || 'Ошибка';
+    return;
+  }
+  _docsData = null;
+  loadDocs();
+}
+
+async function delDoc(id) {
+  if (!confirm('Удалить документ из реестра?')) return;
+  await fetch(`/api/docs/manual/${id}`, { method: 'DELETE' });
+  _docsData = null;
+  loadDocs();
 }
 
 // ── Инструменты WB ────────────────────────────────────────────────────────────
