@@ -2237,8 +2237,11 @@ async def get_ozon_unit(
 
 def _manual_costs_init():
     import db
-    db.execute("CREATE TABLE IF NOT EXISTS manual_costs "
-               "(id INTEGER PRIMARY KEY AUTOINCREMENT, mk TEXT, label TEXT, amount REAL)")
+    # автоинкремент по-разному: SERIAL в Postgres, AUTOINCREMENT в SQLite
+    id_col = ("id SERIAL PRIMARY KEY" if db.IS_PG
+              else "id INTEGER PRIMARY KEY AUTOINCREMENT")
+    db.execute(f"CREATE TABLE IF NOT EXISTS manual_costs "
+               f"({id_col}, mk TEXT, label TEXT, amount REAL)")
 
 
 @router.get("/manual_costs")
