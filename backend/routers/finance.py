@@ -1165,8 +1165,8 @@ async def get_ym_pnl(
         raise HTTPException(status_code=502, detail=f"YM API: {exc}")
 
     costs = cost_store.get_costs()
-    KEYS = ["retailAmount", "commission", "acquiring", "delivery", "processing",
-            "advert", "loyalty", "storage", "otherServices"]
+    KEYS = ["retailAmount", "subsidies", "commission", "acquiring", "delivery",
+            "processing", "advert", "loyalty", "storage", "otherServices"]
     mt: dict[str, dict] = {}
     cogs_by_month: dict[str, float] = {}
 
@@ -1184,8 +1184,14 @@ async def get_ym_pnl(
         m = ensure(d)
         for it in o.get("items") or []:
             for p in it.get("prices") or []:
-                if p.get("type") in ("BUYER", "CASHBACK", "MARKETPLACE"):
+                # Выручка — только реальные платежи покупателей (BUYER), как в
+                # «Балансе кабинета». Субсидии Маркета (акции/баллы) деньгами
+                # не приходят — Маркет компенсирует их скидками на услуги
+                # (они уже учтены в актах отчёта услуг) — показываем справочно.
+                if p.get("type") == "BUYER":
                     m["retailAmount"] += float(p.get("total") or 0)
+                elif p.get("type") in ("CASHBACK", "MARKETPLACE"):
+                    m["subsidies"] += float(p.get("total") or 0)
             sku = _cat.resolve_ym(it.get("shopSku") or "")
             qty = int(it.get("count") or 0)
             uc = costs.get(sku, 0.0)
@@ -1206,7 +1212,7 @@ async def get_ym_pnl(
     pnl_rows = _build_pnl_rows(
         shown, {mk: v for mk, v in cogs_by_month.items() if mk in shown},
         [
-            ("retailAmount",  "📦 Выручка (выкупы)",             "header"),
+            ("retailAmount",  "📦 Выручка (платежи покупателей)", "header"),
             ("commission",    "  − Комиссия размещения",          "cost"),
             ("acquiring",     "  − Приём и перевод платежа",      "cost"),
             ("delivery",      "  − Доставка (вкл. среднюю милю)", "cost"),
@@ -1217,6 +1223,14 @@ async def get_ym_pnl(
             ("otherServices", "  − Прочие услуги",                "cost"),
         ],
     )
+    # субсидии Маркета — справочно (компенсируются скидками на услуги, не деньгами)
+    if any(v.get("subsidies") for v in shown.values()):
+        pnl_rows.insert(1, {
+            "key": "subsidies",
+            "label": "      ↳ Скидки за счёт Маркета (акции/баллы, компенсированы скидками на услуги)",
+            "style": "note", "formula": "info",
+            "values": {mk: round(shown[mk].get("subsidies", 0.0))
+                       for mk in sorted(shown, reverse=True)}})
 
     pending = sorted(mk for mk in mt if mk not in shown)
     cogs_has_data = len(costs) > 0 and any(v > 0 for v in cogs_by_month.values())
