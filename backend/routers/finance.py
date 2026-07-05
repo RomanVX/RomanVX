@@ -664,6 +664,29 @@ async def _build_adv_nm_bg(months: int) -> None:
         _adv_nm_building = False
 
 
+@router.get("/wb/adv_debug", include_in_schema=False)
+async def wb_adv_debug():
+    """Состояние точной раскладки рекламы: какие месяцы собраны, суммы по SKU."""
+    import catalog as _cat
+    out = {
+        "building": _adv_nm_building,
+        "age_sec": round(_time.monotonic() - _adv_nm_ts) if _adv_nm_cache else None,
+        "months": {},
+    }
+    for mk, per_nm in _adv_nm_cache.items():
+        by_sku: dict = {}
+        for nm, s in per_nm.items():
+            sku = _cat.resolve_wb(nm)
+            by_sku[sku] = round(by_sku.get(sku, 0.0) + s)
+        out["months"][mk] = {
+            "fullstats_gross_total": round(sum(per_nm.values())),
+            "upd_net_total": round((_wb_advert_cache.get(mk) or {}).get("total", 0)
+                                   - (_wb_advert_cache.get(mk) or {}).get("bonus", 0)),
+            "by_sku_gross": dict(sorted(by_sku.items(), key=lambda kv: -kv[1])),
+        }
+    return out
+
+
 @router.get("/wb/unit")
 async def get_wb_unit(
     months: int = Query(default=6, ge=1, le=12),
