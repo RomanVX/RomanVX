@@ -124,6 +124,22 @@ app.include_router(advert.router)
 app.include_router(reviews.router)
 app.include_router(finance.router)
 
+
+@app.get("/api/cabinet")
+def get_cabinet():
+    """Конфигурация кабинета: имя, площадки, группировки, ссылка на второй кабинет."""
+    from config import (CABINET, CABINET_NAME, CABINET_MARKETPLACES,
+                        OTHER_CABINET_URL, OTHER_CABINET_NAME)
+    out = {"id": CABINET, "name": CABINET_NAME, "marketplaces": CABINET_MARKETPLACES}
+    if CABINET == "fk":
+        import catalog_fk
+        out["group_order"] = catalog_fk.GROUP_ORDER
+        out["brand_order"] = catalog_fk.BRAND_ORDER
+        out["subgroups"] = []
+    if OTHER_CABINET_URL:
+        out["other"] = {"name": OTHER_CABINET_NAME, "url": OTHER_CABINET_URL}
+    return out
+
 FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
 
 if FRONTEND_DIR.exists():

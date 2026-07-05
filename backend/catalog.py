@@ -178,6 +178,18 @@ SKU_ALIASES: dict[str, str] = {
 }
 
 
+# ── Кабинет «Фабрика красоты»: подменяем каталог целиком ────────────────────
+from config import CABINET as _CABINET
+if _CABINET == "fk":
+    import catalog_fk as _fk
+    WB_ID_TO_ART = _fk.WB_ID_TO_ART
+    OZON_ID_TO_ART = _fk.OZON_ID_TO_ART
+    YM_ID_TO_ART = {}
+    CATALOG = _fk.CATALOG
+    BRAND_ORDER = _fk.BRAND_ORDER
+    SKU_ALIASES = {}
+
+
 def _norm(s) -> str:
     """Normalize an id/article: strip surrounding whitespace."""
     return str(s).strip()

@@ -31,12 +31,56 @@ let currentTab = 'finance';
 let prodAllData = [];
 
 // ── Группировка по брендам + спец-разбивки (фисты / спреи для минета) ──────────
-const BRAND_ORDER = ['Джага', 'Satisfucktion', 'Aloe'];
-const SUBGROUPS = [
+// Дефолты — кабинет Biomed; для других кабинетов переопределяется из /api/cabinet
+let BRAND_ORDER = ['Джага', 'Satisfucktion', 'Aloe'];
+let SUBGROUPS = [
   { name: 'Фисты',             skus: ['BMN-0013', 'BMN-0028', 'BMN-0035', 'BMN-0036', 'ST-07'] },
   { name: 'Спреи для минета',  skus: ['BMN-0115', 'BMN-0116', 'BMN-0110'] },
 ];
-const GROUP_ORDER = ['Фисты', 'Aloe', 'Спреи для минета', 'Satisfucktion', 'Джага', 'Прочее'];
+let GROUP_ORDER = ['Фисты', 'Aloe', 'Спреи для минета', 'Satisfucktion', 'Джага', 'Прочее'];
+
+// ── Кабинет (мультикабинетность: один деплой = один кабинет) ──────────────────
+let _cab = null;   // {id, name, marketplaces, group_order?, other?}
+
+async function loadCabinetInfo() {
+  try {
+    _cab = await (await fetch('/api/cabinet')).json();
+  } catch (e) { return; }
+  if (_cab.group_order) GROUP_ORDER = _cab.group_order;
+  if (_cab.brand_order) BRAND_ORDER = _cab.brand_order;
+  if (_cab.subgroups) SUBGROUPS = _cab.subgroups;
+  // имя кабинета в шапке и на карточке выбора
+  const brand = document.getElementById('cabBrandName');
+  if (brand) brand.textContent = `${_cab.name} — аналитика`;
+  const cabName = document.getElementById('cabCurrentName');
+  if (cabName) cabName.textContent = _cab.name;
+  if (_cab.id === 'fk') {
+    // иконка текущего кабинета — помада вместо льва Biomed
+    const img = document.querySelector('#cabBiomed img');
+    if (img) img.outerHTML = '<div style="font-size:44px">💄</div>';
+    const navImg = document.querySelector('.navbar-brand img');
+    if (navImg) navImg.outerHTML = '💄 ';
+  }
+  // карточка второго кабинета
+  const grid = document.querySelector('.mp-cab-grid');
+  if (grid && _cab.other && _cab.other.url && !document.getElementById('cabOther')) {
+    const div = document.createElement('div');
+    div.id = 'cabOther';
+    div.className = 'mp-cab-card';
+    div.onclick = () => { window.location.href = _cab.other.url; };
+    div.innerHTML = `<div style="font-size:44px">💄</div><span>${_cab.other.name}</span>`;
+    grid.appendChild(div);
+  }
+  // скрываем площадки, которых нет в кабинете (ЯМ у Фабрики красоты)
+  const mps = _cab.marketplaces || [];
+  if (!mps.includes('YM')) {
+    ['ordMpYM', 'finMpYM', 'unitMpYM'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.style.display = 'none';
+    });
+  }
+}
+document.addEventListener('DOMContentLoaded', loadCabinetInfo);
 
 function articleGroup(r) {
   const sku = r.supplierArticle || r.sku || '';
@@ -1498,7 +1542,8 @@ async function loadFinanceMp(mp) {
   if (_financeData[mp]) return;
   try {
     if (mp === 'TOTAL') {
-      const jobs = [loadFinanceMp('WB'), loadFinanceMp('OZON'), loadFinanceMp('YM')];
+      const mps = (_cab && _cab.marketplaces) || ['WB', 'OZON', 'YM'];
+      const jobs = mps.map(m => loadFinanceMp(m));
       if (!_manualCosts) jobs.push(fetchJSON('/api/finance/manual_costs').then(d => { _manualCosts = d; }));
       await Promise.all(jobs);
       _financeData.TOTAL = buildFinanceTotal();
@@ -1512,7 +1557,8 @@ async function loadFinanceMp(mp) {
 
 // Тотал: выручка и затраты в разрезе площадок + ручные статьи + фин. итог
 function buildFinanceTotal() {
-  const PLATS = [['WB', 'WB'], ['OZON', 'Ozon'], ['YM', 'ЯМ']];
+  const cabMps = (_cab && _cab.marketplaces) || ['WB', 'OZON', 'YM'];
+  const PLATS = [['WB', 'WB'], ['OZON', 'Ozon'], ['YM', 'ЯМ']].filter(([k]) => cabMps.includes(k));
   const loaded = PLATS.map(([k, label]) => [k, label, _financeData[k]])
     .filter(([, , d]) => d && (d.months || []).length && d.source !== 'weekly'); // WB только с точными данными
   if (!loaded.length) return { rows: [], months: [], message: '⏳ Точные данные площадок ещё собираются — Тотал появится через минуту' };

@@ -9,7 +9,9 @@ import db
 
 _log = logging.getLogger(__name__)
 
-_SEED_PATH = Path(__file__).parent / "data" / "cogs_seed.csv"
+from config import CABINET as _CABINET
+_SEED_PATH = Path(__file__).parent / "data" / (
+    "cogs_seed_fk.csv" if _CABINET == "fk" else "cogs_seed.csv")
 
 _costs: dict[str, float] = {}
 _names: dict[str, str]   = {}
