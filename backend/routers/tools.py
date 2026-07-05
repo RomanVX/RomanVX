@@ -6,6 +6,7 @@
 только для артикулов, где появились новые отзывы.
 """
 import asyncio
+import os
 import json
 import logging
 from datetime import datetime, timedelta
@@ -571,6 +572,8 @@ def _niche_init():
                "(query TEXT PRIMARY KEY, data TEXT, built_at TEXT)")
 
 
+_niche_last_body = ""   # сырое тело последнего ответа поиска (для диагностики)
+
 # WB жёстко банит IP за очереди запросов — один запрос раз в 12+ секунд
 _wb_search_lock = asyncio.Lock()
 _wb_search_last: float = 0.0
@@ -641,14 +644,17 @@ async def _wb_public_search(query: str, limit: int = 60) -> tuple[list[dict], in
         for attempt in range(2):
             try:
                 await _wb_throttle()
+                ver = os.getenv("WB_SEARCH_VER", "v13").strip() or "v13"
                 r = await client.get(
-                    "https://search.wb.ru/exactmatch/ru/common/v13/search", params=params)
+                    f"https://search.wb.ru/exactmatch/ru/common/{ver}/search", params=params)
             except Exception as e:
-                _niche_last_err = f"v13: {str(e)[:120]}"
+                _niche_last_err = f"search: {str(e)[:120]}"
                 r = None
                 break
+            global _niche_last_body
+            _niche_last_body = f"HTTP {r.status_code}\n" + r.text[:6000]
             if r.status_code == 429:
-                _niche_last_err = ("v13: HTTP 429 — лимит WB на IP; подождите 15-20 минут "
+                _niche_last_err = ("HTTP 429 — лимит WB на IP; подождите 15-20 минут "
                                    "без запросов, бан отойдёт")
                 await asyncio.sleep(25)
                 continue
@@ -718,6 +724,13 @@ async def _wb_public_search(query: str, limit: int = 60) -> tuple[list[dict], in
 
 
 _niche_last_err = ""
+
+
+@router.get("/niche/last_response", include_in_schema=False)
+async def niche_last_response():
+    """Сырое тело последнего ответа поиска WB — без нового запроса."""
+    from fastapi.responses import PlainTextResponse
+    return PlainTextResponse(_niche_last_body or "ещё не было запросов")
 
 
 @router.get("/niche/debug", include_in_schema=False)
