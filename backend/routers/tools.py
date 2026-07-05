@@ -571,6 +571,34 @@ def _niche_init():
                "(query TEXT PRIMARY KEY, data TEXT, built_at TEXT)")
 
 
+async def _wb_preset_catalog(client, preset_id: str) -> dict | None:
+    """Товары пресетной категории: WB перенаправляет широкие запросы
+    («шторы») из поиска в каталог. Пробуем известные пути."""
+    base_params = {"appType": 1, "curr": "rub", "dest": -1257786,
+                   "sort": "popular", "spp": 30, "page": 1}
+    candidates = [
+        ("https://catalog.wb.ru/catalog/preset/v2/catalog",
+         {**base_params, "preset": preset_id}),
+        (f"https://catalog.wb.ru/catalog/preset_{preset_id}/v2/catalog", base_params),
+        ("https://search.wb.ru/exactmatch/ru/common/v13/search",
+         {**base_params, "resultset": "catalog", "preset": preset_id}),
+    ]
+    for url, prm in candidates:
+        try:
+            r = await client.get(url, params=prm)
+            if r.status_code == 429:
+                await asyncio.sleep(6)
+                r = await client.get(url, params=prm)
+            if not r.is_success:
+                continue
+            payload = r.json()
+            if ((payload.get("data") or {}).get("products")):
+                return payload
+        except Exception:
+            continue
+    return None
+
+
 async def _wb_public_search(query: str, limit: int = 60) -> tuple[list[dict], int]:
     """Публичная выдача WB по запросу → (товары, всего найдено).
 
@@ -621,10 +649,20 @@ async def _wb_public_search(query: str, limit: int = 60) -> tuple[list[dict], in
                     try:
                         payload = json.loads(cleaned)
                     except ValueError:
-                        pos = getattr(je, "pos", 0) or 0
-                        frag = txt[max(0, pos - 60):pos + 60]
-                        _niche_last_err = f"v13: битый JSON у позиции {pos}: {frag!r}"
-                        raise
+                        # пресетный запрос: WB отдаёт только metadata + Not Found,
+                        # товары живут в каталожном эндпоинте по preset id
+                        import re as _re2
+                        m = _re2.search(r"preset=(\d+)", txt)
+                        if m:
+                            payload = await _wb_preset_catalog(client, m.group(1))
+                            if not payload:
+                                _niche_last_err = f"v13: пресет {m.group(1)} — каталог не отдал товары"
+                                raise
+                        else:
+                            pos = getattr(je, "pos", 0) or 0
+                            frag = txt[max(0, pos - 60):pos + 60]
+                            _niche_last_err = f"v13: битый JSON у позиции {pos}: {frag!r}"
+                            raise
                 data = payload.get("data") or {}
                 products = data.get("products") or []
                 if products:
@@ -663,7 +701,8 @@ _niche_last_err = ""
 
 
 @router.get("/niche/debug", include_in_schema=False)
-async def niche_debug(query: str = Query(default="крем для лица")):
+async def niche_debug(query: str = Query(default="крем для лица"),
+                      full: bool = Query(default=False)):
     """Диагностика публичного поиска WB: статусы по версиям API."""
     import httpx
     import os
@@ -684,7 +723,8 @@ async def niche_debug(query: str = Query(default="крем для лица")):
                     n = len((r.json().get("data") or {}).get("products") or [])
                 except Exception:
                     pass
-                out[ver] = {"status": r.status_code, "products": n, "body_head": body}
+                out[ver] = {"status": r.status_code, "products": n,
+                            "body_head": r.text[:4000] if full else body}
             except Exception as e:
                 out[ver] = {"error": str(e)[:200]}
     return out
