@@ -590,34 +590,31 @@ async def _wb_throttle():
         _wb_search_last = _t.monotonic()
 
 
-async def _wb_preset_catalog(client, preset_id: str) -> dict | None:
-    """Товары пресетной категории: WB перенаправляет широкие запросы
-    («шторы») из поиска в каталог. Пробуем известные пути."""
-    base_params = {"appType": 1, "curr": "rub", "dest": -1257786,
-                   "sort": "popular", "spp": 30, "page": 1,
-                   "lang": "ru", "locale": "ru", "reg": 1,
-                   "regions": "80,38,83,4,64,33,68,70,30,40,86,75,69,1,66,110,22,31,48,71,114"}
-    candidates = [
-        ("https://catalog.wb.ru/catalog/preset/v2/catalog",
-         {**base_params, "preset": preset_id}),
-        (f"https://catalog.wb.ru/catalog/preset_{preset_id}/v2/catalog", base_params),
-        ("https://search.wb.ru/exactmatch/ru/common/v13/search",
-         {**base_params, "resultset": "catalog", "preset": preset_id}),
-    ]
+async def _wb_search_stage2(client, params: dict, meta_text: str) -> dict | None:
+    """Вторая ступень поиска WB: metadata-ответ содержит анти-бот-токены
+    qv/kcl — повторяем тот же запрос с ними, чтобы получить товары."""
+    import re as _re
     global _niche_last_body
-    for url, prm in candidates:
-        try:
-            await _wb_throttle()
-            r = await client.get(url, params=prm)
-            _niche_last_body += f"\n\n=== PRESET {url} → HTTP {r.status_code} ===\n" + r.text[:1500]
-            if not r.is_success:
-                continue
-            payload = r.json()
-            if ((payload.get("data") or {}).get("products")):
-                return payload
-        except Exception as e:
-            _niche_last_body += f"\n\n=== PRESET {url} → EXC {str(e)[:200]} ==="
-            continue
+    qv = _re.search(r'"qv":"([^"]+)"', meta_text)
+    if not qv:
+        return None
+    p2 = dict(params)
+    p2["qv"] = qv.group(1)
+    kcl = _re.search(r'"kcl":"([^"]+)"', meta_text)
+    if kcl:
+        p2["kcl"] = kcl.group(1)
+    await _wb_throttle()
+    try:
+        r = await client.get(
+            "https://search.wb.ru/exactmatch/ru/common/v13/search", params=p2)
+        _niche_last_body += f"\n\n=== STAGE2 qv → HTTP {r.status_code} ===\n" + r.text[:1500]
+        if not r.is_success:
+            return None
+        payload = r.json()
+        if ((payload.get("data") or {}).get("products")):
+            return payload
+    except Exception as e:
+        _niche_last_body += f"\n\n=== STAGE2 qv → EXC {str(e)[:200]} ==="
     return None
 
 
@@ -680,13 +677,9 @@ async def _wb_public_search(query: str, limit: int = 60) -> tuple[list[dict], in
                     except ValueError:
                         # пресетный запрос: WB отдаёт только metadata + Not Found,
                         # товары живут в каталожном эндпоинте по preset id
-                        import re as _re2
-                        m = _re2.search(r"preset=(\d+)", txt)
-                        if m:
-                            payload = await _wb_preset_catalog(client, m.group(1))
-                            if not payload:
-                                _niche_last_err = f"v13: пресет {m.group(1)} — каталог не отдал товары"
-                                raise
+                        payload = await _wb_search_stage2(client, params, txt)
+                        if payload:
+                            pass
                         else:
                             pos = getattr(je, "pos", 0) or 0
                             frag = txt[max(0, pos - 60):pos + 60]
@@ -694,6 +687,11 @@ async def _wb_public_search(query: str, limit: int = 60) -> tuple[list[dict], in
                             raise
                 data = payload.get("data") or {}
                 products = data.get("products") or []
+                if not products and '"qv"' in r.text:
+                    p2 = await _wb_search_stage2(client, params, r.text)
+                    if p2:
+                        data = p2.get("data") or {}
+                        products = data.get("products") or []
                 if products:
                     total = int(data.get("total") or len(products))
                     out = []
