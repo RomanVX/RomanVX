@@ -587,7 +587,8 @@ async def _wb_public_search(query: str, limit: int = 60) -> tuple[list[dict], in
     async with httpx.AsyncClient(timeout=30, proxy=proxy, headers={
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
             "Accept": "application/json", "Origin": "https://www.wildberries.ru",
-            "Referer": "https://www.wildberries.ru/"}) as client:
+            "Referer": "https://www.wildberries.ru/",
+            "Accept-Encoding": "gzip, deflate"}) as client:
         # v13 — актуальная выдача; v4 отвечает всегда, но отдаёт мусорные
         # «пресеты» (1-2 нерелевантных товара) — принимаем её только если
         # ничего лучше нет и товаров достаточно. 429 = рейт-лимит WB на IP.
@@ -666,7 +667,8 @@ async def niche_debug(query: str = Query(default="крем для лица")):
     params = {"ab_testing": "false", "appType": 1, "curr": "rub", "dest": -1257786,
               "sort": "popular", "resultset": "catalog", "page": 1, "spp": 30, "query": query}
     async with httpx.AsyncClient(timeout=20, proxy=proxy, headers={
-            "User-Agent": "Mozilla/5.0", "Referer": "https://www.wildberries.ru/"}) as client:
+            "User-Agent": "Mozilla/5.0", "Referer": "https://www.wildberries.ru/",
+            "Accept-Encoding": "gzip, deflate"}) as client:
         for ver in ("v13", "v9", "v5", "v4"):
             try:
                 r = await client.get(f"https://search.wb.ru/exactmatch/ru/common/{ver}/search",
