@@ -1180,6 +1180,11 @@ def _oz_load_months_db() -> tuple[dict, dict]:
             cogs[mk] = float(v or 0)
         else:
             groups.setdefault(mk, {})[g] = float(v or 0)
+    # месяцы со старой декомпозицией (баллы отдельной статьёй → двойной счёт)
+    # выбрасываем — они пересоберутся по новой схеме
+    for mk in [mk for mk, g in groups.items() if "Баллы за скидки" in g]:
+        groups.pop(mk, None)
+        cogs.pop(mk, None)
     return groups, cogs
 
 
@@ -1272,8 +1277,13 @@ def _oz_decompose_accrual(a: dict, types: dict, sums: dict) -> None:
         c = prod.get("commission") or {}
         add("Продажи и возвраты", _money(c.get("sale_amount")))
         add("Вознаграждение Ozon", -abs(_money(c.get("commission")) or _money(c.get("sale_commission"))))
+        # Баллы за скидки (соинвест Ozon) уже входят в сумму строки продаж —
+        # НЕ отдельная статья (иначе двойной счёт). Копим справочно, мимо accounted:
+        # остаток строки уйдёт в «Продажи и возвраты», как в кабинете.
         for bonus_key in ("bonus", "coinvestment", "stars"):
-            add("Баллы за скидки", _money(c.get(bonus_key)))
+            v = _money(c.get(bonus_key))
+            if v:
+                sums["__points__"] = sums.get("__points__", 0.0) + v
         d = prod.get("delivery") or {}
         for svc in d.get("services") or []:
             add(fee_group(svc.get("type_id")), _money(svc.get("accrued")))
@@ -1476,11 +1486,13 @@ def _oz_pnl_partial(month_groups: dict, cogs_by_month: dict, costs: dict) -> Non
     all_groups: dict[str, float] = {}
     for mk in month_keys:
         for g, v in month_groups[mk].items():
+            if g.startswith("__"):
+                continue   # служебные ключи (__points__) — не статьи
             all_groups[g] = all_groups.get(g, 0.0) + v
 
-    # Выручка = продажи + баллы за скидки (соинвест Ozon, аналог СПП у WB)
-    # + программы партнёров — как блок «Продажи и возвраты» в кабинете
-    REVENUE_SET = {"Продажи и возвраты", "Баллы за скидки", "Программы партнёров"}
+    # Блок «Продажи и возвраты» кабинета УЖЕ включает баллы за скидки
+    # (соинвест Ozon) — баллы показываем только справочной подстрокой
+    REVENUE_SET = {"Продажи и возвраты", "Программы партнёров"}
     rev_components = [g for g in all_groups if g in REVENUE_SET]
     other_pos = sorted((g for g, v in all_groups.items() if v > 0 and g not in REVENUE_SET),
                        key=lambda g: -all_groups[g])
@@ -1489,10 +1501,21 @@ def _oz_pnl_partial(month_groups: dict, cogs_by_month: dict, costs: dict) -> Non
 
     revenue = {mk: round(sum(month_groups[mk].get(g, 0.0) for g in rev_components))
                for mk in month_keys}
+    points = {mk: round(month_groups[mk].get("__points__", 0.0)) for mk in month_keys}
     pnl_rows = [{"key": "retailAmount", "label": "📦 Выручка (продажи и возвраты, вкл. баллы)",
                  "style": "header", "formula": "direct", "values": revenue}]
     # составляющие выручки — справочно
-    for i, g in enumerate(sorted(rev_components, key=lambda g: -all_groups[g])):
+    if any(points.values()):
+        sales_wo = {mk: round(month_groups[mk].get("Продажи и возвраты", 0.0)) - points[mk]
+                    for mk in month_keys}
+        pnl_rows.append({"key": "revc_sales", "label": "      ↳ Продажи (оплачено покупателями)",
+                         "style": "note", "formula": "info", "values": sales_wo})
+        pnl_rows.append({"key": "revc_points", "label": "      ↳ Баллы за скидки (соинвест Ozon)",
+                         "style": "note", "formula": "info", "values": points})
+        rev_notes = [g for g in rev_components if g != "Продажи и возвраты"]
+    else:
+        rev_notes = list(rev_components)
+    for i, g in enumerate(sorted(rev_notes, key=lambda g: -all_groups[g])):
         pnl_rows.append({"key": f"revc_{i}", "label": f"      ↳ {g}", "style": "note",
                          "formula": "info",
                          "values": {mk: round(month_groups[mk].get(g, 0.0)) for mk in month_keys}})
@@ -1504,7 +1527,8 @@ def _oz_pnl_partial(month_groups: dict, cogs_by_month: dict, costs: dict) -> Non
         pnl_rows.append({"key": f"cost_{i}", "label": f"  − {g}", "style": "cost",
                          "formula": "direct",
                          "values": {mk: round(month_groups[mk].get(g, 0.0)) for mk in month_keys}})
-    payout = {mk: round(sum(month_groups[mk].values())) for mk in month_keys}
+    payout = {mk: round(sum(v for g, v in month_groups[mk].items() if not g.startswith("__")))
+              for mk in month_keys}
     pnl_rows.append({"key": "bankPayment", "label": "💳 Итого начислено (к перечислению)",
                      "style": "subtotal", "formula": "direct", "values": payout})
     pnl_rows.append({"key": "cogs", "label": "  − Себестоимость", "style": "cost",
