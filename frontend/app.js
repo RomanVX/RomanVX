@@ -1941,6 +1941,16 @@ function renderUnitMonth() {
   const advNote = (_unitMonth !== 'ALL' && preciseMks.includes(_unitMonth))
     ? 'Продвижение — точная раскладка по артикулам из статистики кампаний WB (fullstats)'
     : 'Продвижение — по доле выручки' + (_unitData.advert_building ? ' (точная раскладка по кампаниям собирается в фоне, ~5-10 мин)' : '');
+  if ((_unitData.months_pending || []).length) {
+    html += `<div class="text-info small mt-2">⏳ Месяцы ${_unitData.months_pending.join(', ')} появятся по мере сборки раскладки рекламы (по минуте на месяц). Страница обновится сама.</div>`;
+    if (!window._unitPendingTimer) {
+      window._unitPendingTimer = setTimeout(() => {
+        window._unitPendingTimer = null;
+        _unitData = null;
+        if (currentTab === 'unit') loadUnitEconomics();
+      }, 30000);
+    }
+  }
   const taxNote = _unitTax > 0 ? `налог — ${_unitTax}% с прибыли (доходы−расходы)` : 'налог не задан (введите % сверху)';
   html += `<div class="text-secondary small mt-2">${advNote}; удержания — по доле выручки; ${taxNote}; ROI = прибыль / себестоимость.` +
           (_unitData.detail_upto ? ` Отчёт реализации — по ${_unitData.detail_upto}.` : '') + `</div>`;

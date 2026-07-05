@@ -634,14 +634,19 @@ _adv_nm_db_checked: bool = False
 _ADV_NM_TTL = 12 * 3600
 
 
-def _adv_nm_save_db(result: dict) -> None:
-    """Раскладка рекламы — в БД: переживает рестарты (Render Free спит)."""
+def _adv_nm_save_month_db(mk: str, per_nm: dict) -> None:
+    """Инкрементальное сохранение месяца — деплой/рестарт не теряет прогресс."""
     import db
     db.execute("CREATE TABLE IF NOT EXISTS adv_nm_spend "
                "(mk TEXT, nm_id BIGINT, spend REAL, PRIMARY KEY (mk, nm_id))")
-    db.execute("DELETE FROM adv_nm_spend")
-    rows = [(mk, int(nm), float(sp)) for mk, per in result.items() for nm, sp in per.items()]
-    db.executemany("INSERT INTO adv_nm_spend (mk, nm_id, spend) VALUES (?,?,?)", rows)
+    db.execute("DELETE FROM adv_nm_spend WHERE mk = ?", (mk,))
+    rows = [(mk, int(nm), float(sp)) for nm, sp in per_nm.items()]
+    if rows:
+        db.executemany("INSERT INTO adv_nm_spend (mk, nm_id, spend) VALUES (?,?,?)", rows)
+
+
+def _adv_nm_mark_built() -> None:
+    import db
     built_at = datetime.utcnow().isoformat()
     db.execute("CREATE TABLE IF NOT EXISTS cogs_meta (key TEXT PRIMARY KEY, value TEXT)")
     if db.IS_PG:
@@ -713,22 +718,30 @@ async def _build_adv_nm_bg(months: int) -> None:
         today = (datetime.utcnow() + timedelta(hours=3)).date()
         for (y, m) in _last_months(months):
             mk = f"{y}-{m:02d}"
+            # уже собран этим или прошлым запуском (свежие месяцы — приоритет)
+            if mk in _adv_nm_cache and _time.monotonic() - _adv_nm_ts < _ADV_NM_TTL:
+                continue
             begin = f"{mk}-01"
             last_day = (datetime(y + (m == 12), m % 12 + 1, 1) - timedelta(days=1)).date()
             end = min(last_day, today).strftime("%Y-%m-%d")
             per_nm = await advert_client.get_fullstats_nm(ids, begin, end)
             if per_nm:
+                # инкрементально: месяц сразу доступен юнитке и сохранён в БД
                 result[mk] = per_nm
+                _adv_nm_cache = {**_adv_nm_cache, mk: per_nm}
+                try:
+                    await asyncio.to_thread(_adv_nm_save_month_db, mk, per_nm)
+                except Exception as e:
+                    _log.warning("adv-by-nm save month %s failed: %s", mk, e)
+                _log.info("adv-by-nm: месяц %s готов (%d nm)", mk, len(per_nm))
             await asyncio.sleep(62)   # 1 req/мин между месяцами
-        _adv_nm_cache = result
         _adv_nm_ts = _time.monotonic()
-        _adv_nm_error = "" if result else "fullstats вернул пусто по всем месяцам"
-        if result:
-            try:
-                await asyncio.to_thread(_adv_nm_save_db, result)
-            except Exception as e:
-                _log.warning("adv-by-nm save to DB failed: %s", e)
-        _log.info("adv-by-nm собран: %s", {k: len(v) for k, v in result.items()})
+        _adv_nm_error = "" if _adv_nm_cache else "fullstats вернул пусто по всем месяцам"
+        try:
+            await asyncio.to_thread(_adv_nm_mark_built)
+        except Exception:
+            pass
+        _log.info("adv-by-nm собран: %s", {k: len(v) for k, v in _adv_nm_cache.items()})
     except Exception as e:
         _adv_nm_error = str(e)[:300]
         _log.warning("adv-by-nm build failed: %s", e)
@@ -808,18 +821,22 @@ async def get_wb_unit(
         adv_sku_by_month[mk] = agg
     adv_spend_total = {mk: sum(v.values()) for mk, v in adv_sku_by_month.items()}
 
-    # «Точные или никакие»: если в месяце была реклама, а раскладка по
-    # кампаниям ещё не собрана — юнитку не показываем (вместо неточной).
+    # «Точные или никакие» на уровне месяца: показываем готовые месяцы сразу,
+    # несобранные (реклама есть, раскладки нет) скрываем, пока не подъедут.
     months_needing_ads = [mk for mk in month_keys if advert_m.get(mk, 0.0) > 0]
     imprecise = [mk for mk in months_needing_ads if adv_spend_total.get(mk, 0.0) <= 0]
     if imprecise:
-        if _adv_nm_error and not _adv_nm_building:
-            msg = f"⚠ Раскладка рекламы по артикулам не собралась: {_adv_nm_error}"
-        else:
-            msg = ("⏳ Собираем точную раскладку рекламы по артикулам из статистики "
-                   "кампаний WB (~10 минут, лимит API). Юнитка появится автоматически.")
-        return {"months": [], "skus": [], "message": msg,
-                "advert_building": _adv_nm_building}
+        ready = [mk for mk in month_keys if mk not in imprecise]
+        if not ready:
+            if _adv_nm_error and not _adv_nm_building:
+                msg = f"⚠ Раскладка рекламы по артикулам не собралась: {_adv_nm_error}"
+            else:
+                msg = ("⏳ Собираем точную раскладку рекламы по артикулам из статистики "
+                       "кампаний WB (по минуте на месяц, свежие — первыми). "
+                       "Юнитка появится автоматически.")
+            return {"months": [], "skus": [], "message": msg,
+                    "advert_building": _adv_nm_building}
+        month_keys = ready
 
     skus_out = []
     # аллокация с корректировкой остатка: крупнейший SKU месяца добирает разницу
@@ -934,6 +951,7 @@ async def get_wb_unit(
         "skus": skus_out,
         "totals": totals_out,
         "advert_precise_months": sorted(mk for mk, t in adv_spend_total.items() if t > 0),
+        "months_pending": imprecise,
         "advert_building": _adv_nm_building,
         "detail_upto": _wb_unit_data.get("detail_upto", ""),
         "fetched_at": _wb_unit_data.get("fetched_at", ""),
