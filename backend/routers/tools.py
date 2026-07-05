@@ -388,6 +388,7 @@ async def _adv_build_bg(force: bool = False) -> None:
         _adv_progress = "статистика кампаний (fullstats, ~минута)"
         stats = await ac.get_fullstats_campaigns(ids, begin.isoformat(), end.isoformat())
 
+        import catalog as _cat
         campaigns = []
         for aid in ids:
             m = meta.get(aid) or {}
@@ -396,6 +397,20 @@ async def _adv_build_bg(force: bool = False) -> None:
             status = m.get("status")
             if spend <= 0 and status not in (9, 11):
                 continue   # старые пустые кампании не показываем
+            # какие SKU продвигает: nm-разбивка расходов из fullstats,
+            # фолбэк — товары из настроек кампании
+            sku_spend: dict[str, dict] = {}
+            for nid, cell in (s.get("nms") or {}).items():
+                art = _cat.resolve_wb(nid)
+                sc = sku_spend.setdefault(art, {"sum": 0.0, "orders": 0})
+                sc["sum"] += cell.get("sum", 0)
+                sc["orders"] += cell.get("orders", 0)
+            if not sku_spend:
+                for nid in m.get("nms") or []:
+                    sku_spend.setdefault(_cat.resolve_wb(nid), {"sum": 0.0, "orders": 0})
+            skus = sorted(
+                [{"sku": k, "spend": round(v["sum"]), "orders": v["orders"]}
+                 for k, v in sku_spend.items()], key=lambda x: -x["spend"])[:12]
             campaigns.append({
                 "id": aid, "name": m.get("name") or str(aid),
                 "type": _ADV_TYPES.get(m.get("type"), str(m.get("type") or "")),
@@ -410,6 +425,9 @@ async def _adv_build_bg(force: bool = False) -> None:
                 "orders": s.get("orders") or 0,
                 "revenue": round(float(s.get("sum_price") or 0)),
                 "atbs": s.get("atbs") or 0,
+                "mode": "Автоматическая" if m.get("type") == 8 else "Ручная",
+                "bids": m.get("bids") or {},
+                "skus": skus,
             })
         for c in campaigns:
             c["cpo"] = round(c["spend"] / c["orders"]) if c["orders"] else None

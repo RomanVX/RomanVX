@@ -284,9 +284,32 @@ async def get_campaigns_meta(ids: list[int]) -> dict[int, dict]:
             continue
         for c in data if isinstance(data, list) else []:
             aid = c.get("advertId")
-            if aid:
-                out[int(aid)] = {"name": c.get("name") or f"Кампания {aid}",
-                                 "type": c.get("type"), "status": c.get("status")}
+            if not aid:
+                continue
+            meta = {"name": c.get("name") or f"Кампания {aid}",
+                    "type": c.get("type"), "status": c.get("status"),
+                    "nms": [], "bids": {}}
+            # ставки и товары: структура зависит от типа кампании
+            ap = c.get("autoParams") or {}
+            if ap:
+                if ap.get("cpm") is not None:
+                    meta["bids"]["cpm"] = ap.get("cpm")
+                meta["nms"] += [int(n) for n in (ap.get("nms") or []) if n]
+            for up in c.get("unitedParams") or []:
+                if up.get("searchCPM") is not None:
+                    meta["bids"]["search"] = up.get("searchCPM")
+                if up.get("catalogCPM") is not None:
+                    meta["bids"]["catalog"] = up.get("catalogCPM")
+                meta["nms"] += [int(n) for n in (up.get("nms") or []) if n]
+            for p in c.get("params") or []:
+                if p.get("price") is not None:
+                    meta["bids"]["cpm"] = p.get("price")
+                for nm in p.get("nms") or []:
+                    v = nm.get("nm") if isinstance(nm, dict) else nm
+                    if v:
+                        meta["nms"].append(int(v))
+            meta["nms"] = list(dict.fromkeys(meta["nms"]))[:60]
+            out[int(aid)] = meta
         await asyncio.sleep(1)
     return out
 
@@ -320,7 +343,8 @@ async def get_fullstats_campaigns(ids: list[int], begin: str, end: str) -> dict[
             if not aid:
                 continue
             agg = out.setdefault(int(aid), {"views": 0, "clicks": 0, "sum": 0.0,
-                                            "orders": 0, "sum_price": 0.0, "atbs": 0})
+                                            "orders": 0, "sum_price": 0.0, "atbs": 0,
+                                            "nms": {}})
             for day in camp.get("days") or []:
                 for app in day.get("apps") or []:
                     agg["views"] += int(app.get("views") or 0)
@@ -329,6 +353,12 @@ async def get_fullstats_campaigns(ids: list[int], begin: str, end: str) -> dict[
                     agg["orders"] += int(app.get("orders") or 0)
                     agg["sum_price"] += float(app.get("sum_price") or 0)
                     agg["atbs"] += int(app.get("atbs") or 0)
+                    for nm in app.get("nms") or []:
+                        nid = nm.get("nmId")
+                        if nid:
+                            cell = agg["nms"].setdefault(int(nid), {"sum": 0.0, "orders": 0})
+                            cell["sum"] += float(nm.get("sum") or 0)
+                            cell["orders"] += int(nm.get("orders") or 0)
         if ci + CHUNK < len(ids):
             await asyncio.sleep(62)
     return out

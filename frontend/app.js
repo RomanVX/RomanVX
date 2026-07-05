@@ -2634,9 +2634,19 @@ function renderAdvTool() {
     const [vLabel, vClr] = _ADV_VERDICT[c.verdict] || ['', 'var(--muted)'];
     const words = c.words || [];
     const hasWords = words.length > 0;
+    const bids = c.bids || {};
+    const bidStr = [bids.cpm != null ? `CPM ${bids.cpm}₽` : '',
+                    bids.search != null ? `поиск ${bids.search}₽` : '',
+                    bids.catalog != null ? `каталог ${bids.catalog}₽` : ''].filter(Boolean).join(' · ');
+    const skuChips = (c.skus || []).slice(0, 6).map(s =>
+      `<code style="color:var(--dim)">${esc(s.sku)}</code>${s.spend ? `<span class="text-secondary" style="font-size:.68rem">·${fmtRub(s.spend)}</span>` : ''}`).join(' ')
+      + ((c.skus || []).length > 6 ? ` <span class="text-secondary small">+${c.skus.length - 6}</span>` : '');
+    const modeClr = c.mode === 'Автоматическая' ? 'var(--warn-c)' : '#38bdf8';
     html += `<tr style="background:var(--t-row);${hasWords ? 'cursor:pointer' : ''}" ${hasWords ? `onclick="toggleAdvWords(${c.id})"` : ''}>
       <td style="padding:6px 10px">${hasWords ? `<span id="advArr${c.id}" style="color:var(--dim)">▶</span> ` : ''}<span style="color:var(--ink)">${esc(c.name)}</span>
-        <span class="text-secondary small">· ${c.type}</span></td>
+        <span class="small" style="color:${modeClr}">· ${c.mode || ''}</span>
+        <span class="text-secondary small">· ${c.type}${bidStr ? ' · ставка: ' + bidStr : ''}</span>
+        ${skuChips ? `<div style="font-size:.72rem;margin-top:2px">${skuChips}</div>` : ''}</td>
       <td class="small">${c.status}</td>
       <td class="text-end" style="color:var(--val);font-weight:600">${fmtRub(Math.round(c.spend))}</td>
       <td class="text-end" style="color:var(--dim)">${fmt(c.views)}</td>
