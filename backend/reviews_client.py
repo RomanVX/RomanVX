@@ -114,10 +114,18 @@ def get_all_reviews(platform=None, limit=500) -> list[dict]:
                            (platform, limit))
     else:
         rows = db.fetchall(sel + "ORDER BY created_at DESC LIMIT ?", (limit,))
+    # nmId — для превью-фото товара WB (артикул → номенклатура)
+    import catalog as _cat
+    import cost_store as _cs
+    art_to_nm = {a: nm for nm, a in _cat.WB_ID_TO_ART.items()}
+    nmids = {k: str(v) for k, v in (_cs.get_nmids() or {}).items()}
+    def _nm(sku):
+        s = _cat.canon(sku or "")
+        return art_to_nm.get(s) or nmids.get(s) or ""
     return [{"id": r[0], "platform": r[1], "sku": r[2], "name": r[3],
              "brand": r[4], "group": r[5], "rating": r[6],
              "text": r[7], "date": (r[8] or "")[:10],
-             "answer": r[9] or ""} for r in rows]
+             "answer": r[9] or "", "nm": _nm(r[2])} for r in rows]
 
 
 # ─── DRAFTS (AI-генерация ответов) ─────────────────────────────────────────────

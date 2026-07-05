@@ -2460,13 +2460,21 @@ function renderProductolog() {
       <th style="min-width:230px">Минусы (%)</th>
       <th style="min-width:280px">Рекомендации к изменению</th>
     </tr></thead><tbody>`;
+  // классическая группировка (Фисты, Спреи и т.д.) — как в заказах/остатках
+  const groupMap = {};
   items.forEach(it => {
+    const g = articleGroup({ supplierArticle: it.sku, brand: it.group });
+    (groupMap[g] = groupMap[g] || []).push(it);
+  });
+  const orderedGroups = GROUP_ORDER.filter(g => groupMap[g]).map(g => [g, groupMap[g]]);
+
+  const rowHtml = it => {
     const bar = `<div class="d-flex" style="height:6px;border-radius:3px;overflow:hidden;width:100px;margin:4px auto 2px">
       <div style="width:${it.pos}%;background:var(--pos)"></div>
       <div style="width:${it.neu}%;background:var(--warn-c)"></div>
       <div style="width:${it.neg}%;background:var(--neg)"></div></div>`;
     const avgClr = it.avg >= 4.8 ? 'var(--pos)' : it.avg >= 4.5 ? 'var(--warn-c)' : 'var(--neg)';
-    html += `<tr style="background:var(--t-row)">
+    const row = `<tr style="background:var(--t-row)">
       <td style="position:sticky;left:0;background:var(--t-sticky);padding:8px 12px;vertical-align:top">
         <code style="color:var(--val-soft)">${esc(it.sku)}</code>
         <div class="small" style="color:var(--ink)">${esc(it.name)}</div>
@@ -2481,6 +2489,11 @@ function renderProductolog() {
         ? `<span style="color:var(--ink-2)">🛠 ${esc(it.recommendation)}</span>`
         : ''}</td>
     </tr>`;
+    return row;
+  };
+  orderedGroups.forEach(([gname, list]) => {
+    html += `<tr class="table-secondary"><td colspan="5" style="padding:6px 12px"><strong>${gname}</strong> <span class="text-secondary small">(${list.length} арт.)</span></td></tr>`;
+    list.forEach(it => { html += rowHtml(it); });
   });
   html += `</tbody></table></div></div></div>
   <div class="text-secondary small mt-2">Проблемные товары сверху (по доле негативных отзывов). Проценты в плюсах/минусах — доля отзывов, где тема упомянута. Анализ пересобирается автоматически, когда накапливаются новые отзывы.</div>`;
@@ -2981,15 +2994,31 @@ function renderReviewsFeed() {
           ${badge(r.platform)} ${stars(r.rating)}
           <span class="text-secondary small">${r.date}</span>
         </div>
-        <div class="text-end ms-2">
-          <div class="small">${r.name || r.sku}</div>
-          ${r.group ? `<div class="text-secondary" style="font-size:0.75rem">${r.group}</div>` : ''}
+        <div class="d-flex align-items-start gap-2 ms-2">
+          <div class="text-end">
+            <div class="small">${r.name || r.sku}</div>
+            ${r.group ? `<div class="text-secondary" style="font-size:0.75rem">${r.group}</div>` : ''}
+          </div>
+          ${r.nm ? `<img src="${wbPhotoUrl(r.nm)}" loading="lazy" onerror="this.remove()"
+               style="width:40px;height:52px;object-fit:cover;border-radius:8px;border:1px solid var(--border-2);flex-shrink:0" />` : ''}
         </div>
       </div>
       ${r.text ? `<div class="mt-1">${r.text}</div>` : '<div class="text-secondary small fst-italic">без текста</div>'}
       ${replyBlock(r)}
     </div>
   `).join('');
+}
+
+
+// главное фото товара WB по nmId (раскладка по basket-хостам)
+function wbPhotoUrl(nm) {
+  nm = parseInt(nm, 10);
+  if (!nm) return '';
+  const vol = Math.floor(nm / 1e5), part = Math.floor(nm / 1e3);
+  const R = [143,287,431,719,1007,1061,1115,1169,1313,1601,1655,1919,2045,2189,2405,2621,2837,3053,3269,3485,3701,3917,4133,4349,4565,4877,5189,5501,5813,6125,6437];
+  let b = R.length + 1;
+  for (let i = 0; i < R.length; i++) if (vol <= R[i]) { b = i + 1; break; }
+  return `https://basket-${String(b).padStart(2,'0')}.wbbasket.ru/vol${vol}/part${part}/${nm}/images/c246x328/1.webp`;
 }
 
 const ANSWERED_MARK = '✓ Отвечено на платформе';
