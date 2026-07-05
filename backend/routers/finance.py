@@ -2310,28 +2310,35 @@ async def get_payouts(refresh: bool = Query(default=False)):
         wb["note"] = "Баланс — из API WB (к выводу = ещё не выплачено). Выплаты еженедельно."
         items.append(wb)
 
-    # ── Ozon: оценка по начислениям ──
+    # Обе площадки платят еженедельно с отсрочкой ~4 недели (сверено с
+    # кабинетами). Невыплачено ≈ начисления после «отсечки» = сегодня − лаг.
+    def _prev_unpaid_share(lag_days: int) -> float:
+        cutoff = today - timedelta(days=lag_days)
+        prev_last = today.replace(day=1) - timedelta(days=1)
+        if (cutoff.year, cutoff.month) < (prev_last.year, prev_last.month):
+            return 1.0    # отсечка раньше прошлого месяца — он весь не выплачен
+        if (cutoff.year, cutoff.month) > (prev_last.year, prev_last.month):
+            return 0.0
+        return max(0, prev_last.day - cutoff.day) / prev_last.day
+
+    # ── Ozon: недельные периоды, выплата ~через 24 дня после конца недели ──
     if "OZON" in CABINET_MARKETPLACES:
-        upcoming = _row_val(_oz_pnl_cache, "bankPayment", cur_mk)
-        # выплаты 2 раза в месяц: вторая половина прошлого месяца обычно
-        # приходит ~10-го числа — до этого добавляем её в «ожидается»
-        if today.day < 12:
-            upcoming += _row_val(_oz_pnl_cache, "bankPayment", prev_mk) / 2
+        upcoming = (_row_val(_oz_pnl_cache, "bankPayment", cur_mk)
+                    + _row_val(_oz_pnl_cache, "bankPayment", prev_mk) * _prev_unpaid_share(24))
         items.append({
             "mp": "Ozon", "color": "#3b82f6",
             "upcoming": round(upcoming),
-            "note": "Оценка: начислено и ещё не выплачено (выплаты ~10-го и ~25-го числа).",
+            "note": "Оценка: начисления последних ~4 недель (стандартный график — еженедельно с отсрочкой ~4 недели).",
         })
 
-    # ── YM: оценка по начислениям (отсрочка 4 недели) ──
+    # ── YM: недельные периоды, выплата через 4 недели после конца недели ──
     if "YM" in CABINET_MARKETPLACES:
-        upcoming = _row_val(_ym_pnl_cache, "bankPayment", cur_mk)
-        # отсрочка ~4 недели: хвост прошлого месяца ещё едет пропорционально
-        upcoming += _row_val(_ym_pnl_cache, "bankPayment", prev_mk) * min(1.0, (28 - min(today.day, 28)) / 28)
+        upcoming = (_row_val(_ym_pnl_cache, "bankPayment", cur_mk)
+                    + _row_val(_ym_pnl_cache, "bankPayment", prev_mk) * _prev_unpaid_share(35))
         items.append({
             "mp": "ЯМ", "color": "#b45309",
             "upcoming": round(upcoming),
-            "note": "Оценка: начисления последних ~4 недель (выплаты раз в неделю с отсрочкой 4 недели).",
+            "note": "Оценка ≈ балансу кабинета: начисления последних ~5 недель (еженедельно с отсрочкой 4 недели).",
         })
 
     result = {
