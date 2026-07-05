@@ -2582,13 +2582,19 @@ async function renderNicheForm() {
   <div class="card bg-card p-3 mb-3">
     <div class="fw-semibold mb-2" style="color:var(--ink)">Оценка: выходить ли с товаром на WB</div>
     <div class="d-flex gap-2 flex-wrap align-items-center">
-      <input id="nicheQuery" class="form-control form-control-sm bg-dark text-white border-secondary" style="width:280px" placeholder="Поисковый запрос (напр. крем для лица с цинком)">
-      <input id="nichePrice" type="number" class="form-control form-control-sm bg-dark text-white border-secondary" style="width:130px" placeholder="Ваша цена ₽">
-      <input id="nicheCost" type="number" class="form-control form-control-sm bg-dark text-white border-secondary" style="width:130px" placeholder="Себес ₽">
-      <input id="nicheLog" type="number" class="form-control form-control-sm bg-dark text-white border-secondary" style="width:130px" placeholder="Логистика ₽ (70)">
+      <input id="nicheQuery" class="form-control form-control-sm bg-dark text-white border-secondary" style="width:340px" placeholder="Поисковый запрос (напр. крем для лица с цинком)"
+             onkeydown="if(event.key==='Enter')runNiche()">
       <button id="nicheGo" class="btn btn-sm btn-outline-success" onclick="runNiche()">Проанализировать</button>
     </div>
-    <div class="text-secondary small mt-2">Данные — из публичной выдачи WB (как в MPStats). Цена/себес необязательны: без них покажем нишу, с ними — юнит-прикидку. Оценка продаж конкурентов появляется со второго замера (прирост отзывов).</div>
+    <details class="mt-2">
+      <summary class="small" style="cursor:pointer;color:var(--muted)">Доп. параметры для юнит-прикидки (необязательно)</summary>
+      <div class="d-flex gap-2 flex-wrap mt-2">
+        <input id="nichePrice" type="number" class="form-control form-control-sm bg-dark text-white border-secondary" style="width:130px" placeholder="Ваша цена ₽">
+        <input id="nicheCost" type="number" class="form-control form-control-sm bg-dark text-white border-secondary" style="width:130px" placeholder="Себес ₽">
+        <input id="nicheLog" type="number" class="form-control form-control-sm bg-dark text-white border-secondary" style="width:130px" placeholder="Логистика ₽ (70)">
+      </div>
+    </details>
+    <div class="text-secondary small mt-2">Данные — из публичной выдачи WB. Оценка продаж конкурентов появляется со второго замера (прирост отзывов).</div>
     ${hist.length ? `<div class="small mt-2"><span class="text-secondary">Раньше считали:</span> ${hist.map(h => `<a href="#" class="me-2" style="color:var(--gold)" onclick="openNiche('${esc(h.query)}');return false">${esc(h.query)}</a>`).join('')}</div>` : ''}
   </div>
   <div id="nicheOut">${_nicheResult ? '' : ''}</div>`;

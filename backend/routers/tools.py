@@ -564,15 +564,21 @@ async def _wb_public_search(query: str, limit: int = 60) -> tuple[list[dict], in
     Тот же эндпоинт, что использует сайт wildberries.ru (и все сервисы
     аналитики). Формат периодически меняется — пробуем v5 и v4."""
     import httpx
-    params = {"appType": 1, "curr": "rub", "dest": -1257786, "sort": "popular",
-              "resultset": "catalog", "page": 1, "query": query}
+    params = {"ab_testing": "false", "appType": 1, "curr": "rub", "dest": -1257786,
+              "sort": "popular", "resultset": "catalog", "page": 1, "spp": 30,
+              "suppressSpellcheck": "false", "query": query}
+    global _niche_last_err
+    _niche_last_err = ""
     async with httpx.AsyncClient(timeout=30, headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}) as client:
-        for ver in ("v5", "v4"):
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+            "Accept": "application/json", "Origin": "https://www.wildberries.ru",
+            "Referer": "https://www.wildberries.ru/"}) as client:
+        for ver in ("v13", "v9", "v5", "v4"):
             try:
                 r = await client.get(
                     f"https://search.wb.ru/exactmatch/ru/common/{ver}/search", params=params)
                 if not r.is_success:
+                    _niche_last_err = f"{ver}: HTTP {r.status_code}"
                     continue
                 data = r.json().get("data") or {}
                 products = data.get("products") or []
@@ -603,7 +609,36 @@ async def _wb_public_search(query: str, limit: int = 60) -> tuple[list[dict], in
                 return out, total
             except Exception as e:
                 _log.warning("wb public search %s: %s", ver, e)
+                _niche_last_err = f"{ver}: {str(e)[:120]}"
     return [], 0
+
+
+_niche_last_err = ""
+
+
+@router.get("/niche/debug", include_in_schema=False)
+async def niche_debug(query: str = Query(default="крем для лица")):
+    """Диагностика публичного поиска WB: статусы по версиям API."""
+    import httpx
+    out = {}
+    params = {"ab_testing": "false", "appType": 1, "curr": "rub", "dest": -1257786,
+              "sort": "popular", "resultset": "catalog", "page": 1, "spp": 30, "query": query}
+    async with httpx.AsyncClient(timeout=20, headers={
+            "User-Agent": "Mozilla/5.0", "Referer": "https://www.wildberries.ru/"}) as client:
+        for ver in ("v13", "v9", "v5", "v4"):
+            try:
+                r = await client.get(f"https://search.wb.ru/exactmatch/ru/common/{ver}/search",
+                                     params=params)
+                body = r.text[:300]
+                n = 0
+                try:
+                    n = len((r.json().get("data") or {}).get("products") or [])
+                except Exception:
+                    pass
+                out[ver] = {"status": r.status_code, "products": n, "body_head": body}
+            except Exception as e:
+                out[ver] = {"error": str(e)[:200]}
+    return out
 
 
 _commission_cache: dict = {}
@@ -648,7 +683,8 @@ async def analyze_niche(payload: dict):
     products, total = await _wb_public_search(query)
     if not products:
         raise HTTPException(status_code=502,
-                            detail="WB не вернул выдачу по запросу (попробуйте другой запрос)")
+                            detail="WB не вернул выдачу по запросу"
+                                   + (f" ({_niche_last_err})" if _niche_last_err else ""))
 
     today = datetime.utcnow().date().isoformat()
     # прошлые замеры — для оценки продаж по приросту отзывов
