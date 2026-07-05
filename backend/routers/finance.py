@@ -1151,6 +1151,36 @@ _oz_pnl_cache: dict = {}
 _oz_pnl_ts: float = 0.0
 _OZ_PNL_TTL = 6 * 3600
 _oz_pnl_building: bool = False
+_oz_pnl_error: str = ""
+_oz_pnl_progress: str = ""
+
+
+def _oz_save_month_db(mk: str, groups: dict, cogs: float) -> None:
+    """Помесячное сохранение статей Ozon — рестарты не теряют прогресс."""
+    import db
+    db.execute("CREATE TABLE IF NOT EXISTS oz_pnl_groups "
+               "(mk TEXT, grp TEXT, amount REAL, PRIMARY KEY (mk, grp))")
+    db.execute("DELETE FROM oz_pnl_groups WHERE mk = ?", (mk,))
+    rows = [(mk, g, float(v)) for g, v in groups.items()]
+    rows.append((mk, "__cogs__", float(cogs)))
+    db.executemany("INSERT INTO oz_pnl_groups (mk, grp, amount) VALUES (?,?,?)", rows)
+
+
+def _oz_load_months_db() -> tuple[dict, dict]:
+    """{mk: {группа: сумма}}, {mk: cogs} из БД."""
+    import db
+    try:
+        rows = db.fetchall("SELECT mk, grp, amount FROM oz_pnl_groups")
+    except Exception:
+        return {}, {}
+    groups: dict = {}
+    cogs: dict = {}
+    for mk, g, v in rows:
+        if g == "__cogs__":
+            cogs[mk] = float(v or 0)
+        else:
+            groups.setdefault(mk, {})[g] = float(v or 0)
+    return groups, cogs
 
 
 def _last_months(n: int) -> list[tuple[int, int]]:
@@ -1321,21 +1351,32 @@ async def _build_ozon_pnl(months: int) -> None:
     отчёт о реализации + cash-flow. Себестоимость: qty из отчёта о реализации,
     для текущего месяца — из доставленных отправлений.
     """
-    global _oz_pnl_cache, _oz_pnl_ts, _oz_pnl_building
+    global _oz_pnl_cache, _oz_pnl_ts, _oz_pnl_building, _oz_pnl_error, _oz_pnl_progress
     if _oz_pnl_building:
         return
     _oz_pnl_building = True
+    _oz_pnl_error = ""
     try:
         import ozon_client
         import catalog as _cat
 
         costs = cost_store.get_costs()
         today = (datetime.utcnow() + timedelta(hours=3)).date()
+        # поднимаем уже собранные месяцы из БД (свежие два — пересобираем,
+        # они ещё пополняются начислениями)
+        db_groups, db_cogs = await asyncio.to_thread(_oz_load_months_db)
+        cur_mk = today.strftime("%Y-%m")
+        prev_mk = (today.replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
         month_groups: dict[str, dict[str, float]] = {}   # mk → {группа: сумма}
         cogs_by_month: dict[str, float] = {}
 
         for (y, m) in _last_months(months):
             mk = f"{y}-{m:02d}"
+            if mk in db_groups and mk not in (cur_mk, prev_mk):
+                month_groups[mk] = db_groups[mk]
+                cogs_by_month[mk] = db_cogs.get(mk, 0.0)
+                continue
+            _oz_pnl_progress = mk
             month_start = f"{mk}-01"
             month_end = (datetime(y + (m == 12), m % 12 + 1, 1) - timedelta(days=1)).strftime("%Y-%m-%d")
 
@@ -1381,6 +1422,12 @@ async def _build_ozon_pnl(months: int) -> None:
             accr = await _fetch_ozon_accruals_month(y, m, today)
             if accr:
                 month_groups[mk] = accr
+                try:
+                    await asyncio.to_thread(_oz_save_month_db, mk, accr, cogs_by_month.get(mk, 0.0))
+                except Exception as e:
+                    _log.warning("Ozon save month %s failed: %s", mk, e)
+                # промежуточный кэш: собранные месяцы видны сразу
+                _oz_pnl_partial(month_groups, cogs_by_month, costs)
                 continue
 
             # фолбэк: реализация + cash-flow старыми строками
@@ -1408,65 +1455,76 @@ async def _build_ozon_pnl(months: int) -> None:
             if fb:
                 month_groups[mk] = fb
 
-        # ── Динамические строки: группы как в кабинете ──
-        month_keys = sorted(month_groups.keys(), reverse=True)
-        all_groups: dict[str, float] = {}
-        for mk in month_keys:
-            for g, v in month_groups[mk].items():
-                all_groups[g] = all_groups.get(g, 0.0) + v
-        revenue_groups = sorted((g for g, v in all_groups.items() if v > 0),
-                                key=lambda g: -all_groups[g])
-        cost_groups = sorted((g for g, v in all_groups.items() if v <= 0),
-                             key=lambda g: all_groups[g])
-
-        pnl_rows = []
-        for i, g in enumerate(revenue_groups):
-            pnl_rows.append({"key": f"rev_{i}", "label": ("📦 " if i == 0 else "  + ") + g,
-                             "style": "header" if i == 0 else "normal",
-                             "formula": "direct",
-                             "values": {mk: round(month_groups[mk].get(g, 0.0)) for mk in month_keys}})
-        for i, g in enumerate(cost_groups):
-            pnl_rows.append({"key": f"cost_{i}", "label": f"  − {g}", "style": "cost",
-                             "formula": "direct",
-                             "values": {mk: round(month_groups[mk].get(g, 0.0)) for mk in month_keys}})
-        payout = {mk: round(sum(month_groups[mk].values())) for mk in month_keys}
-        pnl_rows.append({"key": "bankPayment", "label": "💳 Итого начислено (к перечислению)",
-                         "style": "subtotal", "formula": "direct", "values": payout})
-        pnl_rows.append({"key": "cogs", "label": "  − Себестоимость", "style": "cost",
-                         "formula": "direct",
-                         "values": {mk: -round(cogs_by_month.get(mk, 0.0)) for mk in month_keys}})
-        gross = {mk: payout[mk] - round(cogs_by_month.get(mk, 0.0)) for mk in month_keys}
-        pnl_rows.append({"key": "gross", "label": "✅ Валовая прибыль", "style": "total",
-                         "formula": "direct", "values": gross})
-        # маржа — от выручки (крупнейшая положительная группа)
-        rev_key = revenue_groups[0] if revenue_groups else None
-        pct = {}
-        for mk in month_keys:
-            rev = month_groups[mk].get(rev_key, 0.0) if rev_key else 0.0
-            pct[mk] = round(gross[mk] / rev * 100) if rev > 0 else 0
-        pnl_rows.append({"key": "gross_pct", "label": "   Маржа %", "style": "pct",
-                         "formula": "gross_pct", "values": pct})
-        # retailAmount для Тотала (фронт суммирует по этому ключу)
-        if rev_key:
-            for r in pnl_rows:
-                if r["key"] == "rev_0":
-                    r["key"] = "retailAmount"
-                    break
-
-        cogs_has_data = len(costs) > 0 and any(v > 0 for v in cogs_by_month.values())
-        _oz_pnl_cache = {
-            "months": _months_out(month_groups.keys()),
-            "rows": pnl_rows,
-            "cogs_loaded": len(costs) > 0,
-            "cogs_has_data": cogs_has_data,
-            "fetched_at": datetime.utcnow().strftime("%d.%m.%Y %H:%M UTC"),
-        }
+        # финальная сборка строк
+        _oz_pnl_partial(month_groups, cogs_by_month, costs)
         _oz_pnl_ts = _time.monotonic()
-        _log.info("Ozon P&L built: %d months (accrual groups: %d)", len(month_groups), len(all_groups))
+        _oz_pnl_progress = ""
+        _log.info("Ozon P&L built: %d months", len(month_groups))
     except Exception as e:
+        _oz_pnl_error = str(e)[:300]
         _log.error("Ozon P&L build failed: %s", e)
     finally:
         _oz_pnl_building = False
+
+
+def _oz_pnl_partial(month_groups: dict, cogs_by_month: dict, costs: dict) -> None:
+    """Собирает строки P&L из уже готовых месяцев и кладёт в кэш."""
+    global _oz_pnl_cache
+    if not month_groups:
+        return
+    month_keys = sorted(month_groups.keys(), reverse=True)
+    all_groups: dict[str, float] = {}
+    for mk in month_keys:
+        for g, v in month_groups[mk].items():
+            all_groups[g] = all_groups.get(g, 0.0) + v
+    revenue_groups = sorted((g for g, v in all_groups.items() if v > 0),
+                            key=lambda g: -all_groups[g])
+    cost_groups = sorted((g for g, v in all_groups.items() if v <= 0),
+                         key=lambda g: all_groups[g])
+
+    pnl_rows = []
+    for i, g in enumerate(revenue_groups):
+        pnl_rows.append({"key": f"rev_{i}", "label": ("📦 " if i == 0 else "  + ") + g,
+                         "style": "header" if i == 0 else "normal",
+                         "formula": "direct",
+                         "values": {mk: round(month_groups[mk].get(g, 0.0)) for mk in month_keys}})
+    for i, g in enumerate(cost_groups):
+        pnl_rows.append({"key": f"cost_{i}", "label": f"  − {g}", "style": "cost",
+                         "formula": "direct",
+                         "values": {mk: round(month_groups[mk].get(g, 0.0)) for mk in month_keys}})
+    payout = {mk: round(sum(month_groups[mk].values())) for mk in month_keys}
+    pnl_rows.append({"key": "bankPayment", "label": "💳 Итого начислено (к перечислению)",
+                     "style": "subtotal", "formula": "direct", "values": payout})
+    pnl_rows.append({"key": "cogs", "label": "  − Себестоимость", "style": "cost",
+                     "formula": "direct",
+                     "values": {mk: -round(cogs_by_month.get(mk, 0.0)) for mk in month_keys}})
+    gross = {mk: payout[mk] - round(cogs_by_month.get(mk, 0.0)) for mk in month_keys}
+    pnl_rows.append({"key": "gross", "label": "✅ Валовая прибыль", "style": "total",
+                     "formula": "direct", "values": gross})
+    # маржа — от выручки (крупнейшая положительная группа)
+    rev_key = revenue_groups[0] if revenue_groups else None
+    pct = {}
+    for mk in month_keys:
+        rev = month_groups[mk].get(rev_key, 0.0) if rev_key else 0.0
+        pct[mk] = round(gross[mk] / rev * 100) if rev > 0 else 0
+    pnl_rows.append({"key": "gross_pct", "label": "   Маржа %", "style": "pct",
+                     "formula": "gross_pct", "values": pct})
+    # retailAmount для Тотала (фронт суммирует по этому ключу)
+    if rev_key:
+        for r in pnl_rows:
+            if r["key"] == "rev_0":
+                r["key"] = "retailAmount"
+                break
+
+    cogs_has_data = len(costs) > 0 and any(v > 0 for v in cogs_by_month.values())
+    _oz_pnl_cache = {
+        "months": _months_out(month_groups.keys()),
+        "rows": pnl_rows,
+        "cogs_loaded": len(costs) > 0,
+        "cogs_has_data": cogs_has_data,
+        "building": _oz_pnl_building,
+        "fetched_at": datetime.utcnow().strftime("%d.%m.%Y %H:%M UTC"),
+    }
 
 
 @router.get("/ozon/pnl")
@@ -1483,9 +1541,13 @@ async def get_ozon_pnl(
         _oz_pnl_ts = 0.0
     _spawn(_build_ozon_pnl(months))
     if _oz_pnl_cache:
-        return _oz_pnl_cache  # отдаём устаревший, свежий соберётся в фоне
+        return _oz_pnl_cache  # отдаём собранное, остальное доедет в фоне
+    if _oz_pnl_error and not _oz_pnl_building:
+        return {"months": [], "rows": [],
+                "message": f"⚠ Ozon: сборка упала — {_oz_pnl_error}"}
+    prog = f" (сейчас: {_oz_pnl_progress})" if _oz_pnl_progress else ""
     return {"months": [], "rows": [],
-            "message": "⏳ Отчёт Ozon собирается в фоне — обновите вкладку через 1-2 минуты"}
+            "message": f"⏳ Отчёт Ozon собирается в фоне{prog} — страница обновится сама"}
 
 
 @router.get("/ozon/reports")
