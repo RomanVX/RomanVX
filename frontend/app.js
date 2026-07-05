@@ -1749,6 +1749,94 @@ function payoutsPanel() {
   </details>`;
 }
 
+// ── Сравнение площадок (Тотал): затраты в % от выручки ───────────────────────
+
+const _CMP_CATS = [
+  ['Комиссия и эквайринг',   [/комисси/i, /вознаграждени/i, /эквайринг/i, /приём и перевод/i]],
+  ['Логистика и доставка',   [/логистик/i, /доставк/i]],
+  ['Хранение и FBO',         [/хранени/i, /fbo/i, /приёмк/i]],
+  ['Реклама и продвижение',  [/продвижени/i, /реклам/i, /буст/i, /лояльн/i]],
+  ['Удержания и прочее',     [/./]],   // всё остальное
+];
+
+function mpComparePanel() {
+  const cabMps = (_cab && _cab.marketplaces) || ['WB', 'OZON', 'YM'];
+  const PLATS = [['WB', 'WB', '#c026d3'], ['OZON', 'Ozon', '#3b82f6'], ['YM', 'ЯМ', '#b45309']]
+    .filter(([k]) => cabMps.includes(k));
+  const cols = [];
+  for (const [k, label, color] of PLATS) {
+    const d = _financeData[k];
+    if (!d || !(d.months || []).length || d.source === 'weekly') continue;
+    const sum = key => (d.rows || []).filter(r => r.key === key)
+      .reduce((a, r) => a + Object.values(r.values || {}).reduce((x, y) => x + (y || 0), 0), 0);
+    const revenue = sum('retailAmount');
+    if (revenue <= 0) continue;
+    const payout = sum('bankPayment');
+    const cogs = Math.abs(sum('cogs'));
+    const gross = sum('gross');
+    // затратные строки → категории
+    const SKIP = new Set(['retailAmount', 'bankPayment', 'cogs', 'gross', 'gross_pct', 'subsidies']);
+    const cats = {};
+    (d.rows || []).forEach(r => {
+      if (SKIP.has(r.key) || r.style === 'note' || r.style === 'pct') return;
+      const total = Object.values(r.values || {}).reduce((a, v) => a + (v || 0), 0);
+      if (total >= 0) return;   // берём только затраты
+      const cat = _CMP_CATS.find(([, pats]) => pats.some(p => p.test(r.label || '')));
+      const name = cat ? cat[0] : 'Удержания и прочее';
+      cats[name] = (cats[name] || 0) + Math.abs(total);
+    });
+    cols.push({ k, label, color, revenue, payout, cogs, gross, cats });
+  }
+  if (cols.length < 2) return '';
+
+  const pct = (v, rev) => rev > 0 ? v / rev * 100 : 0;
+  const fmtPct = v => (Math.round(v * 10) / 10).toLocaleString('ru-RU') + '%';
+  const cell = (v, best, worst, invert) => {
+    // для затрат меньше = лучше; для маржи (invert) больше = лучше
+    const isBest = invert ? v === best : v === best;
+    const isWorst = invert ? v === worst : v === worst;
+    const clr = isBest ? 'var(--pos)' : isWorst ? 'var(--neg)' : 'var(--ink)';
+    return `<td class="text-end" style="padding:5px 14px"><span style="color:${clr};font-weight:${isBest || isWorst ? 700 : 500}">${fmtPct(v)}</span></td>`;
+  };
+
+  let html = `<div class="table-responsive"><table class="table table-sm mb-0" style="font-size:0.85rem">
+    <thead><tr><th style="min-width:230px">Статья (% от выручки площадки)</th>`;
+  cols.forEach(c => { html += `<th class="text-end" style="color:${c.color};min-width:100px">${c.label}</th>`; });
+  html += `</tr></thead><tbody>`;
+
+  _CMP_CATS.forEach(([name]) => {
+    const vals = cols.map(c => pct(c.cats[name] || 0, c.revenue));
+    if (!vals.some(v => v > 0.05)) return;
+    const best = Math.min(...vals), worst = Math.max(...vals);
+    html += `<tr><td style="color:var(--ink-2);padding:5px 12px">− ${name}</td>` +
+      vals.map(v => cell(v, best, worst)).join('') + `</tr>`;
+  });
+
+  // итоги
+  const totCost = cols.map(c => pct(c.revenue - c.payout, c.revenue));
+  html += `<tr style="background:var(--fin-subtotal);font-weight:600"><td style="padding:6px 12px;color:var(--val)">Все затраты площадки</td>` +
+    totCost.map(v => cell(v, Math.min(...totCost), Math.max(...totCost))).join('') + `</tr>`;
+  const cogsP = cols.map(c => pct(c.cogs, c.revenue));
+  html += `<tr><td style="color:var(--ink-2);padding:5px 12px">− Себестоимость</td>` +
+    cogsP.map(v => `<td class="text-end" style="padding:5px 14px;color:var(--ink)">${fmtPct(v)}</td>`).join('') + `</tr>`;
+  const grossP = cols.map(c => pct(c.gross, c.revenue));
+  html += `<tr style="background:var(--fin-total);font-weight:700"><td style="padding:6px 12px;color:var(--val)">Остаётся (валовая маржа)</td>` +
+    grossP.map(v => cell(v, Math.max(...grossP), Math.min(...grossP), true)).join('') + `</tr>`;
+  // абсолюты для контекста
+  html += `<tr><td style="color:var(--muted);padding:5px 12px;font-size:0.78rem">Выручка за период, ₽</td>` +
+    cols.map(c => `<td class="text-end" style="padding:5px 14px;color:var(--dim);font-size:0.78rem">${fmtRub(Math.round(c.revenue))}</td>`).join('') + `</tr>`;
+  html += `<tr><td style="color:var(--muted);padding:5px 12px;font-size:0.78rem">Валовая прибыль, ₽</td>` +
+    cols.map(c => `<td class="text-end" style="padding:5px 14px;color:var(--dim);font-size:0.78rem">${fmtRub(Math.round(c.gross))}</td>`).join('') + `</tr>`;
+  html += `</tbody></table></div>
+  <div class="text-secondary small mt-2">За загруженный период (последние месяцы). Зелёное — лучшая площадка по статье, красное — худшая. Маржа считается от выручки площадки, поэтому напрямую показывает, где рубль выручки приносит больше.</div>`;
+
+  return `
+  <details class="rev-fold mt-3">
+    <summary>⚖️ Сравнение площадок — где зарабатываем, а где теряем</summary>
+    <div class="card bg-card mt-2 p-3">${html}</div>
+  </details>`;
+}
+
 function manualCostsPanel(months) {
   const items = ((_manualCosts && _manualCosts.items) || [])
     .slice().sort((a, b) => b.mk.localeCompare(a.mk) || a.label.localeCompare(b.label));
@@ -1940,7 +2028,7 @@ function renderFinanceTable() {
     html += `<div class="text-secondary small mt-2">Отчёт реализации WB сформирован по ${d.detail_upto}.${tail}</div>`;
   }
   if (d.fetched_at) html += `<div class="text-secondary text-end small mt-1">Обновлено: ${d.fetched_at}</div>`;
-  if (mp === 'TOTAL') html += manualCostsPanel(d.months || []) + payoutsPanel();
+  if (mp === 'TOTAL') html += mpComparePanel() + manualCostsPanel(d.months || []) + payoutsPanel();
   wrap.innerHTML = html;
 }
 
