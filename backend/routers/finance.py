@@ -1157,6 +1157,7 @@ async def _build_ym_srv_bg(months: int) -> None:
                 _log.warning("YM srv save %s: %s", mk, e)
             _ym_pnl_ts = 0.0   # готовый месяц сразу виден при следующем запросе
             _log.info("YM services %s: %s", mk, {k: round(v) for k, v in groups.items()})
+            await asyncio.sleep(20)   # пауза между генерациями — лимит YM (420)
     finally:
         _ym_srv_building = False
 

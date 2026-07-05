@@ -398,14 +398,26 @@ async def get_services_report_month(year: int, month: int) -> bytes | None:
     report_id = None
     last_err = None
     for body in body_variants:
-        try:
-            r = await _post("/reports/united-marketplace-services/generate",
-                            body, params={"format": "FILE"})
-            report_id = (r.get("result") or {}).get("reportId")
-            if report_id:
+        # 420/429 — лимит генерации отчётов: ждём и повторяем (до 5 раз)
+        for attempt in range(5):
+            try:
+                r = await _post("/reports/united-marketplace-services/generate",
+                                body, params={"format": "FILE"})
+                report_id = (r.get("result") or {}).get("reportId")
                 break
-        except Exception as e:
-            last_err = e
+            except httpx.HTTPStatusError as e:
+                last_err = e
+                if e.response.status_code in (420, 429):
+                    _log.warning("YM report generate %s-%02d: %s — ждём 60с (%d/4)",
+                                 year, month, e.response.status_code, attempt + 1)
+                    await asyncio.sleep(60)
+                    continue
+                break   # 400 и прочее — пробуем другой вариант тела
+            except Exception as e:
+                last_err = e
+                break
+        if report_id:
+            break
     if not report_id:
         raise RuntimeError(f"YM services report: не удалось сгенерировать ({last_err})")
 
@@ -413,7 +425,13 @@ async def get_services_report_month(year: int, month: int) -> bytes | None:
     file_url = None
     for _ in range(60):
         await asyncio.sleep(5)
-        info = await _get(f"/reports/info/{report_id}", {})
+        try:
+            info = await _get(f"/reports/info/{report_id}", {})
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code in (420, 429):
+                await asyncio.sleep(30)
+                continue
+            raise
         res = info.get("result") or {}
         status = res.get("status") or ""
         if status == "DONE":
