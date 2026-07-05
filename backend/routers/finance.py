@@ -1161,6 +1161,96 @@ async def _build_ym_srv_bg(months: int) -> None:
         _ym_srv_building = False
 
 
+_ym_orders_state: dict = {}     # {"mt": {mk:{key:₽}}, "cogs": {mk:₽}, "unit_rev": …, "built_at": iso}
+_ym_orders_building: bool = False
+
+
+def _ym_orders_save_db(state: dict) -> None:
+    import db
+    import json
+    db.execute("CREATE TABLE IF NOT EXISTS kv_cache (k TEXT PRIMARY KEY, v TEXT)")
+    db.execute("DELETE FROM kv_cache WHERE k = 'ym_orders_state'")
+    db.execute("INSERT INTO kv_cache (k, v) VALUES ('ym_orders_state', ?)",
+               (json.dumps(state, ensure_ascii=False),))
+
+
+def _ym_orders_load_db() -> dict:
+    import db
+    import json
+    try:
+        rows = db.fetchall("SELECT v FROM kv_cache WHERE k = 'ym_orders_state'")
+        return json.loads(rows[0][0]) if rows else {}
+    except Exception:
+        return {}
+
+
+async def _build_ym_orders_bg(months: int) -> None:
+    """Фоново тянет выкупленные заказы YM и агрегирует по месяцам/SKU."""
+    global _ym_orders_building, _ym_pnl_ts
+    if _ym_orders_building:
+        return
+    _ym_orders_building = True
+    try:
+        import ym_client
+        import catalog as _cat
+        date_from, date_to = _month_range(months)
+        # захватываем заказы, созданные до начала периода, но доставленные внутри него
+        pad_from = (datetime.strptime(date_from, "%Y-%m-%d") - timedelta(days=45)).strftime("%Y-%m-%d")
+        orders = await ym_client.get_orders_stats(
+            pad_from, date_to,
+            statuses=["DELIVERED", "PARTIALLY_DELIVERED", "PARTIALLY_RETURNED"],
+        )
+        costs = cost_store.get_costs()
+        KEYS = ["retailAmount", "subsidies", "commission", "acquiring", "delivery",
+                "processing", "advert", "loyalty", "storage", "otherServices"]
+        mt: dict[str, dict] = {}
+        cogs_by_month: dict[str, float] = {}
+        unit_rev: dict = {}   # mk → sku → {revenue, qty, cogs}
+        min_mk = date_from[:7]
+        for o in orders:
+            # месяц реализации = дата последнего статуса (доставки), fallback — создание
+            d = (o.get("statusUpdateDate") or o.get("creationDate") or "")[:7]
+            if not d or d < min_mk:
+                continue
+            m = mt.setdefault(d, {k: 0.0 for k in KEYS})
+            for it in o.get("items") or []:
+                sku = _cat.resolve_ym(it.get("shopSku") or "")
+                cell = unit_rev.setdefault(d, {}).setdefault(
+                    sku, {"revenue": 0.0, "qty": 0.0, "cogs": 0.0})
+                for p in it.get("prices") or []:
+                    # Выручка — только реальные платежи покупателей (BUYER), как в
+                    # «Балансе кабинета». Субсидии Маркета (акции/баллы) деньгами
+                    # не приходят — Маркет компенсирует их скидками на услуги
+                    # (уже учтены в актах отчёта услуг) — показываем справочно.
+                    if p.get("type") == "BUYER":
+                        m["retailAmount"] += float(p.get("total") or 0)
+                        cell["revenue"] += float(p.get("total") or 0)
+                    elif p.get("type") in ("CASHBACK", "MARKETPLACE"):
+                        m["subsidies"] += float(p.get("total") or 0)
+                qty = int(it.get("count") or 0)
+                cell["qty"] += qty
+                uc = costs.get(sku, 0.0)
+                if uc > 0 and qty > 0:
+                    cogs_by_month[d] = cogs_by_month.get(d, 0.0) + uc * qty
+                    cell["cogs"] += uc * qty
+        state = {"mt": mt, "cogs": cogs_by_month, "unit_rev": unit_rev,
+                 "built_at": datetime.utcnow().isoformat()}
+        _ym_orders_state.clear()
+        _ym_orders_state.update(state)
+        _ym_unit_rev.clear()
+        _ym_unit_rev.update(unit_rev)
+        try:
+            await asyncio.to_thread(_ym_orders_save_db, state)
+        except Exception as e:
+            _log.warning("YM orders save: %s", e)
+        _ym_pnl_ts = 0.0   # свежие заказы видны при следующем запросе
+        _log.info("YM orders built: %d months", len(mt))
+    except Exception as e:
+        _log.error("YM orders build failed: %s", e)
+    finally:
+        _ym_orders_building = False
+
+
 @router.get("/ym/srv_debug", include_in_schema=False)
 async def ym_srv_debug():
     """Состояние сборки «Отчёта по стоимости услуг» YM."""
@@ -1179,13 +1269,13 @@ async def get_ym_pnl(
 ):
     """P&L Яндекс Маркета: выручка из stats/orders (выкупы), затраты — из
     официального «Отчёта по стоимости услуг» (там ВСЁ: комиссия, буст,
-    доставка, приём/перевод платежа, хранение, обработка)."""
+    доставка, приём/перевод платежа, хранение, обработка).
+
+    Отдаёт мгновенно из сохранённого состояния (как WB/Ozon):
+    заказы и отчёты услуг пересобираются в фоне."""
     global _ym_pnl_cache, _ym_pnl_ts
     if not refresh and _ym_pnl_cache and _time.monotonic() - _ym_pnl_ts < _YM_PNL_TTL:
         return _ym_pnl_cache
-
-    import ym_client
-    import catalog as _cat
 
     # затраты: из БД + фоновая сборка отчётов по месяцам
     if not _ym_srv_cache:
@@ -1195,62 +1285,32 @@ async def get_ym_pnl(
     if not _ym_srv_building:
         _spawn(_build_ym_srv_bg(months))
 
-    date_from, date_to = _month_range(months)
-    # захватываем заказы, созданные до начала периода, но доставленные внутри него
-    pad_from = (datetime.strptime(date_from, "%Y-%m-%d") - timedelta(days=45)).strftime("%Y-%m-%d")
-    try:
-        orders = await ym_client.get_orders_stats(
-            pad_from, date_to,
-            statuses=["DELIVERED", "PARTIALLY_DELIVERED", "PARTIALLY_RETURNED"],
-        )
-    except Exception as exc:
-        _log.error("YM stats/orders error: %s", exc)
-        raise HTTPException(status_code=502, detail=f"YM API: {exc}")
+    # выручка/заказы: из БД + фоновая пересборка (stale-while-revalidate)
+    if not _ym_orders_state:
+        st = await asyncio.to_thread(_ym_orders_load_db)
+        if st:
+            _ym_orders_state.update(st)
+            _ym_unit_rev.clear()
+            _ym_unit_rev.update(st.get("unit_rev") or {})
+    built_at = _ym_orders_state.get("built_at") or ""
+    stale = True
+    if built_at:
+        try:
+            age = (datetime.utcnow() - datetime.fromisoformat(built_at)).total_seconds()
+            stale = age > 1800
+        except ValueError:
+            pass
+    if (stale or refresh) and not _ym_orders_building:
+        _spawn(_build_ym_orders_bg(months))
+    if not _ym_orders_state.get("mt"):
+        return {"months": [], "rows": [],
+                "message": "⏳ Загружаем заказы YM в фоне — страница обновится сама"}
 
-    costs = cost_store.get_costs()
-    KEYS = ["retailAmount", "subsidies", "commission", "acquiring", "delivery",
-            "processing", "advert", "loyalty", "storage", "otherServices"]
-    mt: dict[str, dict] = {}
-    cogs_by_month: dict[str, float] = {}
-
-    def ensure(mk):
-        if mk not in mt:
-            mt[mk] = {k: 0.0 for k in KEYS}
-        return mt[mk]
-
-    min_mk = date_from[:7]
-    unit_rev: dict = {}   # mk → sku → {revenue, qty, cogs}
-    for o in orders:
-        # месяц реализации = дата последнего статуса (доставки), fallback — создание
-        d = (o.get("statusUpdateDate") or o.get("creationDate") or "")[:7]
-        if not d or d < min_mk:
-            continue
-        m = ensure(d)
-        for it in o.get("items") or []:
-            sku = _cat.resolve_ym(it.get("shopSku") or "")
-            cell = unit_rev.setdefault(d, {}).setdefault(
-                sku, {"revenue": 0.0, "qty": 0.0, "cogs": 0.0})
-            for p in it.get("prices") or []:
-                # Выручка — только реальные платежи покупателей (BUYER), как в
-                # «Балансе кабинета». Субсидии Маркета (акции/баллы) деньгами
-                # не приходят — Маркет компенсирует их скидками на услуги
-                # (они уже учтены в актах отчёта услуг) — показываем справочно.
-                if p.get("type") == "BUYER":
-                    m["retailAmount"] += float(p.get("total") or 0)
-                    cell["revenue"] += float(p.get("total") or 0)
-                elif p.get("type") in ("CASHBACK", "MARKETPLACE"):
-                    m["subsidies"] += float(p.get("total") or 0)
-            qty = int(it.get("count") or 0)
-            cell["qty"] += qty
-            uc = costs.get(sku, 0.0)
-            if uc > 0 and qty > 0:
-                cogs_by_month[d] = cogs_by_month.get(d, 0.0) + uc * qty
-                cell["cogs"] += uc * qty
-    _ym_unit_rev.clear()
-    _ym_unit_rev.update(unit_rev)
+    mt = _ym_orders_state["mt"]
+    cogs_by_month = _ym_orders_state.get("cogs") or {}
 
     # «точные или никакие»: месяц показываем, когда собрался отчёт услуг
-    shown = {mk: v for mk, v in mt.items() if mk in _ym_srv_cache}
+    shown = {mk: dict(v) for mk, v in mt.items() if mk in _ym_srv_cache}
     if not shown:
         msg = (f"⚠ Отчёт услуг YM не собрался: {_ym_srv_error}"
                if _ym_srv_error and not _ym_srv_building else
@@ -1284,6 +1344,7 @@ async def get_ym_pnl(
                        for mk in sorted(shown, reverse=True)}})
 
     pending = sorted(mk for mk in mt if mk not in shown)
+    costs = cost_store.get_costs()
     cogs_has_data = len(costs) > 0 and any(v > 0 for v in cogs_by_month.values())
     result = {
         "months": _months_out(shown.keys()),
