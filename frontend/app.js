@@ -199,7 +199,8 @@ async function fetchJSON(path, timeoutMs = 60000) {
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   let r;
   try {
-    r = await fetch(`${API}${path}?${getParams()}`, { signal: ctrl.signal });
+    const sep = path.includes('?') ? '&' : '?';
+    r = await fetch(`${API}${path}${sep}${getParams()}`, { signal: ctrl.signal });
   } catch (e) {
     clearTimeout(timer);
     if (e.name === 'AbortError') throw new Error('Таймаут запроса (' + Math.round(timeoutMs/1000) + 'с)');
