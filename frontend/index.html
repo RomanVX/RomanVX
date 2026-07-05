@@ -17,7 +17,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" />
-  <link rel="stylesheet" href="style.css?v=9" />
+  <link rel="stylesheet" href="style.css?v=10" />
 </head>
 <body>
 
@@ -35,7 +35,7 @@
 
 <!-- ══ CABINET OVERLAY ══ -->
 <div id="cabinetOverlay" class="mp-overlay" style="display:none">
-  <div class="mp-box" style="max-width:540px">
+  <div class="mp-box" style="width:640px;max-width:94vw">
     <img src="/static/mp_logo_mono.svg" alt="Market Partners" class="mp-logo" />
     <h2 class="mp-title">Выберите кабинет</h2>
     <div class="mp-cab-grid">
@@ -78,7 +78,6 @@
     <li class="nav-item"><a class="nav-link active" href="#" onclick="switchTab('salesan',this);return false">Заказы</a></li>
     <li class="nav-item"><a class="nav-link" href="#" onclick="switchTab('stocks',this);return false">Остатки</a></li>
     <li class="nav-item"><a class="nav-link" href="#" onclick="switchTab('reviews',this);return false">Отзывы</a></li>
-    <li class="nav-item"><a class="nav-link" href="#" onclick="switchTab('history',this);return false">История</a></li>
     <li class="nav-item"><a class="nav-link" href="#" onclick="switchTab('finance',this);return false">Финансы</a></li>
     <li class="nav-item"><a class="nav-link" href="#" onclick="switchTab('unit',this);return false">Юнитка</a></li>
   </ul>
@@ -117,8 +116,6 @@
       </div>
     </div>
 
-    <!-- Разбивка по месяцам -->
-    <div id="ordersMonthlyWrap" class="mt-2"></div>
   </div><!-- /pane-salesan -->
 
   <!-- Модал: анализ продаж -->
@@ -260,29 +257,6 @@
     <div id="reviewsFeed"></div>
   </div><!-- /pane-reviews -->
 
-  <div id="pane-history" style="display:none">
-    <div class="d-flex align-items-end gap-2 mb-3 flex-wrap">
-      <div>
-        <label class="form-label mb-0 small text-muted">С</label>
-        <input type="date" id="histFrom" class="form-control form-control-sm">
-      </div>
-      <div>
-        <label class="form-label mb-0 small text-muted">По</label>
-        <input type="date" id="histTo" class="form-control form-control-sm">
-      </div>
-      <button class="btn btn-sm btn-primary" onclick="loadHistory()">Показать</button>
-      <span id="histMeta" class="text-muted small ms-2"></span>
-    </div>
-    <div class="alert alert-info py-2 small">
-      📦 Данные продаж накапливаются в базе автоматически (каждые 30 минут) и хранятся
-      <b>навсегда</b> — даже после того, как маркетплейсы удалят их из своих API (WB ~90 дней).
-    </div>
-    <div id="histCards" class="row g-3 mb-3"></div>
-    <div class="card"><div class="card-body">
-      <canvas id="histChart" height="90"></canvas>
-    </div></div>
-  </div><!-- /pane-history -->
-
   <!-- ── Финансы ── -->
   <div id="pane-finance" style="display:none">
     <div class="d-flex gap-2 mb-3 flex-wrap align-items-center">
@@ -347,6 +321,6 @@
 
 <script src="vendor/bootstrap.bundle.min.js"></script>
 <script src="vendor/chart.umd.min.js"></script>
-<script src="app.js?v=74"></script>
+<script src="app.js?v=75"></script>
 </body>
 </html>

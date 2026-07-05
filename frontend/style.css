@@ -547,3 +547,18 @@ html[data-theme="light"] .text-info { color: #0369a1 !important; }
 
 /* кнопка переключения темы */
 #themeBtn { min-width: 38px; }
+
+/* монограмма кабинета — в стиле квадрата BN (тёмный скруглённый, золотые буквы) */
+.cab-mono {
+  width: 64px; height: 64px;
+  border-radius: 16px;
+  background: #14110a;
+  border: 1px solid #c9a84c;
+  color: #c9a84c;
+  font-weight: 800;
+  font-size: 22px;
+  letter-spacing: 1px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.cab-mono.cab-mono-sm { width: 26px; height: 26px; border-radius: 7px; font-size: 11px; letter-spacing: 0; display: inline-flex; margin-right: 8px; vertical-align: -6px; }

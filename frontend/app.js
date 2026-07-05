@@ -25,7 +25,7 @@ document.addEventListener('DOMContentLoaded', _initThemeBtn);
 const API = '';
 let charts = {};
 let sortState = {};
-const dirty = { salesan: true, stocks: true, reviews: true, history: true, finance: true, unit: true };
+const dirty = { salesan: true, stocks: true, reviews: true, finance: true, unit: true };
 let _advertData = [];
 let currentTab = 'finance';
 let prodAllData = [];
@@ -55,11 +55,11 @@ async function loadCabinetInfo() {
   const cabName = document.getElementById('cabCurrentName');
   if (cabName) cabName.textContent = _cab.name;
   if (_cab.id === 'fk') {
-    // иконка текущего кабинета — помада вместо льва Biomed
+    // иконка текущего кабинета — монограмма ФК в стиле квадрата BN
     const img = document.querySelector('#cabBiomed img');
-    if (img) img.outerHTML = '<div style="font-size:44px">💄</div>';
+    if (img) img.outerHTML = '<div class="cab-mono">ФК</div>';
     const navImg = document.querySelector('.navbar-brand img');
-    if (navImg) navImg.outerHTML = '💄 ';
+    if (navImg) navImg.outerHTML = '<span class="cab-mono cab-mono-sm">ФК</span>';
   }
   // карточка второго кабинета
   const grid = document.querySelector('.mp-cab-grid');
@@ -71,7 +71,7 @@ async function loadCabinetInfo() {
     // иконка второй карточки — по тому, КУДА она ведёт: у ФК ссылка на Biomed (лев BN), у Biomed — на ФК (помада)
     const otherIcon = _cab.id === 'fk'
       ? '<img src="/static/lion_logo.svg" alt="BN" style="width:64px;height:64px" />'
-      : '<div style="font-size:44px">💄</div>';
+      : '<div class="cab-mono">ФК</div>';
     div.innerHTML = `${otherIcon}<span>${_cab.other.name}</span>`;
     grid.appendChild(div);
   }
@@ -199,7 +199,7 @@ function skuName(r) {
 function switchTab(name, linkEl) {
   document.querySelectorAll('#mainTabs .nav-link').forEach(a => a.classList.remove('active'));
   if (linkEl) linkEl.classList.add('active');
-  ['salesan', 'stocks', 'reviews', 'history', 'finance', 'unit'].forEach(t => {
+  ['salesan', 'stocks', 'reviews', 'finance', 'unit'].forEach(t => {
     const el = document.getElementById('pane-' + t);
     if (el) el.style.display = t === name ? 'block' : 'none';
   });
@@ -207,7 +207,7 @@ function switchTab(name, linkEl) {
   if (dirty[name]) {
     dirty[name] = false;
     ({ salesan: loadSalesAnalytics, stocks: loadStocks,
-       reviews: loadReviews, history: loadHistory, finance: loadFinance,
+       reviews: loadReviews, finance: loadFinance,
        unit: loadUnitEconomics })[name]();
   }
 }
@@ -974,7 +974,6 @@ async function loadOrders() {
   try {
     _ordersData = await fetchJSON('/api/dashboard/weekly_orders');
     renderOrdersTable();
-    loadOrdersMonthly();  // подгружаем месячную разбивку параллельно
   } catch (e) {
     if (tbl) tbl.innerHTML = `<tr><td class="text-danger py-3">Ошибка: ${e.message}</td></tr>`;
   }
@@ -2242,7 +2241,6 @@ function initDashboard() {
   // Preload all other tabs in background so switching feels instant
   const bgTabs = [
     { name: 'stocks',  fn: loadStocks },
-    { name: 'history', fn: loadHistory },
     { name: 'finance', fn: loadFinance },
     { name: 'reviews', fn: loadReviews },
   ];
