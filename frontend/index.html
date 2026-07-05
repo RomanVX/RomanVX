@@ -1,6 +1,14 @@
 <!DOCTYPE html>
 <html lang="ru" data-bs-theme="dark">
 <head>
+  <script>
+    // тема до первой отрисовки — чтобы не мигало
+    (function () {
+      var t = localStorage.getItem('mp_theme') || 'dark';
+      document.documentElement.dataset.theme = t;
+      document.documentElement.setAttribute('data-bs-theme', t);
+    })();
+  </script>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Market Partners — WB Analytics</title>
@@ -9,7 +17,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" />
-  <link rel="stylesheet" href="style.css?v=7" />
+  <link rel="stylesheet" href="style.css?v=8" />
 </head>
 <body>
 
@@ -48,6 +56,9 @@
     </span>
   </div>
   <div class="d-flex align-items-center gap-2 flex-wrap">
+    <button id="themeBtn" class="btn btn-sm btn-outline-secondary" onclick="toggleTheme()" title="Тема">
+      <i class="bi bi-sun"></i>
+    </button>
     <button class="btn btn-sm btn-outline-light" onclick="loadAll()">
       <i class="bi bi-arrow-clockwise"></i> Обновить
     </button>
@@ -113,8 +124,8 @@
   <!-- Модал: анализ продаж -->
   <div class="modal fade" id="salesAnalysisModal" tabindex="-1">
     <div class="modal-dialog modal-lg modal-dialog-scrollable">
-      <div class="modal-content" style="background:#1a1a1a;color:#e2e8f0;border:1px solid #333">
-        <div class="modal-header" style="border-bottom:1px solid #333">
+      <div class="modal-content" style="background:var(--surface-2);color:var(--ink);border:1px solid var(--border-2)">
+        <div class="modal-header" style="border-bottom:1px solid var(--border)">
           <h5 class="modal-title">✨ Анализ текущих продаж</h5>
           <div class="ms-auto d-flex align-items-center gap-2">
             <span id="salesAnalysisAt" class="text-secondary small"></span>
@@ -151,8 +162,8 @@
   <!-- Модальное окно рекомендаций -->
   <div class="modal fade" id="recoModal" tabindex="-1">
     <div class="modal-dialog modal-lg modal-dialog-scrollable">
-      <div class="modal-content" style="background:#1a1a1a;color:#e2e8f0;border:1px solid #333">
-        <div class="modal-header" style="border-bottom:1px solid #333">
+      <div class="modal-content" style="background:var(--surface-2);color:var(--ink);border:1px solid var(--border-2)">
+        <div class="modal-header" style="border-bottom:1px solid var(--border)">
           <h5 class="modal-title">✨ Рекомендации к поставке</h5>
           <div class="ms-auto d-flex align-items-center gap-2">
             <span id="recoGeneratedAt" class="text-secondary small"></span>
@@ -327,6 +338,6 @@
 
 <script src="vendor/bootstrap.bundle.min.js"></script>
 <script src="vendor/chart.umd.min.js"></script>
-<script src="app.js?v=67"></script>
+<script src="app.js?v=68"></script>
 </body>
 </html>

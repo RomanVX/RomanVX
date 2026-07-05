@@ -38,6 +38,98 @@
   --radius:    14px;
   --radius-sm: 10px;
   --shadow:    0 8px 28px rgba(0, 0, 0, .35);
+
+  /* табличные токены (используются inline-стилями из app.js) */
+  --t-sticky:   #181a20;   /* липкие ячейки первого столбца */
+  --t-row:      #111;      /* обычная строка данных */
+  --t-mp-row:   #1a1a2e;   /* строка площадки (заказы) */
+  --t-grp-row:  #141520;   /* строка группы */
+  --t-sku-row:  #111122;   /* строка артикула */
+  --t-legend:   #0f1117;   /* ячейка легенды под графиком */
+  --t-detail:   #12131f;   /* липкая ячейка раскрытой детали */
+
+  /* финансовая таблица */
+  --fin-header:   #1a1c2a;
+  --fin-cost:     #0d0e1a;
+  --fin-subtotal: #1e2035;
+  --fin-total:    #0d2010;
+  --fin-pct:      #0a1a0a;
+
+  /* разделители недель/колонок */
+  --sep:        #2a2a3e;
+  --sep-strong: #3a3f5c;
+
+  /* значения в таблицах */
+  --val:      #fff;
+  --val-soft: #e2e8f0;
+  --dim:      #94a3b8;
+
+  /* семантика чисел */
+  --pos:        #4ade80;
+  --pos-soft:   #86efac;
+  --pos-strong: #16a34a;
+  --pos-bright: #22c55e;
+  --neg:        #f87171;
+  --warn-c:     #fbbf24;
+
+  /* хедер площадки в остатках (баннеры WB/Ozon/YM — текст всегда белый) */
+  --chip-bg:  #f0f0f0;
+  --chip-ink: #111;
+}
+
+/* ═══ Светлая тема ═══ */
+html[data-theme="light"] {
+  --bg:        #eef0f6;
+  --surface:   #ffffff;
+  --surface-2: #f3f4fa;
+  --surface-3: #e8eaf3;
+  --border:    #dcdfe9;
+  --border-2:  #c6ccde;
+
+  --ink:    #171a23;
+  --ink-2:  #444c62;
+  --muted:  #7b849b;
+
+  --gold:      #a8842e;
+  --gold-soft: rgba(168, 132, 46, .14);
+  --gold-grad: linear-gradient(135deg, #e3c878 0%, #c9a84c 55%, #a07828 100%);
+
+  --ok:      #0e9f6e;
+  --warn:    #b45309;
+  --danger:  #dc2626;
+
+  --shadow: 0 8px 28px rgba(24, 30, 52, .08);
+
+  --t-sticky:   #e9ebf4;
+  --t-row:      #ffffff;
+  --t-mp-row:   #e9ecf8;
+  --t-grp-row:  #f0f1f8;
+  --t-sku-row:  #f7f8fd;
+  --t-legend:   #f3f4fa;
+  --t-detail:   #edeff7;
+
+  --fin-header:   #edeff7;
+  --fin-cost:     #f9fafd;
+  --fin-subtotal: #e6e9f5;
+  --fin-total:    #e0f3e6;
+  --fin-pct:      #eff8f1;
+
+  --sep:        #d4d8e6;
+  --sep-strong: #b6bed6;
+
+  --val:      #12151f;
+  --val-soft: #2a3040;
+  --dim:      #5b6472;
+
+  --pos:        #0e9f6e;
+  --pos-soft:   #0c8a5f;
+  --pos-strong: #16a34a;
+  --pos-bright: #15803d;
+  --neg:        #dc2626;
+  --warn-c:     #b45309;
+
+  --chip-bg:  #dde1ee;
+  --chip-ink: #171a23;
 }
 
 body {
@@ -62,9 +154,9 @@ body {
 
 .navbar .navbar-brand { letter-spacing: .02em; }
 
-/* название компании в шапке — просто белым */
+/* название компании в шапке */
 .brand-text {
-  color: #fff;
+  color: var(--ink);
   font-weight: 700;
   font-size: 15px;
   letter-spacing: 3px;
@@ -384,9 +476,9 @@ body {
   background: var(--surface-2);
 }
 #ordersTable thead th:first-child { z-index: 3; }
-#ordersTable tr[data-row="mp"]  td:first-child { background: #1a1a2e; }
-#ordersTable tr[data-row="grp"] td:first-child { background: #141520; }
-#ordersTable tr[data-row="sku"] td:first-child { background: #111122; }
+#ordersTable tr[data-row="mp"]  td:first-child { background: var(--t-mp-row); }
+#ordersTable tr[data-row="grp"] td:first-child { background: var(--t-grp-row); }
+#ordersTable tr[data-row="sku"] td:first-child { background: var(--t-sku-row); }
 
 /* ══ Модалки ══ */
 .modal-content {
@@ -401,3 +493,37 @@ body {
 .alert-info    { background: rgba(59,130,246,.12); border-color: rgba(59,130,246,.35); color: #93c5fd; }
 .alert-danger  { background: rgba(248,113,113,.1); border-color: rgba(248,113,113,.3);  color: var(--danger); }
 .alert-warning { background: rgba(251,191,36,.1);  border-color: rgba(251,191,36,.3);   color: var(--warn); }
+
+/* ═══ Светлая тема — точечные доводки ═══ */
+html[data-theme="light"] body {
+  background:
+    radial-gradient(1100px 500px at 85% -10%, rgba(168,132,46,.06), transparent 60%),
+    radial-gradient(900px 480px at -10% 0%, rgba(192,38,211,.04), transparent 55%),
+    var(--bg);
+}
+html[data-theme="light"] .navbar {
+  background: rgba(255, 255, 255, .85) !important;
+}
+html[data-theme="light"] .navbar-dark .navbar-brand { color: var(--ink); }
+html[data-theme="light"] .nav-tabs .nav-link.active {
+  color: #fff;
+  box-shadow: 0 2px 12px rgba(168,132,46,.35);
+}
+html[data-theme="light"] .table {
+  --bs-table-hover-bg: rgba(168, 132, 46, .07);
+}
+html[data-theme="light"] .btn-outline-info { color: #0369a1; border-color: rgba(3,105,161,.4); }
+html[data-theme="light"] .btn-outline-info:hover { background: rgba(3,105,161,.08); border-color: #0369a1; color: #0369a1; }
+html[data-theme="light"] .btn-outline-warning:hover { color: #8a6a1e; }
+html[data-theme="light"] .btn-outline-light { color: var(--ink-2); border-color: var(--border-2); }
+html[data-theme="light"] .btn-outline-light:hover { background: var(--surface-3); border-color: var(--border-2); color: var(--ink); }
+html[data-theme="light"] .alert-info { color: #1d4ed8; }
+html[data-theme="light"] ::-webkit-scrollbar-thumb:hover { background: #a7b0c9; }
+html[data-theme="light"] .metric-card:hover { border-color: rgba(168,132,46,.4); }
+html[data-theme="light"] .nav-tabs .nav-link:hover { color: var(--ink); background: var(--surface-3); }
+html[data-theme="light"] .text-secondary { color: var(--muted) !important; }
+html[data-theme="light"] .btn-close-white { filter: none; }
+html[data-theme="light"] .spinner-border.text-light { color: var(--ink-2) !important; }
+
+/* кнопка переключения темы */
+#themeBtn { min-width: 38px; }

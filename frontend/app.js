@@ -1,5 +1,27 @@
 'use strict';
 
+// ── Тема (тёмная/светлая) ─────────────────────────────────────────────────────
+// Атрибут data-theme ставится ещё в <head> (до отрисовки), здесь только читаем.
+// Canvas-графики не понимают CSS-переменные, поэтому для Chart.js — сырые hex,
+// подобранные под активную тему. Переключение перерисовывает страницу целиком.
+const _THEME = document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
+const CHART_C = _THEME === 'light'
+  ? { tick: '#5b6472', tick2: '#8a93a5', grid: '#e2e5ee', legend: '#3d4454', gridSoft: 'rgba(20,25,45,.08)', pos: '#16a34a' }
+  : { tick: '#94a3b8', tick2: '#64748b', grid: '#1e2235', legend: '#cbd5e1', gridSoft: 'rgba(255,255,255,.06)', pos: '#4ade80' };
+
+function toggleTheme() {
+  const next = _THEME === 'light' ? 'dark' : 'light';
+  localStorage.setItem('mp_theme', next);
+  location.reload();   // графики на canvas требуют полной перерисовки с новой палитрой
+}
+
+function _initThemeBtn() {
+  const btn = document.getElementById('themeBtn');
+  if (btn) btn.innerHTML = _THEME === 'light' ? '<i class="bi bi-moon-stars"></i>' : '<i class="bi bi-sun"></i>';
+  if (window.Chart) Chart.defaults.color = CHART_C.tick;
+}
+document.addEventListener('DOMContentLoaded', _initThemeBtn);
+
 const API = '';
 let charts = {};
 let sortState = {};
@@ -208,8 +230,8 @@ function renderStructure(rows) {
         tooltip: { callbacks: { label: ctx => ' ' + fmtRub(ctx.raw) } },
       },
       scales: {
-        x: { ticks: { color: '#64748b', callback: v => fmt(v) }, grid: { color: '#1e2235' } },
-        y: { ticks: { color: '#94a3b8', font: { size: 11 } } },
+        x: { ticks: { color: CHART_C.tick2, callback: v => fmt(v) }, grid: { color: CHART_C.grid } },
+        y: { ticks: { color: CHART_C.tick, font: { size: 11 } } },
       },
     },
   });
@@ -225,8 +247,8 @@ function renderTop5(items) {
     const name = (r.subject || String(art)).slice(0, 24);
     return `<div class="mb-3">
       <div class="d-flex justify-content-between mb-1">
-        <span style="font-size:12px;color:#e2e8f0">${i + 1}. ${name}</span>
-        <span style="font-size:12px;color:#c9a84c;white-space:nowrap">${fmtRub(r.total_revenue)}</span>
+        <span style="font-size:12px;color:var(--val-soft)">${i + 1}. ${name}</span>
+        <span style="font-size:12px;color:var(--gold);white-space:nowrap">${fmtRub(r.total_revenue)}</span>
       </div>
       <div class="progress" style="height:4px">
         <div class="progress-bar" style="width:${pct}%;background:#c9a84c"></div>
@@ -258,7 +280,7 @@ async function loadSalesChart() {
           },
           {
             type: 'line', label: 'Продажи, шт', data: data.map(r => r.sales_count),
-            borderColor: '#4ade80', backgroundColor: 'rgba(74,222,128,0.1)',
+            borderColor: CHART_C.pos, backgroundColor: 'rgba(74,222,128,0.1)',
             pointRadius: 2, tension: 0.4, borderDash: [4, 3], yAxisID: 'y1',
           },
         ],
@@ -266,10 +288,10 @@ async function loadSalesChart() {
       options: {
         responsive: true,
         interaction: { mode: 'index', intersect: false },
-        plugins: { legend: { labels: { color: '#94a3b8' } } },
+        plugins: { legend: { labels: { color: CHART_C.tick } } },
         scales: {
-          x:  { ticks: { color: '#64748b', maxRotation: 45 }, grid: { color: '#1e2235' } },
-          y:  { position: 'left',  ticks: { color: '#94a3b8', callback: v => fmt(v) + ' ₽' }, grid: { color: '#1e2235' } },
+          x:  { ticks: { color: CHART_C.tick2, maxRotation: 45 }, grid: { color: CHART_C.grid } },
+          y:  { position: 'left',  ticks: { color: CHART_C.tick, callback: v => fmt(v) + ' ₽' }, grid: { color: CHART_C.grid } },
           y1: { position: 'right', ticks: { color: '#38bdf8' }, grid: { drawOnChartArea: false } },
         },
       },
@@ -434,32 +456,32 @@ function renderStocksTable() {
       ? '<span class="text-secondary">∞</span>'
       : `<span class="${STATUS_CLS[st]}">${days}</span>`;
     const q = qty > 0
-      ? `<span style="color:#fff;font-weight:600">${fmt(qty)}</span>`
+      ? `<span style="color:var(--val);font-weight:600">${fmt(qty)}</span>`
       : '<span class="text-secondary">—</span>';
     const v = perDay > 0
-      ? `<span style="color:#fff;font-weight:600">${fmt(perDay, 1)}</span>`
+      ? `<span style="color:var(--val);font-weight:600">${fmt(perDay, 1)}</span>`
       : '<span class="text-secondary">—</span>';
-    return `<td class="text-end" style="border-left:2px solid #2a2a2a">${q}</td><td class="text-end">${v}</td><td class="text-end">${oos}</td>`;
+    return `<td class="text-end" style="border-left:2px solid var(--sep)">${q}</td><td class="text-end">${v}</td><td class="text-end">${oos}</td>`;
   }
 
   const header = `<thead class="sticky-top">
-    <tr style="background:#111">
+    <tr style="background:var(--t-row)">
       ${thSort('supplierArticle','Артикул')}
       ${thSort('name','Название')}
       ${thSort('brand','Бренд')}
-      <th class="text-center" colspan="3" style="background:#a21caf;color:#fff;border-left:2px solid #2a2a2a">WB</th>
-      <th class="text-center" colspan="3" style="background:#1d4ed8;color:#fff;border-left:2px solid #2a2a2a">OZON</th>
-      <th class="text-center" colspan="3" style="background:#854d0e;color:#fff;border-left:2px solid #2a2a2a">YM</th>
+      <th class="text-center" colspan="3" style="background:#a21caf;color:white;border-left:2px solid var(--sep)">WB</th>
+      <th class="text-center" colspan="3" style="background:#1d4ed8;color:white;border-left:2px solid var(--sep)">OZON</th>
+      <th class="text-center" colspan="3" style="background:#854d0e;color:white;border-left:2px solid var(--sep)">YM</th>
     </tr>
-    <tr class="small" style="background:#1a1a1a;color:#9ca3af">
+    <tr class="small" style="background:var(--surface-2);color:var(--muted)">
       <th></th><th></th><th></th>
-      <th class="text-end" style="border-left:2px solid #2a2a2a" title="Остаток WB (quantity)">Ост</th>
+      <th class="text-end" style="border-left:2px solid var(--sep)" title="Остаток WB (quantity)">Ост</th>
       <th class="text-end" title="Продаж/день WB">Пр/д</th>
       <th class="text-end" title="Дней до OOS">Дней</th>
-      <th class="text-end" style="border-left:2px solid #2a2a2a" title="Остаток Ozon">Ост</th>
+      <th class="text-end" style="border-left:2px solid var(--sep)" title="Остаток Ozon">Ост</th>
       <th class="text-end" title="Продаж/день Ozon">Пр/д</th>
       <th class="text-end" title="Дней до OOS">Дней</th>
-      <th class="text-end" style="border-left:2px solid #2a2a2a" title="Остаток YM">Ост</th>
+      <th class="text-end" style="border-left:2px solid var(--sep)" title="Остаток YM">Ост</th>
       <th class="text-end" title="Продаж/день YM">Пр/д</th>
       <th class="text-end" title="Дней до OOS">Дней</th>
     </tr>
@@ -470,8 +492,8 @@ function renderStocksTable() {
       <td colspan="12"><strong>${grp}</strong> <span class="text-secondary small">(${rows.length} арт.)</span></td>
     </tr>`;
     const itemRows = rows.map(r => `<tr style="font-size:14px">
-      <td><code style="color:#e2e8f0">${r.supplierArticle}</code></td>
-      <td style="color:#fff">${r.name}</td>
+      <td><code style="color:var(--val-soft)">${r.supplierArticle}</code></td>
+      <td style="color:var(--val)">${r.name}</td>
       <td class="text-secondary small">${r.brand}</td>
       ${cell(r.wb_qty, r.wb_per_day, r.wb_days)}
       ${cell(r.oz_qty, r.oz_per_day, r.oz_days)}
@@ -695,7 +717,7 @@ async function uploadCosts(input) {
   if (!file) return;
   const status = document.getElementById('costStatus');
   status.textContent = 'Загрузка…';
-  status.style.color = '#94a3b8';
+  status.style.color = CHART_C.tick;
   const fd = new FormData();
   fd.append('file', file);
   try {
@@ -706,13 +728,13 @@ async function uploadCosts(input) {
     }
     const d = await r.json();
     status.textContent = `✓ Загружено ${d.loaded} артикулов`;
-    status.style.color = '#4ade80';
+    status.style.color = 'var(--pos)';
     // mark unit-ec dirty so it reloads with new costs
     dirty.unitec = true;
     if (currentTab === 'unitec') { dirty.unitec = false; loadUnitEc(); }
   } catch (e) {
     status.textContent = `Ошибка: ${e.message}`;
-    status.style.color = '#f87171';
+    status.style.color = 'var(--neg)';
   }
   input.value = '';
 }
@@ -1002,7 +1024,7 @@ function renderOrdersMonthly() {
     <div class="card-body p-0"><div class="table-responsive">
     <table class="table table-sm align-middle mb-0 text-nowrap" style="font-size:0.8rem">
     <thead><tr>
-      <th style="min-width:80px;position:sticky;left:0;background:#181a20">Площадка</th>`;
+      <th style="min-width:80px;position:sticky;left:0;background:var(--t-sticky)">Площадка</th>`;
   monthLabels.forEach(m => { html += `<th class="text-end" style="${_WEEK_SEP}">${m}</th>`; });
   html += `</tr></thead><tbody>`;
 
@@ -1010,15 +1032,15 @@ function renderOrdersMonthly() {
     const d = data[key];
     if (!d) return;
     const isTotal = key === 'total';
-    const bg = isTotal ? 'background:#f0f0f0;color:#111;' : '';
-    const stickyBg = isTotal ? '#f0f0f0' : '#181a20';
+    const bg = isTotal ? 'background:var(--chip-bg);color:var(--chip-ink);' : '';
+    const stickyBg = isTotal ? 'var(--chip-bg)' : 'var(--t-sticky)';
     html += `<tr>`;
     html += `<td class="fw-semibold" style="${bg}position:sticky;left:0;background:${stickyBg}">` +
             `<span style="color:${color}">${label}</span></td>`;
     d.rub.forEach((v, i) => {
       const pct = v > 0 ? Math.round((v - d.cancel_rub[i]) / v * 100) : null;
       const buyoutHtml = pct !== null && pct < 100
-        ? `<div style="font-size:0.6rem;color:#16a34a;line-height:1.1">✓${pct}%</div>` : '';
+        ? `<div style="font-size:0.6rem;color:var(--pos-strong);line-height:1.1">✓${pct}%</div>` : '';
       html += `<td class="text-end" style="${_WEEK_SEP}${bg}">${v ? fmtRub(v) : '<span class="text-muted">—</span>'}${buyoutHtml}</td>`;
     });
     html += `</tr>`;
@@ -1050,11 +1072,11 @@ function _dynArrow(cur, prev) {
   const diff = cur - prev;
   if (Math.abs(diff) < 0.005 * Math.max(cur, prev)) return '';  // <0.5% — без стрелки
   const pct = Math.round(Math.abs(diff) / prev * 100);
-  if (diff > 0) return `<span style="color:#4ade80;font-size:0.68rem;margin-left:3px">▲${pct}%</span>`;
-  return `<span style="color:#f87171;font-size:0.68rem;margin-left:3px">▼${pct}%</span>`;
+  if (diff > 0) return `<span style="color:var(--pos);font-size:0.68rem;margin-left:3px">▲${pct}%</span>`;
+  return `<span style="color:var(--neg);font-size:0.68rem;margin-left:3px">▼${pct}%</span>`;
 }
 
-const _WEEK_SEP = 'border-left:2px solid #3a3f5c;';   // вертикальная линия между неделями
+const _WEEK_SEP = 'border-left:2px solid var(--sep-strong);';   // вертикальная линия между неделями
 
 // ячейка ₽ с динамикой относительно предыдущей недели
 function _rubCell(arr, i, cls, extra = '') {
@@ -1107,9 +1129,9 @@ const _GROUP_COLORS = {
   'Спреи для минета': '#f59e0b',
   'Satisfucktion':    '#ec4899',
   'Джага':            '#8b5cf6',
-  'Прочее':           '#64748b',
+  'Прочее':           CHART_C.tick2,
 };
-function _groupColor(g) { return _GROUP_COLORS[g] || '#64748b'; }
+function _groupColor(g) { return _GROUP_COLORS[g] || CHART_C.tick2; }
 
 // разбивка выбранной площадки по группам (как в остатках)
 function _ordersGrouped() {
@@ -1184,7 +1206,7 @@ function _ordersTableHTML() {
   let tbody = '<tbody>';
 
   // итоговая строка площадки
-  tbody += `<tr data-row="mp" style="background:#1a1a2e">`;
+  tbody += `<tr data-row="mp" style="background:var(--t-mp-row)">`;
   tbody += `<td class="fw-bold" style="color:${col}">${_MP_LABEL[mp]}</td>`;
   vis.forEach(i => {
     tbody += _rubCell(totalRub, i, 'fw-semibold', _WEEK_SEP);
@@ -1204,14 +1226,14 @@ function _ordersTableHTML() {
     });
 
     const grpId = `grp-${mp}-${gi}`;
-    const GRP_BG = 'background:#f0f0f0;color:#111111;';
+    const GRP_BG = 'background:var(--chip-bg);color:var(--chip-ink);';
 
     // Строка-заголовок группы со стрелкой сворачивания
-    tbody += `<tr data-row="grp" style="border-top:2px solid #3a3f5c;cursor:pointer" onclick="toggleGrpRows('${grpId}')">`;
+    tbody += `<tr data-row="grp" style="border-top:2px solid var(--sep-strong);cursor:pointer" onclick="toggleGrpRows('${grpId}')">`;
     tbody += `<td class="fw-semibold ps-2" style="${GRP_BG}padding:6px 8px">`
-           + `<span id="arr-${grpId}" style="display:inline-block;width:14px;font-size:0.8rem;color:#666">▶</span>`
+           + `<span id="arr-${grpId}" style="display:inline-block;width:14px;font-size:0.8rem;color:var(--muted)">▶</span>`
            + `<span class="me-1" style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${_groupColor(grp)}"></span>`
-           + `<strong>${grp}</strong> <span class="small" style="color:#555">(${grpSkus.length} арт.)</span></td>`;
+           + `<strong>${grp}</strong> <span class="small" style="color:var(--muted)">(${grpSkus.length} арт.)</span></td>`;
 
     // Ячейки по неделям с % выкупа под суммой
     vis.forEach(i => {
@@ -1220,7 +1242,7 @@ function _ordersTableHTML() {
       const pct  = v > 0 ? Math.round((v - bCancelRub[i]) / v * 100) : null;
       const dynHtml   = v ? _dynArrow(v, prev) : '';
       const buyoutHtml = pct !== null
-        ? `<div style="font-size:0.6rem;color:#16a34a;line-height:1.2;margin-top:1px">✓${pct}% выкуп</div>`
+        ? `<div style="font-size:0.6rem;color:var(--pos-strong);line-height:1.2;margin-top:1px">✓${pct}% выкуп</div>`
         : '';
       const cellVal = v
         ? `${fmtRub(v)}${dynHtml}${buyoutHtml}`
@@ -1232,7 +1254,7 @@ function _ordersTableHTML() {
 
     // строки SKU — по умолчанию скрыты
     grpSkus.forEach(s => {
-      tbody += `<tr data-row="sku" data-grp="${grpId}" style="display:none;background:#111122">`;
+      tbody += `<tr data-row="sku" data-grp="${grpId}" style="display:none;background:var(--t-sku-row)">`;
       tbody += `<td class="ps-4 small" style="max-width:260px;overflow:hidden;text-overflow:ellipsis">`
              + `<span class="badge me-1" style="background:${col}22;color:${col};font-size:10px">${s.sku}</span>`
              + `<span class="text-muted">${s.name || s.sku}</span></td>`;
@@ -1251,11 +1273,11 @@ function _ordersTableHTML() {
     const colors = labels.map(_groupColor);
     // legend в первой ячейке (залипает слева)
     const legendHTML = labels.map((l, i) =>
-      `<div style="white-space:nowrap;font-size:0.74rem;color:#e2e8f0;margin-bottom:3px">`
+      `<div style="white-space:nowrap;font-size:0.74rem;color:var(--val-soft);margin-bottom:3px">`
       + `<span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${colors[i]};margin-right:5px"></span>${l}</div>`
     ).join('');
     tfoot = `<tfoot><tr>`
-      + `<td style="position:sticky;left:0;background:#0f1117;padding:10px 8px;vertical-align:middle">${legendHTML}</td>`;
+      + `<td style="position:sticky;left:0;background:var(--t-legend);padding:10px 8px;vertical-align:middle">${legendHTML}</td>`;
     vis.forEach(i => {
       // доли групп этой недели
       const sums = orderedGroups.map(([, sk]) => sk.reduce((a, s) => a + (s.rub[i] || 0), 0));
@@ -1264,10 +1286,10 @@ function _ordersTableHTML() {
         .filter(x => x.p > 0)
         .sort((a, b) => b.p - a.p);
       const pctHTML = pctItems.map(({ gi, p }) =>
-        `<div style="white-space:nowrap;font-size:0.68rem;color:#cbd5e1;line-height:1.35">`
+        `<div style="white-space:nowrap;font-size:0.68rem;color:var(--ink-2);line-height:1.35">`
         + `<span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${colors[gi]};margin-right:4px"></span>${p}%</div>`
       ).join('');
-      tfoot += `<td colspan="2" style="background:#0f1117;padding:6px 4px;${_WEEK_SEP}">`
+      tfoot += `<td colspan="2" style="background:var(--t-legend);padding:6px 4px;${_WEEK_SEP}">`
              + `<div style="display:flex;align-items:center;justify-content:center;gap:6px">`
              + `<canvas id="ordDonutW${i}" width="96" height="96"></canvas>`
              + `<div>${pctHTML}</div></div></td>`;
@@ -1315,7 +1337,7 @@ function _renderTfootDonuts() {
               if (!el) {
                 el = document.createElement('div');
                 el.id = 'ordDonutTooltip';
-                el.style.cssText = 'position:fixed;background:#1e2130;color:#e2e8f0;border:1px solid #3a3f5c;border-radius:6px;padding:6px 10px;font-size:0.78rem;pointer-events:none;z-index:9999;white-space:nowrap;transition:opacity .1s';
+                el.style.cssText = 'position:fixed;background:var(--surface-3);color:var(--val-soft);border:1px solid var(--sep-strong);border-radius:6px;padding:6px 10px;font-size:0.78rem;pointer-events:none;z-index:9999;white-space:nowrap;transition:opacity .1s';
                 document.body.appendChild(el);
               }
               if (tooltip.opacity === 0) { el.style.opacity = '0'; return; }
@@ -1412,13 +1434,13 @@ function renderHistory(d) {
       responsive: true,
       maintainAspectRatio: false,
       plugins: {
-        legend: { labels: { color: '#cbd5e1', usePointStyle: true, pointStyle: 'rectRounded' } },
+        legend: { labels: { color: CHART_C.legend, usePointStyle: true, pointStyle: 'rectRounded' } },
         tooltip: { callbacks: { label: c => `${c.dataset.label}: ${fmtRub(c.raw)}` } },
         datalabels: false,
       },
       scales: {
-        x: { stacked: true, ticks: { color: '#94a3b8', maxRotation: 90, font: { size: 10 } }, grid: { display: false } },
-        y: { stacked: true, ticks: { color: '#94a3b8', callback: v => _fmtShort(v) }, grid: { color: 'rgba(255,255,255,.06)' }, beginAtZero: true },
+        x: { stacked: true, ticks: { color: CHART_C.tick, maxRotation: 90, font: { size: 10 } }, grid: { display: false } },
+        y: { stacked: true, ticks: { color: CHART_C.tick, callback: v => _fmtShort(v) }, grid: { color: CHART_C.gridSoft }, beginAtZero: true },
       },
     },
   });
@@ -1588,41 +1610,41 @@ function renderFinanceTable() {
 
   const MP_COLOR = { WB: '#c026d3', OZON: '#3b82f6', YM: '#b45309', TOTAL: '#059669' };
   const col = MP_COLOR[mp] || '#c026d3';
-  const SEP = 'border-left:2px solid #2a2a3e;';
+  const SEP = 'border-left:2px solid var(--sep);';
 
   // Стили строк — читаемо, как в заказах: белые жирные цифры на ключевых строках
   const ROW_STYLE = {
-    header:   `background:#1a1c2a`,
-    cost:     `background:#0d0e1a`,
+    header:   `background:var(--fin-header)`,
+    cost:     `background:var(--fin-cost)`,
     note:     `background:transparent;font-style:italic`,
-    subtotal: `background:#1e2035;border-top:2px solid #3a3f5c`,
-    total:    `background:#0d2010;border-top:2px solid #16a34a`,
-    pct:      `background:#0a1a0a;font-style:italic`,
-    normal:   `background:#111`,
+    subtotal: `background:var(--fin-subtotal);border-top:2px solid var(--sep-strong)`,
+    total:    `background:var(--fin-total);border-top:2px solid var(--pos-strong)`,
+    pct:      `background:var(--fin-pct);font-style:italic`,
+    normal:   `background:var(--t-row)`,
   };
 
   function fmtCell(key, val, style) {
     if (key === 'gross_pct') {
-      const clr = val >= 20 ? '#4ade80' : val >= 10 ? '#fbbf24' : '#f87171';
+      const clr = val >= 20 ? 'var(--pos)' : val >= 10 ? 'var(--warn-c)' : 'var(--neg)';
       return `<span style="color:${clr};font-weight:700">${val}%</span>`;
     }
     if (val === 0) return `<span class="text-muted small">—</span>`;
     if (key === 'advert_bonus') {
-      return `<span style="color:#86efac">${fmtRub(Math.abs(val))}</span>`;
+      return `<span style="color:var(--pos-soft)">${fmtRub(Math.abs(val))}</span>`;
     }
     if (key === 'advert_balance') {
-      return `<span style="color:#94a3b8">${fmtRub(Math.abs(val))}</span>`;
+      return `<span style="color:var(--dim)">${fmtRub(Math.abs(val))}</span>`;
     }
     // ключевые строки — белым жирным, затраты — светлым с красным минусом
     const emphasized = style === 'header' || style === 'subtotal' || style === 'total';
     if (emphasized) {
-      const c = key === 'gross' || key === 'bankPayment' ? '#4ade80' : '#ffffff';
+      const c = key === 'gross' || key === 'bankPayment' ? 'var(--pos)' : 'var(--val)';
       return `<span style="color:${c};font-weight:700">${val < 0 ? '−' : ''}${fmtRub(Math.abs(val))}</span>`;
     }
     if (val < 0) {
-      return `<span style="color:#eef1f8"><span style="color:#f87171">−</span>${fmtRub(Math.abs(val))}</span>`;
+      return `<span style="color:var(--ink)"><span style="color:var(--neg)">−</span>${fmtRub(Math.abs(val))}</span>`;
     }
-    return `<span style="color:#eef1f8">${fmtRub(val)}</span>`;
+    return `<span style="color:var(--ink)">${fmtRub(val)}</span>`;
   }
 
   // Итоговая колонка — по видимым месяцам
@@ -1635,7 +1657,7 @@ function renderFinanceTable() {
 
   // thead
   html += `<thead><tr>
-    <th style="min-width:230px;position:sticky;left:0;background:#181a20;z-index:2">Статья</th>`;
+    <th style="min-width:230px;position:sticky;left:0;background:var(--t-sticky);z-index:2">Статья</th>`;
   months.forEach(m => {
     html += `<th class="text-end" style="${SEP}min-width:112px">${m.label}</th>`;
   });
@@ -1644,11 +1666,11 @@ function renderFinanceTable() {
 
   rows.forEach(row => {
     const st = ROW_STYLE[row.style] || ROW_STYLE.normal;
-    const stickyBg = (row.style === 'total') ? '#0d2010'
-                   : (row.style === 'subtotal') ? '#1e2035'
-                   : (row.style === 'header') ? '#1a1c2a' : '#181a20';
-    const labelStyle = (row.style === 'note') ? 'color:#86efac;font-size:0.78rem' :
-                       (row.style === 'cost') ? 'color:#aab2c8' : 'color:#fff;font-weight:600';
+    const stickyBg = (row.style === 'total') ? 'var(--fin-total)'
+                   : (row.style === 'subtotal') ? 'var(--fin-subtotal)'
+                   : (row.style === 'header') ? 'var(--fin-header)' : 'var(--t-sticky)';
+    const labelStyle = (row.style === 'note') ? 'color:var(--pos-soft);font-size:0.78rem' :
+                       (row.style === 'cost') ? 'color:var(--ink-2)' : 'color:var(--val);font-weight:600';
     html += `<tr style="${st}">`;
     html += `<td style="position:sticky;left:0;background:${stickyBg};padding:6px 12px;${labelStyle}">${row.label}</td>`;
     months.forEach(m => {
@@ -1666,7 +1688,7 @@ function renderFinanceTable() {
       const gTot = gross ? rowTotal(gross) : 0;
       const rTot = retail ? rowTotal(retail) : 0;
       const pct = rTot > 0 ? Math.round(gTot / rTot * 100) : 0;
-      const clr = pct >= 20 ? '#4ade80' : pct >= 10 ? '#fbbf24' : '#f87171';
+      const clr = pct >= 20 ? 'var(--pos)' : pct >= 10 ? 'var(--warn-c)' : 'var(--neg)';
       html += `<td class="text-end fw-bold" style="${SEP}padding:5px 12px"><span style="color:${clr}">${pct}%</span></td>`;
     }
     html += `</tr>`;
@@ -1724,18 +1746,18 @@ const UNIT_METRICS = [
 
 // строки развёрнутого P&L артикула
 const UNIT_PNL_ROWS = [
-  ['revenue',    'Выручка (до СПП)',        '#fff'],
-  ['commission', '− Комиссия и эквайринг',  '#f87171'],
-  ['delivery',   '− Логистика',             '#f87171'],
-  ['storage',    '− Хранение',              '#f87171'],
-  ['penalty',    '− Штрафы',                '#fbbf24'],
-  ['deductions', '− Удержания (распр.)',    '#fbbf24'],
+  ['revenue',    'Выручка (до СПП)',        'var(--val)'],
+  ['commission', '− Комиссия и эквайринг',  'var(--neg)'],
+  ['delivery',   '− Логистика',             'var(--neg)'],
+  ['storage',    '− Хранение',              'var(--neg)'],
+  ['penalty',    '− Штрафы',                'var(--warn-c)'],
+  ['deductions', '− Удержания (распр.)',    'var(--warn-c)'],
   ['advert',     '− Продвижение (распр.)',  '#c084fc'],
-  ['payout',     'К перечислению',          '#4ade80'],
-  ['cogs',       '− Себестоимость',         '#f87171'],
-  ['gross',      'Валовая прибыль',         '#4ade80'],
-  ['margin',     'Маржа %',                 '#4ade80'],
-  ['qty',        'Штук',                    '#aab2c8'],
+  ['payout',     'К перечислению',          'var(--pos)'],
+  ['cogs',       '− Себестоимость',         'var(--neg)'],
+  ['gross',      'Валовая прибыль',         'var(--pos)'],
+  ['margin',     'Маржа %',                 'var(--pos)'],
+  ['qty',        'Штук',                    'var(--ink-2)'],
 ];
 
 async function loadUnitEconomics() {
@@ -1769,14 +1791,14 @@ function toggleUnitSku(sku) {
 function _unitFmt(key, v) {
   if (v == null) return '<span class="text-muted small">—</span>';
   if (key === 'margin') {
-    const clr = v >= 20 ? '#4ade80' : v >= 10 ? '#fbbf24' : '#f87171';
+    const clr = v >= 20 ? 'var(--pos)' : v >= 10 ? 'var(--warn-c)' : 'var(--neg)';
     return `<span style="color:${clr};font-weight:600">${v}%</span>`;
   }
-  if (key === 'qty') return `<span style="color:#eef1f8">${fmt(v)}</span>`;
+  if (key === 'qty') return `<span style="color:var(--ink)">${fmt(v)}</span>`;
   if (v === 0) return '<span class="text-muted small">—</span>';
   const isCost = ['commission','delivery','storage','acceptance','penalty','advert','deductions','cogs'].includes(key);
-  if (isCost) return `<span style="color:#eef1f8"><span style="color:#f87171">−</span>${fmtRub(Math.abs(v))}</span>`;
-  const clr = (key === 'gross' || key === 'payout') ? (v >= 0 ? '#4ade80' : '#f87171') : '#fff';
+  if (isCost) return `<span style="color:var(--ink)"><span style="color:var(--neg)">−</span>${fmtRub(Math.abs(v))}</span>`;
+  const clr = (key === 'gross' || key === 'payout') ? (v >= 0 ? 'var(--pos)' : 'var(--neg)') : 'var(--val)';
   return `<span style="color:${clr};font-weight:600">${v < 0 ? '−' : ''}${fmtRub(Math.abs(v))}</span>`;
 }
 
@@ -1786,7 +1808,7 @@ function _momBadge(key, cur, prev) {
     const d = cur - prev;
     if (!d) return '';
     const up = d > 0;
-    return ` <span class="small" style="color:${up ? '#4ade80' : '#f87171'}">${up ? '▲' : '▼'}${Math.abs(d)}пп</span>`;
+    return ` <span class="small" style="color:${up ? 'var(--pos)' : 'var(--neg)'}">${up ? '▲' : '▼'}${Math.abs(d)}пп</span>`;
   }
   if (!prev) return '';
   const pct = Math.round((cur - prev) / Math.abs(prev) * 100);
@@ -1795,7 +1817,7 @@ function _momBadge(key, cur, prev) {
   const isCost = ['advert','cogs','commission','delivery','deductions'].includes(key);
   const up = pct > 0;
   const good = isCost ? !up : up;
-  return ` <span class="small" style="color:${good ? '#4ade80' : '#f87171'}">${up ? '▲' : '▼'}${Math.abs(pct)}%</span>`;
+  return ` <span class="small" style="color:${good ? 'var(--pos)' : 'var(--neg)'}">${up ? '▲' : '▼'}${Math.abs(pct)}%</span>`;
 }
 
 function renderUnitTable() {
@@ -1875,30 +1897,30 @@ function renderUnitMonth() {
   }
 
   function cell(key, d, r) {
-    if (key === 'nm')   return `<td style="padding:5px 10px"><code style="color:#94a3b8">${r?.nmId || '—'}</code></td>`;
+    if (key === 'nm')   return `<td style="padding:5px 10px"><code style="color:var(--dim)">${r?.nmId || '—'}</code></td>`;
     if (key === 'name') return `<td style="padding:5px 10px;max-width:340px;overflow:hidden;text-overflow:ellipsis">
-        <code style="color:#e2e8f0">${r?.sku || ''}</code> <span class="text-secondary small">${r?.name || ''}</span></td>`;
+        <code style="color:var(--val-soft)">${r?.sku || ''}</code> <span class="text-secondary small">${r?.name || ''}</span></td>`;
     if (key === 'unitCost') {
       const v = r?.unitCost;
       return `<td class="text-end" style="padding:5px 10px;background:rgba(201,168,76,.05)">${v ? fmtRub(v) : '—'}</td>`;
     }
     if (!d) return `<td class="text-end" style="padding:5px 10px"><span class="text-muted small">—</span></td>`;
     const v = d[key];
-    if (key === 'qty') return `<td class="text-end" style="padding:5px 10px;color:#eef1f8">${fmt(v || 0)}</td>`;
+    if (key === 'qty') return `<td class="text-end" style="padding:5px 10px;color:var(--ink)">${fmt(v || 0)}</td>`;
     if (key === 'roi') {
       if (v == null) return `<td class="text-end" style="padding:5px 10px"><span class="text-muted small">—</span></td>`;
-      const clr = v >= 250 ? '#22c55e' : v >= 150 ? '#4ade80' : v >= 80 ? '#fbbf24' : '#f87171';
+      const clr = v >= 250 ? 'var(--pos-bright)' : v >= 150 ? 'var(--pos)' : v >= 80 ? 'var(--warn-c)' : 'var(--neg)';
       const bg = v >= 150 ? 'rgba(34,197,94,.12)' : v >= 80 ? 'rgba(251,191,36,.08)' : 'rgba(248,113,113,.10)';
       return `<td class="text-end" style="padding:5px 10px;background:${bg}"><span style="color:${clr};font-weight:700">${fmt(v)}%</span></td>`;
     }
     if (key === 'profit') {
-      const clr = v >= 0 ? '#4ade80' : '#f87171';
+      const clr = v >= 0 ? 'var(--pos)' : 'var(--neg)';
       return `<td class="text-end" style="padding:5px 10px"><span style="color:${clr};font-weight:700">${v < 0 ? '−' : ''}${fmtRub(Math.abs(Math.round(v)))}</span></td>`;
     }
-    if (key === 'revenue') return `<td class="text-end" style="padding:5px 10px"><span style="color:#fff;font-weight:600">${fmtRub(Math.round(v || 0))}</span></td>`;
+    if (key === 'revenue') return `<td class="text-end" style="padding:5px 10px"><span style="color:var(--val);font-weight:600">${fmtRub(Math.round(v || 0))}</span></td>`;
     // затратные колонки
     if (!v) return `<td class="text-end" style="padding:5px 10px"><span class="text-muted small">—</span></td>`;
-    return `<td class="text-end" style="padding:5px 10px;color:#eef1f8"><span style="color:#f87171">−</span>${fmtRub(Math.abs(Math.round(v)))}</td>`;
+    return `<td class="text-end" style="padding:5px 10px;color:var(--ink)"><span style="color:var(--neg)">−</span>${fmtRub(Math.abs(Math.round(v)))}</td>`;
   }
 
   // группировка как в заказах/остатках
@@ -1914,12 +1936,12 @@ function renderUnitMonth() {
 
   let html = `<div class="table-responsive"><table class="table table-sm align-middle mb-0 text-nowrap" style="font-size:0.83rem">`;
   html += `<thead><tr>` + COLS.map(([k, label], i) =>
-    `<th class="${i > 1 ? 'text-end' : ''}" style="${i > 2 ? 'border-left:1px solid #23283a;' : ''}min-width:${k === 'name' ? '280' : k === 'nm' ? '110' : '96'}px">${label}</th>`).join('') + `</tr></thead><tbody>`;
+    `<th class="${i > 1 ? 'text-end' : ''}" style="${i > 2 ? 'border-left:1px solid var(--sep);' : ''}min-width:${k === 'name' ? '280' : k === 'nm' ? '110' : '96'}px">${label}</th>`).join('') + `</tr></thead><tbody>`;
 
   // ИТОГО (сходится со вкладкой Финансы)
   const T = derive(totalsCell);
-  html += `<tr style="background:#0d2010;border-bottom:2px solid #16a34a;font-weight:700">
-    <td style="padding:6px 10px;color:#fff" colspan="2">ИТОГО WB</td>
+  html += `<tr style="background:var(--fin-total);border-bottom:2px solid var(--pos-strong);font-weight:700">
+    <td style="padding:6px 10px;color:var(--val)" colspan="2">ИТОГО WB</td>
     <td></td>${COLS.slice(3).map(([k]) => cell(k, T, null)).join('')}</tr>`;
 
   orderedGroups.forEach(([gname, list]) => {
@@ -1928,11 +1950,11 @@ function renderUnitMonth() {
       return acc;
     }, {}));
     if (G) { G.roi = G.cogs > 0 ? Math.round(G.profit / G.cogs * 100) : null; }
-    html += `<tr style="background:#1f2333;font-weight:600">
-      <td colspan="3" style="padding:6px 10px;color:#fff">${gname} <span class="text-secondary small">(${list.length} арт.)</span></td>
+    html += `<tr style="background:var(--surface-3);font-weight:600">
+      <td colspan="3" style="padding:6px 10px;color:var(--val)">${gname} <span class="text-secondary small">(${list.length} арт.)</span></td>
       ${COLS.slice(3).map(([k]) => cell(k, G, null)).join('')}</tr>`;
     list.forEach(({ r, c }) => {
-      html += `<tr style="background:#111">${COLS.map(([k]) => cell(k, c, r)).join('')}</tr>`;
+      html += `<tr style="background:var(--t-row)">${COLS.map(([k]) => cell(k, c, r)).join('')}</tr>`;
     });
   });
 
@@ -1968,11 +1990,11 @@ function renderUnitDynamics() {
   const months = _unitData.months || [];
   const skus = _unitData.skus || [];
   const totals = _unitData.totals || {};
-  const SEP = 'border-left:2px solid #2a2a3e;';
+  const SEP = 'border-left:2px solid var(--sep);';
 
   let html = `<div class="table-responsive"><table class="table table-sm align-middle mb-0 text-nowrap" style="font-size:0.85rem">`;
   html += `<thead><tr>
-    <th style="min-width:250px;position:sticky;left:0;background:#181a20;z-index:2">Артикул</th>`;
+    <th style="min-width:250px;position:sticky;left:0;background:var(--t-sticky);z-index:2">Артикул</th>`;
   months.forEach(m => { html += `<th class="text-end" style="${SEP}min-width:120px">${m.label}</th>`; });
   html += `<th class="text-end" style="${SEP}min-width:124px;color:#c026d3">Итого</th></tr></thead><tbody>`;
 
@@ -1998,22 +2020,22 @@ function renderUnitDynamics() {
   }
 
   // ИТОГО (сходится со вкладкой Финансы)
-  html += `<tr style="background:#0d2010;border-bottom:2px solid #16a34a">
-    <td style="position:sticky;left:0;background:#0d2010;padding:6px 12px;color:#fff;font-weight:700">ИТОГО WB</td>
+  html += `<tr style="background:var(--fin-total);border-bottom:2px solid var(--pos-strong)">
+    <td style="position:sticky;left:0;background:var(--fin-total);padding:6px 12px;color:var(--val);font-weight:700">ИТОГО WB</td>
     ${rowCells(totals, true)}</tr>`;
 
   skus.forEach(r => {
     const expanded = _unitExpanded.has(r.sku);
-    html += `<tr style="background:#111;cursor:pointer" onclick="toggleUnitSku('${r.sku}')">
-      <td style="position:sticky;left:0;background:#181a20;padding:6px 12px">
-        <span style="color:#94a3b8">${expanded ? '▼' : '▶'}</span>
-        <code style="color:#e2e8f0">${r.sku}</code>
+    html += `<tr style="background:var(--t-row);cursor:pointer" onclick="toggleUnitSku('${r.sku}')">
+      <td style="position:sticky;left:0;background:var(--t-sticky);padding:6px 12px">
+        <span style="color:var(--dim)">${expanded ? '▼' : '▶'}</span>
+        <code style="color:var(--val-soft)">${r.sku}</code>
         <span class="text-secondary small">${r.name || ''}</span></td>
       ${rowCells(r.months)}</tr>`;
     if (expanded) {
       UNIT_PNL_ROWS.forEach(([key, label, clr]) => {
-        html += `<tr style="background:#0d0e1a;font-size:0.8rem">
-          <td style="position:sticky;left:0;background:#12131f;padding:3px 12px 3px 34px;color:${clr}">${label}</td>`;
+        html += `<tr style="background:var(--fin-cost);font-size:0.8rem">
+          <td style="position:sticky;left:0;background:var(--t-detail);padding:3px 12px 3px 34px;color:${clr}">${label}</td>`;
         months.forEach(m => {
           html += `<td class="text-end" style="${SEP}padding:3px 12px">${_unitFmt(key, r.months[m.key]?.[key])}</td>`;
         });
@@ -2222,7 +2244,7 @@ function renderRatingCalc() {
     } else {
       const need = Math.ceil((threshold * n - s) / (5 - threshold));
       const after = (s + 5 * need) / (n + need);
-      needHtml  = `<span class="fw-bold" style="color:#4ade80">+${fmt(need)}</span> оценок 5★`;
+      needHtml  = `<span class="fw-bold" style="color:var(--pos)">+${fmt(need)}</span> оценок 5★`;
       afterHtml = `<span class="text-secondary">среднее станет ${after.toFixed(3)} → покажет ${t.toFixed(1)}★</span>`;
     }
     rows += `<tr>
@@ -2239,7 +2261,7 @@ function renderRatingCalc() {
   out.innerHTML = `
     <div class="mb-2">
       Текущий рейтинг на <b>${PLAT_NAME[plat]}</b>:
-      <span class="fw-bold" style="color:#fbbf24;font-size:1.1rem">${shown.toFixed(1)}★</span>
+      <span class="fw-bold" style="color:var(--warn-c);font-size:1.1rem">${shown.toFixed(1)}★</span>
       <span class="text-secondary">(точное среднее ${cur.toFixed(3)}, ${fmt(n)} оценок)</span>
     </div>
     <div class="table-responsive">
@@ -2438,13 +2460,13 @@ function renderRatingDynamics(dyn, artLabel) {
     options: {
       responsive: true, maintainAspectRatio: false,
       plugins: {
-        legend: { labels: { color: '#cbd5e1', usePointStyle: true } },
-        title: artLabel ? { display: true, text: artLabel, color: '#94a3b8', font: { size: 12 } } : { display: false },
+        legend: { labels: { color: CHART_C.legend, usePointStyle: true } },
+        title: artLabel ? { display: true, text: artLabel, color: CHART_C.tick, font: { size: 12 } } : { display: false },
       },
       scales: {
-        x: { ticks: { color: '#94a3b8' }, grid: { display: false } },
-        y: { min: yMin, max: 5, ticks: { color: '#94a3b8', stepSize: 0.25 },
-             grid: { color: 'rgba(255,255,255,.06)' } },
+        x: { ticks: { color: CHART_C.tick }, grid: { display: false } },
+        y: { min: yMin, max: 5, ticks: { color: CHART_C.tick, stepSize: 0.25 },
+             grid: { color: CHART_C.gridSoft } },
       },
     },
   });
