@@ -67,7 +67,7 @@ async function loadCabinetInfo() {
     const div = document.createElement('div');
     div.id = 'cabOther';
     div.className = 'mp-cab-card';
-    div.onclick = () => { window.location.href = _cab.other.url; };
+    div.onclick = () => { window.location.href = _cab.other.url.replace(/\/+$/, '') + '/?enter=1'; };
     // иконка второй карточки — по тому, КУДА она ведёт: у ФК ссылка на Biomed (лев BN), у Biomed — на ФК (помада)
     const otherIcon = _cab.id === 'fk'
       ? '<img src="/static/lion_logo.svg" alt="BN" style="width:64px;height:64px" />'
@@ -2256,6 +2256,11 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById(id).addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); })
   );
 
+  // переход по карточке с другого кабинета (?enter=1) — сразу внутрь, без повторного выбора
+  if (new URLSearchParams(location.search).has('enter') && localStorage.getItem('mp_auth') === '1') {
+    localStorage.setItem('mp_cabinet', 'auto');
+    history.replaceState(null, '', location.pathname);
+  }
   if (localStorage.getItem('mp_auth') === '1') {
     if (localStorage.getItem('mp_cabinet')) {
       showOverlay('app');
