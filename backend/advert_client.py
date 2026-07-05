@@ -181,17 +181,30 @@ async def get_spend_by_month(date_from: datetime, date_to: datetime) -> dict[str
 
 
 async def get_all_campaign_ids_ext() -> list[int]:
-    """ID кампаний всех статусов, включая завершённые (9) и паузу WB (11) —
-    для исторической раскладки рекламы по месяцам."""
-    results = []
-    for status in (7, 8, 9, 11, 4):
-        results.append(await _ids_for_status(status))
+    """Все ID кампаний (все статусы, вкл. завершённые) — для истории рекламы.
+
+    Канонический источник — GET /adv/v1/promotion/count: возвращает группы
+    {type, status, count, advert_list: [{advertId, changeTime}]}.
+    Фолбэк — постатусные запросы promotion/adverts.
+    """
     seen, ids = set(), []
-    for chunk in results:
-        for i in chunk:
-            if i not in seen:
-                seen.add(i)
-                ids.append(i)
+    try:
+        data = await _get("/adv/v1/promotion/count")
+        if isinstance(data, dict):
+            for grp in data.get("adverts") or []:
+                for a in grp.get("advert_list") or []:
+                    aid = a.get("advertId")
+                    if aid and aid not in seen:
+                        seen.add(aid)
+                        ids.append(int(aid))
+    except Exception as e:
+        _log.warning("[ADVERT] promotion/count failed: %s", e)
+    if not ids:
+        for status in (7, 8, 9, 11, 4):
+            for i in await _ids_for_status(status):
+                if i not in seen:
+                    seen.add(i)
+                    ids.append(i)
     _log.info("[ADVERT] campaign ids (all statuses): %d", len(ids))
     return ids
 

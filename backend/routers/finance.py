@@ -746,6 +746,19 @@ async def get_wb_unit(
         adv_sku_by_month[mk] = agg
     adv_spend_total = {mk: sum(v.values()) for mk, v in adv_sku_by_month.items()}
 
+    # «Точные или никакие»: если в месяце была реклама, а раскладка по
+    # кампаниям ещё не собрана — юнитку не показываем (вместо неточной).
+    months_needing_ads = [mk for mk in month_keys if advert_m.get(mk, 0.0) > 0]
+    imprecise = [mk for mk in months_needing_ads if adv_spend_total.get(mk, 0.0) <= 0]
+    if imprecise:
+        if _adv_nm_error and not _adv_nm_building:
+            msg = f"⚠ Раскладка рекламы по артикулам не собралась: {_adv_nm_error}"
+        else:
+            msg = ("⏳ Собираем точную раскладку рекламы по артикулам из статистики "
+                   "кампаний WB (~10 минут, лимит API). Юнитка появится автоматически.")
+        return {"months": [], "skus": [], "message": msg,
+                "advert_building": _adv_nm_building}
+
     skus_out = []
     # аллокация с корректировкой остатка: крупнейший SKU месяца добирает разницу
     alloc_sum = {mk: {"advert": 0.0, "deductions": 0.0} for mk in month_keys}
