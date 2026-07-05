@@ -435,7 +435,19 @@ async def _adv_build_bg(force: bool = False) -> None:
             v, why = _adv_verdict(c)
             c["verdict"], c["verdict_why"] = v, why
 
-        # ключевые фразы — по кампаниям с расходом (щадяще, с паузами)
+        def _save(c: dict):
+            db.execute(
+                "INSERT INTO adv_tool (campaign_id, data, built_at) VALUES (?,?,?) "
+                "ON CONFLICT (campaign_id) DO UPDATE SET data = excluded.data, built_at = excluded.built_at",
+                (c["id"], json.dumps(c, ensure_ascii=False), datetime.utcnow().isoformat()))
+
+        # сохраняем сразу (без фраз) — рестарты сервера не теряют прогресс
+        for c in campaigns:
+            await asyncio.to_thread(_save, c)
+        _log.info("adv tool: %d кампаний сохранено, собираем фразы", len(campaigns))
+
+        # ключевые фразы — по кампаниям с расходом (щадяще, с паузами),
+        # каждая кампания дозаписывается в БД по мере готовности
         with_spend = sorted([c for c in campaigns if c["spend"] > 100],
                             key=lambda x: -x["spend"])[:15]
         for i, c in enumerate(with_spend):
@@ -451,15 +463,8 @@ async def _adv_build_bg(force: bool = False) -> None:
                              else "")
             words.sort(key=lambda w: -(w.get("sum") or w.get("views") or 0))
             c["words"] = words[:40]
+            await asyncio.to_thread(_save, c)
             await asyncio.sleep(2)
-
-        # сохраняем
-        for c in campaigns:
-            await asyncio.to_thread(
-                db.execute,
-                "INSERT INTO adv_tool (campaign_id, data, built_at) VALUES (?,?,?) "
-                "ON CONFLICT (campaign_id) DO UPDATE SET data = excluded.data, built_at = excluded.built_at",
-                (c["id"], json.dumps(c, ensure_ascii=False), datetime.utcnow().isoformat()))
 
         # LLM-совет по оптимизации (одним вызовом)
         try:
