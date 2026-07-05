@@ -1692,12 +1692,12 @@ let _unitData = null;
 let _unitMetric = 'gross';
 let _unitMode = 'month';                       // month — как в Excel; dyn — динамика
 let _unitMonth = null;                         // выбранный месяц или 'ALL'
-let _unitTax = parseFloat(localStorage.getItem('unit_tax_pct') || '7');
+let _unitTax = parseFloat(localStorage.getItem('unit_tax_profit_pct') || '0');
 const _unitExpanded = new Set();
 
 function setUnitTax(v) {
   _unitTax = Math.max(0, parseFloat(v) || 0);
-  localStorage.setItem('unit_tax_pct', String(_unitTax));
+  localStorage.setItem('unit_tax_profit_pct', String(_unitTax));
   renderUnitTable();
 }
 
@@ -1803,7 +1803,7 @@ function renderUnitTable() {
   if (!wrap || !_unitData) return;
 
   const taxInput = document.getElementById('unitTaxPct');
-  if (taxInput && taxInput.value === '') taxInput.value = _unitTax;
+  if (taxInput && taxInput.value === '' && _unitTax > 0) taxInput.value = _unitTax;
 
   // пилюли месяцев (для режима «месяц»)
   const mBox = document.getElementById('unitMonthBtns');
@@ -1859,7 +1859,7 @@ function renderUnitMonth() {
     ['acquiring',  'Эквайринг'],
     ['advert',     'Продвижение'],
     ['other',      'Удерж./проч.'],
-    ['tax',        `Налог ${_unitTax}%`],
+    ['tax',        _unitTax > 0 ? `Налог ${_unitTax}% с приб.` : 'Налог (—)'],
     ['profit',     'Прибыль/убыток'],
     ['roi',        'ROI %'],
   ];
@@ -1867,7 +1867,8 @@ function renderUnitMonth() {
   function derive(c) {
     if (!c || !Object.keys(c).length) return null;
     const other = (c.deductions || 0) + (c.penalty || 0) + (c.acceptance || 0);
-    const tax = (c.revenue || 0) * _unitTax / 100;
+    // налог — с прибыли (доходы-расходы), только с положительной
+    const tax = _unitTax > 0 ? Math.max(c.gross || 0, 0) * _unitTax / 100 : 0;
     const profit = (c.gross || 0) - tax;
     const roi = (c.cogs || 0) > 0 ? Math.round(profit / c.cogs * 100) : null;
     return { ...c, other, tax, profit, roi };
@@ -1940,7 +1941,8 @@ function renderUnitMonth() {
   const advNote = (_unitMonth !== 'ALL' && preciseMks.includes(_unitMonth))
     ? 'Продвижение — точная раскладка по артикулам из статистики кампаний WB (fullstats)'
     : 'Продвижение — по доле выручки' + (_unitData.advert_building ? ' (точная раскладка по кампаниям собирается в фоне, ~5-10 мин)' : '');
-  html += `<div class="text-secondary small mt-2">${advNote}; удержания — по доле выручки; налог — ${_unitTax}% от выручки (настраивается сверху); ROI = прибыль / себестоимость.` +
+  const taxNote = _unitTax > 0 ? `налог — ${_unitTax}% с прибыли (доходы−расходы)` : 'налог не задан (введите % сверху)';
+  html += `<div class="text-secondary small mt-2">${advNote}; удержания — по доле выручки; ${taxNote}; ROI = прибыль / себестоимость.` +
           (_unitData.detail_upto ? ` Отчёт реализации — по ${_unitData.detail_upto}.` : '') + `</div>`;
   wrap.innerHTML = html;
 }

@@ -519,6 +519,10 @@ async def get_wb_pnl(
 
     # ── Реклама (продвижение): списания из advert API по месяцам ──────────────
     advert_by_month = await _get_wb_advert_cached(dt_from, dt_to)
+    # точная раскладка по nmId (для юнитки) — стартуем сборку заранее
+    if not _adv_nm_building and (not _adv_nm_cache
+                                 or _time.monotonic() - _adv_nm_ts >= _ADV_NM_TTL):
+        _spawn(_build_adv_nm_bg(months))
 
     # ── Единая структура P&L ──────────────────────────────────────────────────
     # Комиссия WB (вкл. эквайринг) = выручка − «к перечислению за товар» (forPay).
@@ -623,6 +627,8 @@ _wb_unit_data: dict = {}
 _adv_nm_cache: dict = {}
 _adv_nm_ts: float = 0.0
 _adv_nm_building: bool = False
+_adv_nm_error: str = ""
+_adv_nm_ids: int = -1
 _ADV_NM_TTL = 12 * 3600
 
 
@@ -632,17 +638,20 @@ async def _build_adv_nm_bg(months: int) -> None:
     Лимит fullstats ~1 req/мин → полгода собирается несколько минут;
     до готовности юнитка распределяет рекламу по доле выручки.
     """
-    global _adv_nm_cache, _adv_nm_ts, _adv_nm_building
+    global _adv_nm_cache, _adv_nm_ts, _adv_nm_building, _adv_nm_error, _adv_nm_ids
     if _adv_nm_building:
         return
     _adv_nm_building = True
     try:
         from config import USE_ADVERT_MOCK
         if USE_ADVERT_MOCK:
+            _adv_nm_error = "advert mock mode"
             return
         import advert_client
         ids = await advert_client.get_all_campaign_ids_ext()
+        _adv_nm_ids = len(ids)
         if not ids:
+            _adv_nm_error = "campaign list is empty (проверьте доступ токена к продвижению)"
             return
         result: dict = {}
         today = (datetime.utcnow() + timedelta(hours=3)).date()
@@ -657,8 +666,10 @@ async def _build_adv_nm_bg(months: int) -> None:
             await asyncio.sleep(62)   # 1 req/мин между месяцами
         _adv_nm_cache = result
         _adv_nm_ts = _time.monotonic()
+        _adv_nm_error = "" if result else "fullstats вернул пусто по всем месяцам"
         _log.info("adv-by-nm собран: %s", {k: len(v) for k, v in result.items()})
     except Exception as e:
+        _adv_nm_error = str(e)[:300]
         _log.warning("adv-by-nm build failed: %s", e)
     finally:
         _adv_nm_building = False
@@ -670,6 +681,8 @@ async def wb_adv_debug():
     import catalog as _cat
     out = {
         "building": _adv_nm_building,
+        "error": _adv_nm_error,
+        "campaign_ids": _adv_nm_ids,
         "age_sec": round(_time.monotonic() - _adv_nm_ts) if _adv_nm_cache else None,
         "months": {},
     }
