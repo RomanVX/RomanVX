@@ -588,7 +588,7 @@ async def _wb_public_search(query: str, limit: int = 60) -> tuple[list[dict], in
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
             "Accept": "application/json", "Origin": "https://www.wildberries.ru",
             "Referer": "https://www.wildberries.ru/",
-            "Accept-Encoding": "gzip, deflate"}) as client:
+            "Accept-Encoding": "identity"}) as client:
         # Одна версия (v13), терпеливые ретраи: каскад версий с ретраями
         # сам выжигает рейт-лимит WB на IP (даже на свежем прокси).
         r = None
@@ -612,9 +612,19 @@ async def _wb_public_search(query: str, limit: int = 60) -> tuple[list[dict], in
                     raise ValueError(_niche_last_err)
                 try:
                     payload = r.json()
-                except ValueError:
-                    _niche_last_err = f"v13: не-JSON ответ: {r.text[:100]!r}"
-                    raise
+                except ValueError as je:
+                    # дешёвые прокси иногда портят chunked-передачу: в теле
+                    # остаются размеры чанков (hex + CRLF) — вычищаем и пробуем снова
+                    import re as _re
+                    txt = r.text
+                    cleaned = _re.sub(r"\r?\n[0-9a-fA-F]{1,6}\r?\n", "", txt)
+                    try:
+                        payload = json.loads(cleaned)
+                    except ValueError:
+                        pos = getattr(je, "pos", 0) or 0
+                        frag = txt[max(0, pos - 60):pos + 60]
+                        _niche_last_err = f"v13: битый JSON у позиции {pos}: {frag!r}"
+                        raise
                 data = payload.get("data") or {}
                 products = data.get("products") or []
                 if products:
