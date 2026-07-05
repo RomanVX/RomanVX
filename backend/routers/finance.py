@@ -1153,9 +1153,12 @@ _OZ_PNL_TTL = 6 * 3600
 _oz_pnl_building: bool = False
 _oz_pnl_error: str = ""
 _oz_pnl_progress: str = ""
+# состояние юнит-экономики Ozon: {groups: {mk:{грп:₽}}, sku: {mk:{sku:{col:₽}}}, cogs: {mk:₽}}
+_oz_unit_state: dict = {}
 
 
-def _oz_save_month_db(mk: str, groups: dict, cogs: float) -> None:
+def _oz_save_month_db(mk: str, groups: dict, cogs: float,
+                      sku_sums: dict | None = None) -> None:
     """Помесячное сохранение статей Ozon — рестарты не теряют прогресс."""
     import db
     db.execute("CREATE TABLE IF NOT EXISTS oz_pnl_groups "
@@ -1164,15 +1167,23 @@ def _oz_save_month_db(mk: str, groups: dict, cogs: float) -> None:
     rows = [(mk, g, float(v)) for g, v in groups.items()]
     rows.append((mk, "__cogs__", float(cogs)))
     db.executemany("INSERT INTO oz_pnl_groups (mk, grp, amount) VALUES (?,?,?)", rows)
+    if sku_sums is not None:
+        db.execute("CREATE TABLE IF NOT EXISTS oz_unit_sku "
+                   "(mk TEXT, sku TEXT, col TEXT, amount REAL, PRIMARY KEY (mk, sku, col))")
+        db.execute("DELETE FROM oz_unit_sku WHERE mk = ?", (mk,))
+        srows = [(mk, sku, col, float(v))
+                 for sku, cols in sku_sums.items() for col, v in cols.items()]
+        srows.append((mk, "__built__", "__built__", 1.0))   # маркер: SKU-разрез собран
+        db.executemany("INSERT INTO oz_unit_sku (mk, sku, col, amount) VALUES (?,?,?,?)", srows)
 
 
-def _oz_load_months_db() -> tuple[dict, dict]:
-    """{mk: {группа: сумма}}, {mk: cogs} из БД."""
+def _oz_load_months_db() -> tuple[dict, dict, dict]:
+    """{mk: {группа: сумма}}, {mk: cogs}, {mk: {sku: {col: сумма}}} из БД."""
     import db
     try:
         rows = db.fetchall("SELECT mk, grp, amount FROM oz_pnl_groups")
     except Exception:
-        return {}, {}
+        return {}, {}, {}
     groups: dict = {}
     cogs: dict = {}
     for mk, g, v in rows:
@@ -1180,12 +1191,24 @@ def _oz_load_months_db() -> tuple[dict, dict]:
             cogs[mk] = float(v or 0)
         else:
             groups.setdefault(mk, {})[g] = float(v or 0)
-    # месяцы со старой декомпозицией (баллы отдельной статьёй → двойной счёт)
-    # выбрасываем — они пересоберутся по новой схеме
-    for mk in [mk for mk, g in groups.items() if "Баллы за скидки" in g]:
+    sku: dict = {}
+    try:
+        for mk, s, col, v in db.fetchall("SELECT mk, sku, col, amount FROM oz_unit_sku"):
+            if s == "__built__":
+                sku.setdefault(mk, {})
+                continue
+            sku.setdefault(mk, {}).setdefault(s, {})[col] = float(v or 0)
+    except Exception:
+        sku = {}
+    # инвалидация старых схем: баллы отдельной статьёй (двойной счёт) или
+    # месяц без SKU-разреза — такие месяцы пересоберутся заново
+    stale = [mk for mk, g in groups.items()
+             if "Баллы за скидки" in g or mk not in sku]
+    for mk in stale:
         groups.pop(mk, None)
         cogs.pop(mk, None)
-    return groups, cogs
+        sku.pop(mk, None)
+    return groups, cogs, sku
 
 
 def _last_months(n: int) -> list[tuple[int, int]]:
@@ -1221,7 +1244,8 @@ def _accrual_type_id(a: dict):
 # Группировка элементарных типов начислений в кабинетные статьи (по описанию)
 _OZ_GROUP_RULES = [
     ("Продвижение и реклама", ("продвижен", "реклам", "brand", "трафарет", "полка",
-                               "advertising", "promotion", "буст", "отзыв")),
+                               "advertising", "promotion", "буст", "отзыв",
+                               "оплата за клик", "за клик")),
     ("Услуги доставки",       ("доставк", "магистрал", "миля", "drop-off", "курьер",
                                "логистик", "перевозк", "shipment")),
     ("Услуги FBO",            ("сборка", "fulfillment", "размещени", "кросс-док",
@@ -1241,42 +1265,100 @@ def _oz_group_for(desc: str) -> str:
     return "Прочие услуги"
 
 
-def _oz_decompose_accrual(a: dict, types: dict, sums: dict) -> None:
+# колонки юнит-экономики Ozon и соответствие кабинетным статьям
+_OZ_GROUP_TO_COL = {
+    "Продажи и возвраты":           "revenue",
+    "Программы партнёров":          "revenue",
+    "Вознаграждение Ozon":          "commission",
+    "Услуги доставки":              "delivery",
+    "Услуги FBO":                   "storage",
+    "Продвижение и реклама":        "advert",
+    "Эквайринг":                    "acquiring",
+    "Обработка возвратов и отмен":  "returns",
+}
+
+
+def _oz_col_for(group: str) -> str:
+    return _OZ_GROUP_TO_COL.get(group, "other")
+
+
+def _oz_sku_of(obj: dict) -> str:
+    """Артикул из объекта начисления: пробуем offer_id, потом ozon sku id."""
+    import catalog as _cat
+    for k in ("offer_id", "offer", "item_code", "article"):
+        v = obj.get(k)
+        if v:
+            return str(v).strip().upper()
+    item = obj.get("item") or {}
+    if isinstance(item, dict):
+        for k in ("offer_id", "sku"):
+            v = item.get(k)
+            if v:
+                return _cat.resolve_ozon(v) if str(v).isdigit() else str(v).strip().upper()
+    for k in ("sku", "item_sku", "product_id"):
+        v = obj.get(k)
+        if v:
+            return _cat.resolve_ozon(v)
+    return ""
+
+
+def _oz_decompose_accrual(a: dict, types: dict, sums: dict,
+                          sku_sums: dict | None = None) -> None:
     """Раскладывает начисление на кабинетные статьи. Остаток строки уходит в
-    «Продажи и возвраты»/«Прочие начисления», чтобы Итого всегда сходился."""
+    «Продажи и возвраты»/«Прочие начисления», чтобы Итого всегда сходился.
+    Если передан sku_sums — параллельно копит SKU-разрез для юнит-экономики
+    (те же суммы, поэтому юнитка сходится с Финансами по построению)."""
     total = _accrual_amount(a)
     accounted = 0.0
 
-    def add(group: str, amount: float):
+    def add(group: str, amount: float, sku: str = ""):
         nonlocal accounted
         if not amount:
             return
         sums[group] = sums.get(group, 0.0) + amount
         accounted += amount
+        if sku_sums is not None and sku:
+            cell = sku_sums.setdefault(sku, {})
+            col = _oz_col_for(group)
+            cell[col] = cell.get(col, 0.0) + amount
+
+    def s_qty(sku: str, q: float):
+        if sku_sums is not None and sku and q:
+            cell = sku_sums.setdefault(sku, {})
+            cell["qty"] = cell.get("qty", 0.0) + q
 
     def fee_group(tid) -> str:
         t = types.get(tid) or {}
         return _oz_group_for(t.get("description") or t.get("name") or "")
 
+    row_sku = _oz_sku_of(a)
+
     # товарные и нетоварные услуги
     item_fees = (a.get("item_fees") or {}).get("fees") or []
     for by_sku in item_fees:
+        f_sku = _oz_sku_of(by_sku) or row_sku
         for f in by_sku.get("fees") or []:
-            add(fee_group(f.get("type_id")), _money(f.get("accrued")))
+            add(fee_group(f.get("type_id")), _money(f.get("accrued")), f_sku)
     nif = a.get("non_item_fee")
     for f in (nif if isinstance(nif, list) else [nif] if nif else []):
-        add(fee_group(f.get("type_id")), _money(f.get("accrued")))
+        add(fee_group(f.get("type_id")), _money(f.get("accrued")), row_sku)
     cf = a.get("container_fees")
     for f in (cf if isinstance(cf, list) else [cf] if cf else []):
         if isinstance(f, dict):
-            add(fee_group(f.get("type_id")), _money(f.get("accrued")))
+            add(fee_group(f.get("type_id")), _money(f.get("accrued")), row_sku)
 
     # отправление: выручка, вознаграждение, баллы, услуги доставки
     posting = a.get("posting") or {}
+    prod_skus: list[tuple[str, float]] = []   # (sku, |sale|) — для раздачи остатка
     for prod in posting.get("products") or []:
         c = prod.get("commission") or {}
-        add("Продажи и возвраты", _money(c.get("sale_amount")))
-        add("Вознаграждение Ozon", -abs(_money(c.get("commission")) or _money(c.get("sale_commission"))))
+        p_sku = _oz_sku_of(prod) or row_sku
+        sale = _money(c.get("sale_amount"))
+        add("Продажи и возвраты", sale, p_sku)
+        add("Вознаграждение Ozon", -abs(_money(c.get("commission")) or _money(c.get("sale_commission"))), p_sku)
+        prod_skus.append((p_sku, abs(sale)))
+        qty = _money(prod.get("quantity")) or (1 if sale else 0)
+        s_qty(p_sku, qty if sale >= 0 else -qty)
         # Баллы за скидки (соинвест Ozon) уже входят в сумму строки продаж —
         # НЕ отдельная статья (иначе двойной счёт). Копим справочно, мимо accounted:
         # остаток строки уйдёт в «Продажи и возвраты», как в кабинете.
@@ -1286,19 +1368,30 @@ def _oz_decompose_accrual(a: dict, types: dict, sums: dict) -> None:
                 sums["__points__"] = sums.get("__points__", 0.0) + v
         d = prod.get("delivery") or {}
         for svc in d.get("services") or []:
-            add(fee_group(svc.get("type_id")), _money(svc.get("accrued")))
+            add(fee_group(svc.get("type_id")), _money(svc.get("accrued")), p_sku)
         if d.get("total_accrued") is not None and not d.get("services"):
-            add("Услуги доставки", _money(d.get("total_accrued")))
+            add("Услуги доставки", _money(d.get("total_accrued")), p_sku)
 
     # остаток строки — чтобы Итого совпало с кабинетом копейка в копейку
     rest = total - accounted
     if abs(rest) > 0.005:
         cat = a.get("accrued_category") or ""
-        add("Продажи и возвраты" if cat == "POSTING" and rest > 0 else "Прочие начисления", rest)
+        group = "Продажи и возвраты" if cat == "POSTING" and rest > 0 else "Прочие начисления"
+        # остаток POSTING (обычно баллы) — товарам отправления по доле продаж
+        base = sum(w for _, w in prod_skus)
+        if prod_skus and base > 0:
+            left = rest
+            for i, (p_sku, w) in enumerate(prod_skus):
+                part = rest * w / base if i < len(prod_skus) - 1 else left
+                add(group, part, p_sku)
+                left -= part
+        else:
+            add(group, rest, prod_skus[0][0] if prod_skus else row_sku)
 
 
-async def _fetch_ozon_accruals_month(y: int, m: int, today) -> dict[str, float]:
-    """Суммы начислений месяца по кабинетным статьям."""
+async def _fetch_ozon_accruals_month(y: int, m: int, today,
+                                     sku_sums: dict | None = None) -> dict[str, float]:
+    """Суммы начислений месяца по кабинетным статьям (+SKU-разрез в sku_sums)."""
     import ozon_client
     types = {t.get("id"): t for t in await ozon_client.get_accrual_types()}
     sums: dict[str, float] = {}
@@ -1307,7 +1400,7 @@ async def _fetch_ozon_accruals_month(y: int, m: int, today) -> dict[str, float]:
     while d <= min(last_day, today):
         try:
             for a in await ozon_client.get_accruals_day(d.isoformat()):
-                _oz_decompose_accrual(a, types, sums)
+                _oz_decompose_accrual(a, types, sums, sku_sums)
         except Exception as e:
             _log.warning("Ozon accruals %s: %s", d, e)
         d += timedelta(days=1)
@@ -1374,17 +1467,19 @@ async def _build_ozon_pnl(months: int) -> None:
         today = (datetime.utcnow() + timedelta(hours=3)).date()
         # поднимаем уже собранные месяцы из БД (свежие два — пересобираем,
         # они ещё пополняются начислениями)
-        db_groups, db_cogs = await asyncio.to_thread(_oz_load_months_db)
+        db_groups, db_cogs, db_sku = await asyncio.to_thread(_oz_load_months_db)
         cur_mk = today.strftime("%Y-%m")
         prev_mk = (today.replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
         month_groups: dict[str, dict[str, float]] = {}   # mk → {группа: сумма}
         cogs_by_month: dict[str, float] = {}
+        sku_by_month: dict[str, dict] = {}               # mk → {sku: {col: сумма}}
 
         for (y, m) in _last_months(months):
             mk = f"{y}-{m:02d}"
             if mk in db_groups and mk not in (cur_mk, prev_mk):
                 month_groups[mk] = db_groups[mk]
                 cogs_by_month[mk] = db_cogs.get(mk, 0.0)
+                sku_by_month[mk] = db_sku.get(mk, {})
                 continue
             _oz_pnl_progress = mk
             month_start = f"{mk}-01"
@@ -1428,16 +1523,21 @@ async def _build_ozon_pnl(months: int) -> None:
                 except Exception as e:
                     _log.warning("Ozon delivered COGS %s: %s", mk, e)
 
-            # ── Статьи: детализация начислений (как в кабинете) ──
-            accr = await _fetch_ozon_accruals_month(y, m, today)
+            # ── Статьи: детализация начислений (как в кабинете) + SKU-разрез ──
+            sku_sums: dict = {}
+            accr = await _fetch_ozon_accruals_month(y, m, today, sku_sums)
             if accr:
                 month_groups[mk] = accr
+                sku_by_month[mk] = sku_sums
                 try:
-                    await asyncio.to_thread(_oz_save_month_db, mk, accr, cogs_by_month.get(mk, 0.0))
+                    await asyncio.to_thread(_oz_save_month_db, mk, accr,
+                                            cogs_by_month.get(mk, 0.0), sku_sums)
                 except Exception as e:
                     _log.warning("Ozon save month %s failed: %s", mk, e)
                 # промежуточный кэш: собранные месяцы видны сразу
                 _oz_pnl_partial(month_groups, cogs_by_month, costs)
+                _oz_unit_state.update(groups=dict(month_groups), sku=dict(sku_by_month),
+                                      cogs=dict(cogs_by_month))
                 continue
 
             # фолбэк: реализация + cash-flow старыми строками
@@ -1467,6 +1567,8 @@ async def _build_ozon_pnl(months: int) -> None:
 
         # финальная сборка строк
         _oz_pnl_partial(month_groups, cogs_by_month, costs)
+        _oz_unit_state.update(groups=dict(month_groups), sku=dict(sku_by_month),
+                              cogs=dict(cogs_by_month))
         _oz_pnl_ts = _time.monotonic()
         _oz_pnl_progress = ""
         _log.info("Ozon P&L built: %d months", len(month_groups))
@@ -1575,6 +1677,157 @@ async def get_ozon_pnl(
     prog = f" (сейчас: {_oz_pnl_progress})" if _oz_pnl_progress else ""
     return {"months": [], "rows": [],
             "message": f"⏳ Отчёт Ozon собирается в фоне{prog} — страница обновится сама"}
+
+
+@router.get("/ozon/unit")
+async def get_ozon_unit(
+    months: int = Query(default=6, ge=1, le=12),
+    refresh: bool = Query(default=False),
+):
+    """Юнит-экономика Ozon по SKU × месяц.
+
+    SKU-разрез копится тем же проходом по детализации начислений, что и P&L,
+    поэтому итоги столбцов сходятся со вкладкой Финансы. Начисления без
+    привязки к товару (промо «оплата за клик», размещение FBO и т.п.)
+    распределяются по SKU пропорционально доле выручки месяца; остаток
+    округления — крупнейшему SKU."""
+    pnl = await get_ozon_pnl(months=months, refresh=refresh)
+    st = _oz_unit_state
+    sku_m: dict = st.get("sku") or {}
+    month_keys = sorted(mk for mk, s in sku_m.items() if s)
+    if not month_keys:
+        return {"months": [], "skus": [],
+                "message": pnl.get("message")
+                or "⏳ SKU-разрез Ozon собирается по мере пересборки месяцев — юнитка появится автоматически"}
+    groups_m: dict = st.get("groups") or {}
+    cogs_m: dict = st.get("cogs") or {}
+    pending = sorted(mk for mk in groups_m if mk not in month_keys)
+
+    COST_COLS = ("commission", "delivery", "storage", "advert", "acquiring", "returns", "other")
+
+    # итоги месяца по колонкам — прямо из статей P&L (сходимость с Финансами)
+    totals_cols: dict[str, dict[str, float]] = {}
+    for mk in month_keys:
+        t = {c: 0.0 for c in ("revenue",) + COST_COLS}
+        for grp, v in (groups_m.get(mk) or {}).items():
+            if grp.startswith("__"):
+                continue
+            col = _oz_col_for(grp)
+            t[col] += v if col == "revenue" else -v
+        totals_cols[mk] = t
+
+    # прямые суммы по SKU (знак → положительные затраты)
+    direct: dict[str, dict[str, dict[str, float]]] = {}   # mk → sku → col
+    for mk in month_keys:
+        d = direct[mk] = {}
+        for sku, cols in sku_m[mk].items():
+            cell = d.setdefault(sku, {})
+            for col, v in cols.items():
+                if col == "qty":
+                    cell["qty"] = cell.get("qty", 0.0) + v
+                elif col == "revenue":
+                    cell["revenue"] = cell.get("revenue", 0.0) + v
+                else:
+                    cell[col] = cell.get(col, 0.0) - v
+
+    names = cost_store.get_names()
+    unit_costs = cost_store.get_costs()
+    import catalog as _cat
+    oz_ids = {art: oid for oid, art in _cat.OZON_ID_TO_ART.items()}
+
+    all_skus = sorted({s for mk in month_keys for s in direct[mk]})
+    rows_by_sku: dict[str, dict] = {}
+    for mk in month_keys:
+        t = totals_cols[mk]
+        d = direct[mk]
+        rev_direct = {s: max(c.get("revenue", 0.0), 0.0) for s, c in d.items()}
+        rev_base = sum(rev_direct.values())
+        top_sku = max(rev_direct, key=rev_direct.get, default=None)
+
+        # распределение недоатрибуцированного остатка каждой колонки по доле выручки
+        alloc: dict[str, dict[str, float]] = {s: dict(c) for s, c in d.items()}
+        for col in ("revenue",) + COST_COLS:
+            residual = t[col] - sum(c.get(col, 0.0) for c in d.values())
+            if abs(residual) < 0.5 or rev_base <= 0:
+                continue
+            for s in alloc:
+                alloc[s][col] = alloc[s].get(col, 0.0) + residual * rev_direct[s] / rev_base
+
+        # себестоимость: цена × шт, остаток к официальному COGS — топ-SKU
+        for s, c in alloc.items():
+            qty = c.get("qty", 0.0)
+            c["cogs"] = unit_costs.get(s, 0.0) * max(qty, 0.0)
+        cg_target = cogs_m.get(mk, 0.0)
+        if cg_target > 0 and top_sku:
+            diff = cg_target - sum(c["cogs"] for c in alloc.values())
+            alloc[top_sku]["cogs"] = max(alloc[top_sku]["cogs"] + diff, 0.0)
+
+        # округление + добор разницы топ-SKU (итог = P&L рубль в рубль)
+        rounded_sum: dict[str, int] = {}
+        for s, c in alloc.items():
+            cell = {k: round(c.get(k, 0.0)) for k in ("qty", "revenue", "cogs") + COST_COLS}
+            for k in ("revenue",) + COST_COLS:
+                rounded_sum[k] = rounded_sum.get(k, 0) + cell[k]
+            row = rows_by_sku.setdefault(s, {
+                "sku": s, "name": names.get(s) or _cat.lookup(s).get("name", ""),
+                "brand": _cat.lookup(s).get("brand", ""),
+                "nmId": oz_ids.get(s), "unitCost": unit_costs.get(s, 0), "months": {}})
+            row["months"][mk] = cell
+        if top_sku and top_sku in rows_by_sku and mk in rows_by_sku[top_sku]["months"]:
+            cell = rows_by_sku[top_sku]["months"][mk]
+            for k in ("revenue",) + COST_COLS:
+                cell[k] += round(t[k]) - rounded_sum.get(k, 0)
+
+        # производные значения ячеек
+        for s in list(d.keys()):
+            cell = rows_by_sku[s]["months"].get(mk)
+            if not cell:
+                continue
+            costs_sum = sum(cell[k] for k in COST_COLS)
+            cell["deductions"] = cell.pop("returns") + cell.pop("other")
+            cell["acceptance"] = 0
+            cell["penalty"] = 0
+            cell["payout"] = cell["revenue"] - costs_sum
+            cell["gross"] = cell["payout"] - cell["cogs"]
+            cell["margin"] = round(cell["gross"] / cell["revenue"] * 100) if cell["revenue"] else 0
+
+    skus_out = [r for r in rows_by_sku.values()
+                if any(c.get("revenue") or c.get("qty") for c in r["months"].values())]
+    skus_out.sort(key=lambda r: -sum(m.get("revenue", 0) for m in r["months"].values()))
+
+    totals_out = {}
+    for mk in month_keys:
+        t = totals_cols[mk]
+        costs_sum = sum(t[c] for c in COST_COLS)
+        cg = cogs_m.get(mk, 0.0)
+        if cg <= 0:
+            cg = sum(r["months"].get(mk, {}).get("cogs", 0) for r in skus_out)
+        payout = t["revenue"] - costs_sum       # == «Итого начислено» в Финансах
+        gross = payout - cg
+        totals_out[mk] = {
+            "revenue": round(t["revenue"]),
+            "commission": round(t["commission"]),
+            "acquiring": round(t["acquiring"]),
+            "delivery": round(t["delivery"]),
+            "storage": round(t["storage"]),
+            "acceptance": 0, "penalty": 0,
+            "advert": round(t["advert"]),
+            "deductions": round(t["returns"] + t["other"]),
+            "cogs": round(cg),
+            "payout": round(payout),
+            "gross": round(gross),
+            "margin": round(gross / t["revenue"] * 100) if t["revenue"] else 0,
+            "qty": round(sum(r["months"].get(mk, {}).get("qty", 0) for r in skus_out)),
+        }
+
+    return {
+        "months": [{"key": mk, "label": RU_MON[int(mk[5:7])] + " " + mk[:4]} for mk in month_keys],
+        "skus": skus_out,
+        "totals": totals_out,
+        "months_pending": pending,
+        "building": _oz_pnl_building,
+        "fetched_at": (_oz_pnl_cache or {}).get("fetched_at", ""),
+    }
 
 
 @router.get("/ozon/reports")

@@ -313,6 +313,12 @@
   <!-- ── Юнит-экономика WB ── -->
   <div id="pane-unit" style="display:none">
     <div class="d-flex gap-2 mb-3 flex-wrap align-items-center">
+      <div id="unitMpWB" class="mp-selector-bloc active" style="--mp-color:#c026d3" onclick="setUnitMp('WB')">
+        <span class="mp-selector-dot" style="background:#c026d3"></span>WB
+      </div>
+      <div id="unitMpOZON" class="mp-selector-bloc" style="--mp-color:#3b82f6" onclick="setUnitMp('OZON')">
+        <span class="mp-selector-dot" style="background:#3b82f6"></span>Ozon
+      </div>
       <div id="unitMonthBtns" class="d-flex gap-1 flex-wrap"></div>
       <div class="d-flex align-items-center gap-1 ms-2">
         <span class="text-secondary small">Налог</span>
@@ -324,7 +330,7 @@
       <button id="unitModeBtn" class="btn btn-sm btn-outline-info ms-auto" onclick="toggleUnitMode()">
         📈 Динамика по месяцам
       </button>
-      <button class="btn btn-sm btn-outline-secondary" onclick="_unitData=null;loadUnitEconomics()">
+      <button class="btn btn-sm btn-outline-secondary" onclick="_unitData=null;delete _unitDataByMp[_unitMp];loadUnitEconomics()">
         <i class="bi bi-arrow-clockwise"></i> Обновить
       </button>
     </div>
@@ -338,6 +344,6 @@
 
 <script src="vendor/bootstrap.bundle.min.js"></script>
 <script src="vendor/chart.umd.min.js"></script>
-<script src="app.js?v=68"></script>
+<script src="app.js?v=69"></script>
 </body>
 </html>

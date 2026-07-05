@@ -1712,6 +1712,20 @@ function renderFinanceTable() {
 
 let _unitData = null;
 let _unitMetric = 'gross';
+let _unitMp = 'WB';                            // WB | OZON
+const _unitDataByMp = {};                      // кэш ответов по площадке
+
+function setUnitMp(mp) {
+  if (_unitMp === mp) return;
+  _unitMp = mp;
+  _unitMonth = null;
+  _unitData = _unitDataByMp[mp] || null;
+  ['WB', 'OZON'].forEach(k => {
+    const el = document.getElementById('unitMp' + k);
+    if (el) el.classList.toggle('active', k === mp);
+  });
+  loadUnitEconomics();
+}
 let _unitMode = 'month';                       // month — как в Excel; dyn — динамика
 let _unitMonth = null;                         // выбранный месяц или 'ALL'
 let _unitTax = parseFloat(localStorage.getItem('unit_tax_profit_pct') || '0');
@@ -1764,14 +1778,16 @@ async function loadUnitEconomics() {
   const wrap = document.getElementById('unitTableWrap');
   if (_unitData) { renderUnitTable(); return; }
   if (wrap) wrap.innerHTML = '<div class="text-center text-secondary py-5"><span class="spinner-border me-2"></span>Собираем юнит-экономику…</div>';
+  const mp = _unitMp;
   try {
-    const d = await fetchJSON('/api/finance/wb/unit', 120000);
+    const d = await fetchJSON(mp === 'OZON' ? '/api/finance/ozon/unit' : '/api/finance/wb/unit', 120000);
+    if (mp !== _unitMp) return;   // пока грузили — переключили площадку
     if (d.message) {
       if (wrap) wrap.innerHTML = `<div class="alert alert-info mt-3">${d.message}</div>`;
-      setTimeout(() => { if (currentTab === 'unit') loadUnitEconomics(); }, 20000);
+      setTimeout(() => { if (currentTab === 'unit' && mp === _unitMp) loadUnitEconomics(); }, 20000);
       return;
     }
-    _unitData = d;
+    _unitData = _unitDataByMp[mp] = d;
     renderUnitTable();
   } catch (e) {
     if (wrap) wrap.innerHTML = `<div class="alert alert-danger mt-3">Ошибка: ${e.message}</div>`;
@@ -1868,16 +1884,17 @@ function renderUnitMonth() {
   const skus = _unitData.skus || [];
   const totalsCell = _unitCellSum(_unitData.totals || {}, selMonths);
 
+  const isOz = _unitMp === 'OZON';
   const COLS = [
-    ['nm',         'Артикул WB'],
+    ['nm',         isOz ? 'SKU Ozon' : 'Артикул WB'],
     ['name',       'Название'],
     ['unitCost',   'Себес. ед.'],
     ['qty',        'Шт'],
     ['revenue',    'Выкупы, ₽'],
     ['cogs',       'Себес., ₽'],
-    ['delivery',   'Логистика'],
-    ['storage',    'Хранение'],
-    ['commission', 'Комиссия WB'],
+    ['delivery',   isOz ? 'Доставка' : 'Логистика'],
+    ['storage',    isOz ? 'Услуги FBO' : 'Хранение'],
+    ['commission', isOz ? 'Комиссия Ozon' : 'Комиссия WB'],
     ['acquiring',  'Эквайринг'],
     ['advert',     'Продвижение'],
     ['other',      'Удерж./проч.'],
@@ -1941,7 +1958,7 @@ function renderUnitMonth() {
   // ИТОГО (сходится со вкладкой Финансы)
   const T = derive(totalsCell);
   html += `<tr style="background:var(--fin-total);border-bottom:2px solid var(--pos-strong);font-weight:700">
-    <td style="padding:6px 10px;color:var(--val)" colspan="2">ИТОГО WB</td>
+    <td style="padding:6px 10px;color:var(--val)" colspan="2">ИТОГО ${isOz ? 'Ozon' : 'WB'}</td>
     <td></td>${COLS.slice(3).map(([k]) => cell(k, T, null)).join('')}</tr>`;
 
   orderedGroups.forEach(([gname, list]) => {
@@ -1960,21 +1977,24 @@ function renderUnitMonth() {
 
   html += `</tbody></table></div>`;
   const preciseMks = _unitData.advert_precise_months || [];
-  const advNote = (_unitMonth !== 'ALL' && preciseMks.includes(_unitMonth))
-    ? 'Продвижение — точная раскладка по артикулам из статистики кампаний WB (fullstats)'
-    : 'Продвижение — по доле выручки' + (_unitData.advert_building ? ' (точная раскладка по кампаниям собирается в фоне, ~5-10 мин)' : '');
+  const advNote = isOz
+    ? 'Все статьи — из детализации начислений Ozon; начисления без привязки к товару (промо, размещение FBO) — по доле выручки'
+    : ((_unitMonth !== 'ALL' && preciseMks.includes(_unitMonth))
+        ? 'Продвижение — точная раскладка по артикулам из статистики кампаний WB (fullstats)'
+        : 'Продвижение — по доле выручки' + (_unitData.advert_building ? ' (точная раскладка по кампаниям собирается в фоне, ~5-10 мин)' : ''));
   if ((_unitData.months_pending || []).length) {
-    html += `<div class="text-info small mt-2">⏳ Месяцы ${_unitData.months_pending.join(', ')} появятся по мере сборки раскладки рекламы (по минуте на месяц). Страница обновится сама.</div>`;
+    html += `<div class="text-info small mt-2">⏳ Месяцы ${_unitData.months_pending.join(', ')} появятся по мере сборки ${isOz ? 'SKU-разреза начислений Ozon' : 'раскладки рекламы (по минуте на месяц)'}. Страница обновится сама.</div>`;
     if (!window._unitPendingTimer) {
       window._unitPendingTimer = setTimeout(() => {
         window._unitPendingTimer = null;
         _unitData = null;
+        delete _unitDataByMp[_unitMp];
         if (currentTab === 'unit') loadUnitEconomics();
       }, 30000);
     }
   }
   const taxNote = _unitTax > 0 ? `налог — ${_unitTax}% с прибыли (доходы−расходы)` : 'налог не задан (введите % сверху)';
-  html += `<div class="text-secondary small mt-2">${advNote}; удержания — по доле выручки; ${taxNote}; ROI = прибыль / себестоимость.` +
+  html += `<div class="text-secondary small mt-2">${advNote}; ${isOz ? '' : 'удержания — по доле выручки; '}${taxNote}; ROI = прибыль / себестоимость.` +
           (_unitData.detail_upto ? ` Отчёт реализации — по ${_unitData.detail_upto}.` : '') + `</div>`;
   wrap.innerHTML = html;
 }
@@ -2021,7 +2041,7 @@ function renderUnitDynamics() {
 
   // ИТОГО (сходится со вкладкой Финансы)
   html += `<tr style="background:var(--fin-total);border-bottom:2px solid var(--pos-strong)">
-    <td style="position:sticky;left:0;background:var(--fin-total);padding:6px 12px;color:var(--val);font-weight:700">ИТОГО WB</td>
+    <td style="position:sticky;left:0;background:var(--fin-total);padding:6px 12px;color:var(--val);font-weight:700">ИТОГО ${_unitMp === 'OZON' ? 'Ozon' : 'WB'}</td>
     ${rowCells(totals, true)}</tr>`;
 
   skus.forEach(r => {
