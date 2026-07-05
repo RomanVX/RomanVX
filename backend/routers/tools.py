@@ -660,10 +660,12 @@ _niche_last_err = ""
 async def niche_debug(query: str = Query(default="крем для лица")):
     """Диагностика публичного поиска WB: статусы по версиям API."""
     import httpx
-    out = {}
+    import os
+    proxy = os.getenv("WB_SEARCH_PROXY", "").strip() or None
+    out = {"proxy": "настроен" if proxy else "нет"}
     params = {"ab_testing": "false", "appType": 1, "curr": "rub", "dest": -1257786,
               "sort": "popular", "resultset": "catalog", "page": 1, "spp": 30, "query": query}
-    async with httpx.AsyncClient(timeout=20, headers={
+    async with httpx.AsyncClient(timeout=20, proxy=proxy, headers={
             "User-Agent": "Mozilla/5.0", "Referer": "https://www.wildberries.ru/"}) as client:
         for ver in ("v13", "v9", "v5", "v4"):
             try:
