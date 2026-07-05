@@ -525,5 +525,25 @@ html[data-theme="light"] .text-secondary { color: var(--muted) !important; }
 html[data-theme="light"] .btn-close-white { filter: none; }
 html[data-theme="light"] .spinner-border.text-light { color: var(--ink-2) !important; }
 
+/* Bootstrap-утилиты тёмного фона (карточки отзывов, таблицы рейтингов,
+   селекты) в светлой теме перекрашиваем в светлые поверхности */
+html[data-theme="light"] .bg-dark {
+  background: var(--surface) !important;
+  color: var(--ink);
+}
+html[data-theme="light"] .table-dark {
+  --bs-table-bg: var(--surface);
+  --bs-table-color: var(--ink);
+  --bs-table-striped-color: var(--ink);
+  --bs-table-hover-color: var(--ink);
+  --bs-table-hover-bg: rgba(168, 132, 46, .07);
+  --bs-table-border-color: var(--border);
+  color: var(--ink);
+  border-color: var(--border);
+}
+html[data-theme="light"] .text-white { color: var(--ink) !important; }
+html[data-theme="light"] .border-secondary { border-color: var(--border-2) !important; }
+html[data-theme="light"] .text-info { color: #0369a1 !important; }
+
 /* кнопка переключения темы */
 #themeBtn { min-width: 38px; }
