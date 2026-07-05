@@ -1148,8 +1148,7 @@ def _last_months(n: int) -> list[tuple[int, int]]:
     return out
 
 
-def _accrual_amount(a: dict) -> float:
-    v = a.get("total_amount")
+def _money(v) -> float:
     if isinstance(v, dict):
         v = v.get("amount")
     try:
@@ -1158,30 +1157,103 @@ def _accrual_amount(a: dict) -> float:
         return 0.0
 
 
+def _accrual_amount(a: dict) -> float:
+    return _money(a.get("total_amount"))
+
+
 def _accrual_type_id(a: dict):
     return a.get("type_id") or a.get("accrual_id") or a.get("type")
 
 
+# Группировка элементарных типов начислений в кабинетные статьи (по описанию)
+_OZ_GROUP_RULES = [
+    ("Продвижение и реклама", ("продвижен", "реклам", "brand", "трафарет", "полка",
+                               "advertising", "promotion", "буст", "отзыв")),
+    ("Услуги доставки",       ("доставк", "магистрал", "миля", "drop-off", "курьер",
+                               "логистик", "перевозк", "shipment")),
+    ("Услуги FBO",            ("сборка", "fulfillment", "размещени", "кросс-док",
+                               "приёмк", "приемк", "обработка отправ", "хранени")),
+    ("Обработка возвратов и отмен", ("возврат", "отмен", "невостреб", "утилизац")),
+    ("Эквайринг",             ("эквайринг", "acquiring", "рассрочк", "installment")),
+    ("Компенсации",           ("компенсац", "претензи", "claim")),
+    ("Другие услуги и штрафы", ("штраф", "ошибок", "defect", "инвентаризац", "пожертвован")),
+]
+
+
+def _oz_group_for(desc: str) -> str:
+    low = (desc or "").lower()
+    for group, keys in _OZ_GROUP_RULES:
+        if any(k in low for k in keys):
+            return group
+    return "Прочие услуги"
+
+
+def _oz_decompose_accrual(a: dict, types: dict, sums: dict) -> None:
+    """Раскладывает начисление на кабинетные статьи. Остаток строки уходит в
+    «Продажи и возвраты»/«Прочие начисления», чтобы Итого всегда сходился."""
+    total = _accrual_amount(a)
+    accounted = 0.0
+
+    def add(group: str, amount: float):
+        nonlocal accounted
+        if not amount:
+            return
+        sums[group] = sums.get(group, 0.0) + amount
+        accounted += amount
+
+    def fee_group(tid) -> str:
+        t = types.get(tid) or {}
+        return _oz_group_for(t.get("description") or t.get("name") or "")
+
+    # товарные и нетоварные услуги
+    item_fees = (a.get("item_fees") or {}).get("fees") or []
+    for by_sku in item_fees:
+        for f in by_sku.get("fees") or []:
+            add(fee_group(f.get("type_id")), _money(f.get("accrued")))
+    nif = a.get("non_item_fee")
+    for f in (nif if isinstance(nif, list) else [nif] if nif else []):
+        add(fee_group(f.get("type_id")), _money(f.get("accrued")))
+    cf = a.get("container_fees")
+    for f in (cf if isinstance(cf, list) else [cf] if cf else []):
+        if isinstance(f, dict):
+            add(fee_group(f.get("type_id")), _money(f.get("accrued")))
+
+    # отправление: выручка, вознаграждение, баллы, услуги доставки
+    posting = a.get("posting") or {}
+    for prod in posting.get("products") or []:
+        c = prod.get("commission") or {}
+        add("Продажи и возвраты", _money(c.get("sale_amount")))
+        add("Вознаграждение Ozon", -abs(_money(c.get("commission")) or _money(c.get("sale_commission"))))
+        for bonus_key in ("bonus", "coinvestment", "stars"):
+            add("Баллы за скидки", _money(c.get(bonus_key)))
+        d = prod.get("delivery") or {}
+        for svc in d.get("services") or []:
+            add(fee_group(svc.get("type_id")), _money(svc.get("accrued")))
+        if d.get("total_accrued") is not None and not d.get("services"):
+            add("Услуги доставки", _money(d.get("total_accrued")))
+
+    # остаток строки — чтобы Итого совпало с кабинетом копейка в копейку
+    rest = total - accounted
+    if abs(rest) > 0.005:
+        cat = a.get("accrued_category") or ""
+        add("Продажи и возвраты" if cat == "POSTING" and rest > 0 else "Прочие начисления", rest)
+
+
 async def _fetch_ozon_accruals_month(y: int, m: int, today) -> dict[str, float]:
-    """Суммы начислений месяца по названиям типов (как «Группа услуг» в кабинете)."""
+    """Суммы начислений месяца по кабинетным статьям."""
     import ozon_client
-    types = {t.get("id"): (t.get("name") or t.get("description") or f"Тип {t.get('id')}")
-             for t in await ozon_client.get_accrual_types()}
+    types = {t.get("id"): t for t in await ozon_client.get_accrual_types()}
     sums: dict[str, float] = {}
     last_day = (datetime(y + (m == 12), m % 12 + 1, 1) - timedelta(days=1)).date()
     d = datetime(y, m, 1).date()
     while d <= min(last_day, today):
         try:
             for a in await ozon_client.get_accruals_day(d.isoformat()):
-                amt = _accrual_amount(a)
-                if not amt:
-                    continue
-                name = types.get(_accrual_type_id(a)) or a.get("accrued_category") or "Прочее"
-                sums[name] = sums.get(name, 0.0) + amt
+                _oz_decompose_accrual(a, types, sums)
         except Exception as e:
             _log.warning("Ozon accruals %s: %s", d, e)
         d += timedelta(days=1)
-    return sums
+    return {k: v for k, v in sums.items() if abs(v) >= 0.5}
 
 
 @router.get("/ozon/accrual_debug", include_in_schema=False)
@@ -1202,12 +1274,21 @@ async def ozon_accrual_debug(date: str = Query(default="")):
         out["rows"] = len(rows)
         if rows:
             out["row_keys"] = sorted(rows[0].keys())
-            out["samples"] = rows[:3]
-            agg: dict = {}
+            # по одному примеру каждой категории — видно структуру posting/non_item
+            seen_cat: dict = {}
             for a in rows:
-                key = f"{a.get('accrued_category')}/{_accrual_type_id(a)}"
-                agg[key] = round(agg.get(key, 0.0) + _accrual_amount(a))
-            out["day_by_type"] = agg
+                cat = a.get("accrued_category") or "—"
+                if cat not in seen_cat:
+                    seen_cat[cat] = a
+            out["samples_by_category"] = seen_cat
+            # проверка разложения: сумма статей должна равняться сумме строк
+            types = {t.get("id"): t for t in await ozon_client.get_accrual_types()}
+            sums: dict = {}
+            for a in rows:
+                _oz_decompose_accrual(a, types, sums)
+            out["day_decomposed"] = {k: round(v) for k, v in sorted(sums.items(), key=lambda kv: -abs(kv[1]))}
+            out["day_total_rows"] = round(sum(_accrual_amount(a) for a in rows))
+            out["day_total_decomposed"] = round(sum(sums.values()))
     except Exception as e:
         out["day_error"] = str(e)[:300]
     return out
