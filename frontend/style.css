@@ -585,4 +585,4 @@ html[data-theme="light"] .text-info { color: #0369a1 !important; }
   display: flex; align-items: center; justify-content: center;
   flex-shrink: 0;
 }
-.cab-mono.cab-mono-sm { width: 26px; height: 26px; border-radius: 7px; font-size: 11px; letter-spacing: 0; display: inline-flex; margin-right: 8px; vertical-align: -6px; }
+.cab-mono.cab-mono-sm { width: 26px; height: 26px; border-radius: 7px; font-size: 11px; letter-spacing: 0; display: inline-flex; margin-right: 8px; vertical-align: middle; position: relative; top: -1px; }
