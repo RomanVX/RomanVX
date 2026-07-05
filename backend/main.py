@@ -75,16 +75,25 @@ async def _prefetch_weekly():
             _log.info("sales history accumulated")
         except Exception as exc:
             _log.warning("sales accumulation failed: %s", exc)
-        # прогрев финансов: сборки идут в фоне и уважают свои TTL/кэши в БД,
-        # так что к заходу пользователя P&L всех площадок уже готов
-        try:
-            from routers import finance as _fin
-            await _fin.get_wb_pnl(months=6, refresh=False)
-            await _fin.get_ozon_pnl(months=6, refresh=False)
-            await _fin.get_ym_pnl(months=6, refresh=False)
-            _log.info("finance caches warmed")
-        except Exception as exc:
-            _log.warning("finance warm failed: %s", exc)
+        await asyncio.sleep(_PREFETCH_INTERVAL)
+
+
+async def _warm_finance():
+    """Прогрев финансов отдельным циклом со стартовой задержкой и паузами:
+    на Render free одновременный старт всех сборок (WB детальный, Ozon по
+    дням, YM отчёты) забивает CPU/память и роняет инстанс (502)."""
+    await asyncio.sleep(180)   # даём подняться основным кешам после деплоя
+    from routers import finance as _fin
+    while True:
+        for name, fn in (("WB", _fin.get_wb_pnl),
+                         ("Ozon", _fin.get_ozon_pnl),
+                         ("YM", _fin.get_ym_pnl)):
+            try:
+                await fn(months=6, refresh=False)
+                _log.info("finance warm: %s ok", name)
+            except Exception as exc:
+                _log.warning("finance warm %s failed: %s", name, exc)
+            await asyncio.sleep(120)   # сборки стартуют по очереди, не разом
         await asyncio.sleep(_PREFETCH_INTERVAL)
 
 
@@ -92,8 +101,10 @@ async def _prefetch_weekly():
 async def lifespan(app: FastAPI):
     cost_store.init()
     task = asyncio.create_task(_prefetch_weekly())
+    task2 = asyncio.create_task(_warm_finance())
     yield
     task.cancel()
+    task2.cancel()
 
 
 app = FastAPI(title="WB Analytics Dashboard", version="1.0.0", lifespan=lifespan)

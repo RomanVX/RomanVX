@@ -1033,14 +1033,16 @@ def _ym_parse_services_xlsx(data: bytes,
     import io
     import openpyxl
     import catalog as _cat
-    # ВАЖНО: не read_only — у кабинетного XLSX битые metadata размеров листов,
-    # в read_only-режиме каждый лист выглядит как 1×1
-    wb = openpyxl.load_workbook(io.BytesIO(data), data_only=True)
+    # read_only (потоковое чтение, ~8× меньше памяти — важно на Render free).
+    # У кабинетного XLSX битые metadata размеров листов — reset_dimensions()
+    # заставляет openpyxl читать фактические строки.
+    wb = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
     out: dict[str, float] = {}
     for sh in wb.sheetnames:
         low = sh.lower()
         if low.startswith("сводка"):
             continue
+        wb[sh].reset_dimensions()
         grp = next((g for g, keys in _YM_SHEET_GROUPS
                     if any(k in low for k in keys)), "otherServices")
         cost_idx = None
