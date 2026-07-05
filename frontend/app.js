@@ -25,7 +25,7 @@ document.addEventListener('DOMContentLoaded', _initThemeBtn);
 const API = '';
 let charts = {};
 let sortState = {};
-const dirty = { salesan: true, stocks: true, reviews: true, finance: true, unit: true };
+const dirty = { salesan: true, stocks: true, reviews: true, finance: true, unit: true, tools: true };
 let _advertData = [];
 let currentTab = 'finance';
 let prodAllData = [];
@@ -230,7 +230,7 @@ function skuName(r) {
 function switchTab(name, linkEl) {
   document.querySelectorAll('#mainTabs .nav-link').forEach(a => a.classList.remove('active'));
   if (linkEl) linkEl.classList.add('active');
-  ['salesan', 'stocks', 'reviews', 'finance', 'unit'].forEach(t => {
+  ['salesan', 'stocks', 'reviews', 'finance', 'unit', 'tools'].forEach(t => {
     const el = document.getElementById('pane-' + t);
     if (el) el.style.display = t === name ? 'block' : 'none';
   });
@@ -238,7 +238,7 @@ function switchTab(name, linkEl) {
   if (dirty[name]) {
     dirty[name] = false;
     ({ salesan: loadSalesAnalytics, stocks: loadStocks,
-       reviews: loadReviews, finance: loadFinance,
+       reviews: loadReviews, finance: loadFinance, tools: loadProductolog,
        unit: loadUnitEconomics })[name]();
   }
 }
@@ -2408,6 +2408,83 @@ function renderUnitDynamics() {
     html += `<div class="text-secondary small mt-2">Продвижение и удержания распределены по SKU пропорционально доле выручки месяца. Отчёт реализации — по ${_unitData.detail_upto}.</div>`;
   }
   wrap.innerHTML = metricBtns + html;
+}
+
+// ── Инструменты WB: Продуктолог ───────────────────────────────────────────────
+
+let _prodData = null;
+let _prodTimer = null;
+
+async function loadProductolog(refresh) {
+  const wrap = document.getElementById('toolsWrap');
+  if (!wrap) return;
+  if (_prodData && !refresh) { renderProductolog(); return; }
+  if (!_prodData) wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>Загружаем анализ отзывов…</div>';
+  try {
+    _prodData = await fetchJSON('/api/tools/productolog' + (refresh ? '?refresh=true' : ''), 60000);
+    renderProductolog();
+  } catch (e) {
+    wrap.innerHTML = `<div class="alert alert-danger mt-3">Ошибка: ${e.message}</div>`;
+  }
+}
+
+function _prodChips(list, kind) {
+  if (!list || !list.length) return '<span class="text-secondary small">—</span>';
+  const style = kind === 'plus'
+    ? 'background:rgba(34,197,94,.13);color:var(--pos);border:1px solid rgba(34,197,94,.3)'
+    : 'background:rgba(248,113,113,.12);color:var(--neg);border:1px solid rgba(248,113,113,.3)';
+  return list.map(p => `<span style="${style};border-radius:7px;padding:2px 8px;font-size:.76rem;display:inline-block;margin:2px 3px 2px 0;white-space:nowrap">${esc(p.tag)} · ${p.pct}%</span>`).join('');
+}
+
+function renderProductolog() {
+  const wrap = document.getElementById('toolsWrap');
+  if (!wrap || !_prodData) return;
+  const d = _prodData;
+  const items = d.items || [];
+  if (!items.length) {
+    wrap.innerHTML = `<div class="alert alert-info">${d.error ? '⚠ ' + d.error : 'Отзывов WB пока мало для анализа — сводка появится, когда накопятся.'}</div>`;
+    return;
+  }
+  let html = '';
+  if (d.pending > 0 || d.building) {
+    html += `<div class="alert alert-info py-2 small">⏳ Анализируем отзывы (${d.progress || `осталось ${d.pending} арт.`}) — страница обновится сама.</div>`;
+    if (!_prodTimer) _prodTimer = setTimeout(() => { _prodTimer = null; _prodData = null; if (currentTab === 'tools') loadProductolog(); }, 25000);
+  } else if (d.error) {
+    html += `<div class="alert alert-warning py-2 small">⚠ ${d.error}</div>`;
+  }
+  html += `<div class="card border-0 bg-card"><div class="card-body p-0"><div class="table-responsive" style="max-height:78vh">
+    <table class="table table-sm align-middle mb-0"><thead><tr>
+      <th style="min-width:190px;position:sticky;left:0;background:var(--t-sticky);z-index:2">Товар</th>
+      <th class="text-center" style="min-width:120px">Отзывы</th>
+      <th style="min-width:230px">Плюсы (%)</th>
+      <th style="min-width:230px">Минусы (%)</th>
+      <th style="min-width:280px">Рекомендации к изменению</th>
+    </tr></thead><tbody>`;
+  items.forEach(it => {
+    const bar = `<div class="d-flex" style="height:6px;border-radius:3px;overflow:hidden;width:100px;margin:4px auto 2px">
+      <div style="width:${it.pos}%;background:var(--pos)"></div>
+      <div style="width:${it.neu}%;background:var(--warn-c)"></div>
+      <div style="width:${it.neg}%;background:var(--neg)"></div></div>`;
+    const avgClr = it.avg >= 4.8 ? 'var(--pos)' : it.avg >= 4.5 ? 'var(--warn-c)' : 'var(--neg)';
+    html += `<tr style="background:var(--t-row)">
+      <td style="position:sticky;left:0;background:var(--t-sticky);padding:8px 12px;vertical-align:top">
+        <code style="color:var(--val-soft)">${esc(it.sku)}</code>
+        <div class="small" style="color:var(--ink)">${esc(it.name)}</div>
+        <div class="text-secondary" style="font-size:.72rem">${esc(it.group || '')}</div></td>
+      <td class="text-center" style="vertical-align:top;padding-top:10px">
+        <b style="color:var(--val)">${fmt(it.count)}</b>${bar}
+        <span style="color:${avgClr};font-weight:700">${it.avg.toFixed(2)}★</span>
+        <div class="text-secondary" style="font-size:.7rem">🟢${it.pos}% · ⚪${it.neu}% · 🔴${it.neg}%</div></td>
+      <td style="vertical-align:top;padding:8px">${it.analyzed ? _prodChips(it.pluses, 'plus') : '<span class="text-secondary small">⏳ анализируется…</span>'}</td>
+      <td style="vertical-align:top;padding:8px">${it.analyzed ? _prodChips(it.minuses, 'minus') : ''}</td>
+      <td style="vertical-align:top;padding:8px" class="small">${it.analyzed
+        ? `<span style="color:var(--ink-2)">🛠 ${esc(it.recommendation)}</span>`
+        : ''}</td>
+    </tr>`;
+  });
+  html += `</tbody></table></div></div></div>
+  <div class="text-secondary small mt-2">Проблемные товары сверху (по доле негативных отзывов). Проценты в плюсах/минусах — доля отзывов, где тема упомянута. Анализ пересобирается автоматически, когда накапливаются новые отзывы.</div>`;
+  wrap.innerHTML = html;
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────

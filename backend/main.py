@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse
 
 from datetime import datetime, timedelta
 
-from routers import dashboard, upload, advert, reviews, finance
+from routers import dashboard, upload, advert, reviews, finance, tools
 import cache
 import cost_store
 import ozon_client
@@ -124,6 +124,7 @@ app.include_router(upload.router)
 app.include_router(advert.router)
 app.include_router(reviews.router)
 app.include_router(finance.router)
+app.include_router(tools.router)
 
 import auth as _auth
 app.include_router(_auth.router)
