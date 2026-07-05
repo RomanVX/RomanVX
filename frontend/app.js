@@ -68,7 +68,11 @@ async function loadCabinetInfo() {
     div.id = 'cabOther';
     div.className = 'mp-cab-card';
     div.onclick = () => { window.location.href = _cab.other.url; };
-    div.innerHTML = `<div style="font-size:44px">💄</div><span>${_cab.other.name}</span>`;
+    // иконка второй карточки — по тому, КУДА она ведёт: у ФК ссылка на Biomed (лев BN), у Biomed — на ФК (помада)
+    const otherIcon = _cab.id === 'fk'
+      ? '<img src="/static/lion_logo.svg" alt="BN" style="width:64px;height:64px" />'
+      : '<div style="font-size:44px">💄</div>';
+    div.innerHTML = `${otherIcon}<span>${_cab.other.name}</span>`;
     grid.appendChild(div);
   }
   // скрываем площадки, которых нет в кабинете (ЯМ у Фабрики красоты)
