@@ -1720,7 +1720,7 @@ function setUnitMp(mp) {
   _unitMp = mp;
   _unitMonth = null;
   _unitData = _unitDataByMp[mp] || null;
-  ['WB', 'OZON'].forEach(k => {
+  ['WB', 'OZON', 'YM'].forEach(k => {
     const el = document.getElementById('unitMp' + k);
     if (el) el.classList.toggle('active', k === mp);
   });
@@ -1780,7 +1780,8 @@ async function loadUnitEconomics() {
   if (wrap) wrap.innerHTML = '<div class="text-center text-secondary py-5"><span class="spinner-border me-2"></span>Собираем юнит-экономику…</div>';
   const mp = _unitMp;
   try {
-    const d = await fetchJSON(mp === 'OZON' ? '/api/finance/ozon/unit' : '/api/finance/wb/unit', 120000);
+    const url = { OZON: '/api/finance/ozon/unit', YM: '/api/finance/ym/unit' }[mp] || '/api/finance/wb/unit';
+    const d = await fetchJSON(url, 120000);
     if (mp !== _unitMp) return;   // пока грузили — переключили площадку
     if (d.message) {
       if (wrap) wrap.innerHTML = `<div class="alert alert-info mt-3">${d.message}</div>`;
@@ -1885,16 +1886,17 @@ function renderUnitMonth() {
   const totalsCell = _unitCellSum(_unitData.totals || {}, selMonths);
 
   const isOz = _unitMp === 'OZON';
+  const isYm = _unitMp === 'YM';
   const COLS = [
-    ['nm',         isOz ? 'SKU Ozon' : 'Артикул WB'],
+    ['nm',         isOz ? 'SKU Ozon' : isYm ? 'SKU' : 'Артикул WB'],
     ['name',       'Название'],
     ['unitCost',   'Себес. ед.'],
     ['qty',        'Шт'],
     ['revenue',    'Выкупы, ₽'],
     ['cogs',       'Себес., ₽'],
-    ['delivery',   isOz ? 'Доставка' : 'Логистика'],
+    ['delivery',   (isOz || isYm) ? 'Доставка' : 'Логистика'],
     ['storage',    isOz ? 'Услуги FBO' : 'Хранение'],
-    ['commission', isOz ? 'Комиссия Ozon' : 'Комиссия WB'],
+    ['commission', isOz ? 'Комиссия Ozon' : isYm ? 'Комиссия ЯМ' : 'Комиссия WB'],
     ['acquiring',  'Эквайринг'],
     ['advert',     'Продвижение'],
     ['other',      'Удерж./проч.'],
@@ -1958,7 +1960,7 @@ function renderUnitMonth() {
   // ИТОГО (сходится со вкладкой Финансы)
   const T = derive(totalsCell);
   html += `<tr style="background:var(--fin-total);border-bottom:2px solid var(--pos-strong);font-weight:700">
-    <td style="padding:6px 10px;color:var(--val)" colspan="2">ИТОГО ${isOz ? 'Ozon' : 'WB'}</td>
+    <td style="padding:6px 10px;color:var(--val)" colspan="2">ИТОГО ${isOz ? 'Ozon' : isYm ? 'ЯМ' : 'WB'}</td>
     <td></td>${COLS.slice(3).map(([k]) => cell(k, T, null)).join('')}</tr>`;
 
   orderedGroups.forEach(([gname, list]) => {
@@ -1977,7 +1979,9 @@ function renderUnitMonth() {
 
   html += `</tbody></table></div>`;
   const preciseMks = _unitData.advert_precise_months || [];
-  const advNote = isOz
+  const advNote = isYm
+    ? 'Все статьи — из «Отчёта по стоимости услуг» YM (построчно по SKU); услуги без SKU (буст показов, поставки) — по доле выручки'
+    : isOz
     ? 'Все статьи — из детализации начислений Ozon; начисления без привязки к товару (промо, размещение FBO) — по доле выручки'
     : ((_unitMonth !== 'ALL' && preciseMks.includes(_unitMonth))
         ? 'Продвижение — точная раскладка по артикулам из статистики кампаний WB (fullstats)'
@@ -1994,7 +1998,7 @@ function renderUnitMonth() {
     }
   }
   const taxNote = _unitTax > 0 ? `налог — ${_unitTax}% с прибыли (доходы−расходы)` : 'налог не задан (введите % сверху)';
-  html += `<div class="text-secondary small mt-2">${advNote}; ${isOz ? '' : 'удержания — по доле выручки; '}${taxNote}; ROI = прибыль / себестоимость.` +
+  html += `<div class="text-secondary small mt-2">${advNote}; ${(isOz || isYm) ? '' : 'удержания — по доле выручки; '}${taxNote}; ROI = прибыль / себестоимость.` +
           (_unitData.detail_upto ? ` Отчёт реализации — по ${_unitData.detail_upto}.` : '') + `</div>`;
   wrap.innerHTML = html;
 }
@@ -2041,7 +2045,7 @@ function renderUnitDynamics() {
 
   // ИТОГО (сходится со вкладкой Финансы)
   html += `<tr style="background:var(--fin-total);border-bottom:2px solid var(--pos-strong)">
-    <td style="position:sticky;left:0;background:var(--fin-total);padding:6px 12px;color:var(--val);font-weight:700">ИТОГО ${_unitMp === 'OZON' ? 'Ozon' : 'WB'}</td>
+    <td style="position:sticky;left:0;background:var(--fin-total);padding:6px 12px;color:var(--val);font-weight:700">ИТОГО ${_unitMp === 'OZON' ? 'Ozon' : _unitMp === 'YM' ? 'ЯМ' : 'WB'}</td>
     ${rowCells(totals, true)}</tr>`;
 
   skus.forEach(r => {

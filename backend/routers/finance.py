@@ -1007,6 +1007,8 @@ _YM_PNL_TTL = 3600
 _ym_srv_cache: dict = {}      # mk → {группа: ₽} из «Отчёта по стоимости услуг»
 _ym_srv_building: bool = False
 _ym_srv_error: str = ""
+_ym_unit_sku: dict = {}       # mk → {sku: {группа: ₽}} — SKU-разрез услуг
+_ym_unit_rev: dict = {}       # mk → {sku: {revenue, qty, cogs}} — из заказов
 
 # лист XLSX «Отчёта по стоимости услуг» → строка P&L (по ключевым словам)
 _YM_SHEET_GROUPS = [
@@ -1020,13 +1022,17 @@ _YM_SHEET_GROUPS = [
 ]
 
 
-def _ym_parse_services_xlsx(data: bytes) -> dict[str, float]:
+def _ym_parse_services_xlsx(data: bytes,
+                            sku_sums: dict | None = None) -> dict[str, float]:
     """Суммирует «Стоимость услуги, ₽» по листам отчёта → {группа: ₽}.
 
     Берётся последняя колонка «Стоимость …, ₽» листа — это итог по акту
-    после скидок и наценок (в кабинетном XLSX ровно она)."""
+    после скидок и наценок (в кабинетном XLSX ровно она).
+    Если передан sku_sums — параллельно копит SKU-разрез {sku: {группа: ₽}}
+    по колонке «Ваш SKU» (для юнит-экономики)."""
     import io
     import openpyxl
+    import catalog as _cat
     # ВАЖНО: не read_only — у кабинетного XLSX битые metadata размеров листов,
     # в read_only-режиме каждый лист выглядит как 1×1
     wb = openpyxl.load_workbook(io.BytesIO(data), data_only=True)
@@ -1038,6 +1044,7 @@ def _ym_parse_services_xlsx(data: bytes) -> dict[str, float]:
         grp = next((g for g, keys in _YM_SHEET_GROUPS
                     if any(k in low for k in keys)), "otherServices")
         cost_idx = None
+        sku_idx = None
         total = 0.0
         for r in wb[sh].iter_rows(values_only=True):
             if cost_idx is None:
@@ -1046,17 +1053,23 @@ def _ym_parse_services_xlsx(data: bytes) -> dict[str, float]:
                             if c and str(c).strip().startswith("Стоимость") and "₽" in str(c)]
                     if idxs:
                         cost_idx = idxs[-1]
+                    skus = [j for j, c in enumerate(r) if c and str(c).strip() == "Ваш SKU"]
+                    sku_idx = skus[0] if skus else None
                 continue
             v = r[cost_idx] if len(r) > cost_idx else None
             if isinstance(v, (int, float)):
                 total += float(v)
+                if sku_sums is not None and sku_idx is not None and len(r) > sku_idx and r[sku_idx]:
+                    sku = _cat.resolve_ym(str(r[sku_idx]).strip())
+                    cell = sku_sums.setdefault(sku, {})
+                    cell[grp] = cell.get(grp, 0.0) + float(v)
         if total:
             out[grp] = out.get(grp, 0.0) + total
     wb.close()
     return out
 
 
-def _ym_srv_save_db(mk: str, groups: dict) -> None:
+def _ym_srv_save_db(mk: str, groups: dict, sku_sums: dict | None = None) -> None:
     import db
     db.execute("CREATE TABLE IF NOT EXISTS ym_srv_groups "
                "(mk TEXT, grp TEXT, amount REAL, PRIMARY KEY (mk, grp))")
@@ -1064,21 +1077,40 @@ def _ym_srv_save_db(mk: str, groups: dict) -> None:
     rows = [(mk, g, float(v)) for g, v in groups.items()]
     rows.append((mk, "__built__", 1.0))
     db.executemany("INSERT INTO ym_srv_groups (mk, grp, amount) VALUES (?,?,?)", rows)
+    if sku_sums is not None:
+        db.execute("CREATE TABLE IF NOT EXISTS ym_unit_sku "
+                   "(mk TEXT, sku TEXT, grp TEXT, amount REAL, PRIMARY KEY (mk, sku, grp))")
+        db.execute("DELETE FROM ym_unit_sku WHERE mk = ?", (mk,))
+        srows = [(mk, s, g, float(v)) for s, cols in sku_sums.items() for g, v in cols.items()]
+        srows.append((mk, "__built__", "__built__", 1.0))
+        db.executemany("INSERT INTO ym_unit_sku (mk, sku, grp, amount) VALUES (?,?,?,?)", srows)
 
 
-def _ym_srv_load_db() -> dict:
+def _ym_srv_load_db() -> tuple[dict, dict]:
     import db
     try:
         rows = db.fetchall("SELECT mk, grp, amount FROM ym_srv_groups")
     except Exception:
-        return {}
+        return {}, {}
     out: dict = {}
     for mk, g, v in rows:
         if g == "__built__":
             out.setdefault(mk, {})
             continue
         out.setdefault(mk, {})[g] = float(v or 0)
-    return out
+    sku: dict = {}
+    try:
+        for mk, s, g, v in db.fetchall("SELECT mk, sku, grp, amount FROM ym_unit_sku"):
+            if s == "__built__":
+                sku.setdefault(mk, {})
+                continue
+            sku.setdefault(mk, {}).setdefault(s, {})[g] = float(v or 0)
+    except Exception:
+        sku = {}
+    # месяцы без SKU-разреза пересобираются (отчёт перетянется заново)
+    for mk in [mk for mk in out if mk not in sku]:
+        out.pop(mk, None)
+    return out, sku
 
 
 async def _build_ym_srv_bg(months: int) -> None:
@@ -1091,7 +1123,9 @@ async def _build_ym_srv_bg(months: int) -> None:
     try:
         import ym_client
         if not _ym_srv_cache:
-            _ym_srv_cache.update(await asyncio.to_thread(_ym_srv_load_db))
+            g, s = await asyncio.to_thread(_ym_srv_load_db)
+            _ym_srv_cache.update(g)
+            _ym_unit_sku.update(s)
         today = (datetime.utcnow() + timedelta(hours=3)).date()
         cur_mk = today.strftime("%Y-%m")
         prev_mk = (today.replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
@@ -1107,11 +1141,18 @@ async def _build_ym_srv_bg(months: int) -> None:
                 continue
             if not data:
                 _ym_srv_cache.setdefault(mk, {})
+                _ym_unit_sku.setdefault(mk, {})
+                try:
+                    await asyncio.to_thread(_ym_srv_save_db, mk, {}, {})
+                except Exception:
+                    pass
                 continue
-            groups = await asyncio.to_thread(_ym_parse_services_xlsx, data)
+            sku_sums: dict = {}
+            groups = await asyncio.to_thread(_ym_parse_services_xlsx, data, sku_sums)
             _ym_srv_cache[mk] = groups
+            _ym_unit_sku[mk] = sku_sums
             try:
-                await asyncio.to_thread(_ym_srv_save_db, mk, groups)
+                await asyncio.to_thread(_ym_srv_save_db, mk, groups, sku_sums)
             except Exception as e:
                 _log.warning("YM srv save %s: %s", mk, e)
             _ym_pnl_ts = 0.0   # готовый месяц сразу виден при следующем запросе
@@ -1148,7 +1189,9 @@ async def get_ym_pnl(
 
     # затраты: из БД + фоновая сборка отчётов по месяцам
     if not _ym_srv_cache:
-        _ym_srv_cache.update(await asyncio.to_thread(_ym_srv_load_db))
+        g, s = await asyncio.to_thread(_ym_srv_load_db)
+        _ym_srv_cache.update(g)
+        _ym_unit_sku.update(s)
     if not _ym_srv_building:
         _spawn(_build_ym_srv_bg(months))
 
@@ -1176,6 +1219,7 @@ async def get_ym_pnl(
         return mt[mk]
 
     min_mk = date_from[:7]
+    unit_rev: dict = {}   # mk → sku → {revenue, qty, cogs}
     for o in orders:
         # месяц реализации = дата последнего статуса (доставки), fallback — создание
         d = (o.get("statusUpdateDate") or o.get("creationDate") or "")[:7]
@@ -1183,6 +1227,9 @@ async def get_ym_pnl(
             continue
         m = ensure(d)
         for it in o.get("items") or []:
+            sku = _cat.resolve_ym(it.get("shopSku") or "")
+            cell = unit_rev.setdefault(d, {}).setdefault(
+                sku, {"revenue": 0.0, "qty": 0.0, "cogs": 0.0})
             for p in it.get("prices") or []:
                 # Выручка — только реальные платежи покупателей (BUYER), как в
                 # «Балансе кабинета». Субсидии Маркета (акции/баллы) деньгами
@@ -1190,13 +1237,17 @@ async def get_ym_pnl(
                 # (они уже учтены в актах отчёта услуг) — показываем справочно.
                 if p.get("type") == "BUYER":
                     m["retailAmount"] += float(p.get("total") or 0)
+                    cell["revenue"] += float(p.get("total") or 0)
                 elif p.get("type") in ("CASHBACK", "MARKETPLACE"):
                     m["subsidies"] += float(p.get("total") or 0)
-            sku = _cat.resolve_ym(it.get("shopSku") or "")
             qty = int(it.get("count") or 0)
+            cell["qty"] += qty
             uc = costs.get(sku, 0.0)
             if uc > 0 and qty > 0:
                 cogs_by_month[d] = cogs_by_month.get(d, 0.0) + uc * qty
+                cell["cogs"] += uc * qty
+    _ym_unit_rev.clear()
+    _ym_unit_rev.update(unit_rev)
 
     # «точные или никакие»: месяц показываем, когда собрался отчёт услуг
     shown = {mk: v for mk, v in mt.items() if mk in _ym_srv_cache}
@@ -1248,6 +1299,136 @@ async def get_ym_pnl(
     _ym_pnl_cache = result
     _ym_pnl_ts = _time.monotonic()
     return result
+
+
+# группа услуг YM → колонка юнитки (фронтовые ключи как у WB/Ozon)
+_YM_GRP_TO_COL = {
+    "commission":    "commission",
+    "acquiring":     "acquiring",
+    "delivery":      "delivery",
+    "storage":       "storage",
+    "advert":        "advert",
+    "loyalty":       "deductions",
+    "processing":    "deductions",
+    "otherServices": "deductions",
+}
+
+
+@router.get("/ym/unit")
+async def get_ym_unit(
+    months: int = Query(default=6, ge=1, le=12),
+    refresh: bool = Query(default=False),
+):
+    """Юнит-экономика YM по SKU × месяц.
+
+    Затраты — SKU-разрез «Отчёта по стоимости услуг» (доставка, комиссия,
+    буст и т.д. привязаны к товару построчно). Услуги без SKU (буст показов,
+    транзитные поставки) распределяются по доле выручки; остаток округления —
+    крупнейшему SKU. Итоги сходятся со вкладкой Финансы."""
+    pnl = await get_ym_pnl(months=months, refresh=refresh)
+    month_keys = sorted(mk for mk in _ym_unit_sku
+                        if mk in _ym_unit_rev and _ym_unit_sku[mk])
+    if not month_keys:
+        return {"months": [], "skus": [],
+                "message": pnl.get("message")
+                or "⏳ SKU-разрез услуг YM собирается — юнитка появится автоматически"}
+
+    COST_COLS = ("commission", "acquiring", "delivery", "storage", "advert", "deductions")
+    names = cost_store.get_names()
+    unit_costs = cost_store.get_costs()
+    import catalog as _cat
+
+    # итоги месяца по колонкам — из тех же групп, что и Финансы
+    totals_cols: dict[str, dict[str, float]] = {}
+    for mk in month_keys:
+        t = {c: 0.0 for c in COST_COLS}
+        for g, v in (_ym_srv_cache.get(mk) or {}).items():
+            t[_YM_GRP_TO_COL.get(g, "deductions")] += v
+        t["revenue"] = sum(c["revenue"] for c in _ym_unit_rev[mk].values())
+        totals_cols[mk] = t
+
+    rows_by_sku: dict[str, dict] = {}
+    for mk in month_keys:
+        t = totals_cols[mk]
+        rev_map = _ym_unit_rev[mk]
+        # прямые затраты по SKU из отчёта услуг
+        direct: dict[str, dict[str, float]] = {}
+        for sku, grps in _ym_unit_sku[mk].items():
+            cell = direct.setdefault(sku, {c: 0.0 for c in COST_COLS})
+            for g, v in grps.items():
+                cell[_YM_GRP_TO_COL.get(g, "deductions")] += v
+        skus = sorted(set(rev_map) | set(direct))
+        rev_direct = {s: max(rev_map.get(s, {}).get("revenue", 0.0), 0.0) for s in skus}
+        rev_base = sum(rev_direct.values())
+        top_sku = max(rev_direct, key=rev_direct.get, default=None)
+
+        alloc = {s: dict(direct.get(s) or {c: 0.0 for c in COST_COLS}) for s in skus}
+        for col in COST_COLS:
+            residual = t[col] - sum(c[col] for c in alloc.values())
+            if abs(residual) < 0.5 or rev_base <= 0:
+                continue
+            for s in skus:
+                alloc[s][col] += residual * rev_direct[s] / rev_base
+
+        rounded_sum: dict[str, int] = {}
+        for s in skus:
+            rm = rev_map.get(s, {})
+            cell = {c: round(alloc[s][c]) for c in COST_COLS}
+            cell["revenue"] = round(rm.get("revenue", 0.0))
+            cell["qty"] = round(rm.get("qty", 0.0))
+            cell["cogs"] = round(rm.get("cogs", 0.0))
+            for c in COST_COLS:
+                rounded_sum[c] = rounded_sum.get(c, 0) + cell[c]
+            row = rows_by_sku.setdefault(s, {
+                "sku": s, "name": names.get(s) or _cat.lookup(s).get("name", ""),
+                "brand": _cat.lookup(s).get("brand", ""),
+                "nmId": None, "unitCost": unit_costs.get(s, 0), "months": {}})
+            row["months"][mk] = cell
+        if top_sku and mk in rows_by_sku.get(top_sku, {}).get("months", {}):
+            cell = rows_by_sku[top_sku]["months"][mk]
+            for c in COST_COLS:
+                cell[c] += round(t[c]) - rounded_sum.get(c, 0)
+
+        for s in skus:
+            cell = rows_by_sku[s]["months"][mk]
+            costs_sum = sum(cell[c] for c in COST_COLS)
+            cell["acceptance"] = 0
+            cell["penalty"] = 0
+            cell["payout"] = cell["revenue"] - costs_sum
+            cell["gross"] = cell["payout"] - cell["cogs"]
+            cell["margin"] = round(cell["gross"] / cell["revenue"] * 100) if cell["revenue"] else 0
+
+    skus_out = [r for r in rows_by_sku.values()
+                if any(any(round(v or 0) for v in c.values()) for c in r["months"].values())]
+    skus_out.sort(key=lambda r: -sum(m.get("revenue", 0) for m in r["months"].values()))
+
+    totals_out = {}
+    for mk in month_keys:
+        t = totals_cols[mk]
+        costs_sum = sum(t[c] for c in COST_COLS)
+        cg = sum(c["cogs"] for c in _ym_unit_rev[mk].values())
+        payout = t["revenue"] - costs_sum
+        gross = payout - cg
+        totals_out[mk] = {
+            "revenue": round(t["revenue"]),
+            **{c: round(t[c]) for c in COST_COLS},
+            "acceptance": 0, "penalty": 0,
+            "cogs": round(cg),
+            "payout": round(payout),
+            "gross": round(gross),
+            "margin": round(gross / t["revenue"] * 100) if t["revenue"] else 0,
+            "qty": round(sum(c["qty"] for c in _ym_unit_rev[mk].values())),
+        }
+
+    pending = sorted(mk for mk in _ym_srv_cache if mk not in month_keys and _ym_srv_cache[mk])
+    return {
+        "months": [{"key": mk, "label": RU_MON[int(mk[5:7])] + " " + mk[:4]} for mk in month_keys],
+        "skus": skus_out,
+        "totals": totals_out,
+        "months_pending": pending,
+        "building": _ym_srv_building,
+        "fetched_at": (_ym_pnl_cache or {}).get("fetched_at", ""),
+    }
 
 
 def _build_pnl_rows(month_totals: dict, cogs_by_month: dict, cost_lines: list) -> list[dict]:
@@ -1950,7 +2131,7 @@ async def get_ozon_unit(
             cell["margin"] = round(cell["gross"] / cell["revenue"] * 100) if cell["revenue"] else 0
 
     skus_out = [r for r in rows_by_sku.values()
-                if any(c.get("revenue") or c.get("qty") for c in r["months"].values())]
+                if any(any(round(v or 0) for v in c.values()) for c in r["months"].values())]
     skus_out.sort(key=lambda r: -sum(m.get("revenue", 0) for m in r["months"].values()))
 
     totals_out = {}
