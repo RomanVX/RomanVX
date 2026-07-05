@@ -188,6 +188,8 @@ async def get_all_campaign_ids_ext() -> list[int]:
     Фолбэк — постатусные запросы promotion/adverts.
     """
     seen, ids = set(), []
+    global _count_meta
+    _count_meta = {}
     try:
         data = await _get("/adv/v1/promotion/count")
         if isinstance(data, dict):
@@ -197,6 +199,8 @@ async def get_all_campaign_ids_ext() -> list[int]:
                     if aid and aid not in seen:
                         seen.add(aid)
                         ids.append(int(aid))
+                        _count_meta[int(aid)] = {"type": grp.get("type"),
+                                                 "status": grp.get("status")}
     except Exception as e:
         _log.warning("[ADVERT] promotion/count failed: %s", e)
     if not ids:
@@ -273,6 +277,13 @@ async def get_fullstats(ids: list[int], date_from: datetime, date_to: datetime) 
         return []
 
 
+_count_meta: dict[int, dict] = {}   # id → {type, status} из promotion/count
+
+
+def get_count_meta() -> dict[int, dict]:
+    return dict(_count_meta)
+
+
 async def get_campaigns_meta(ids: list[int]) -> dict[int, dict]:
     """{advertId: {name, type, status}} через POST promotion/adverts (чанки по 50)."""
     out: dict[int, dict] = {}
@@ -282,6 +293,8 @@ async def get_campaigns_meta(ids: list[int]) -> dict[int, dict]:
         except Exception as e:
             _log.warning("[ADVERT] adverts meta failed: %s", e)
             continue
+        if not isinstance(data, list) or not data:
+            _log.warning("[ADVERT] adverts meta: неожиданный ответ %s", str(data)[:300])
         for c in data if isinstance(data, list) else []:
             aid = c.get("advertId")
             if not aid:

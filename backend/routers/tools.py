@@ -383,6 +383,14 @@ async def _adv_build_bg(force: bool = False) -> None:
             _adv_error = "Кампании не найдены (проверьте права токена «Продвижение»)"
             return
         meta = await ac.get_campaigns_meta(ids)
+        # фолбэк: тип/статус из promotion/count, если детали кампаний пусты
+        cnt_meta = ac.get_count_meta()
+        for aid, cm in cnt_meta.items():
+            m = meta.setdefault(aid, {"name": f"Кампания {aid}", "nms": [], "bids": {}})
+            if m.get("type") is None:
+                m["type"] = cm.get("type")
+            if m.get("status") is None:
+                m["status"] = cm.get("status")
         end = (datetime.utcnow() + timedelta(hours=3)).date()
         begin = end - timedelta(days=_ADV_DAYS)
         _adv_progress = "статистика кампаний (fullstats, ~минута)"
@@ -574,14 +582,19 @@ async def _wb_public_search(query: str, limit: int = 60) -> tuple[list[dict], in
               "suppressSpellcheck": "false", "query": query}
     global _niche_last_err
     _niche_last_err = ""
-    async with httpx.AsyncClient(timeout=30, headers={
+    import os
+    proxy = os.getenv("WB_SEARCH_PROXY", "").strip() or None
+    async with httpx.AsyncClient(timeout=30, proxy=proxy, headers={
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
             "Accept": "application/json", "Origin": "https://www.wildberries.ru",
             "Referer": "https://www.wildberries.ru/"}) as client:
-        # v4 стабильно отвечает с серверных IP; на 429 ждём и повторяем
-        for ver in ("v4", "v13", "v9", "v5"):
+        # v13 — актуальная выдача; v4 отвечает всегда, но отдаёт мусорные
+        # «пресеты» (1-2 нерелевантных товара) — принимаем её только если
+        # ничего лучше нет и товаров достаточно. 429 = рейт-лимит WB на IP.
+        best: tuple[list, int] | None = None
+        for ver in ("v13", "v9", "v5", "v4"):
             r = None
-            for attempt in range(3):
+            for attempt in range(4):
                 try:
                     r = await client.get(
                         f"https://search.wb.ru/exactmatch/ru/common/{ver}/search", params=params)
@@ -591,7 +604,7 @@ async def _wb_public_search(query: str, limit: int = 60) -> tuple[list[dict], in
                     break
                 if r.status_code == 429:
                     _niche_last_err = f"{ver}: HTTP 429"
-                    await asyncio.sleep(3 * (attempt + 1))
+                    await asyncio.sleep(4 * (attempt + 1))
                     continue
                 break
             if r is None:
@@ -626,10 +639,17 @@ async def _wb_public_search(query: str, limit: int = 60) -> tuple[list[dict], in
                         "subject_id": p.get("subjectId"),
                         "supplier": p.get("supplier") or "",
                     })
-                return out, total
+                if len(out) >= 5:
+                    return out, total
+                # подозрительно короткая выдача (пресет v4) — запомним как запасную
+                if best is None or len(out) > len(best[0]):
+                    best = (out, total)
+                _niche_last_err = f"{ver}: только {len(out)} товаров"
             except Exception as e:
                 _log.warning("wb public search %s: %s", ver, e)
                 _niche_last_err = f"{ver}: {str(e)[:120]}"
+    if best:
+        return best
     return [], 0
 
 
