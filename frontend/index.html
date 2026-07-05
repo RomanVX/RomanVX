@@ -90,6 +90,9 @@
     <li class="nav-item ms-2" style="border-left:1px solid var(--border-2);padding-left:6px">
       <a class="nav-link" href="#" onclick="switchTab('tools',this);return false">🛠 Инструменты WB</a>
     </li>
+    <li class="nav-item">
+      <a class="nav-link" href="#" onclick="switchTab('toolsoz',this);return false">🛠 Инструменты Ozon</a>
+    </li>
   </ul>
 
   <!-- ── Заказы ── -->
@@ -364,6 +367,22 @@
     </div>
   </div><!-- /pane-tools -->
 
+  <!-- ── Инструменты Ozon ── -->
+  <div id="pane-toolsoz" style="display:none">
+    <div class="d-flex gap-2 mb-3 flex-wrap align-items-center">
+      <div class="mp-selector-bloc active" style="--mp-color:#3b82f6">
+        <span class="mp-selector-dot" style="background:#3b82f6"></span>📈 Воронка продаж
+      </div>
+      <span class="text-secondary small">Premium-аналитика Ozon: показы → карточка → корзина → заказ по каждому SKU, где теряем продажи</span>
+      <button class="btn btn-sm btn-outline-secondary ms-auto" onclick="loadFunnel(true)">
+        <i class="bi bi-arrow-clockwise"></i> Обновить
+      </button>
+    </div>
+    <div id="toolsOzWrap">
+      <div class="text-center text-secondary py-4"><span class="spinner-border"></span></div>
+    </div>
+  </div><!-- /pane-toolsoz -->
+
   <!-- ── Юнит-экономика WB ── -->
   <div id="pane-unit" style="display:none">
     <div class="d-flex gap-2 mb-3 flex-wrap align-items-center">
@@ -401,6 +420,6 @@
 
 <script src="vendor/bootstrap.bundle.min.js"></script>
 <script src="vendor/chart.umd.min.js"></script>
-<script src="app.js?v=92"></script>
+<script src="app.js?v=94"></script>
 </body>
 </html>

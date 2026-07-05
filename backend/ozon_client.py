@@ -398,3 +398,31 @@ async def get_certificate_products(cert_number: str, page_size: int = 200) -> li
             break
         page += 1
     return out
+
+
+async def get_analytics_data(date_from: str, date_to: str,
+                             metrics: list[str], limit: int = 500) -> list[dict]:
+    """POST /v1/analytics/data — аналитика по SKU (часть метрик — Premium).
+
+    Возвращает [{sku, name, metrics: {метрика: значение}}]."""
+    if not OZON_CLIENT_ID or not OZON_API_KEY:
+        return []
+    out: list[dict] = []
+    offset = 0
+    while True:
+        data = await _post("/v1/analytics/data", {
+            "date_from": date_from, "date_to": date_to,
+            "dimension": ["sku"], "metrics": metrics,
+            "limit": limit, "offset": offset,
+        })
+        rows = (data.get("result") or {}).get("data") or []
+        for r in rows:
+            dim = (r.get("dimensions") or [{}])[0]
+            vals = r.get("metrics") or []
+            out.append({"sku": dim.get("id"), "name": dim.get("name") or "",
+                        "metrics": dict(zip(metrics, vals))})
+        if len(rows) < limit:
+            break
+        offset += limit
+        await asyncio.sleep(1)
+    return out

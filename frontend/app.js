@@ -25,7 +25,7 @@ document.addEventListener('DOMContentLoaded', _initThemeBtn);
 const API = '';
 let charts = {};
 let sortState = {};
-const dirty = { salesan: true, stocks: true, reviews: true, finance: true, unit: true, tools: true, docs: true };
+const dirty = { salesan: true, stocks: true, reviews: true, finance: true, unit: true, tools: true, toolsoz: true, docs: true };
 let _advertData = [];
 let currentTab = 'finance';
 let prodAllData = [];
@@ -231,7 +231,7 @@ function skuName(r) {
 function switchTab(name, linkEl) {
   document.querySelectorAll('#mainTabs .nav-link').forEach(a => a.classList.remove('active'));
   if (linkEl) linkEl.classList.add('active');
-  ['salesan', 'stocks', 'reviews', 'finance', 'unit', 'tools', 'docs'].forEach(t => {
+  ['salesan', 'stocks', 'reviews', 'finance', 'unit', 'tools', 'toolsoz', 'docs'].forEach(t => {
     const el = document.getElementById('pane-' + t);
     if (el) el.style.display = t === name ? 'block' : 'none';
   });
@@ -239,7 +239,7 @@ function switchTab(name, linkEl) {
   if (dirty[name]) {
     dirty[name] = false;
     ({ salesan: loadSalesAnalytics, stocks: loadStocks,
-       reviews: loadReviews, finance: loadFinance, tools: loadTools, docs: loadDocs,
+       reviews: loadReviews, finance: loadFinance, tools: loadTools, toolsoz: loadFunnel, docs: loadDocs,
        unit: loadUnitEconomics })[name]();
   }
 }
@@ -2565,7 +2565,89 @@ function reloadTool() {
      adv: () => loadAdv(true), niche: renderNicheForm })[_toolActive]();
 }
 function loadTools() {
-  ({ prod: loadProductolog, clusters: loadClusters, adv: loadAdv, niche: renderNicheForm })[_toolActive]();
+  ({ prod: loadProductolog, clusters: loadClusters, adv: loadAdv,
+     niche: renderNicheForm })[_toolActive]();
+}
+
+// ── Воронка Ozon (Premium) ────────────────────────────────────────────────────
+
+let _funnelData = null;
+
+async function loadFunnel(refresh) {
+  const wrap = document.getElementById('toolsOzWrap');
+  if (!wrap) return;
+  if (_funnelData && !refresh) { renderFunnel(); return; }
+  wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>Загружаем аналитику Ozon…</div>';
+  try {
+    _funnelData = await fetchJSON('/api/tools/funnel' + (refresh ? '?refresh=true' : ''), 120000);
+    renderFunnel();
+  } catch (e) {
+    wrap.innerHTML = `<div class="alert alert-danger mt-3">Ошибка: ${e.message}</div>`;
+  }
+}
+
+const _FUNNEL_BN = {
+  visibility: ['🔴 Нет показов',    'var(--neg)'],
+  ctr:        ['🟠 Не кликают',     'var(--warn-c)'],
+  cart:       ['🟡 Не кладут в корзину', 'var(--warn-c)'],
+  checkout:   ['🟣 Не выкупают',    '#c084fc'],
+  ok:         ['🟢 Здоровая',       'var(--pos)'],
+};
+
+function renderFunnel() {
+  const wrap = document.getElementById('toolsOzWrap');
+  if (!wrap || !_funnelData) return;
+  const d = _funnelData;
+  if (d.error) { wrap.innerHTML = `<div class="alert alert-warning">⚠ ${esc(d.error)}</div>`; return; }
+  if (!(d.items || []).length) { wrap.innerHTML = '<div class="alert alert-info">Ozon не вернул данных аналитики</div>'; return; }
+
+  // группировка как везде
+  const groupMap = {};
+  d.items.forEach(it => {
+    const g = articleGroup({ supplierArticle: it.sku, brand: it.group });
+    (groupMap[g] = groupMap[g] || []).push(it);
+  });
+  const orderedGroups = GROUP_ORDER.filter(g => groupMap[g]).map(g => [g, groupMap[g]]);
+
+  let html = `<div class="card border-0 bg-card"><div class="card-body p-0"><div class="table-responsive" style="max-height:75vh">
+    <table class="table table-sm align-middle mb-0 text-nowrap"><thead><tr>
+      <th style="min-width:200px;position:sticky;left:0;background:var(--t-sticky);z-index:2">Товар</th>
+      <th class="text-end" title="Показы в поиске и каталоге">Показы</th>
+      <th class="text-end" title="Открытия карточки">Карточка</th>
+      <th class="text-end" title="CTR: карточка/показы">CTR</th>
+      <th class="text-end" title="Добавления в корзину">Корзина</th>
+      <th class="text-end" title="Корзина/карточка">В корз.%</th>
+      <th class="text-end">Заказы</th>
+      <th class="text-end" title="Заказы/корзина">Выкуп%</th>
+      <th class="text-end">Выручка</th>
+      <th style="min-width:260px">Узкое место</th>
+    </tr></thead><tbody>`;
+  orderedGroups.forEach(([gname, list]) => {
+    html += `<tr class="table-secondary"><td colspan="10" style="padding:6px 12px"><strong>${gname}</strong> <span class="text-secondary small">(${list.length} арт.)</span></td></tr>`;
+    list.forEach(it => {
+      const [lbl, clr] = _FUNNEL_BN[it.bottleneck] || _FUNNEL_BN.ok;
+      // мини-воронка: 4 сегмента с шириной по log
+      const seg = (v, max) => Math.max(4, Math.round(Math.min(1, (v || 0) / (max || 1)) * 60));
+      const mx = it.search || 1;
+      html += `<tr style="background:var(--t-row)">
+        <td style="position:sticky;left:0;background:var(--t-sticky);padding:6px 12px">
+          <code style="color:var(--val-soft)">${esc(it.sku)}</code>
+          <div class="small text-secondary" style="max-width:190px;overflow:hidden;text-overflow:ellipsis">${esc(it.name)}</div></td>
+        <td class="text-end">${fmt(it.search)}</td>
+        <td class="text-end">${fmt(it.pdp)}</td>
+        <td class="text-end" style="color:${it.ctr != null && it.ctr < 2 ? 'var(--neg)' : 'var(--ink)'}">${it.ctr != null ? it.ctr + '%' : '—'}</td>
+        <td class="text-end">${fmt(it.tocart)}</td>
+        <td class="text-end" style="color:${it.cart_pct != null && it.cart_pct < 5 ? 'var(--neg)' : 'var(--ink)'}">${it.cart_pct != null ? it.cart_pct + '%' : '—'}</td>
+        <td class="text-end" style="color:var(--val);font-weight:600">${fmt(it.orders)}</td>
+        <td class="text-end">${it.buy_pct != null ? it.buy_pct + '%' : '—'}</td>
+        <td class="text-end" style="color:var(--pos)">${fmtRub(it.revenue)}</td>
+        <td class="small"><span style="color:${clr};font-weight:600">${lbl}</span> <span class="text-secondary">${esc(it.bottleneck_why)}</span></td>
+      </tr>`;
+    });
+  });
+  html += `</tbody></table></div></div></div>
+  <div class="text-secondary small mt-2">Данные Premium-аналитики Ozon за ${d.days} дней. Товары с проблемной воронкой — сверху. Обновлено: ${d.fetched_at}</div>`;
+  wrap.innerHTML = html;
 }
 
 // ── Калькулятор ниши ──────────────────────────────────────────────────────────

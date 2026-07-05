@@ -949,3 +949,89 @@ async def niche_get(query: str = Query(...)):
     if not row:
         raise HTTPException(status_code=404, detail="Нет сохранённого анализа")
     return json.loads(row[0])
+
+
+# ══ Воронка Ozon (Premium-аналитика) ═══════════════════════════════════════════
+
+_funnel_cache: dict = {}
+_funnel_ts: float = 0.0
+
+# метрики Premium-аналитики Ozon: воронка от показа до заказа
+_FUNNEL_METRICS = ["hits_view_search", "hits_view_pdp", "hits_tocart_pdp",
+                   "ordered_units", "revenue", "position_category", "session_view"]
+
+
+def _funnel_bottleneck(m: dict) -> tuple[str, str]:
+    """Где товар теряет продажи: (код, пояснение)."""
+    search = m.get("hits_view_search") or 0
+    pdp = m.get("hits_view_pdp") or 0
+    tocart = m.get("hits_tocart_pdp") or 0
+    orders = m.get("ordered_units") or 0
+    if search < 300:
+        return "visibility", "мало показов — усилить SEO карточки/рекламу"
+    ctr = pdp / search * 100 if search else 0
+    if ctr < 2:
+        return "ctr", f"показы есть, в карточку идут {ctr:.1f}% — главное фото/цена в выдаче"
+    cart = tocart / pdp * 100 if pdp else 0
+    if cart < 5:
+        return "cart", f"карточку смотрят, в корзину кладут {cart:.1f}% — контент/отзывы/цена"
+    buy = orders / tocart * 100 if tocart else 0
+    if buy < 25:
+        return "checkout", f"из корзины выкупают {buy:.0f}% — сроки доставки/конкуренты в корзине"
+    return "ok", "воронка здоровая"
+
+
+@router.get("/funnel")
+async def get_funnel(refresh: bool = Query(default=False)):
+    """Воронка Ozon по SKU: показы → карточка → корзина → заказ (Premium)."""
+    import time as _t
+    global _funnel_cache, _funnel_ts
+    if not refresh and _funnel_cache and _t.monotonic() - _funnel_ts < 6 * 3600:
+        return _funnel_cache
+
+    import ozon_client
+    import catalog as _cat
+    from datetime import date
+    d_to = date.today().isoformat()
+    d_from = (date.today() - timedelta(days=28)).isoformat()
+    try:
+        rows = await ozon_client.get_analytics_data(d_from, d_to, _FUNNEL_METRICS)
+    except Exception as e:
+        msg = str(e)[:300]
+        hint = (" Метрики воронки доступны с подпиской Ozon Premium — проверьте, "
+                "что она активна и у API-ключа есть роль «Аналитика»."
+                if "403" in msg or "premium" in msg.lower() else "")
+        return {"items": [], "error": msg + hint}
+
+    items = []
+    for r in rows:
+        m = r["metrics"]
+        if not any(m.values()):
+            continue
+        sku = _cat.resolve_ozon(r["sku"]) if str(r["sku"]).isdigit() else str(r["sku"])
+        search = m.get("hits_view_search") or 0
+        pdp = m.get("hits_view_pdp") or 0
+        tocart = m.get("hits_tocart_pdp") or 0
+        orders = m.get("ordered_units") or 0
+        code, why = _funnel_bottleneck(m)
+        items.append({
+            "sku": sku,
+            "name": _cat.lookup(sku).get("name") or r["name"] or sku,
+            "group": _cat.lookup(sku).get("brand", ""),
+            "search": int(search), "pdp": int(pdp), "tocart": int(tocart),
+            "orders": int(orders),
+            "revenue": round(m.get("revenue") or 0),
+            "sessions": int(m.get("session_view") or 0),
+            "position": round(m.get("position_category") or 0),
+            "ctr": round(pdp / search * 100, 1) if search else None,
+            "cart_pct": round(tocart / pdp * 100, 1) if pdp else None,
+            "buy_pct": round(orders / tocart * 100, 1) if tocart else None,
+            "bottleneck": code, "bottleneck_why": why,
+        })
+    order = {"visibility": 0, "ctr": 1, "cart": 2, "checkout": 3, "ok": 4}
+    items.sort(key=lambda x: (order.get(x["bottleneck"], 9), -x["revenue"]))
+    result = {"items": items, "days": 28,
+              "fetched_at": datetime.utcnow().strftime("%d.%m.%Y %H:%M UTC")}
+    _funnel_cache = result
+    _funnel_ts = _t.monotonic()
+    return result
