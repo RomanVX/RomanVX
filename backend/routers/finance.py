@@ -2233,6 +2233,54 @@ async def get_ozon_unit(
     }
 
 
+# ══ Ручные статьи затрат (вкладка Тотал) ═══════════════════════════════════════
+
+def _manual_costs_init():
+    import db
+    db.execute("CREATE TABLE IF NOT EXISTS manual_costs "
+               "(id INTEGER PRIMARY KEY AUTOINCREMENT, mk TEXT, label TEXT, amount REAL)")
+
+
+@router.get("/manual_costs")
+async def get_manual_costs():
+    """Ручные статьи затрат: {items: [{id, mk, label, amount}]}."""
+    import db
+    def _load():
+        _manual_costs_init()
+        return db.fetchall("SELECT id, mk, label, amount FROM manual_costs ORDER BY mk, id")
+    rows = await asyncio.to_thread(_load)
+    return {"items": [{"id": r[0], "mk": r[1], "label": r[2], "amount": float(r[3] or 0)}
+                      for r in rows]}
+
+
+@router.post("/manual_costs")
+async def add_manual_cost(payload: dict):
+    """Добавить статью: {mk: '2026-06', label: 'Аренда склада', amount: 15000}."""
+    mk = str(payload.get("mk") or "").strip()
+    label = str(payload.get("label") or "").strip()
+    try:
+        amount = float(payload.get("amount") or 0)
+    except (ValueError, TypeError):
+        amount = 0.0
+    if not mk or len(mk) != 7 or not label or not amount:
+        raise HTTPException(status_code=400, detail="Нужны месяц (ГГГГ-ММ), название и сумма")
+    import db
+    def _save():
+        _manual_costs_init()
+        db.execute("INSERT INTO manual_costs (mk, label, amount) VALUES (?,?,?)",
+                   (mk, label, amount))
+        return db.fetchall("SELECT MAX(id) FROM manual_costs")[0][0]
+    new_id = await asyncio.to_thread(_save)
+    return {"id": new_id}
+
+
+@router.delete("/manual_costs/{cost_id}")
+async def delete_manual_cost(cost_id: int):
+    import db
+    await asyncio.to_thread(db.execute, "DELETE FROM manual_costs WHERE id = ?", (cost_id,))
+    return {"ok": True}
+
+
 @router.get("/ozon/reports")
 async def get_ozon_reports():
     return {"reports": [], "message": "OZON финансовые отчёты будут добавлены позже"}

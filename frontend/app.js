@@ -1492,11 +1492,15 @@ const _FIN_URLS = {
   YM:   '/api/finance/ym/pnl',
 };
 
+let _manualCosts = null;   // {items: [{id, mk, label, amount}]}
+
 async function loadFinanceMp(mp) {
   if (_financeData[mp]) return;
   try {
     if (mp === 'TOTAL') {
-      await Promise.all([loadFinanceMp('WB'), loadFinanceMp('OZON'), loadFinanceMp('YM')]);
+      const jobs = [loadFinanceMp('WB'), loadFinanceMp('OZON'), loadFinanceMp('YM')];
+      if (!_manualCosts) jobs.push(fetchJSON('/api/finance/manual_costs').then(d => { _manualCosts = d; }));
+      await Promise.all(jobs);
       _financeData.TOTAL = buildFinanceTotal();
     } else {
       _financeData[mp] = await fetchJSON(_FIN_URLS[mp], 120000);
@@ -1506,49 +1510,136 @@ async function loadFinanceMp(mp) {
   }
 }
 
-// Тотал: суммируем платформы по общим ключам (выручка/к перечислению/COGS/валовая)
+// Тотал: выручка и затраты в разрезе площадок + ручные статьи + фин. итог
 function buildFinanceTotal() {
-  const plats = ['WB', 'OZON', 'YM'].map(m => _financeData[m])
-    .filter(d => d && (d.months || []).length && d.source !== 'weekly'); // WB только с точными данными
-  if (!plats.length) return { rows: [], months: [], message: '⏳ Точные данные площадок ещё собираются — Тотал появится через минуту' };
+  const PLATS = [['WB', 'WB'], ['OZON', 'Ozon'], ['YM', 'ЯМ']];
+  const loaded = PLATS.map(([k, label]) => [k, label, _financeData[k]])
+    .filter(([, , d]) => d && (d.months || []).length && d.source !== 'weekly'); // WB только с точными данными
+  if (!loaded.length) return { rows: [], months: [], message: '⏳ Точные данные площадок ещё собираются — Тотал появится через минуту' };
 
   const monthLabels = {};
-  plats.forEach(d => d.months.forEach(m => { monthLabels[m.key] = m.label; }));
+  loaded.forEach(([, , d]) => d.months.forEach(m => { monthLabels[m.key] = m.label; }));
   const monthKeys = Object.keys(monthLabels).sort().reverse();
 
-  function sumKey(key) {
+  const rowVals = (d, key) => {
+    const row = (d.rows || []).find(r => r.key === key);
+    return row && row.values ? row.values : {};
+  };
+  const sumAll = key => {
     const vals = {};
     monthKeys.forEach(mk => {
-      vals[mk] = plats.reduce((a, d) => {
-        const row = (d.rows || []).find(r => r.key === key);
-        return a + (row && row.values ? (row.values[mk] || 0) : 0);
-      }, 0);
+      vals[mk] = loaded.reduce((a, [, , d]) => a + (rowVals(d, key)[mk] || 0), 0);
     });
     return vals;
-  }
+  };
 
-  const revenue = sumKey('retailAmount');
-  const payout  = sumKey('bankPayment');
-  const cogs    = sumKey('cogs');    // уже отрицательные
-  const gross   = sumKey('gross');
-  const mpCosts = {};
-  monthKeys.forEach(mk => { mpCosts[mk] = payout[mk] - revenue[mk]; }); // отрицательное
+  const revenue = sumAll('retailAmount');
+  const payout  = sumAll('bankPayment');
+  const cogs    = sumAll('cogs');    // уже отрицательные
+  const gross   = sumAll('gross');
 
+  const rows = [
+    { key: 'retailAmount', label: '📦 Выручка (все площадки)', style: 'header', formula: 'direct', values: revenue },
+  ];
+  // выручка в разрезе площадок — справочно
+  loaded.forEach(([k, label, d]) => {
+    const rv = rowVals(d, 'retailAmount');
+    rows.push({ key: 'rev_' + k, label: `      ↳ ${label}`, style: 'note', formula: 'info',
+                values: Object.fromEntries(monthKeys.map(mk => [mk, rv[mk] || 0])) });
+  });
+  // затраты каждой площадки = к перечислению − выручка (отрицательное)
+  loaded.forEach(([k, label, d]) => {
+    const rv = rowVals(d, 'retailAmount'), po = rowVals(d, 'bankPayment');
+    rows.push({ key: 'cost_' + k, label: `  − Затраты ${label}`, style: 'cost', formula: 'direct',
+                values: Object.fromEntries(monthKeys.map(mk => [mk, (po[mk] || 0) - (rv[mk] || 0)])) });
+  });
+  rows.push({ key: 'bankPayment', label: '💳 К перечислению', style: 'subtotal', formula: 'direct', values: payout });
+  rows.push({ key: 'cogs', label: '  − Себестоимость', style: 'cost', formula: 'direct', values: cogs });
+  rows.push({ key: 'gross', label: '✅ Валовая прибыль', style: 'total', formula: 'direct', values: gross });
   const pct = {};
   monthKeys.forEach(mk => { pct[mk] = revenue[mk] ? Math.round(gross[mk] / revenue[mk] * 100) : 0; });
+  rows.push({ key: 'gross_pct', label: '   Маржа %', style: 'pct', formula: 'gross_pct', values: pct });
+
+  // ручные статьи затрат (сгруппированы по названию)
+  const items = (_manualCosts && _manualCosts.items) || [];
+  const byLabel = {};
+  items.forEach(it => {
+    if (!monthLabels[it.mk]) return;
+    (byLabel[it.label] = byLabel[it.label] || {})[it.mk] =
+      (byLabel[it.label][it.mk] || 0) + it.amount;
+  });
+  const manualSum = {};
+  monthKeys.forEach(mk => { manualSum[mk] = 0; });
+  Object.entries(byLabel).forEach(([label, vals]) => {
+    rows.push({ key: 'man_' + label, label: `  − ${label}`, style: 'cost', formula: 'direct',
+                values: Object.fromEntries(monthKeys.map(mk => [mk, -(vals[mk] || 0)])) });
+    monthKeys.forEach(mk => { manualSum[mk] += vals[mk] || 0; });
+  });
+  const net = {};
+  monthKeys.forEach(mk => { net[mk] = (gross[mk] || 0) - manualSum[mk]; });
+  rows.push({ key: 'net', label: '🏁 Финансовый итог месяца', style: 'total', formula: 'direct', values: net });
+  const netPct = {};
+  monthKeys.forEach(mk => { netPct[mk] = revenue[mk] ? Math.round(net[mk] / revenue[mk] * 100) : 0; });
+  rows.push({ key: 'net_pct', label: '   Итоговая маржа %', style: 'pct', formula: 'gross_pct', values: netPct });
 
   return {
     months: monthKeys.map(mk => ({ key: mk, label: monthLabels[mk] })),
-    rows: [
-      { key: 'retailAmount', label: '📦 Выручка (все площадки)', style: 'header',   formula: 'direct', values: revenue },
-      { key: 'mpCosts',      label: '  − Затраты площадок',      style: 'cost',     formula: 'direct', values: mpCosts },
-      { key: 'bankPayment',  label: '💳 К перечислению',          style: 'subtotal', formula: 'direct', values: payout },
-      { key: 'cogs',         label: '  − Себестоимость',          style: 'cost',     formula: 'direct', values: cogs },
-      { key: 'gross',        label: '✅ Валовая прибыль',          style: 'total',    formula: 'direct', values: gross },
-      { key: 'gross_pct',    label: '   Маржа %',                 style: 'pct',      formula: 'gross_pct', values: pct },
-    ],
-    fetched_at: plats[0].fetched_at || '',
+    rows,
+    fetched_at: loaded[0][2].fetched_at || '',
   };
+}
+
+// ── Ручные статьи затрат (Тотал) ──────────────────────────────────────────────
+
+async function addManualCost() {
+  const mk = document.getElementById('manCostMonth')?.value;
+  const label = (document.getElementById('manCostLabel')?.value || '').trim();
+  const amount = parseFloat(document.getElementById('manCostAmount')?.value || '0');
+  if (!mk || !label || !amount) return;
+  await fetch('/api/finance/manual_costs', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mk, label, amount }),
+  });
+  _manualCosts = null;
+  _financeData.TOTAL = null;
+  renderFinanceTable();
+}
+
+async function delManualCost(id) {
+  await fetch(`/api/finance/manual_costs/${id}`, { method: 'DELETE' });
+  _manualCosts = null;
+  _financeData.TOTAL = null;
+  renderFinanceTable();
+}
+
+function manualCostsPanel(months) {
+  const items = ((_manualCosts && _manualCosts.items) || [])
+    .slice().sort((a, b) => b.mk.localeCompare(a.mk) || a.label.localeCompare(b.label));
+  const monthOpts = [...months].sort((a, b) => b.key.localeCompare(a.key))
+    .map(m => `<option value="${m.key}">${m.label}</option>`).join('');
+  const mLabel = mk => (months.find(m => m.key === mk) || {}).label || mk;
+  let list = '';
+  if (items.length) {
+    list = `<div class="mt-2 d-flex flex-column gap-1">` + items.map(it => `
+      <div class="d-flex align-items-center gap-2 small">
+        <span class="text-secondary" style="min-width:80px">${mLabel(it.mk)}</span>
+        <span style="min-width:220px">${esc(it.label)}</span>
+        <span style="color:var(--neg)">−${fmtRub(it.amount)}</span>
+        <button class="btn btn-sm btn-outline-danger py-0 px-1" style="font-size:.7rem;line-height:1.2"
+                onclick="delManualCost(${it.id})" title="Удалить">✕</button>
+      </div>`).join('') + `</div>`;
+  }
+  return `
+  <div class="card bg-card mt-3 p-3">
+    <div class="fw-semibold mb-2" style="color:var(--ink)">➕ Ручные статьи затрат <span class="text-secondary small fw-normal">(аренда, зарплаты, фф и т.д. — вычитаются из валовой в «Финансовый итог месяца»)</span></div>
+    <div class="d-flex gap-2 flex-wrap align-items-center">
+      <select id="manCostMonth" class="form-select form-select-sm bg-dark text-white border-secondary" style="width:130px">${monthOpts}</select>
+      <input id="manCostLabel" class="form-control form-control-sm bg-dark text-white border-secondary" style="width:260px" placeholder="Название (напр. Аренда склада)">
+      <input id="manCostAmount" type="number" min="0" step="100" class="form-control form-control-sm bg-dark text-white border-secondary" style="width:130px" placeholder="Сумма ₽">
+      <button class="btn btn-sm btn-outline-success" onclick="addManualCost()">Добавить</button>
+    </div>
+    ${list}
+  </div>`;
 }
 
 function renderFinanceTable() {
@@ -1624,7 +1715,7 @@ function renderFinanceTable() {
   };
 
   function fmtCell(key, val, style) {
-    if (key === 'gross_pct') {
+    if (key === 'gross_pct' || style === 'pct') {
       const clr = val >= 20 ? 'var(--pos)' : val >= 10 ? 'var(--warn-c)' : 'var(--neg)';
       return `<span style="color:${clr};font-weight:700">${val}%</span>`;
     }
@@ -1683,7 +1774,7 @@ function renderFinanceTable() {
       html += `<td class="text-end" style="${SEP}padding:5px 12px;background:rgba(201,168,76,.04)">${fmtCell(row.key, tot, row.style === 'cost' ? 'cost' : row.style)}</td>`;
     } else {
       // маржа итого считается от суммарных значений
-      const gross = rows.find(r => r.key === 'gross');
+      const gross = rows.find(r => r.key === (row.key === 'net_pct' ? 'net' : 'gross'));
       const retail = rows.find(r => r.key === 'retailAmount');
       const gTot = gross ? rowTotal(gross) : 0;
       const rTot = retail ? rowTotal(retail) : 0;
@@ -1705,6 +1796,7 @@ function renderFinanceTable() {
     html += `<div class="text-secondary small mt-2">Отчёт реализации WB сформирован по ${d.detail_upto}.${tail}</div>`;
   }
   if (d.fetched_at) html += `<div class="text-secondary text-end small mt-1">Обновлено: ${d.fetched_at}</div>`;
+  if (mp === 'TOTAL') html += manualCostsPanel(d.months || []);
   wrap.innerHTML = html;
 }
 
