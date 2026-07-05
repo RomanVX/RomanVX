@@ -289,7 +289,8 @@ async def get_campaigns_meta(ids: list[int]) -> dict[int, dict]:
     out: dict[int, dict] = {}
     for ci in range(0, len(ids), 50):
         try:
-            data = await _post("/adv/v1/promotion/adverts", ids[ci:ci + 50])
+            data = await _post("/adv/v1/promotion/adverts?order=create&direction=desc",
+                               ids[ci:ci + 50])
         except Exception as e:
             _log.warning("[ADVERT] adverts meta failed: %s", e)
             continue

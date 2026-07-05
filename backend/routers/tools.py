@@ -648,7 +648,7 @@ async def _wb_public_search(query: str, limit: int = 60) -> tuple[list[dict], in
             except Exception as e:
                 _log.warning("wb public search %s: %s", ver, e)
                 _niche_last_err = f"{ver}: {str(e)[:120]}"
-    if best:
+    if best and len(best[0]) >= 5:
         return best
     return [], 0
 
@@ -722,9 +722,12 @@ async def analyze_niche(payload: dict):
 
     products, total = await _wb_public_search(query)
     if not products:
+        hint = (" WB ограничивает запросы с IP сервера — повторите через минуту; "
+                "если ошибка постоянная, нужен российский прокси (WB_SEARCH_PROXY)."
+                if "429" in _niche_last_err else "")
         raise HTTPException(status_code=502,
                             detail="WB не вернул выдачу по запросу"
-                                   + (f" ({_niche_last_err})" if _niche_last_err else ""))
+                                   + (f" ({_niche_last_err})." if _niche_last_err else "") + hint)
 
     today = datetime.utcnow().date().isoformat()
     # прошлые замеры — для оценки продаж по приросту отзывов
