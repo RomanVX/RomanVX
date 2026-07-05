@@ -2545,12 +2545,13 @@ const _TOOL_HINTS = {
   prod: 'Анализ отзывов WB по каждому артикулу',
   clusters: 'Сток и продажи по федеральным округам складов WB, локализация и дозаказ',
   adv: 'Кампании, куда уходят деньги, ДРР, ключевые фразы и советы по оптимизации',
+  niche: 'Выходить ли с товаром: конкуренты из выдачи WB, цены, спрос и вердикт',
 };
 
 function setTool(t) {
   if (_toolActive === t) return;
   _toolActive = t;
-  ['Prod', 'Clusters', 'Adv'].forEach(k => {
+  ['Prod', 'Clusters', 'Adv', 'Niche'].forEach(k => {
     document.getElementById('tool' + k)?.classList.toggle('active', k.toLowerCase() === t);
   });
   const hint = document.getElementById('toolHint');
@@ -2559,10 +2560,110 @@ function setTool(t) {
 }
 
 function reloadTool() {
-  ({ prod: () => loadProductolog(true), clusters: () => loadClusters(true), adv: () => loadAdv(true) })[_toolActive]();
+  ({ prod: () => loadProductolog(true), clusters: () => loadClusters(true),
+     adv: () => loadAdv(true), niche: renderNicheForm })[_toolActive]();
 }
 function loadTools() {
-  ({ prod: loadProductolog, clusters: loadClusters, adv: loadAdv })[_toolActive]();
+  ({ prod: loadProductolog, clusters: loadClusters, adv: loadAdv, niche: renderNicheForm })[_toolActive]();
+}
+
+// ── Калькулятор ниши ──────────────────────────────────────────────────────────
+
+let _nicheResult = null;
+
+async function renderNicheForm() {
+  if (_toolActive !== 'niche') return;
+  const wrap = document.getElementById('toolsWrap');
+  if (!wrap) return;
+  let hist = [];
+  try { hist = (await fetchJSON('/api/tools/niche/history')).items || []; } catch (e) {}
+  wrap.innerHTML = `
+  <div class="card bg-card p-3 mb-3">
+    <div class="fw-semibold mb-2" style="color:var(--ink)">Оценка: выходить ли с товаром на WB</div>
+    <div class="d-flex gap-2 flex-wrap align-items-center">
+      <input id="nicheQuery" class="form-control form-control-sm bg-dark text-white border-secondary" style="width:280px" placeholder="Поисковый запрос (напр. крем для лица с цинком)">
+      <input id="nichePrice" type="number" class="form-control form-control-sm bg-dark text-white border-secondary" style="width:130px" placeholder="Ваша цена ₽">
+      <input id="nicheCost" type="number" class="form-control form-control-sm bg-dark text-white border-secondary" style="width:130px" placeholder="Себес ₽">
+      <input id="nicheLog" type="number" class="form-control form-control-sm bg-dark text-white border-secondary" style="width:130px" placeholder="Логистика ₽ (70)">
+      <button id="nicheGo" class="btn btn-sm btn-outline-success" onclick="runNiche()">Проанализировать</button>
+    </div>
+    <div class="text-secondary small mt-2">Данные — из публичной выдачи WB (как в MPStats). Цена/себес необязательны: без них покажем нишу, с ними — юнит-прикидку. Оценка продаж конкурентов появляется со второго замера (прирост отзывов).</div>
+    ${hist.length ? `<div class="small mt-2"><span class="text-secondary">Раньше считали:</span> ${hist.map(h => `<a href="#" class="me-2" style="color:var(--gold)" onclick="openNiche('${esc(h.query)}');return false">${esc(h.query)}</a>`).join('')}</div>` : ''}
+  </div>
+  <div id="nicheOut">${_nicheResult ? '' : ''}</div>`;
+  if (_nicheResult) renderNicheResult();
+}
+
+async function openNiche(q) {
+  try {
+    _nicheResult = await fetchJSON('/api/tools/niche/get?query=' + encodeURIComponent(q));
+    renderNicheResult();
+  } catch (e) {}
+}
+
+async function runNiche() {
+  const out = document.getElementById('nicheOut');
+  const btn = document.getElementById('nicheGo');
+  const q = document.getElementById('nicheQuery').value.trim();
+  if (!q) return;
+  btn.disabled = true;
+  out.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>Анализируем выдачу WB и считаем вердикт (~15 сек)…</div>';
+  try {
+    const r = await fetch('/api/tools/niche', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: q,
+        price: parseFloat(document.getElementById('nichePrice').value) || 0,
+        cost: parseFloat(document.getElementById('nicheCost').value) || 0,
+        logistics: parseFloat(document.getElementById('nicheLog').value) || 0 }) });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.status);
+    _nicheResult = await r.json();
+    renderNicheResult();
+  } catch (e) {
+    out.innerHTML = `<div class="alert alert-danger">Ошибка: ${e.message}</div>`;
+  }
+  btn.disabled = false;
+}
+
+function renderNicheResult() {
+  const out = document.getElementById('nicheOut');
+  if (!out || !_nicheResult) return;
+  const d = _nicheResult;
+  let html = `<div class="d-flex gap-3 flex-wrap mb-3">
+    <div class="metric-card"><div class="mc-head">Товаров по запросу</div><div class="mc-val">${fmt(d.total)}</div></div>
+    <div class="metric-card"><div class="mc-head">Цены (медиана)</div><div class="mc-val">${fmtRub(d.median_price)}</div><div class="mc-sub">${fmtRub(d.price_min)} – ${fmtRub(d.price_max)}</div></div>
+    <div class="metric-card"><div class="mc-head">Отзывы топ-30</div><div class="mc-val">${fmt(d.feedbacks_top30)}</div><div class="mc-sub">ср. рейтинг ${d.avg_rating}★</div></div>
+    <div class="metric-card"><div class="mc-head">Монополизация</div><div class="mc-val" style="color:${d.top3_brand_share > 60 ? 'var(--neg)' : d.top3_brand_share > 40 ? 'var(--warn-c)' : 'var(--pos)'}">${d.top3_brand_share}%</div><div class="mc-sub">доля топ-3 брендов</div></div>
+    <div class="metric-card"><div class="mc-head">Шанс новичку</div><div class="mc-val" style="color:${d.newcomers_top30 >= 5 ? 'var(--pos)' : d.newcomers_top30 >= 2 ? 'var(--warn-c)' : 'var(--neg)'}">${d.newcomers_top30}</div><div class="mc-sub">карточек &lt;50 отзывов в топ-30</div></div>
+  </div>`;
+  if (d.unit) {
+    const u = d.unit;
+    html += `<div class="card bg-card p-3 mb-3"><div class="fw-semibold mb-1" style="color:var(--ink)">Юнит-прикидка</div>
+      <div class="small" style="color:var(--ink-2)">Цена ${fmtRub(u.price)} − комиссия WB ${u.commission_pct}% (${fmtRub(u.commission)}) − логистика ${fmtRub(u.logistics)} − себес ${fmtRub(u.cost)} =
+      <b style="color:${u.profit > 0 ? 'var(--pos)' : 'var(--neg)'}">${fmtRub(u.profit)} (${u.margin}%)</b> с единицы <span class="text-secondary">— без учёта рекламы, хранения и налога</span></div></div>`;
+  }
+  if (d.verdict) {
+    html += `<details class="rev-fold mb-3" open><summary>🧠 Вердикт (Claude)</summary>
+      <div class="card bg-card mt-2 p-3 small" style="white-space:pre-wrap;line-height:1.6;color:var(--ink)">${esc(d.verdict)}</div></details>`;
+  }
+  html += `<div class="card border-0 bg-card"><div class="card-body p-0"><div class="table-responsive" style="max-height:60vh">
+    <table class="table table-sm align-middle mb-0"><thead><tr>
+      <th></th><th>Товар</th><th class="text-end">Цена</th><th class="text-end">Рейтинг</th>
+      <th class="text-end">Отзывы</th><th class="text-end">~Прод/мес</th>
+    </tr></thead><tbody>`;
+  (d.products || []).forEach((p, i) => {
+    html += `<tr style="background:var(--t-row)">
+      <td style="width:52px"><img src="${wbPhotoUrl(p.nm)}" loading="lazy" onerror="this.remove()" style="width:36px;height:48px;object-fit:cover;border-radius:6px"></td>
+      <td><span class="text-secondary small">${i + 1}.</span> <span style="color:var(--ink)">${esc(p.name)}</span>
+        <div class="text-secondary" style="font-size:.72rem">${esc(p.brand)} · <a href="https://www.wildberries.ru/catalog/${p.nm}/detail.aspx" target="_blank" style="color:var(--dim)">${p.nm}</a></div></td>
+      <td class="text-end" style="color:var(--val);font-weight:600">${p.price ? fmtRub(p.price) : '—'}</td>
+      <td class="text-end">${p.rating}★</td>
+      <td class="text-end">${fmt(p.feedbacks)}</td>
+      <td class="text-end">${p.sales_month_est != null ? '<b style=\'color:var(--pos)\'>' + fmt(p.sales_month_est) + '</b>' : '<span class="text-secondary small">со 2-го замера</span>'}</td>
+    </tr>`;
+  });
+  html += `</tbody></table></div></div></div>
+  <div class="text-secondary small mt-2">Топ-30 выдачи WB по популярности. ~Прод/мес — оценка по приросту отзывов между замерами (÷4% оставляющих отзыв); чтобы она появилась, повтори анализ этого запроса через 3+ дня. ${d.analyzed_at}</div>`;
+  out.innerHTML = html;
 }
 
 // ── Контроль рекламы ──────────────────────────────────────────────────────────

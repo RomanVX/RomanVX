@@ -10,7 +10,7 @@ import json
 import logging
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 
 import db
 from config import ANTHROPIC_API_KEY
@@ -543,3 +543,244 @@ async def get_adv(refresh: bool = Query(default=False)):
             "advice": advice,
             "building": _adv_building, "progress": _adv_progress, "error": _adv_error,
             "built_at": newest[:16].replace("T", " ")}
+
+
+# ══ Калькулятор ниши: выходить с товаром или нет ═══════════════════════════════
+
+_NICHE_REVIEW_RATE = 0.04   # ~4% покупателей оставляют отзыв (отраслевая оценка)
+
+
+def _niche_init():
+    db.execute("CREATE TABLE IF NOT EXISTS niche_snapshots "
+               "(query TEXT, nm_id BIGINT, feedbacks INTEGER, price REAL, "
+               "snap_date TEXT, PRIMARY KEY (query, nm_id, snap_date))")
+    db.execute("CREATE TABLE IF NOT EXISTS niche_history "
+               "(query TEXT PRIMARY KEY, data TEXT, built_at TEXT)")
+
+
+async def _wb_public_search(query: str, limit: int = 60) -> tuple[list[dict], int]:
+    """Публичная выдача WB по запросу → (товары, всего найдено).
+
+    Тот же эндпоинт, что использует сайт wildberries.ru (и все сервисы
+    аналитики). Формат периодически меняется — пробуем v5 и v4."""
+    import httpx
+    params = {"appType": 1, "curr": "rub", "dest": -1257786, "sort": "popular",
+              "resultset": "catalog", "page": 1, "query": query}
+    async with httpx.AsyncClient(timeout=30, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}) as client:
+        for ver in ("v5", "v4"):
+            try:
+                r = await client.get(
+                    f"https://search.wb.ru/exactmatch/ru/common/{ver}/search", params=params)
+                if not r.is_success:
+                    continue
+                data = r.json().get("data") or {}
+                products = data.get("products") or []
+                if not products:
+                    continue
+                total = int(data.get("total") or len(products))
+                out = []
+                for p in products[:limit]:
+                    price = None
+                    # цена: v5 sizes[0].price.product, v4 salePriceU
+                    for sz in p.get("sizes") or []:
+                        pr = (sz.get("price") or {}).get("product")
+                        if pr:
+                            price = pr / 100
+                            break
+                    if price is None and p.get("salePriceU"):
+                        price = p["salePriceU"] / 100
+                    out.append({
+                        "nm": p.get("id"),
+                        "name": p.get("name") or "",
+                        "brand": p.get("brand") or "",
+                        "price": round(price) if price else None,
+                        "rating": p.get("reviewRating") or p.get("rating") or 0,
+                        "feedbacks": int(p.get("feedbacks") or 0),
+                        "subject_id": p.get("subjectId"),
+                        "supplier": p.get("supplier") or "",
+                    })
+                return out, total
+            except Exception as e:
+                _log.warning("wb public search %s: %s", ver, e)
+    return [], 0
+
+
+_commission_cache: dict = {}
+
+
+async def _wb_commission(subject_id: int | None) -> float | None:
+    """Комиссия WB (FBW, %) по предмету — официальный API тарифов."""
+    global _commission_cache
+    if not subject_id:
+        return None
+    if not _commission_cache:
+        try:
+            import httpx
+            from config import WB_API_KEY
+            async with httpx.AsyncClient(timeout=30) as client:
+                r = await client.get(
+                    "https://common-api.wildberries.ru/api/v1/tariffs/commission",
+                    headers={"Authorization": WB_API_KEY}, params={"locale": "ru"})
+                for rep in (r.json().get("report") or []):
+                    sid = rep.get("subjectID")
+                    if sid:
+                        _commission_cache[int(sid)] = float(
+                            rep.get("kgvpMarketplace") or rep.get("paidStorageKgvp") or 0)
+        except Exception as e:
+            _log.warning("wb tariffs: %s", e)
+            _commission_cache = {0: 0.0}
+    return _commission_cache.get(int(subject_id))
+
+
+@router.post("/niche")
+async def analyze_niche(payload: dict):
+    """Скоринг ниши по поисковому запросу WB.
+
+    {query, price?, cost?, logistics?} → конкуренты, метрики ниши,
+    юнит-прикидка и вердикт Claude. Прирост отзывов между замерами
+    даёт оценку продаж конкурентов (как в MPStats)."""
+    query = str(payload.get("query") or "").strip().lower()
+    if not query:
+        raise HTTPException(status_code=400, detail="Введите поисковый запрос")
+    _niche_init()
+
+    products, total = await _wb_public_search(query)
+    if not products:
+        raise HTTPException(status_code=502,
+                            detail="WB не вернул выдачу по запросу (попробуйте другой запрос)")
+
+    today = datetime.utcnow().date().isoformat()
+    # прошлые замеры — для оценки продаж по приросту отзывов
+    prev_rows = await asyncio.to_thread(
+        db.fetchall,
+        "SELECT nm_id, feedbacks, snap_date FROM niche_snapshots "
+        "WHERE query = ? AND snap_date < ? ORDER BY snap_date", (query, today))
+    prev: dict[int, tuple] = {}
+    for nm, fb, dt_ in prev_rows:
+        prev[int(nm)] = (int(fb or 0), dt_)   # берём самый старый→последняя запись перезапишет? нет: оставляем первый
+    # (первый замер по nm — самая старая точка)
+    first_seen: dict[int, tuple] = {}
+    for nm, fb, dt_ in prev_rows:
+        if int(nm) not in first_seen:
+            first_seen[int(nm)] = (int(fb or 0), dt_)
+
+    sales_est_available = False
+    for p in products:
+        p["sales_month_est"] = None
+        base = first_seen.get(int(p["nm"] or 0))
+        if base:
+            fb0, dt0 = base
+            try:
+                days = (datetime.utcnow().date() - datetime.fromisoformat(dt0).date()).days
+            except ValueError:
+                days = 0
+            if days >= 3:
+                delta = max(0, p["feedbacks"] - fb0)
+                p["sales_month_est"] = round(delta / days * 30 / _NICHE_REVIEW_RATE)
+                sales_est_available = True
+
+    # сохраняем сегодняшний снимок
+    snap_rows = [(query, int(p["nm"]), p["feedbacks"], float(p["price"] or 0), today)
+                 for p in products if p.get("nm")]
+    await asyncio.to_thread(
+        db.executemany,
+        "INSERT INTO niche_snapshots (query, nm_id, feedbacks, price, snap_date) "
+        "VALUES (?,?,?,?,?) ON CONFLICT (query, nm_id, snap_date) DO UPDATE "
+        "SET feedbacks = excluded.feedbacks, price = excluded.price", snap_rows)
+
+    # ── метрики ниши ──
+    prices = sorted(p["price"] for p in products if p["price"])
+    med_price = prices[len(prices) // 2] if prices else 0
+    top30 = products[:30]
+    fb_total = sum(p["feedbacks"] for p in top30)
+    brand_fb: dict[str, int] = {}
+    for p in top30:
+        brand_fb[p["brand"]] = brand_fb.get(p["brand"], 0) + p["feedbacks"]
+    top3_share = round(sum(sorted(brand_fb.values(), reverse=True)[:3]) / fb_total * 100) if fb_total else 0
+    newcomers = sum(1 for p in top30 if p["feedbacks"] < 50)
+    avg_rating = round(sum(float(p["rating"] or 0) for p in top30) / len(top30), 2) if top30 else 0
+
+    # ── юнит-прикидка ──
+    price = float(payload.get("price") or 0) or med_price
+    cost = float(payload.get("cost") or 0)
+    logistics = float(payload.get("logistics") or 70)
+    subj = next((p["subject_id"] for p in top30 if p.get("subject_id")), None)
+    commission_pct = await _wb_commission(subj)
+    unit = None
+    if price:
+        comm = price * (commission_pct or 19) / 100
+        profit = price - comm - logistics - cost
+        unit = {"price": round(price), "commission_pct": commission_pct or 19,
+                "commission": round(comm), "logistics": round(logistics),
+                "cost": round(cost),
+                "profit": round(profit),
+                "margin": round(profit / price * 100) if price else 0}
+
+    # ── вердикт Claude ──
+    verdict = None
+    try:
+        if ANTHROPIC_API_KEY:
+            comp = "\n".join(
+                f"- {p['brand']} «{p['name'][:50]}»: {p['price']}₽, ★{p['rating']}, отзывов {p['feedbacks']}"
+                + (f", ~{p['sales_month_est']} прод/мес" if p.get("sales_month_est") else "")
+                for p in top30[:20])
+            prompt = f"""Ты — аналитик маркетплейсов. Оцени, стоит ли селлеру выходить на Wildberries с товаром по запросу «{query}».
+
+НИША: найдено {total} товаров. Медианная цена {med_price}₽. Средний рейтинг топ-30: {avg_rating}. Суммарно отзывов у топ-30: {fb_total}. Доля топ-3 брендов: {top3_share}% (монополизация). Карточек с <50 отзывов в топ-30: {newcomers} (шанс новичку).
+{'ЮНИТ-ПРИКИДКА: цена ' + str(unit['price']) + '₽, комиссия ' + str(unit['commission_pct']) + '%, логистика ' + str(unit['logistics']) + '₽, себес ' + str(unit['cost']) + '₽ → прибыль ' + str(unit['profit']) + '₽ (' + str(unit['margin']) + '%)' if unit and cost else ''}
+
+ТОП КОНКУРЕНТОВ:
+{comp}
+
+Дай вердикт: 1) итог одной строкой (ИДТИ / ИДТИ ОСТОРОЖНО / НЕ ИДТИ + почему); 2) 3-4 пункта обоснования с цифрами; 3) при каких условиях заходить (цена, на что давить). Кратко, без воды."""
+            import anthropic
+            client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
+            msg = await client.messages.create(model=_MODEL, max_tokens=800,
+                                               messages=[{"role": "user", "content": prompt}])
+            verdict = msg.content[0].text.strip()
+    except Exception as e:
+        _log.warning("niche verdict: %s", e)
+
+    result = {
+        "query": query, "total": total,
+        "median_price": med_price,
+        "price_min": prices[0] if prices else None,
+        "price_max": prices[-1] if prices else None,
+        "avg_rating": avg_rating,
+        "feedbacks_top30": fb_total,
+        "top3_brand_share": top3_share,
+        "newcomers_top30": newcomers,
+        "sales_est_available": sales_est_available,
+        "unit": unit,
+        "verdict": verdict,
+        "products": products[:30],
+        "analyzed_at": datetime.utcnow().strftime("%d.%m.%Y %H:%M UTC"),
+    }
+    await asyncio.to_thread(
+        db.execute,
+        "INSERT INTO niche_history (query, data, built_at) VALUES (?,?,?) "
+        "ON CONFLICT (query) DO UPDATE SET data = excluded.data, built_at = excluded.built_at",
+        (query, json.dumps(result, ensure_ascii=False), datetime.utcnow().isoformat()))
+    return result
+
+
+@router.get("/niche/history")
+async def niche_history():
+    """Последние проанализированные ниши."""
+    _niche_init()
+    rows = await asyncio.to_thread(
+        db.fetchall, "SELECT query, built_at FROM niche_history ORDER BY built_at DESC")
+    return {"items": [{"query": r[0], "built_at": (r[1] or "")[:16].replace("T", " ")}
+                      for r in rows[:20]]}
+
+
+@router.get("/niche/get")
+async def niche_get(query: str = Query(...)):
+    """Сохранённый анализ ниши (без пересчёта)."""
+    _niche_init()
+    row = await asyncio.to_thread(
+        db.fetchone, "SELECT data FROM niche_history WHERE query = ?", (query.strip().lower(),))
+    if not row:
+        raise HTTPException(status_code=404, detail="Нет сохранённого анализа")
+    return json.loads(row[0])
