@@ -13,6 +13,7 @@ _log = logging.getLogger(__name__)
 STATS_BASE    = "https://statistics-api.wildberries.ru/api/v1"
 REPORT_BASE   = "https://statistics-api.wildberries.ru"
 ANALYTICS_BASE = "https://seller-analytics-api.wildberries.ru"
+CONTENT_BASE  = "https://content-api.wildberries.ru"
 
 # Актуальные пути nm-report (WB периодически меняет версии)
 _NM_REPORT_PATHS = [
@@ -75,6 +76,38 @@ async def get_orders(date_from: datetime, date_to: datetime) -> list[dict]:
     return await asyncio.to_thread(_learn_sku_map, rows)
 
 
+async def _learn_from_cards() -> None:
+    """Список карточек товаров (Content API) → связки nmID→vendorCode.
+
+    Работает для всех товаров, включая те, что без продаж — в отличие от
+    доучивания из заказов."""
+    import catalog as _cat
+    url = f"{CONTENT_BASE}/content/v2/get/cards/list"
+    cursor: dict = {"limit": 100}
+    learned: list[dict] = []
+    for _ in range(50):   # до 5000 карточек
+        body = {"settings": {"cursor": cursor, "filter": {"withPhoto": -1}}}
+        resp = await _http().post(url, headers=_headers(), json=body)
+        if resp.status_code == 429:
+            await asyncio.sleep(21)
+            continue
+        if not resp.is_success:
+            _log.warning("WB cards list → %s %s", resp.status_code, resp.text[:200])
+            return
+        data = resp.json()
+        cards = data.get("cards") or []
+        for c in cards:
+            if c.get("nmID") and c.get("vendorCode"):
+                learned.append({"nmId": c["nmID"], "supplierArticle": c["vendorCode"]})
+        cur = data.get("cursor") or {}
+        if len(cards) < cursor["limit"] or not cur.get("nmID"):
+            break
+        cursor = {"limit": 100, "updatedAt": cur.get("updatedAt"), "nmID": cur.get("nmID")}
+    if learned:
+        await asyncio.to_thread(_cat.learn_wb, learned)
+        _log.info("WB cards: выучено %d связок nmID→артикул", len(learned))
+
+
 async def get_stocks() -> list[dict]:
     """Остатки на складах WB.
 
@@ -109,6 +142,23 @@ async def get_stocks() -> list[dict]:
             break
         offset += LIMIT
         await asyncio.sleep(21)  # rate limit 3 req/мин
+
+    # если часть nmId не резолвится в артикул (новые товары) — доучиваем
+    # связки из карточек товаров (Content API: nmID + vendorCode для ВСЕХ
+    # товаров, даже без продаж), затем из заказов за 30 дней
+    def _unresolved() -> bool:
+        return any(it.get("nmId") and str(_cat.resolve_wb(it["nmId"])).isdigit()
+                   for it in items)
+    if _unresolved():
+        try:
+            await _learn_from_cards()
+        except Exception as e:
+            _log.warning("WB stocks: доучивание nmId из карточек не удалось: %s", e)
+    if _unresolved():
+        try:
+            await get_orders(datetime.now() - timedelta(days=30), datetime.now())
+        except Exception as e:
+            _log.warning("WB stocks: доучивание nmId из заказов не удалось: %s", e)
 
     rows = []
     for it in items:
