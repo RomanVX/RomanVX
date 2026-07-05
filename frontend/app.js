@@ -2482,9 +2482,23 @@ function renderClusters() {
         Покрытие: <b style="color:${clr}">${it.coverage != null ? it.coverage + ' дн' : '—'}</b>
         ${it.localization != null ? ` · Локализация: <b>${it.localization}%</b> <span class="text-secondary">(спрос ${fmt(it.demand)})</span>` : ''}
       </div>
+      ${(it.skus || []).length ? `
+      <details class="mt-2">
+        <summary class="small" style="cursor:pointer;color:var(--gold)">🚚 Что везти: ${(it.skus || []).length} арт. (${fmt(it.need_by_demand || 0)} шт от спроса округа)</summary>
+        <table class="table table-sm mb-0 mt-1" style="font-size:.74rem">
+          <thead><tr><th>Артикул</th><th class="text-end">Спрос/д</th><th class="text-end">Здесь, шт</th><th class="text-end">Покр., дн</th><th class="text-end">Везти</th></tr></thead>
+          <tbody>${it.skus.map(s => `<tr>
+            <td><code style="color:var(--val-soft)">${esc(s.sku)}</code> <span class="text-secondary">${esc((s.name || '').slice(0, 22))}</span></td>
+            <td class="text-end">${s.demand_spd}</td>
+            <td class="text-end">${fmt(s.stock)}</td>
+            <td class="text-end" style="color:${s.coverage < 7 ? 'var(--neg)' : s.coverage < 15 ? 'var(--warn-c)' : 'var(--ink)'}">${s.coverage}</td>
+            <td class="text-end"><b style="color:var(--pos)">${fmt(s.need)}</b></td>
+          </tr>`).join('')}</tbody>
+        </table>
+      </details>` : ''}
     </div></div>`;
   });
-  html += `</div><div class="text-secondary small mt-3">Продажи/день — среднее за ${d.days} дн. по складам округа (только выкупы). Покрытие = остаток / скорость. Дозаказ — до ${d.target_days} дней покрытия. Локализация — доля заказов покупателей округа, отгруженных со складов этого же округа (выше — дешевле логистика WB). Обновлено: ${d.fetched_at}</div>`;
+  html += `</div><div class="text-secondary small mt-3">Продажи/день — среднее за ${d.days} дн. по складам округа (только выкупы). Покрытие = остаток / скорость. Дозаказ — до ${d.target_days} дней покрытия. Локализация — доля заказов покупателей округа, отгруженных со складов этого же округа (выше — дешевле логистика WB). «Что везти» считается от СПРОСА покупателей округа — показывает и те артикулы, что сейчас продаются с чужих складов. Обновлено: ${d.fetched_at}</div>`;
   wrap.innerHTML = html;
 }
 

@@ -256,8 +256,15 @@ async def get_clusters(refresh: bool = Query(default=False)):
 
     agg: dict[str, dict] = {c: {"stock": 0, "sold": 0, "loc_hit": 0, "loc_total": 0}
                             for c in _CLUSTER_ORDER}
+    # SKU-разрез: остаток на складах кластера и СПРОС покупателей кластера
+    sku_stock: dict = {c: {} for c in _CLUSTER_ORDER}   # кластер → sku → шт на складах
+    sku_demand: dict = {c: {} for c in _CLUSTER_ORDER}  # кластер → sku → выкупов покупателями округа
     for s in stocks or []:
-        agg[_cluster_of(s.get("warehouseName"))]["stock"] += int(s.get("quantity") or 0)
+        cl = _cluster_of(s.get("warehouseName"))
+        agg[cl]["stock"] += int(s.get("quantity") or 0)
+        sku = (s.get("supplierArticle") or "").strip()
+        if sku:
+            sku_stock[cl][sku] = sku_stock[cl].get(sku, 0) + int(s.get("quantity") or 0)
     for r in sales or []:
         if not analytics._is_sale(r):
             continue
@@ -268,6 +275,9 @@ async def get_clusters(refresh: bool = Query(default=False)):
             agg[buyer]["loc_total"] += 1
             if buyer == wh_cl:
                 agg[buyer]["loc_hit"] += 1
+            sku = (r.get("supplierArticle") or "").strip()
+            if sku:
+                sku_demand[buyer][sku] = sku_demand[buyer].get(sku, 0) + 1
 
     TARGET_DAYS = 30
     items = []
@@ -289,9 +299,26 @@ async def get_clusters(refresh: bool = Query(default=False)):
         else:
             status = "ok"
         loc = round(a["loc_hit"] / a["loc_total"] * 100) if a["loc_total"] else None
+        # что именно везти: покрытие по SKU от СПРОСА округа (не от отгрузок)
+        import catalog as _cat
+        skus = []
+        for sku, dem in sku_demand[c].items():
+            d_spd = dem / DAYS
+            if d_spd <= 0:
+                continue
+            st_here = sku_stock[c].get(sku, 0)
+            cov = round(st_here / d_spd, 1)
+            sku_need = max(0, round((TARGET_DAYS - cov) * d_spd))
+            if sku_need > 0:
+                skus.append({"sku": _cat.canon(sku), "name": _cat.lookup(sku).get("name", sku),
+                             "demand_spd": round(d_spd, 2), "stock": st_here,
+                             "coverage": cov, "need": sku_need})
+        skus.sort(key=lambda x: -x["need"])
         items.append({"cluster": c, "stock": a["stock"], "spd": spd,
                       "coverage": coverage, "need": need, "status": status,
-                      "localization": loc, "demand": a["loc_total"]})
+                      "localization": loc, "demand": a["loc_total"],
+                      "need_by_demand": sum(s["need"] for s in skus),
+                      "skus": skus[:15]})
 
     total_hit = sum(a["loc_hit"] for a in agg.values())
     total_dem = sum(a["loc_total"] for a in agg.values())
