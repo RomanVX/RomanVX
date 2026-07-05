@@ -573,10 +573,25 @@ async def _wb_public_search(query: str, limit: int = 60) -> tuple[list[dict], in
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
             "Accept": "application/json", "Origin": "https://www.wildberries.ru",
             "Referer": "https://www.wildberries.ru/"}) as client:
-        for ver in ("v13", "v9", "v5", "v4"):
+        # v4 стабильно отвечает с серверных IP; на 429 ждём и повторяем
+        for ver in ("v4", "v13", "v9", "v5"):
+            r = None
+            for attempt in range(3):
+                try:
+                    r = await client.get(
+                        f"https://search.wb.ru/exactmatch/ru/common/{ver}/search", params=params)
+                except Exception as e:
+                    _niche_last_err = f"{ver}: {str(e)[:120]}"
+                    r = None
+                    break
+                if r.status_code == 429:
+                    _niche_last_err = f"{ver}: HTTP 429"
+                    await asyncio.sleep(3 * (attempt + 1))
+                    continue
+                break
+            if r is None:
+                continue
             try:
-                r = await client.get(
-                    f"https://search.wb.ru/exactmatch/ru/common/{ver}/search", params=params)
                 if not r.is_success:
                     _niche_last_err = f"{ver}: HTTP {r.status_code}"
                     continue
