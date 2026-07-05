@@ -2028,7 +2028,7 @@ function renderFinanceTable() {
     html += `<div class="text-secondary small mt-2">Отчёт реализации WB сформирован по ${d.detail_upto}.${tail}</div>`;
   }
   if (d.fetched_at) html += `<div class="text-secondary text-end small mt-1">Обновлено: ${d.fetched_at}</div>`;
-  if (mp === 'TOTAL') html += mpComparePanel() + manualCostsPanel(d.months || []) + payoutsPanel();
+  if (mp === 'TOTAL') html += manualCostsPanel(d.months || []) + payoutsPanel() + mpComparePanel();
   wrap.innerHTML = html;
 }
 
