@@ -2445,7 +2445,7 @@ let _advTimer = null;
 
 async function loadAdv(refresh) {
   const wrap = document.getElementById('toolsWrap');
-  if (!wrap) return;
+  if (!wrap || _toolActive !== 'adv') return;
   if (_advToolData && !refresh) { renderAdvTool(); return; }
   if (!_advToolData) wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>Загружаем рекламу…</div>';
   try {
@@ -2465,6 +2465,7 @@ const _ADV_VERDICT = {
 };
 
 function renderAdvTool() {
+  if (_toolActive !== 'adv') return;
   const wrap = document.getElementById('toolsWrap');
   if (!wrap || !_advToolData) return;
   const d = _advToolData;
@@ -2553,7 +2554,7 @@ let _clustersData = null;
 
 async function loadClusters(refresh) {
   const wrap = document.getElementById('toolsWrap');
-  if (!wrap) return;
+  if (!wrap || _toolActive !== 'clusters') return;
   if (_clustersData && !refresh) { renderClusters(); return; }
   wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>Считаем кластеры…</div>';
   try {
@@ -2573,6 +2574,7 @@ const _CL_STATUS = {
 };
 
 function renderClusters() {
+  if (_toolActive !== 'clusters') return;
   const wrap = document.getElementById('toolsWrap');
   if (!wrap || !_clustersData) return;
   const d = _clustersData;
@@ -2627,7 +2629,7 @@ let _prodTimer = null;
 
 async function loadProductolog(refresh) {
   const wrap = document.getElementById('toolsWrap');
-  if (!wrap) return;
+  if (!wrap || _toolActive !== 'prod') return;
   if (_prodData && !refresh) { renderProductolog(); return; }
   if (!_prodData) wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>Загружаем анализ отзывов…</div>';
   try {
@@ -2647,6 +2649,7 @@ function _prodChips(list, kind) {
 }
 
 function renderProductolog() {
+  if (_toolActive !== 'prod') return;
   const wrap = document.getElementById('toolsWrap');
   if (!wrap || !_prodData) return;
   const d = _prodData;
@@ -2658,7 +2661,7 @@ function renderProductolog() {
   let html = '';
   if (d.pending > 0 || d.building) {
     html += `<div class="alert alert-info py-2 small">⏳ Анализируем отзывы (${d.progress || `осталось ${d.pending} арт.`}) — страница обновится сама.</div>`;
-    if (!_prodTimer) _prodTimer = setTimeout(() => { _prodTimer = null; _prodData = null; if (currentTab === 'tools') loadProductolog(); }, 25000);
+    if (!_prodTimer) _prodTimer = setTimeout(() => { _prodTimer = null; _prodData = null; if (currentTab === 'tools' && _toolActive === 'prod') loadProductolog(); }, 25000);
   } else if (d.error) {
     html += `<div class="alert alert-warning py-2 small">⚠ ${d.error}</div>`;
   }
