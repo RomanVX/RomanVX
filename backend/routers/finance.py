@@ -1254,6 +1254,33 @@ async def _build_ym_orders_bg(months: int) -> None:
         _ym_orders_building = False
 
 
+@router.get("/cogs_debug", include_in_schema=False)
+async def cogs_debug(reapply: bool = Query(default=False)):
+    """Диагностика себестоимости: сид-файл кабинета, состояние БД.
+
+    ?reapply=1 — принудительно перечитать сид в БД (не трогая ручные правки
+    сверх сида: set_costs делает upsert)."""
+    from config import CABINET
+    out: dict = {"cabinet": CABINET, "seed_path": str(cost_store._SEED_PATH),
+                 "seed_exists": cost_store._SEED_PATH.exists()}
+    try:
+        costs, names, nmids = cost_store._parse_seed()
+        out["seed_rows"] = {k: v for k, v in list(costs.items())[:20]}
+    except Exception as e:
+        out["seed_parse_error"] = str(e)[:200]
+    if reapply:
+        try:
+            costs, names, nmids = cost_store._parse_seed()
+            cost_store.set_costs(costs, names, nmids)
+            out["reapplied"] = len(costs)
+        except Exception as e:
+            out["reapply_error"] = str(e)[:300]
+    cur = cost_store.get_costs()
+    out["db_count"] = len(cur)
+    out["db_sample"] = {k: v for k, v in list(cur.items())[:20]}
+    return out
+
+
 @router.get("/ym/srv_debug", include_in_schema=False)
 async def ym_srv_debug():
     """Состояние сборки «Отчёта по стоимости услуг» YM."""
