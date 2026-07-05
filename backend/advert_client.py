@@ -271,3 +271,98 @@ async def get_fullstats(ids: list[int], date_from: datetime, date_to: datetime) 
     except Exception as e:
         _log.warning("[ADVERT] fullstats error: %s", e)
         return []
+
+
+async def get_campaigns_meta(ids: list[int]) -> dict[int, dict]:
+    """{advertId: {name, type, status}} через POST promotion/adverts (чанки по 50)."""
+    out: dict[int, dict] = {}
+    for ci in range(0, len(ids), 50):
+        try:
+            data = await _post("/adv/v1/promotion/adverts", ids[ci:ci + 50])
+        except Exception as e:
+            _log.warning("[ADVERT] adverts meta failed: %s", e)
+            continue
+        for c in data if isinstance(data, list) else []:
+            aid = c.get("advertId")
+            if aid:
+                out[int(aid)] = {"name": c.get("name") or f"Кампания {aid}",
+                                 "type": c.get("type"), "status": c.get("status")}
+        await asyncio.sleep(1)
+    return out
+
+
+async def get_fullstats_campaigns(ids: list[int], begin: str, end: str) -> dict[int, dict]:
+    """GET /adv/v3/fullstats → агрегаты по кампаниям за период.
+
+    {advertId: {views, clicks, sum, orders, sum_price, atbs}} — суммируем
+    по дням/платформам. Лимит ~1 req/мин на чанк из 50 id."""
+    out: dict[int, dict] = {}
+    CHUNK = 50
+    for ci in range(0, len(ids), CHUNK):
+        chunk = ids[ci:ci + CHUNK]
+        data = None
+        for attempt in range(4):
+            try:
+                data = await _get("/adv/v3/fullstats", {
+                    "ids": ",".join(map(str, chunk)),
+                    "beginDate": begin, "endDate": end,
+                })
+                break
+            except Exception as e:
+                if "429" in str(e) and attempt < 3:
+                    await asyncio.sleep(62)
+                    continue
+                _log.warning("[ADVERT] fullstats(campaigns) failed: %s", e)
+                data = None
+                break
+        for camp in data if isinstance(data, list) else []:
+            aid = camp.get("advertId")
+            if not aid:
+                continue
+            agg = out.setdefault(int(aid), {"views": 0, "clicks": 0, "sum": 0.0,
+                                            "orders": 0, "sum_price": 0.0, "atbs": 0})
+            for day in camp.get("days") or []:
+                for app in day.get("apps") or []:
+                    agg["views"] += int(app.get("views") or 0)
+                    agg["clicks"] += int(app.get("clicks") or 0)
+                    agg["sum"] += float(app.get("sum") or 0)
+                    agg["orders"] += int(app.get("orders") or 0)
+                    agg["sum_price"] += float(app.get("sum_price") or 0)
+                    agg["atbs"] += int(app.get("atbs") or 0)
+        if ci + CHUNK < len(ids):
+            await asyncio.sleep(62)
+    return out
+
+
+async def get_campaign_words(advert_id: int, ctype: int | None = None) -> list[dict]:
+    """Статистика ключевых фраз кампании → [{phrase, views, clicks, ctr, sum}].
+
+    Поисковые/аукционные кампании: GET /adv/v1/stat/words (поле stat — метрики
+    по фразам). Автоматические (type 8): GET /adv/v2/auto/stat-words (кластеры,
+    только счётчики). Возвращаем нормализованный список, пустой — если тип
+    кампании фраз не отдаёт."""
+    words: list[dict] = []
+    try:
+        data = await _get("/adv/v1/stat/words", {"id": advert_id})
+        for s in (data.get("stat") or []) if isinstance(data, dict) else []:
+            kw = s.get("keyword") or ""
+            if not kw or kw == "Всего по кампании":
+                continue
+            words.append({"phrase": kw,
+                          "views": int(s.get("views") or 0),
+                          "clicks": int(s.get("clicks") or 0),
+                          "ctr": float(s.get("ctr") or 0),
+                          "sum": float(s.get("sum") or 0)})
+    except Exception:
+        pass
+    if not words and ctype == 8:
+        try:
+            data = await _get("/adv/v2/auto/stat-words", {"id": advert_id})
+            clusters = (data.get("clusters") or []) if isinstance(data, dict) else []
+            for c in clusters:
+                words.append({"phrase": c.get("cluster") or "", "views": int(c.get("count") or 0),
+                              "clicks": 0, "ctr": 0.0, "sum": 0.0, "cluster": True,
+                              "keywords": (c.get("keywords") or [])[:8]})
+        except Exception:
+            pass
+    return words

@@ -2414,20 +2414,138 @@ function renderUnitDynamics() {
 
 let _toolActive = 'prod';   // prod | clusters
 
+const _TOOL_HINTS = {
+  prod: 'Анализ отзывов WB по каждому артикулу',
+  clusters: 'Сток и продажи по федеральным округам складов WB, локализация и дозаказ',
+  adv: 'Кампании, куда уходят деньги, ДРР, ключевые фразы и советы по оптимизации',
+};
+
 function setTool(t) {
   if (_toolActive === t) return;
   _toolActive = t;
-  document.getElementById('toolProd')?.classList.toggle('active', t === 'prod');
-  document.getElementById('toolClusters')?.classList.toggle('active', t === 'clusters');
+  ['Prod', 'Clusters', 'Adv'].forEach(k => {
+    document.getElementById('tool' + k)?.classList.toggle('active', k.toLowerCase() === t);
+  });
   const hint = document.getElementById('toolHint');
-  if (hint) hint.textContent = t === 'prod'
-    ? 'Анализ отзывов WB по каждому артикулу'
-    : 'Сток и продажи по федеральным округам складов WB, локализация и дозаказ';
+  if (hint) hint.textContent = _TOOL_HINTS[t] || '';
   loadTools();
 }
 
-function reloadTool() { _toolActive === 'prod' ? loadProductolog(true) : loadClusters(true); }
-function loadTools() { _toolActive === 'prod' ? loadProductolog() : loadClusters(); }
+function reloadTool() {
+  ({ prod: () => loadProductolog(true), clusters: () => loadClusters(true), adv: () => loadAdv(true) })[_toolActive]();
+}
+function loadTools() {
+  ({ prod: loadProductolog, clusters: loadClusters, adv: loadAdv })[_toolActive]();
+}
+
+// ── Контроль рекламы ──────────────────────────────────────────────────────────
+
+let _advToolData = null;
+let _advTimer = null;
+
+async function loadAdv(refresh) {
+  const wrap = document.getElementById('toolsWrap');
+  if (!wrap) return;
+  if (_advToolData && !refresh) { renderAdvTool(); return; }
+  if (!_advToolData) wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>Загружаем рекламу…</div>';
+  try {
+    _advToolData = await fetchJSON('/api/tools/adv' + (refresh ? '?refresh=true' : ''), 60000);
+    renderAdvTool();
+  } catch (e) {
+    wrap.innerHTML = `<div class="alert alert-danger mt-3">Ошибка: ${e.message}</div>`;
+  }
+}
+
+const _ADV_VERDICT = {
+  waste: ['🔴 Сливает бюджет', 'var(--neg)'],
+  bad:   ['🔴 Убыточна',       'var(--neg)'],
+  warn:  ['🟡 На грани',       'var(--warn-c)'],
+  good:  ['🟢 Эффективна',     'var(--pos)'],
+  idle:  ['◽ Без расхода',    'var(--muted)'],
+};
+
+function renderAdvTool() {
+  const wrap = document.getElementById('toolsWrap');
+  if (!wrap || !_advToolData) return;
+  const d = _advToolData;
+  let html = '';
+  if (d.building || (!d.campaigns?.length && !d.error)) {
+    html += `<div class="alert alert-info py-2 small">⏳ Собираем статистику рекламы (${d.progress || 'старт'}) — страница обновится сама.</div>`;
+    if (!_advTimer) _advTimer = setTimeout(() => { _advTimer = null; _advToolData = null; if (currentTab === 'tools' && _toolActive === 'adv') loadAdv(); }, 25000);
+  }
+  if (d.error) html += `<div class="alert alert-warning py-2 small">⚠ ${d.error}</div>`;
+  if (!d.campaigns?.length) { wrap.innerHTML = html || '<div class="alert alert-info">Кампаний нет</div>'; return; }
+
+  html += `<div class="d-flex gap-3 flex-wrap mb-3">
+    <div class="metric-card" style="min-width:150px"><div class="mc-head">Расход за ${d.days} дн.</div>
+      <div class="mc-val">${fmtRub(d.total_spend)}</div></div>
+    <div class="metric-card" style="min-width:150px"><div class="mc-head">Заказы с рекламы</div>
+      <div class="mc-val" style="color:var(--pos)">${fmtRub(d.total_revenue)}</div></div>
+    <div class="metric-card" style="min-width:130px"><div class="mc-head">Средняя ДРР</div>
+      <div class="mc-val" style="color:${d.total_drr > 20 ? 'var(--neg)' : d.total_drr > 12 ? 'var(--warn-c)' : 'var(--pos)'}">${d.total_drr != null ? d.total_drr + '%' : '—'}</div></div>
+    <div class="metric-card" style="min-width:150px"><div class="mc-head">Впустую (без заказов)</div>
+      <div class="mc-val" style="color:${d.waste ? 'var(--neg)' : 'var(--pos)'}">${fmtRub(d.waste)}</div></div>
+  </div>`;
+
+  if (d.advice && d.advice.text) {
+    html += `<details class="rev-fold mb-3" open>
+      <summary>🧠 Советы по оптимизации (Claude)</summary>
+      <div class="card bg-card mt-2 p-3 small" style="white-space:pre-wrap;line-height:1.6;color:var(--ink)">${esc(d.advice.text)}</div>
+    </details>`;
+  }
+
+  html += `<div class="card border-0 bg-card"><div class="card-body p-0"><div class="table-responsive" style="max-height:70vh">
+    <table class="table table-sm align-middle mb-0 text-nowrap"><thead><tr>
+      <th style="min-width:220px">Кампания</th><th>Статус</th>
+      <th class="text-end">Расход</th><th class="text-end">Показы</th><th class="text-end">Клики</th>
+      <th class="text-end">CTR</th><th class="text-end">CPC</th>
+      <th class="text-end">Заказы</th><th class="text-end">Выручка</th>
+      <th class="text-end">ДРР</th><th style="min-width:190px">Вердикт</th>
+    </tr></thead><tbody>`;
+  d.campaigns.forEach(c => {
+    const [vLabel, vClr] = _ADV_VERDICT[c.verdict] || ['', 'var(--muted)'];
+    const words = c.words || [];
+    const hasWords = words.length > 0;
+    html += `<tr style="background:var(--t-row);${hasWords ? 'cursor:pointer' : ''}" ${hasWords ? `onclick="toggleAdvWords(${c.id})"` : ''}>
+      <td style="padding:6px 10px">${hasWords ? `<span id="advArr${c.id}" style="color:var(--dim)">▶</span> ` : ''}<span style="color:var(--ink)">${esc(c.name)}</span>
+        <span class="text-secondary small">· ${c.type}</span></td>
+      <td class="small">${c.status}</td>
+      <td class="text-end" style="color:var(--val);font-weight:600">${fmtRub(Math.round(c.spend))}</td>
+      <td class="text-end" style="color:var(--dim)">${fmt(c.views)}</td>
+      <td class="text-end">${fmt(c.clicks)}</td>
+      <td class="text-end">${c.ctr}%</td>
+      <td class="text-end">${c.cpc != null ? c.cpc + ' ₽' : '—'}</td>
+      <td class="text-end">${fmt(c.orders)}</td>
+      <td class="text-end" style="color:var(--pos)">${fmtRub(c.revenue)}</td>
+      <td class="text-end" style="font-weight:700;color:${c.drr == null ? 'var(--neg)' : c.drr > 20 ? 'var(--neg)' : c.drr > 12 ? 'var(--warn-c)' : 'var(--pos)'}">${c.drr != null ? c.drr + '%' : '∞'}</td>
+      <td class="small"><span style="color:${vClr}">${vLabel}</span> <span class="text-secondary">${esc(c.verdict_why || '')}</span></td>
+    </tr>`;
+    if (hasWords) {
+      html += `<tr id="advWords${c.id}" style="display:none;background:var(--fin-cost)"><td colspan="11" style="padding:8px 14px 12px 30px">
+        <div class="small mb-1" style="color:var(--ink-2)">Ключевые фразы (топ по расходу; 🔥 — работает, 🗑 — кандидат в минус):</div>
+        <div class="d-flex flex-wrap gap-1">${words.map(w => {
+          const clr = w.flag === 'minus' ? 'rgba(248,113,113,.12);color:var(--neg);border:1px solid rgba(248,113,113,.3)'
+                    : w.flag === 'hot' ? 'rgba(34,197,94,.13);color:var(--pos);border:1px solid rgba(34,197,94,.3)'
+                    : 'var(--surface-3);color:var(--ink-2);border:1px solid var(--border)';
+          const icon = w.flag === 'minus' ? '🗑 ' : w.flag === 'hot' ? '🔥 ' : '';
+          const metr = w.cluster ? `${fmt(w.views)} показов` : `${fmt(w.views)}п · ${fmt(w.clicks)}к · CTR ${w.ctr}%${w.sum ? ' · ' + fmtRub(Math.round(w.sum)) : ''}`;
+          return `<span style="background:${clr};border-radius:7px;padding:3px 9px;font-size:.74rem">${icon}${esc(w.phrase)} <span style="opacity:.7">(${metr})</span></span>`;
+        }).join('')}</div></td></tr>`;
+    }
+  });
+  html += `</tbody></table></div></div></div>
+  <div class="text-secondary small mt-2">Статистика fullstats WB за ${d.days} дней. ДРР = расход / выручка с рекламы. Фразы показаны для кампаний с расходом. ${d.built_at ? 'Обновлено: ' + d.built_at + ' UTC' : ''}</div>`;
+  wrap.innerHTML = html;
+}
+
+function toggleAdvWords(id) {
+  const row = document.getElementById('advWords' + id);
+  const arr = document.getElementById('advArr' + id);
+  if (!row) return;
+  const open = row.style.display !== 'none';
+  row.style.display = open ? 'none' : '';
+  if (arr) arr.textContent = open ? '▶' : '▼';
+}
 
 // ── Остатки по кластерам ──────────────────────────────────────────────────────
 

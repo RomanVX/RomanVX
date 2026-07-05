@@ -8,7 +8,7 @@
 import asyncio
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Query
 
@@ -333,3 +333,195 @@ async def get_clusters(refresh: bool = Query(default=False)):
     _clusters_cache = result
     _clusters_ts = _time.monotonic()
     return result
+
+
+# ══ Контроль рекламы WB ═══════════════════════════════════════════════════════
+
+_ADV_TYPES = {4: "Каталог", 5: "Карточка", 6: "Поиск", 7: "Рекомендации",
+              8: "Авто", 9: "Аукцион"}
+_ADV_STATUS = {4: "готова", 7: "завершена", 8: "отказ", 9: "🟢 активна", 11: "⏸ пауза"}
+
+_adv_building = False
+_adv_error = ""
+_adv_progress = ""
+_ADV_DAYS = 28
+
+
+def _adv_init():
+    db.execute("CREATE TABLE IF NOT EXISTS adv_tool "
+               "(campaign_id BIGINT PRIMARY KEY, data TEXT, built_at TEXT)")
+    db.execute("CREATE TABLE IF NOT EXISTS kv_cache (k TEXT PRIMARY KEY, v TEXT)")
+
+
+def _adv_verdict(c: dict) -> tuple[str, str]:
+    """Правило-вердикт по кампании: (код, пояснение)."""
+    spend, revenue, clicks = c["spend"], c["revenue"], c["clicks"]
+    if spend < 100:
+        return "idle", "почти нет расхода"
+    if revenue <= 0:
+        return "waste", f"потрачено {round(spend)} ₽ без заказов"
+    drr = spend / revenue * 100
+    if drr > 30:
+        return "bad", f"ДРР {round(drr)}% — реклама дороже, чем приносит"
+    if drr > 15:
+        return "warn", f"ДРР {round(drr)}% — на грани"
+    return "good", f"ДРР {round(drr)}% — эффективна"
+
+
+async def _adv_build_bg(force: bool = False) -> None:
+    global _adv_building, _adv_error, _adv_progress
+    if _adv_building:
+        return
+    _adv_building = True
+    _adv_error = ""
+    try:
+        import advert_client as ac
+        _adv_init()
+        _adv_progress = "список кампаний"
+        ids = await ac.get_all_campaign_ids_ext()
+        if not ids:
+            _adv_error = "Кампании не найдены (проверьте права токена «Продвижение»)"
+            return
+        meta = await ac.get_campaigns_meta(ids)
+        end = (datetime.utcnow() + timedelta(hours=3)).date()
+        begin = end - timedelta(days=_ADV_DAYS)
+        _adv_progress = "статистика кампаний (fullstats, ~минута)"
+        stats = await ac.get_fullstats_campaigns(ids, begin.isoformat(), end.isoformat())
+
+        campaigns = []
+        for aid in ids:
+            m = meta.get(aid) or {}
+            s = stats.get(aid) or {}
+            spend = round(float(s.get("sum") or 0), 2)
+            status = m.get("status")
+            if spend <= 0 and status not in (9, 11):
+                continue   # старые пустые кампании не показываем
+            campaigns.append({
+                "id": aid, "name": m.get("name") or str(aid),
+                "type": _ADV_TYPES.get(m.get("type"), str(m.get("type") or "")),
+                "type_id": m.get("type"),
+                "status": _ADV_STATUS.get(status, str(status or "")),
+                "active": status == 9,
+                "spend": spend,
+                "views": s.get("views") or 0,
+                "clicks": s.get("clicks") or 0,
+                "ctr": round((s.get("clicks") or 0) / s["views"] * 100, 2) if s.get("views") else 0,
+                "cpc": round(spend / s["clicks"], 1) if s.get("clicks") else None,
+                "orders": s.get("orders") or 0,
+                "revenue": round(float(s.get("sum_price") or 0)),
+                "atbs": s.get("atbs") or 0,
+            })
+        for c in campaigns:
+            c["cpo"] = round(c["spend"] / c["orders"]) if c["orders"] else None
+            c["drr"] = round(c["spend"] / c["revenue"] * 100, 1) if c["revenue"] else None
+            v, why = _adv_verdict(c)
+            c["verdict"], c["verdict_why"] = v, why
+
+        # ключевые фразы — по кампаниям с расходом (щадяще, с паузами)
+        with_spend = sorted([c for c in campaigns if c["spend"] > 100],
+                            key=lambda x: -x["spend"])[:15]
+        for i, c in enumerate(with_spend):
+            _adv_progress = f"фразы {i + 1}/{len(with_spend)}: {c['name'][:30]}"
+            try:
+                words = await ac.get_campaign_words(c["id"], c.get("type_id"))
+            except Exception:
+                words = []
+            for w in words:
+                # кандидат в минус: тратит, почти не кликают, заказов не видно
+                w["flag"] = ("minus" if w.get("sum", 0) > 300 and w.get("ctr", 0) < 1.5
+                             else "hot" if w.get("clicks", 0) >= 20 and w.get("ctr", 0) >= 4
+                             else "")
+            words.sort(key=lambda w: -(w.get("sum") or w.get("views") or 0))
+            c["words"] = words[:40]
+            await asyncio.sleep(2)
+
+        # сохраняем
+        for c in campaigns:
+            await asyncio.to_thread(
+                db.execute,
+                "INSERT INTO adv_tool (campaign_id, data, built_at) VALUES (?,?,?) "
+                "ON CONFLICT (campaign_id) DO UPDATE SET data = excluded.data, built_at = excluded.built_at",
+                (c["id"], json.dumps(c, ensure_ascii=False), datetime.utcnow().isoformat()))
+
+        # LLM-совет по оптимизации (одним вызовом)
+        try:
+            if ANTHROPIC_API_KEY and campaigns:
+                _adv_progress = "советы Claude"
+                table = "\n".join(
+                    f"- {c['name']} [{c['type']}, {c['status']}]: расход {c['spend']}₽, "
+                    f"показы {c['views']}, клики {c['clicks']} (CTR {c['ctr']}%), "
+                    f"заказы {c['orders']} на {c['revenue']}₽, ДРР {c['drr'] or '—'}%"
+                    for c in sorted(campaigns, key=lambda x: -x["spend"])[:20])
+                waste_words = []
+                for c in campaigns:
+                    for w in c.get("words") or []:
+                        if w.get("flag") == "minus":
+                            waste_words.append(f"«{w['phrase']}» ({c['name'][:25]}): {round(w['sum'])}₽, CTR {w['ctr']}%")
+                prompt = f"""Ты — специалист по рекламе Wildberries. Данные кампаний селлера за {_ADV_DAYS} дней:
+{table}
+
+Фразы-кандидаты в минус (тратят, не кликаются):
+{chr(10).join(waste_words[:25]) or 'нет'}
+
+Дай 3-6 конкретных рекомендаций по оптимизации: что остановить/минусовать, куда перераспределить бюджет, где потенциал масштабирования. Формат: маркированный список, каждая рекомендация 1-2 предложения с цифрами. Без воды и вступлений."""
+                import anthropic
+                client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
+                msg = await client.messages.create(model=_MODEL, max_tokens=900,
+                                                   messages=[{"role": "user", "content": prompt}])
+                advice = msg.content[0].text.strip()
+                await asyncio.to_thread(
+                    db.execute,
+                    "INSERT INTO kv_cache (k, v) VALUES ('adv_advice', ?) "
+                    "ON CONFLICT (k) DO UPDATE SET v = excluded.v",
+                    (json.dumps({"text": advice, "at": datetime.utcnow().isoformat()},
+                                ensure_ascii=False),))
+        except Exception as e:
+            _log.warning("adv advice: %s", e)
+        _log.info("adv tool built: %d campaigns", len(campaigns))
+    except Exception as e:
+        _adv_error = str(e)[:300]
+        _log.error("adv tool build: %s", e)
+    finally:
+        _adv_building = False
+        _adv_progress = ""
+
+
+@router.get("/adv")
+async def get_adv(refresh: bool = Query(default=False)):
+    """Контроль рекламы: кампании, ДРР, ключевые фразы, советы."""
+    _adv_init()
+    rows = await asyncio.to_thread(db.fetchall, "SELECT data, built_at FROM adv_tool")
+    campaigns = []
+    newest = ""
+    for data, built in rows:
+        try:
+            campaigns.append(json.loads(data))
+            newest = max(newest, built or "")
+        except ValueError:
+            pass
+    stale = True
+    if newest:
+        try:
+            stale = (datetime.utcnow() - datetime.fromisoformat(newest)).total_seconds() > 6 * 3600
+        except ValueError:
+            pass
+    if (refresh or stale or not campaigns) and not _adv_building:
+        _spawn(_adv_build_bg())
+    advice = None
+    row = await asyncio.to_thread(db.fetchone, "SELECT v FROM kv_cache WHERE k = 'adv_advice'")
+    if row:
+        try:
+            advice = json.loads(row[0])
+        except ValueError:
+            pass
+    campaigns.sort(key=lambda c: (-c.get("active", False), -(c.get("spend") or 0)))
+    total_spend = round(sum(c.get("spend") or 0 for c in campaigns))
+    total_rev = round(sum(c.get("revenue") or 0 for c in campaigns))
+    waste = round(sum(c.get("spend") or 0 for c in campaigns if c.get("verdict") == "waste"))
+    return {"campaigns": campaigns, "days": _ADV_DAYS,
+            "total_spend": total_spend, "total_revenue": total_rev,
+            "total_drr": round(total_spend / total_rev * 100, 1) if total_rev else None,
+            "waste": waste,
+            "advice": advice,
+            "building": _adv_building, "progress": _adv_progress, "error": _adv_error,
+            "built_at": newest[:16].replace("T", " ")}
