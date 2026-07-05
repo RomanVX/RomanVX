@@ -519,7 +519,8 @@ async def get_wb_pnl(
 
     # ── Реклама (продвижение): списания из advert API по месяцам ──────────────
     advert_by_month = await _get_wb_advert_cached(dt_from, dt_to)
-    # точная раскладка по nmId (для юнитки) — стартуем сборку заранее
+    # точная раскладка по nmId (для юнитки): сперва из БД, обновление — в фоне
+    await _adv_nm_ensure_loaded()
     if not _adv_nm_building and (not _adv_nm_cache
                                  or _time.monotonic() - _adv_nm_ts >= _ADV_NM_TTL):
         _spawn(_build_adv_nm_bg(months))
@@ -629,7 +630,62 @@ _adv_nm_ts: float = 0.0
 _adv_nm_building: bool = False
 _adv_nm_error: str = ""
 _adv_nm_ids: int = -1
+_adv_nm_db_checked: bool = False
 _ADV_NM_TTL = 12 * 3600
+
+
+def _adv_nm_save_db(result: dict) -> None:
+    """Раскладка рекламы — в БД: переживает рестарты (Render Free спит)."""
+    import db
+    db.execute("CREATE TABLE IF NOT EXISTS adv_nm_spend "
+               "(mk TEXT, nm_id BIGINT, spend REAL, PRIMARY KEY (mk, nm_id))")
+    db.execute("DELETE FROM adv_nm_spend")
+    rows = [(mk, int(nm), float(sp)) for mk, per in result.items() for nm, sp in per.items()]
+    db.executemany("INSERT INTO adv_nm_spend (mk, nm_id, spend) VALUES (?,?,?)", rows)
+    built_at = datetime.utcnow().isoformat()
+    db.execute("CREATE TABLE IF NOT EXISTS cogs_meta (key TEXT PRIMARY KEY, value TEXT)")
+    if db.IS_PG:
+        db.execute("INSERT INTO cogs_meta (key, value) VALUES ('adv_nm_built_at', ?) "
+                   "ON CONFLICT (key) DO UPDATE SET value = excluded.value", (built_at,))
+    else:
+        db.execute("INSERT OR REPLACE INTO cogs_meta VALUES ('adv_nm_built_at', ?)", (built_at,))
+
+
+def _adv_nm_load_db() -> None:
+    """Поднимает раскладку из БД. Если она старше TTL — данные показываем,
+    но помечаем устаревшими (сборка обновит в фоне)."""
+    global _adv_nm_cache, _adv_nm_ts
+    import db
+    try:
+        rows = db.fetchall("SELECT mk, nm_id, spend FROM adv_nm_spend")
+    except Exception:
+        return  # таблицы ещё нет
+    cache: dict = {}
+    for mk, nm, sp in rows:
+        cache.setdefault(mk, {})[int(nm)] = float(sp)
+    if not cache:
+        return
+    fresh = False
+    try:
+        r = db.fetchone("SELECT value FROM cogs_meta WHERE key = 'adv_nm_built_at'")
+        if r and r[0]:
+            built = datetime.fromisoformat(r[0])
+            fresh = (datetime.utcnow() - built).total_seconds() < _ADV_NM_TTL
+    except Exception:
+        pass
+    _adv_nm_cache = cache
+    # устаревший кеш служит данными, но триггерит фоновое обновление
+    _adv_nm_ts = _time.monotonic() if fresh else _time.monotonic() - _ADV_NM_TTL - 1
+    _log.info("adv-by-nm поднят из БД: %d месяцев (fresh=%s)", len(cache), fresh)
+
+
+async def _adv_nm_ensure_loaded() -> None:
+    global _adv_nm_db_checked
+    if _adv_nm_db_checked:
+        return
+    _adv_nm_db_checked = True
+    if not _adv_nm_cache:
+        await asyncio.to_thread(_adv_nm_load_db)
 
 
 async def _build_adv_nm_bg(months: int) -> None:
@@ -667,6 +723,11 @@ async def _build_adv_nm_bg(months: int) -> None:
         _adv_nm_cache = result
         _adv_nm_ts = _time.monotonic()
         _adv_nm_error = "" if result else "fullstats вернул пусто по всем месяцам"
+        if result:
+            try:
+                await asyncio.to_thread(_adv_nm_save_db, result)
+            except Exception as e:
+                _log.warning("adv-by-nm save to DB failed: %s", e)
         _log.info("adv-by-nm собран: %s", {k: len(v) for k, v in result.items()})
     except Exception as e:
         _adv_nm_error = str(e)[:300]
@@ -733,9 +794,10 @@ async def get_wb_unit(
         for mk in month_keys
     }
 
-    # Точная реклама по SKU из fullstats (nmId → артикул). Если по месяцу
-    # статистика ещё не собрана — фолбэк на долю выручки.
-    if _time.monotonic() - _adv_nm_ts >= _ADV_NM_TTL or not _adv_nm_cache:
+    # Точная реклама по SKU из fullstats (nmId → артикул): сперва из БД
+    await _adv_nm_ensure_loaded()
+    if not _adv_nm_building and (not _adv_nm_cache
+                                 or _time.monotonic() - _adv_nm_ts >= _ADV_NM_TTL):
         _spawn(_build_adv_nm_bg(months))
     adv_sku_by_month: dict[str, dict[str, float]] = {}
     for mk, per_nm in _adv_nm_cache.items():
