@@ -619,6 +619,50 @@ _wb_advert_ts: float = 0.0
 # SKU-разрез для юнит-экономики (наполняется при сборке P&L из деталей)
 _wb_unit_data: dict = {}
 
+# Точная реклама по nmId из fullstats: {mk: {nmId: sum}} (кеш 12ч, сборка в фоне)
+_adv_nm_cache: dict = {}
+_adv_nm_ts: float = 0.0
+_adv_nm_building: bool = False
+_ADV_NM_TTL = 12 * 3600
+
+
+async def _build_adv_nm_bg(months: int) -> None:
+    """Фоновая сборка рекламы по nmId: /adv/v3/fullstats помесячно.
+
+    Лимит fullstats ~1 req/мин → полгода собирается несколько минут;
+    до готовности юнитка распределяет рекламу по доле выручки.
+    """
+    global _adv_nm_cache, _adv_nm_ts, _adv_nm_building
+    if _adv_nm_building:
+        return
+    _adv_nm_building = True
+    try:
+        from config import USE_ADVERT_MOCK
+        if USE_ADVERT_MOCK:
+            return
+        import advert_client
+        ids = await advert_client.get_all_campaign_ids_ext()
+        if not ids:
+            return
+        result: dict = {}
+        today = (datetime.utcnow() + timedelta(hours=3)).date()
+        for (y, m) in _last_months(months):
+            mk = f"{y}-{m:02d}"
+            begin = f"{mk}-01"
+            last_day = (datetime(y + (m == 12), m % 12 + 1, 1) - timedelta(days=1)).date()
+            end = min(last_day, today).strftime("%Y-%m-%d")
+            per_nm = await advert_client.get_fullstats_nm(ids, begin, end)
+            if per_nm:
+                result[mk] = per_nm
+            await asyncio.sleep(62)   # 1 req/мин между месяцами
+        _adv_nm_cache = result
+        _adv_nm_ts = _time.monotonic()
+        _log.info("adv-by-nm собран: %s", {k: len(v) for k, v in result.items()})
+    except Exception as e:
+        _log.warning("adv-by-nm build failed: %s", e)
+    finally:
+        _adv_nm_building = False
+
 
 @router.get("/wb/unit")
 async def get_wb_unit(
@@ -647,11 +691,24 @@ async def get_wb_unit(
     names = cost_store.get_names()
     import catalog as _cat
 
-    # выручка месяца по SKU (только положительная — база распределения)
+    # выручка месяца по SKU (только положительная — база распределения-фолбэка)
     rev_by_month: dict[str, float] = {
         mk: sum(max(m.get(mk, {}).get("revenue", 0.0), 0.0) for m in sku_data.values())
         for mk in month_keys
     }
+
+    # Точная реклама по SKU из fullstats (nmId → артикул). Если по месяцу
+    # статистика ещё не собрана — фолбэк на долю выручки.
+    if _time.monotonic() - _adv_nm_ts >= _ADV_NM_TTL or not _adv_nm_cache:
+        _spawn(_build_adv_nm_bg(months))
+    adv_sku_by_month: dict[str, dict[str, float]] = {}
+    for mk, per_nm in _adv_nm_cache.items():
+        agg: dict[str, float] = {}
+        for nm, s in per_nm.items():
+            sku = _cat.resolve_wb(nm)
+            agg[sku] = agg.get(sku, 0.0) + s
+        adv_sku_by_month[mk] = agg
+    adv_spend_total = {mk: sum(v.values()) for mk, v in adv_sku_by_month.items()}
 
     skus_out = []
     # аллокация с корректировкой остатка: крупнейший SKU месяца добирает разницу
@@ -679,7 +736,12 @@ async def get_wb_unit(
                 continue
             rev = d["revenue"]
             share = (max(rev, 0.0) / rev_by_month[mk]) if rev_by_month[mk] > 0 else 0.0
-            adv = advert_m.get(mk, 0.0) * share
+            # реклама: точная доля из fullstats по nmId, иначе — по выручке
+            if adv_spend_total.get(mk, 0.0) > 0:
+                adv_share = adv_sku_by_month[mk].get(sku, 0.0) / adv_spend_total[mk]
+            else:
+                adv_share = share
+            adv = advert_m.get(mk, 0.0) * adv_share
             ded = deduct_m.get(mk, 0.0) * share
             alloc_sum[mk]["advert"] += adv
             alloc_sum[mk]["deductions"] += ded
@@ -760,6 +822,8 @@ async def get_wb_unit(
         "months": [{"key": mk, "label": RU_MON[int(mk[5:7])] + " " + mk[:4]} for mk in month_keys],
         "skus": skus_out,
         "totals": totals_out,
+        "advert_precise_months": sorted(mk for mk, t in adv_spend_total.items() if t > 0),
+        "advert_building": _adv_nm_building,
         "detail_upto": _wb_unit_data.get("detail_upto", ""),
         "fetched_at": _wb_unit_data.get("fetched_at", ""),
     }

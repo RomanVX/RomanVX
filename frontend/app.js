@@ -1936,7 +1936,11 @@ function renderUnitMonth() {
   });
 
   html += `</tbody></table></div>`;
-  html += `<div class="text-secondary small mt-2">Продвижение и удержания распределены по SKU пропорционально доле выручки; налог — ${_unitTax}% от выручки (настраивается сверху); ROI = прибыль / себестоимость.` +
+  const preciseMks = _unitData.advert_precise_months || [];
+  const advNote = (_unitMonth !== 'ALL' && preciseMks.includes(_unitMonth))
+    ? 'Продвижение — точная раскладка по артикулам из статистики кампаний WB (fullstats)'
+    : 'Продвижение — по доле выручки' + (_unitData.advert_building ? ' (точная раскладка по кампаниям собирается в фоне, ~5-10 мин)' : '');
+  html += `<div class="text-secondary small mt-2">${advNote}; удержания — по доле выручки; налог — ${_unitTax}% от выручки (настраивается сверху); ROI = прибыль / себестоимость.` +
           (_unitData.detail_upto ? ` Отчёт реализации — по ${_unitData.detail_upto}.` : '') + `</div>`;
   wrap.innerHTML = html;
 }

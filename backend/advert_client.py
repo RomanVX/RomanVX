@@ -21,8 +21,8 @@ _log = logging.getLogger(__name__)
 
 # WB has been migrating between these two domains — try both
 _BASES = [
-    "https://advert-api.wb.ru",
     "https://advert-api.wildberries.ru",
+    "https://advert-api.wb.ru",
 ]
 
 TYPE_NAMES   = {4: "Каталог", 5: "Поиск+Каталог", 6: "Поиск", 7: "Поиск", 8: "Автокампания", 9: "Поиск"}
@@ -178,6 +178,61 @@ async def get_spend_by_month(date_from: datetime, date_to: datetime) -> dict[str
     _log.info("[ADVERT] spend by month: %s",
               {k: (round(v["total"]), round(v["bonus"])) for k, v in spend.items()})
     return spend
+
+
+async def get_all_campaign_ids_ext() -> list[int]:
+    """ID кампаний всех статусов, включая завершённые (9) и паузу WB (11) —
+    для исторической раскладки рекламы по месяцам."""
+    results = []
+    for status in (7, 8, 9, 11, 4):
+        results.append(await _ids_for_status(status))
+    seen, ids = set(), []
+    for chunk in results:
+        for i in chunk:
+            if i not in seen:
+                seen.add(i)
+                ids.append(i)
+    _log.info("[ADVERT] campaign ids (all statuses): %d", len(ids))
+    return ids
+
+
+async def get_fullstats_nm(ids: list[int], begin: str, end: str) -> dict[int, float]:
+    """GET /adv/v3/fullstats за период → {nmId: затраты}.
+
+    Ответ: [{advertId, days: [{date, apps: [{nms: [{nmId, sum}]}]}]}].
+    Лимит ~1 req/мин — вызывающий обязан выдерживать паузы между вызовами.
+    """
+    per_nm: dict[int, float] = {}
+    CHUNK = 50
+    for ci in range(0, len(ids), CHUNK):
+        chunk = ids[ci:ci + CHUNK]
+        data = None
+        for attempt in range(4):
+            try:
+                data = await _get("/adv/v3/fullstats", {
+                    "ids": ",".join(map(str, chunk)),
+                    "beginDate": begin,
+                    "endDate": end,
+                })
+                break
+            except Exception as e:
+                if "429" in str(e) and attempt < 3:
+                    _log.warning("[ADVERT] fullstats 429 — ждём 62с (%d/3)", attempt + 1)
+                    await asyncio.sleep(62)
+                    continue
+                _log.warning("[ADVERT] fullstats %s–%s failed: %s", begin, end, e)
+                data = None
+                break
+        for camp in data if isinstance(data, list) else []:
+            for day in camp.get("days") or []:
+                for app in day.get("apps") or []:
+                    for nm in app.get("nms") or []:
+                        nm_id = nm.get("nmId")
+                        if nm_id:
+                            per_nm[nm_id] = per_nm.get(nm_id, 0.0) + float(nm.get("sum") or 0)
+        if ci + CHUNK < len(ids):
+            await asyncio.sleep(62)  # rate limit между чанками
+    return per_nm
 
 
 async def get_fullstats(ids: list[int], date_from: datetime, date_to: datetime) -> list[dict]:
