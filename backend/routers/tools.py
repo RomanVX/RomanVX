@@ -571,6 +571,22 @@ def _niche_init():
                "(query TEXT PRIMARY KEY, data TEXT, built_at TEXT)")
 
 
+# WB жёстко банит IP за очереди запросов — один запрос раз в 12+ секунд
+_wb_search_lock = asyncio.Lock()
+_wb_search_last: float = 0.0
+_WB_SEARCH_INTERVAL = 12.0
+
+
+async def _wb_throttle():
+    global _wb_search_last
+    import time as _t
+    async with _wb_search_lock:
+        wait = _WB_SEARCH_INTERVAL - (_t.monotonic() - _wb_search_last)
+        if wait > 0:
+            await asyncio.sleep(wait)
+        _wb_search_last = _t.monotonic()
+
+
 async def _wb_preset_catalog(client, preset_id: str) -> dict | None:
     """Товары пресетной категории: WB перенаправляет широкие запросы
     («шторы») из поиска в каталог. Пробуем известные пути."""
@@ -587,10 +603,8 @@ async def _wb_preset_catalog(client, preset_id: str) -> dict | None:
     ]
     for url, prm in candidates:
         try:
+            await _wb_throttle()
             r = await client.get(url, params=prm)
-            if r.status_code == 429:
-                await asyncio.sleep(6)
-                r = await client.get(url, params=prm)
             if not r.is_success:
                 continue
             payload = r.json()
@@ -624,8 +638,9 @@ async def _wb_public_search(query: str, limit: int = 60) -> tuple[list[dict], in
         # Одна версия (v13), терпеливые ретраи: каскад версий с ретраями
         # сам выжигает рейт-лимит WB на IP (даже на свежем прокси).
         r = None
-        for attempt in range(5):
+        for attempt in range(2):
             try:
+                await _wb_throttle()
                 r = await client.get(
                     "https://search.wb.ru/exactmatch/ru/common/v13/search", params=params)
             except Exception as e:
@@ -633,8 +648,9 @@ async def _wb_public_search(query: str, limit: int = 60) -> tuple[list[dict], in
                 r = None
                 break
             if r.status_code == 429:
-                _niche_last_err = "v13: HTTP 429"
-                await asyncio.sleep(6 * (attempt + 1))
+                _niche_last_err = ("v13: HTTP 429 — лимит WB на IP; подождите 15-20 минут "
+                                   "без запросов, бан отойдёт")
+                await asyncio.sleep(25)
                 continue
             break
         if r is not None:
@@ -720,8 +736,9 @@ async def niche_debug(query: str = Query(default="крем для лица"),
     async with httpx.AsyncClient(timeout=20, proxy=proxy, headers={
             "User-Agent": "Mozilla/5.0", "Referer": "https://www.wildberries.ru/",
             "Accept-Encoding": "gzip, deflate"}) as client:
-        for ver in ("v13", "v9", "v5", "v4"):
+        for ver in ("v13",):   # только один запрос — очереди выжигают лимит WB
             try:
+                await _wb_throttle()
                 r = await client.get(f"https://search.wb.ru/exactmatch/ru/common/{ver}/search",
                                      params=params)
                 body = r.text[:300]
