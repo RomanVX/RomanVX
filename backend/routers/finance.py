@@ -1477,15 +1477,27 @@ def _oz_pnl_partial(month_groups: dict, cogs_by_month: dict, costs: dict) -> Non
     for mk in month_keys:
         for g, v in month_groups[mk].items():
             all_groups[g] = all_groups.get(g, 0.0) + v
-    revenue_groups = sorted((g for g, v in all_groups.items() if v > 0),
-                            key=lambda g: -all_groups[g])
-    cost_groups = sorted((g for g, v in all_groups.items() if v <= 0),
+
+    # Выручка = продажи + баллы за скидки (соинвест Ozon, аналог СПП у WB)
+    # + программы партнёров — как блок «Продажи и возвраты» в кабинете
+    REVENUE_SET = {"Продажи и возвраты", "Баллы за скидки", "Программы партнёров"}
+    rev_components = [g for g in all_groups if g in REVENUE_SET]
+    other_pos = sorted((g for g, v in all_groups.items() if v > 0 and g not in REVENUE_SET),
+                       key=lambda g: -all_groups[g])
+    cost_groups = sorted((g for g, v in all_groups.items() if v <= 0 and g not in REVENUE_SET),
                          key=lambda g: all_groups[g])
 
-    pnl_rows = []
-    for i, g in enumerate(revenue_groups):
-        pnl_rows.append({"key": f"rev_{i}", "label": ("📦 " if i == 0 else "  + ") + g,
-                         "style": "header" if i == 0 else "normal",
+    revenue = {mk: round(sum(month_groups[mk].get(g, 0.0) for g in rev_components))
+               for mk in month_keys}
+    pnl_rows = [{"key": "retailAmount", "label": "📦 Выручка (продажи и возвраты, вкл. баллы)",
+                 "style": "header", "formula": "direct", "values": revenue}]
+    # составляющие выручки — справочно
+    for i, g in enumerate(sorted(rev_components, key=lambda g: -all_groups[g])):
+        pnl_rows.append({"key": f"revc_{i}", "label": f"      ↳ {g}", "style": "note",
+                         "formula": "info",
+                         "values": {mk: round(month_groups[mk].get(g, 0.0)) for mk in month_keys}})
+    for i, g in enumerate(other_pos):
+        pnl_rows.append({"key": f"pos_{i}", "label": f"  + {g}", "style": "normal",
                          "formula": "direct",
                          "values": {mk: round(month_groups[mk].get(g, 0.0)) for mk in month_keys}})
     for i, g in enumerate(cost_groups):
@@ -1501,20 +1513,11 @@ def _oz_pnl_partial(month_groups: dict, cogs_by_month: dict, costs: dict) -> Non
     gross = {mk: payout[mk] - round(cogs_by_month.get(mk, 0.0)) for mk in month_keys}
     pnl_rows.append({"key": "gross", "label": "✅ Валовая прибыль", "style": "total",
                      "formula": "direct", "values": gross})
-    # маржа — от выручки (крупнейшая положительная группа)
-    rev_key = revenue_groups[0] if revenue_groups else None
     pct = {}
     for mk in month_keys:
-        rev = month_groups[mk].get(rev_key, 0.0) if rev_key else 0.0
-        pct[mk] = round(gross[mk] / rev * 100) if rev > 0 else 0
+        pct[mk] = round(gross[mk] / revenue[mk] * 100) if revenue.get(mk) else 0
     pnl_rows.append({"key": "gross_pct", "label": "   Маржа %", "style": "pct",
                      "formula": "gross_pct", "values": pct})
-    # retailAmount для Тотала (фронт суммирует по этому ключу)
-    if rev_key:
-        for r in pnl_rows:
-            if r["key"] == "rev_0":
-                r["key"] = "retailAmount"
-                break
 
     cogs_has_data = len(costs) > 0 and any(v > 0 for v in cogs_by_month.values())
     _oz_pnl_cache = {
