@@ -614,6 +614,8 @@ async def get_wb_pnl(
         }
     _pnl_cache = result
     _pnl_cache_ts = _time.monotonic()
+    if result.get("source") == "detail":
+        await asyncio.to_thread(_snapshot_pnl, "WB", result)
     return result
 
 
@@ -1389,6 +1391,7 @@ async def get_ym_pnl(
     }
     _ym_pnl_cache = result
     _ym_pnl_ts = _time.monotonic()
+    await asyncio.to_thread(_snapshot_pnl, "YM", result)
     return result
 
 
@@ -1520,6 +1523,32 @@ async def get_ym_unit(
         "building": _ym_srv_building,
         "fetched_at": (_ym_pnl_cache or {}).get("fetched_at", ""),
     }
+
+
+def _snapshot_pnl(mp: str, result: dict) -> None:
+    """Архив P&L в БД: {площадка, месяц, строка} → ₽.
+
+    История копится навсегда, независимо от того, что API площадок отдадут
+    потом (WB, например, свою детализацию мы нигде больше не храним)."""
+    try:
+        rows = result.get("rows") or []
+        if not rows:
+            return
+        import db
+        db.execute("CREATE TABLE IF NOT EXISTS fin_history "
+                   "(mp TEXT, mk TEXT, row_key TEXT, label TEXT, amount REAL, "
+                   "PRIMARY KEY (mp, mk, row_key))")
+        out = []
+        for r in rows:
+            for mk, v in (r.get("values") or {}).items():
+                out.append((mp, mk, r.get("key") or "", r.get("label") or "", float(v or 0)))
+        if out:
+            db.executemany(
+                "INSERT INTO fin_history (mp, mk, row_key, label, amount) VALUES (?,?,?,?,?) "
+                "ON CONFLICT (mp, mk, row_key) DO UPDATE "
+                "SET amount = excluded.amount, label = excluded.label", out)
+    except Exception as e:
+        _log.warning("fin_history snapshot %s: %s", mp, e)
 
 
 def _build_pnl_rows(month_totals: dict, cogs_by_month: dict, cost_lines: list) -> list[dict]:
@@ -2084,6 +2113,7 @@ def _oz_pnl_partial(month_groups: dict, cogs_by_month: dict, costs: dict) -> Non
         "building": _oz_pnl_building,
         "fetched_at": datetime.utcnow().strftime("%d.%m.%Y %H:%M UTC"),
     }
+    _snapshot_pnl("OZON", _oz_pnl_cache)
 
 
 @router.get("/ozon/pnl")
