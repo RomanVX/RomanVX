@@ -213,8 +213,28 @@ def resolve_ym(offer_id) -> str:
     return YM_ID_TO_ART.get(s, SKU_ALIASES.get(s, s))
 
 
-def lookup(article: str) -> dict[str, str]:
-    """Return {name, brand, group} from CATALOG or fallback."""
+# индекс без учёта регистра: WB отдаёт артикулы продавца в нижнем регистре
+# («нкр-01», «al-01») — без этого товары проваливаются в «Прочее»
+_CATALOG_UP = {k.upper(): v for k, v in CATALOG.items()}
+_ALIASES_UP = {k.upper(): v for k, v in SKU_ALIASES.items()}
+
+
+def canon(article) -> str:
+    """Каноничный артикул (регистр как в каталоге)."""
     a = _norm(article)
-    a = SKU_ALIASES.get(a, a)
-    return CATALOG.get(a, {"name": a, "brand": "Прочее", "group": ""})
+    a = SKU_ALIASES.get(a, _ALIASES_UP.get(a.upper(), a))
+    if a in CATALOG:
+        return a
+    up = a.upper()
+    for k in CATALOG:
+        if k.upper() == up:
+            return k
+    return a
+
+
+def lookup(article: str) -> dict[str, str]:
+    """Return {name, brand, group} from CATALOG or fallback (без учёта регистра)."""
+    a = _norm(article)
+    a = SKU_ALIASES.get(a, _ALIASES_UP.get(a.upper(), a))
+    hit = CATALOG.get(a) or _CATALOG_UP.get(a.upper())
+    return hit if hit else {"name": a, "brand": "Прочее", "group": ""}
