@@ -2954,16 +2954,30 @@ function renderClusters() {
 let _prodData = null;
 let _prodTimer = null;
 
+function _prodSig(d) {
+  return (d && d.items || []).map(i => i.sku + ':' + (i.analyzed ? 1 : 0) + ':' + i.count).join('|')
+    + '|p' + (d && d.pending || 0) + '|b' + (d && d.building ? 1 : 0);
+}
+
 async function loadProductolog(refresh) {
   const wrap = document.getElementById('toolsWrap');
   if (!wrap || _toolActive !== 'prod') return;
+  const poll = refresh === 'poll';
   if (_prodData && !refresh) { renderProductolog(); return; }
   if (!_prodData) wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>Загружаем анализ отзывов…</div>';
   try {
-    _prodData = await fetchJSON('/api/tools/productolog' + (refresh ? '?refresh=true' : ''), 60000);
+    const data = await fetchJSON('/api/tools/productolog' + (refresh && !poll ? '?refresh=true' : ''), 60000);
+    if (poll && _prodData && _prodSig(data) === _prodSig(_prodData)) {
+      // ничего не изменилось — не трогаем DOM, просто ждём дальше
+      _prodData = data;
+      if (!_prodTimer && (data.pending > 0 || data.building) && _toolActive === 'prod')
+        _prodTimer = setTimeout(() => { _prodTimer = null; if (currentTab === 'tools' && _toolActive === 'prod') loadProductolog('poll'); }, 25000);
+      return;
+    }
+    _prodData = data;
     renderProductolog();
   } catch (e) {
-    wrap.innerHTML = `<div class="alert alert-danger mt-3">Ошибка: ${e.message}</div>`;
+    if (!poll) wrap.innerHTML = `<div class="alert alert-danger mt-3">Ошибка: ${e.message}</div>`;
   }
 }
 
@@ -2988,7 +3002,7 @@ function renderProductolog() {
   let html = '';
   if (d.pending > 0 || d.building) {
     html += `<div class="alert alert-info py-2 small">⏳ Анализируем отзывы (${d.progress || `осталось ${d.pending} арт.`}) — страница обновится сама.</div>`;
-    if (!_prodTimer) _prodTimer = setTimeout(() => { _prodTimer = null; _prodData = null; if (currentTab === 'tools' && _toolActive === 'prod') loadProductolog(); }, 25000);
+    if (!_prodTimer) _prodTimer = setTimeout(() => { _prodTimer = null; if (currentTab === 'tools' && _toolActive === 'prod') loadProductolog('poll'); }, 25000);
   } else if (d.error) {
     html += `<div class="alert alert-warning py-2 small">⚠ ${d.error}</div>`;
   }
@@ -3037,7 +3051,14 @@ function renderProductolog() {
   });
   html += `</tbody></table></div></div></div>
   <div class="text-secondary small mt-2">Проблемные товары сверху (по доле негативных отзывов). Проценты в плюсах/минусах — доля отзывов, где тема упомянута. Анализ пересобирается автоматически, когда накапливаются новые отзывы.</div>`;
+  // сохранить прокрутку — автообновление не должно сбрасывать чтение
+  const prevTable = wrap.querySelector('.table-responsive');
+  const tScroll = prevTable ? prevTable.scrollTop : 0;
+  const wScroll = window.scrollY;
   wrap.innerHTML = html;
+  const newTable = wrap.querySelector('.table-responsive');
+  if (newTable && tScroll) newTable.scrollTop = tScroll;
+  if (wScroll) window.scrollTo(0, wScroll);
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
