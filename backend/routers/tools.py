@@ -617,6 +617,36 @@ def _parse_loose(text: str) -> dict | None:
     return None
 
 
+async def _wb_search_preset(client, params: dict, meta_text: str) -> dict | None:
+    """Preset-ответ WB: metadata несёт catalog_value=preset=N — сама выдача
+    отдаётся тем же эндпоинтом при повторе с параметром preset."""
+    import re as _re
+    global _niche_last_body
+    m = _re.search(r'"catalog_value":"preset=(\d+)"', meta_text)
+    if not m:
+        return None
+    preset_id = m.group(1)
+    for drop_query in (False, True):
+        p2 = dict(params)
+        p2["preset"] = preset_id
+        if drop_query:
+            p2.pop("query", None)
+        await _wb_throttle()
+        try:
+            r = await client.get(
+                "https://search.wb.ru/exactmatch/ru/common/v13/search", params=p2)
+            _niche_last_body += (f"\n\n=== PRESET {preset_id}{' (без query)' if drop_query else ''}"
+                                 f" → HTTP {r.status_code} ===\n" + r.text[:1500])
+            if not r.is_success:
+                continue
+            payload = _parse_loose(r.text)
+            if payload and ((payload.get("data") or {}).get("products")):
+                return payload
+        except Exception as e:
+            _niche_last_body += f"\n\n=== PRESET → EXC {str(e)[:200]} ==="
+    return None
+
+
 async def _wb_search_stage2(client, params: dict, meta_text: str) -> dict | None:
     """Анти-бот WB: metadata-ответ несёт токены qv/kcl — повторяем запрос
     с ними. Иногда и второй ответ metadata-только (с новыми токенами),
@@ -704,17 +734,24 @@ async def _wb_public_search(query: str, limit: int = 60) -> tuple[list[dict], in
                 txt = r.text
                 payload = _parse_loose(txt)
                 if payload is None:
-                    # совсем не JSON — последняя надежда на qv-ступень
-                    payload = await _wb_search_stage2(client, params, txt)
+                    # совсем не JSON (обрезано прокси) — токены qv/preset
+                    # достаём регекспами прямо из битого текста
+                    payload = (await _wb_search_stage2(client, params, txt)
+                               or await _wb_search_preset(client, params, txt))
                     if not payload:
                         _niche_last_err = f"v13: не-JSON ответ ({txt[:80]!r})"
                         raise ValueError(_niche_last_err)
                 data = payload.get("data") or {}
                 products = data.get("products") or []
-                if not products and '"qv"' in r.text:
-                    p2 = await _wb_search_stage2(client, params, r.text)
+                if not products and '"qv"' in txt:
+                    p2 = await _wb_search_stage2(client, params, txt)
                     if p2:
                         data = p2.get("data") or {}
+                        products = data.get("products") or []
+                if not products and '"catalog_value":"preset=' in txt:
+                    p3 = await _wb_search_preset(client, params, txt)
+                    if p3:
+                        data = p3.get("data") or {}
                         products = data.get("products") or []
                 if products:
                     total = int(data.get("total") or len(products))
