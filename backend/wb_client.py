@@ -247,11 +247,31 @@ async def get_nm_report_weeks(week_ranges: list[tuple[str, str]]) -> list[dict]:
     return results
 
 
+# Поля детального отчёта, которые реально читаются дальше (finance/analytics).
+# Сырые записи несут 60+ полей (kiz, стикеры, названия офисов, ИНН...) —
+# на 100k строк это сотни МБ и OOM на Render free. Оставляем только нужное.
+_REPORT_KEEP = frozenset({
+    "rrd_id", "nm_id", "sa_name", "brand_name", "subject_name", "ts_name",
+    "doc_type_name", "supplier_oper_name", "bonus_type_name", "site_country",
+    "order_dt", "sale_dt", "rr_dt",
+    "quantity", "retail_price", "retail_amount", "retail_price_withdisc_rub",
+    "sale_percent", "commission_percent", "ppvz_spp_prc",
+    "ppvz_sales_commission", "ppvz_for_pay", "for_pay", "ppvz_vw", "ppvz_vw_nds",
+    "ppvz_reward", "acquiring_fee",
+    "delivery_rub", "delivery_amount", "return_amount",
+    "storage_fee", "acceptance", "penalty", "deduction", "additional_payment",
+})
+
+_REPORT_PAGE = 20_000  # меньше страница → меньше пиковая память при парсинге
+
+
 async def get_report_detail(date_from: datetime, date_to: datetime) -> list[dict]:
     """GET /api/v5/supplier/reportDetailByPeriod with auto-pagination via rrdid.
 
     Returns the full financial report: per-item commission, logistics,
     storage, deductions, penalties, acquiring, for_pay etc.
+    Записи прорежены до _REPORT_KEEP — иначе полугодовой отчёт не влезает
+    в память инстанса.
     """
     if USE_MOCK:
         return []
@@ -268,7 +288,7 @@ async def get_report_detail(date_from: datetime, date_to: datetime) -> list[dict
             resp = await _http().get(
                 f"{REPORT_BASE}/api/v5/supplier/reportDetailByPeriod",
                 headers=_headers(),
-                params={"dateFrom": df_str, "dateTo": dt_str, "limit": 100_000, "rrdid": rrdid},
+                params={"dateFrom": df_str, "dateTo": dt_str, "limit": _REPORT_PAGE, "rrdid": rrdid},
             )
             if resp.status_code == 429:
                 _log.warning("reportDetailByPeriod 429 — ждём 62с (%d/3)", attempt + 1)
@@ -281,11 +301,13 @@ async def get_report_detail(date_from: datetime, date_to: datetime) -> list[dict
             break
         if not data:
             break
-        all_records.extend(data)
-        _log.info("reportDetailByPeriod: got %d records (total %d)", len(data), len(all_records))
-        if len(data) < 100_000:
-            break
+        got = len(data)
         rrdid = data[-1]["rrd_id"]
+        all_records.extend({k: r[k] for k in _REPORT_KEEP if k in r} for r in data)
+        del data  # сырые записи с полным набором полей больше не нужны
+        _log.info("reportDetailByPeriod: got %d records (total %d)", got, len(all_records))
+        if got < _REPORT_PAGE:
+            break
         await asyncio.sleep(62)  # лимит между страницами
 
     return all_records
