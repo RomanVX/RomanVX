@@ -25,20 +25,28 @@ def _corr(x: np.ndarray, y: np.ndarray) -> tuple[float, int]:
     return float(np.corrcoef(x, y)[0, 1]), len(x)
 
 
+MODE_COLS = {
+    "levels": ("ch_z", "btc_z"),
+    "diffs": ("dch", "btc_ret"),
+    "levels_dt": ("ch_dt", "btc_dt"),  # уровни после удаления медленного тренда
+}
+
+
 def lagged_pairs(pairs: pd.DataFrame, k: int, mode: str, window: str | None = None):
     """Массивы (ch_t, btc_{t+k}) c внутриоконным сдвигом.
 
     mode: 'levels' — z-уровни; 'diffs' — ΔCH и лог-доходность BTC;
-          'levels_s3' — z-уровни, сглаженные MA(3).
+          'levels_s3' — z-уровни, сглаженные MA(3);
+          'levels_dt' — z-уровни минус скользящий тренд (колонки ch_dt/btc_dt
+          должны быть добавлены в pairs заранее).
     """
     xs, ys = [], []
     for w, g in pairs.groupby("window"):
         if window is not None and w != window:
             continue
-        if mode == "levels":
-            x, y = g["ch_z"].to_numpy(), g["btc_z"].to_numpy()
-        elif mode == "diffs":
-            x, y = g["dch"].to_numpy(), g["btc_ret"].to_numpy()
+        if mode in MODE_COLS:
+            cx, cy = MODE_COLS[mode]
+            x, y = g[cx].to_numpy(), g[cy].to_numpy()
         elif mode == "levels_s3":
             x = g["ch_z"].rolling(3, center=True, min_periods=2).mean().to_numpy()
             y = g["btc_z"].rolling(3, center=True, min_periods=2).mean().to_numpy()

@@ -75,8 +75,8 @@ def _date_axis(ax, weekly: bool = True, interval: int = 1) -> None:
     ax.grid(axis="x", visible=False)
 
 
-def _endlabel(ax, x, y, text, color, dx=3.0) -> None:
-    ax.annotate(text, (x, y), xytext=(dx, 0), textcoords="offset points",
+def _endlabel(ax, x, y, text, color, dx=3.0, dy=0.0) -> None:
+    ax.annotate(text, (x, y), xytext=(dx, dy), textcoords="offset points",
                 color=color, fontsize=9.5, fontweight="bold", va="center")
 
 
@@ -104,14 +104,17 @@ def fig_overview(btc: pd.DataFrame, pairs: pd.DataFrame, ch: pd.DataFrame,
         ax.axvspan(max(g["date"].min(), btc["date"].min() - pd.Timedelta(days=2)),
                    min(g["date"].max(), btc["date"].max() + pd.Timedelta(days=2)),
                    color=C_CH, alpha=0.10, lw=0)
-    anchors = btc[btc["sigma_usd"] <= 600]
-    ax.scatter(anchors["date"], anchors["close_usd"], s=16, zorder=3,
-               color=C_BTC, edgecolor=SURFACE, linewidth=1)
+    anchors = btc[(btc["sigma_usd"] > 0) & (btc["sigma_usd"] <= 600)]
+    if len(anchors):
+        ax.scatter(anchors["date"], anchors["close_usd"], s=16, zorder=3,
+                   color=C_BTC, edgecolor=SURFACE, linewidth=1)
+        src_note = "точки — датированные якоря из новостей; "
+    else:
+        src_note = "биржевые данные; "
     _endlabel(ax, btc["date"].iloc[-1], btc["close_usd"].iloc[-1], "BTC/USD", C_BTC)
     _thousands(ax)
     _date_axis(ax, interval=2)
-    ax.set_title("BTC/USD (точки — датированные якоря из новостей; "
-                 "зелёная заливка — есть данные CH-211Å)")
+    ax.set_title(f"BTC/USD ({src_note}зелёная заливка — есть данные CH-211Å)")
 
     for ax, w, cwin in zip(axes[1:], wins, WIN_COLORS):
         g = pairs[pairs["window"] == w]
@@ -325,6 +328,145 @@ def fig_forecast(ch: pd.DataFrame, chf: dict, btc: pd.DataFrame, fan: dict,
     ax2.set_title("BTC: веер «солнечной» лаг-модели (полосы 5–95% и 25–75%) и наивные "
                   "бейзлайны — игровая экстраполяция, не прогноз")
 
+    fig.savefig(path, bbox_inches="tight")
+    plt.close(fig)
+
+
+# ------------------------------------------------------------ fig 11 --------
+
+def fig_predict(pr: dict, path: str) -> None:
+    """Walk-forward: кумулятивные кривые знаковых стратегий + скользящий hit-rate."""
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10.4, 8.0))
+    fig.subplots_adjust(hspace=0.42, left=0.08, right=0.86, top=0.89, bottom=0.07)
+    dates = pr["dates"]
+
+    curves = [("SOLAR", C_CH, "-", "по Солнцу"),
+              ("AR", INK2, "--", "по прошлым ценам")]
+    for name, color, ls, label in curves:
+        c = pr["models"][name]["strategy_curve"] * 100
+        ax1.plot(dates, c, color=color, lw=2, ls=ls)
+        _endlabel(ax1, dates.iloc[-1], c[-1], label, color)
+    bh = pr["buy_hold"] * 100
+    ax1.plot(dates, bh, color=C_BTC, lw=1.6, ls=":")
+    _endlabel(ax1, dates.iloc[-1], bh[-1], "просто держать", C_BTC)
+    ax1.axhline(0, color=BASELINE, lw=1)
+    ax1.set_ylabel("накопленный результат, %")
+    _date_axis(ax1)
+    ax1.set_title("Игрушечные знаковые стратегии (без комиссий): предсказал рост — "
+                  "«купил», падение — «продал»")
+
+    win = 60
+    for (name, color, ls, label), dy in zip(curves, (-8, 8)):
+        p = pr["models"][name]["pred"]
+        hit = pd.Series((np.sign(p) == np.sign(pr["actual"])).astype(float))
+        roll = hit.rolling(win, min_periods=win).mean()
+        ax2.plot(dates, roll, color=color, lw=2, ls=ls)
+        last = roll.dropna()
+        if len(last):
+            _endlabel(ax2, dates.iloc[last.index[-1]], last.iloc[-1], label,
+                      color, dy=dy)
+    ax2.axhline(0.5, color=BASELINE, lw=1.2)
+    ax2.annotate("монетка = 0.50", (dates.iloc[2], 0.5), xytext=(0, 5),
+                 textcoords="offset points", color=MUTED, fontsize=8.5)
+    ax2.set_ylim(0.25, 0.75)
+    ax2.set_ylabel(f"доля угаданных направлений (окно {win} дн)")
+    _date_axis(ax2)
+    ms = pr["models"]["SOLAR"]
+    ax2.set_title(f"Скользящая точность направления: SOLAR = {ms['hit_rate']:.1%} "
+                  f"всего (p против монетки ≈ {ms['binom_p']:.2f})")
+
+    fig.suptitle("Решающий тест: каждый день модель видит только прошлое и "
+                 "предсказывает завтра", fontsize=11.5, fontweight="bold")
+    fig.savefig(path, bbox_inches="tight")
+    plt.close(fig)
+
+
+# ------------------------------------------------------------ fig 10 --------
+
+def fig_probe(probe: dict, r_raw: float, path: str) -> None:
+    """Допрос пограничного сигнала: детренд-скан + сравнение с двойниками."""
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11.6, 4.8))
+    fig.subplots_adjust(wspace=0.45, left=0.07, right=0.97, top=0.84, bottom=0.14)
+
+    res = probe["scan_dt"]
+    ks = np.array([r.k for r in res])
+    rs = np.array([r.r for r in res])
+    q95 = probe["null_dt"]["per_lag_q95"]
+    band = np.array([q95.get(int(k), np.nan) for k in ks])
+    ax1.fill_between(ks, -band, band, color=NULLBAND, zorder=0)
+    colors = [C_POS if r >= 0 else C_NEG for r in np.nan_to_num(rs)]
+    ax1.bar(ks, rs, width=0.82, color=colors, zorder=2)
+    ax1.axhline(0, color=BASELINE, lw=1)
+    ax1.annotate(f"на лаге сырого сигнала (k={probe['k_lv']:+d}): "
+                 f"r={probe['r_dt_at']:+.2f}\nлучший: r={probe['best_dt'].r:+.2f}, "
+                 f"p≈{probe['p_dt']:.2f}",
+                 (0.02, 0.96), xycoords="axes fraction", va="top",
+                 fontsize=8.8, color=INK, fontweight="bold")
+    ax1.set_ylim(-1.05, 1.05)
+    ax1.set_xlabel("лаг k, дней (k>0: CH раньше)")
+    ax1.set_ylabel("r")
+    ax1.set_title(f"Тест 1: детренд (минус MA {probe['trend_win']} дн)",
+                  fontsize=10)
+
+    rows = [("CH, сырые уровни (лучший лаг)", abs(r_raw), C_CH),
+            ("CH после детренда (тот же лаг)", abs(probe["r_dt_at"]), C_CH),
+            ("синусоида 27.3 дн (лучшая фаза)", probe["r_sine"], "#eda100")]
+    null_med = float(np.median(probe["null_dt"]["max_abs"]))
+    null_q95 = float(np.quantile(probe["null_dt"]["max_abs"], 0.95))
+    rows += [("случайная прокрутка: медиана", null_med, BASELINE),
+             ("случайная прокрутка: топ-5%", null_q95, BASELINE)]
+    ypos = np.arange(len(rows))[::-1]
+    for y, (label, v, c) in zip(ypos, rows):
+        ax2.barh(y, v, height=0.62, color=c)
+        ax2.annotate(f"{v:.2f}", (v, y), xytext=(4, 0), textcoords="offset points",
+                     va="center", fontsize=9, color=INK2)
+    ax2.set_yticks(ypos, [r[0] for r in rows], fontsize=9)
+    ax2.set_xlim(0, 1.0)
+    ax2.set_xlabel("|r|")
+    ax2.grid(axis="y", visible=False)
+    h_txt = " и ".join(f"{h['r_at']:+.2f}" for h in probe["halves"])
+    ax2.set_title(f"Тест 3: двойники · Тест 2 (половины года): r = {h_txt}",
+                  fontsize=10)
+
+    fig.suptitle("Допрос пограничного сигнала в уровнях", fontsize=11.5,
+                 fontweight="bold")
+    fig.savefig(path, bbox_inches="tight")
+    plt.close(fig)
+
+
+# ------------------------------------------------------------- fig 9 --------
+
+def fig_multitf(scans4: dict, nulls4: dict, verdicts4: dict, bar_hours: float,
+                path: str) -> None:
+    """Лаг-скан на мелких барах (напр. 4ч): x в днях, полоса нуля своя."""
+    modes = [("levels", "уровни (z в окне)"), ("diffs", "приращения")]
+    fig, axes = plt.subplots(1, 2, figsize=(11.6, 4.6), sharey=True)
+    fig.subplots_adjust(wspace=0.1, left=0.07, right=0.98, top=0.82, bottom=0.15)
+    step = bar_hours / 24.0
+    for ax, (mode, mtitle) in zip(axes, modes):
+        res = scans4[mode]
+        kd = np.array([r.k for r in res]) * step
+        rs = np.array([r.r for r in res])
+        q95 = nulls4[mode]["per_lag_q95"]
+        band = np.array([q95.get(int(r.k), np.nan) for r in res])
+        ax.fill_between(kd, -band, band, color=NULLBAND, zorder=0)
+        colors = [C_POS if r >= 0 else C_NEG for r in np.nan_to_num(rs)]
+        ax.bar(kd, rs, width=step * 0.85, color=colors, zorder=2)
+        ax.axhline(0, color=BASELINE, lw=1)
+        ax.axvline(0, color=GRID, lw=0.8)
+        v = verdicts4[mode]
+        b = v["best"]
+        ax.annotate(f"k*={b.k * step:+.1f} дн, r={b.r:+.2f}\n"
+                    f"N={b.n}, но N_eff≈{v['neff']:.0f}\np(скана)≈{v['p']:.2f}",
+                    (0.02, 0.96), xycoords="axes fraction", va="top",
+                    fontsize=8.8, color=INK, fontweight="bold")
+        ax.set_ylim(-1.05, 1.05)
+        ax.set_xlabel("лаг, дней (k>0: CH раньше)")
+        ax.set_title(mtitle, fontsize=10.5)
+    axes[0].set_ylabel("r")
+    fig.suptitle(f"Бары по {bar_hours:g} ч: точек в {24 / bar_hours:g} раза больше, "
+                 "информации — нет (серая полоса нуля не сузилась)",
+                 fontsize=11.5, fontweight="bold")
     fig.savefig(path, bbox_inches="tight")
     plt.close(fig)
 

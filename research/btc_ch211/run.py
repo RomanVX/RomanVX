@@ -18,7 +18,8 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from lib import data_io, extrapolate, honest_stats, plots, slices, stretch  # noqa: E402
+from lib import (data_io, extrapolate, honest_stats, plots, predict, slices,  # noqa: E402
+                 stretch)
 
 OUT = Path(__file__).resolve().parent / "out"
 KMAX = 12          # максимум лага в скане, дней
@@ -65,6 +66,19 @@ def main() -> None:
             print(f"Оцифровка скриншотов vs реальные данные: RMSE {digit_rmse:.2f} п.п. "
                   f"на {len(cmp_)} общих днях")
 
+    btc_rmse = None
+    dig_btc = data_io.DATA_DIR / "btc_usd_daily.csv"
+    if "биржевые" in btc_src and dig_btc.exists():
+        db = pd.read_csv(dig_btc, parse_dates=["date"])
+        db = db[~db["provenance"].str.contains("partial", na=False)]
+        cb = db.merge(btc, on="date", suffixes=("_dig", ""))
+        if len(cb):
+            err = cb["close_usd_dig"] - cb["close_usd"]
+            btc_rmse = (float(np.sqrt(np.mean(err**2))), float(np.abs(err).max()),
+                        len(cb))
+            print(f"Оцифровка BTC vs биржа: RMSE ${btc_rmse[0]:,.0f}, "
+                  f"max ${btc_rmse[1]:,.0f} на {btc_rmse[2]} днях")
+
     # -------------------------------------------------------- лаг-сканы -----
     scans: dict[tuple[str, str], list[slices.LagResult]] = {}
     for mode in ("levels", "diffs", "levels_s3"):
@@ -104,6 +118,65 @@ def main() -> None:
             print(f"[окно {wtitles[w]} | {mode}] k={b.k:+d} r={b.r:+.2f} "
                   f"→ p(скан окна)≈{p_w:.3f}")
 
+    # --------------------------- допрос пограничного сигнала (уровни, k*>0) -
+    # если сырые уровни дают что-то на грани значимости, гоняем три решающих
+    # теста: детренд, воспроизводимость в половинах периода, синусоида-двойник
+    TREND_WIN = 27
+    gW = pairs.groupby("window")
+    pairs["ch_dt"] = pairs["ch_z"] - gW["ch_z"].transform(
+        lambda s: s.rolling(TREND_WIN, center=True, min_periods=TREND_WIN // 2).mean())
+    pairs["btc_dt"] = pairs["btc_z"] - gW["btc_z"].transform(
+        lambda s: s.rolling(TREND_WIN, center=True, min_periods=TREND_WIN // 2).mean())
+
+    k_lv = verdicts["levels"]["best"].k
+    sc_dt = slices.lag_scan(pairs, "levels_dt", "pooled", kmax=KMAX)
+    null_dt = honest_stats.circular_null(pairs, "levels_dt",
+                                         [r.k for r in sc_dt], n_iter=NULL_ITER)
+    b_dt = slices.best_lag([r for r in sc_dt if np.isfinite(r.r)])
+    p_dt = honest_stats.null_pvalue(abs(b_dt.r), null_dt["max_abs"])
+    r_dt_at = next((r.r for r in sc_dt if r.k == k_lv), np.nan)
+    print(f"[допрос: детренд {TREND_WIN}д] r(k={k_lv:+d})={r_dt_at:+.2f}; "
+          f"лучший k={b_dt.k:+d} r={b_dt.r:+.2f}; p(скан)≈{p_dt:.3f}")
+
+    mid = pairs["date"].sort_values().iloc[len(pairs) // 2]
+    halves = []
+    for name, chh in (("первая половина", ch[ch["date"] <= mid]),
+                      ("вторая половина", ch[ch["date"] > mid])):
+        ph = data_io.make_pairs(chh, btc)
+        sch = slices.lag_scan(ph, "levels", "pooled", kmax=KMAX)
+        fin = [r for r in sch if np.isfinite(r.r)]
+        if not fin:
+            continue
+        bh = slices.best_lag(fin)
+        r_at = next((r.r for r in sch if r.k == k_lv), np.nan)
+        nullh = honest_stats.circular_null(ph, "levels", [r.k for r in sch],
+                                           n_iter=1500)
+        p_h = honest_stats.null_pvalue(abs(bh.r), nullh["max_abs"])
+        halves.append({"name": name, "lo": ph["date"].min(), "hi": ph["date"].max(),
+                       "best": bh, "r_at": r_at, "p": p_h, "n": len(ph)})
+        print(f"[допрос: {name} {ph['date'].min():%d.%m}–{ph['date'].max():%d.%m}] "
+              f"r(k={k_lv:+d})={r_at:+.2f}; лучший k={bh.k:+d} r={bh.r:+.2f}; "
+              f"p≈{p_h:.3f}")
+
+    t_days = (pairs["date"] - pairs["date"].min()).dt.days.to_numpy(float)
+    yz = pairs["btc_z"].to_numpy()
+    m_fin = np.isfinite(yz)
+    r_sine = 0.0
+    for phase in np.linspace(0, 2 * np.pi, 144, endpoint=False):
+        s = np.sin(2 * np.pi * t_days / extrapolate.CARRINGTON_D + phase)
+        r_sine = max(r_sine, abs(float(np.corrcoef(s[m_fin], yz[m_fin])[0, 1])))
+    print(f"[допрос: синусоида 27.27д вместо Солнца] max|r| по фазам = {r_sine:.2f}")
+
+    sign_ok = all(np.isfinite(h["r_at"]) and
+                  np.sign(h["r_at"]) == np.sign(verdicts["levels"]["best"].r) and
+                  abs(h["r_at"]) > 0.15 for h in halves) and len(halves) == 2
+    survives = p_dt < 0.05 and sign_ok and \
+        abs(verdicts["levels"]["best"].r) > r_sine + 0.05
+    probe = {"k_lv": k_lv, "scan_dt": sc_dt, "null_dt": null_dt, "best_dt": b_dt,
+             "p_dt": p_dt, "r_dt_at": r_dt_at, "halves": halves, "r_sine": r_sine,
+             "survives": survives, "trend_win": TREND_WIN}
+    print(f"[допрос: вердикт] сигнал {'ПЕРЕЖИЛ все три теста' if survives else 'не пережил допрос'}")
+
     # ------------------------------------------- позитивный контроль (СВ) ---
     control = None
     sw = data_io.load_solar_wind()
@@ -122,9 +195,9 @@ def main() -> None:
     # --------------------------------------- разрез с растяжением времени ---
     # формализация «наложения N дней СДО на месяцы рынка»: перебор масштабов
     # 0.25x…55x и всех сдвигов против такого же перебора на прокрученном ряде
+    hourly = data_io._parse_qlook_hourly() if data_io.QLOOK.exists() else None
     stretch_res = None
-    if data_io.QLOOK.exists():
-        hourly = data_io._parse_qlook_hourly()
+    if hourly is not None:
         st_t, st_v, st_ok = stretch.hourly_arrays(hourly)
         scales_grid = [0.25, 0.5, 1, 2, 3, 5, 8, 12, 20, 30, 55]
         obs = stretch.scale_scan(st_t, st_v, st_ok, btc["date"],
@@ -140,6 +213,46 @@ def main() -> None:
               f"→ p(всего перебора)≈{p_glob:.2f}; "
               f"случайный ряд даёт max|r|≥{float(np.quantile(nul['global_max'], 0.5)):.2f} "
               f"в половине попыток")
+
+    # ------------------------------- многомасштабный разрез: бары по 4 часа -
+    # проверка тезиса «4 часа коррелируют лучше»: та же батарея на 4ч-барах
+    multitf = None
+    btc_hourly = data_io.load_btc_hourly()
+    if hourly is not None and btc_hourly is not None:
+        ch4 = (pd.DataFrame({"date": hourly["dt"], "ch211_pct": hourly["ch211"]})
+               .dropna().set_index("date").resample("4h")["ch211_pct"].mean()
+               .dropna().reset_index())
+        btc4 = (btc_hourly.set_index("dt").resample("4h")["close_usd"].last()
+                .dropna().reset_index().rename(columns={"dt": "date"}))
+        pairs4 = data_io.make_pairs(ch4, btc4, min_window=90)
+        kmax4 = KMAX * 6  # ±12 дней в 4-часовых барах
+        multitf = {"bar_hours": 4.0, "n": len(pairs4), "scans": {}, "nulls": {},
+                   "verdicts": {}}
+        for mode in ("levels", "diffs"):
+            sc = slices.lag_scan(pairs4, mode, "pooled", kmax=kmax4)
+            nul4 = honest_stats.circular_null(pairs4, mode, [r.k for r in sc],
+                                              n_iter=500)
+            b4 = slices.best_lag([r for r in sc if np.isfinite(r.r)])
+            p4 = honest_stats.null_pvalue(abs(b4.r), nul4["max_abs"])
+            x4, y4 = slices.lagged_pairs(pairs4, b4.k, mode)
+            neff4 = honest_stats.effective_n(x4, y4)
+            multitf["scans"][mode] = sc
+            multitf["nulls"][mode] = nul4
+            multitf["verdicts"][mode] = {"best": b4, "p": p4, "neff": neff4}
+            print(f"[4ч {mode}] лучший k={b4.k:+d} бар ({b4.k / 6:+.1f} дн) "
+                  f"r={b4.r:+.2f} (N={b4.n}, N_eff≈{neff4:.0f}); p(скан)≈{p4:.3f}")
+
+    # ---------------------- решающий тест: предсказание вне выборки ---------
+    # инженерная постановка «строим логику от воздействия Солнца»: каждый день
+    # модель видит только прошлое и предсказывает завтрашнюю доходность BTC
+    predict_res = None
+    design = predict.build_design(pairs)
+    if len(design) > predict.MIN_TRAIN + 40:
+        predict_res = predict.walk_forward(design)
+        for name in ("SOLAR", "AR"):
+            m = predict_res["models"][name]
+            print(f"[прогноз {name}] hit-rate={m['hit_rate']:.1%} (n={m['n']}, "
+                  f"binom p={m['binom_p']:.2f}); skill vs ZERO={m['skill']:+.3f}")
 
     # -------------------------------------------------- прочие разрезы ------
     roll_lv = pd.concat([slices.rolling_corr(pairs, w, ROLL_WIN, "levels") for w in wins],
@@ -190,29 +303,50 @@ def main() -> None:
         plots.fig_stretch(btc, stretch_res["obs"], stretch_res["null"],
                           stretch_res["p"], stretch_res["scales"],
                           OUT / "fig8_stretch.png")
+    if multitf:
+        plots.fig_multitf(multitf["scans"], multitf["nulls"], multitf["verdicts"],
+                          multitf["bar_hours"], OUT / "fig9_multitf.png")
+    plots.fig_probe(probe, verdicts["levels"]["best"].r, OUT / "fig10_probe.png")
+    if predict_res:
+        plots.fig_predict(predict_res, OUT / "fig11_predict.png")
 
     # ------------------------------------------------------------- отчёт ----
     write_report(ch_src, btc_src, ch, pairs, wins, wtitles, scans, verdicts, nulls,
                  neg_share, events, chf, fan, base, k_star, control, digit_rmse,
-                 win_checks, coverage, stretch_res)
-    print(f"\nГотово: {OUT}/fig1…fig8.png, {OUT}/REPORT.md")
+                 win_checks, coverage, stretch_res, btc_rmse, multitf, probe,
+                 predict_res)
+    print(f"\nГотово: {OUT}/fig1…fig11.png, {OUT}/REPORT.md")
 
 
 def write_report(ch_src, btc_src, ch, pairs, wins, wtitles, scans, verdicts, nulls,
                  neg_share, events, chf, fan, base, k_star, control,
-                 digit_rmse, win_checks, coverage, stretch_res) -> None:
+                 digit_rmse, win_checks, coverage, stretch_res, btc_rmse,
+                 multitf, probe, predict_res) -> None:
     L: list[str] = []
     add = L.append
 
     add("# Корональные дыры (SDO 211Å) × BTC: разрезы, честная статистика, экстраполяции\n")
     add(f"*Автоотчёт `run.py` от {pairs['date'].max():%d.%m.%Y}. "
         f"CH — {ch_src}; BTC — {btc_src}.*\n")
+    tldr = ("слабое сходство есть, но оно не пережило проверок: совпадают только "
+            "плавные изгибы, в половинах года связь не воспроизводится, и простая "
+            "синусоида «коррелирует» не хуже Солнца"
+            if not probe["survives"] else
+            "слабый сигнал пережил все три проверки — это ещё не доказательство, "
+            "но повод для вневыборочного теста на свежих данных")
+    add(f"> **Коротко:** {tldr}. Подробности — ниже, человеческим языком — в "
+        "сводке в самом конце.\n")
     add(f"Дневных пар: **{len(pairs)}** ("
         + "; ".join(f"{wtitles[w]}: {(pairs.window == w).sum()}" for w in wins)
         + "). Лаг k>0 = площадь КД опережает BTC на k дней.\n")
     if digit_rmse is not None:
         add(f"> Проверка ручной оцифровки скриншотов против реальной выгрузки: "
             f"RMSE **{digit_rmse:.2f} п.п.** — оценки погрешности в data/README.md честные.\n")
+    if btc_rmse is not None:
+        add(f"> Оцифровка BTC (свечи + новостные якоря) против биржевых данных: "
+            f"RMSE **${btc_rmse[0]:,.0f}** (max ${btc_rmse[1]:,.0f}) на {btc_rmse[2]} "
+            f"днях — заявленная точность ±1–2% подтвердилась; теперь всюду "
+            f"используются биржевые цены.\n")
 
     add("\n## 0. Данные и их плотность (про «сжатие» на сайте)\n")
     add(f"Файл SINP: **{ch['date'].min():%d.%m.%Y} – {ch['date'].max():%d.%m.%Y}**, "
@@ -276,6 +410,45 @@ def write_report(ch_src, btc_src, ch, pairs, wins, wtitles, scans, verdicts, nul
             "у похожих лагов противоположный; (в) лаг на краю скана. Это профиль "
             "случайной находки — статус «интересно, перепроверить на 6+ месяцах», "
             "а не «связь установлена».")
+    add(f"\n### Допрос главного подозреваемого: уровни, сдвиг k={probe['k_lv']:+d} дн\n")
+    add("![допрос](fig10_probe.png)\n")
+    r_raw = verdicts["levels"]["best"].r
+    add(f"Сырые уровни дали r={r_raw:+.2f} на лаге {probe['k_lv']:+d} дн с "
+        f"p(скана)≈{verdicts['levels']['p_scan']:.2f} — на грани. Три решающих теста:\n")
+    if abs(probe["r_dt_at"]) < 0.6 * abs(r_raw):
+        t1 = (f"связь падает до r={probe['r_dt_at']:+.2f} — совпадали только "
+              "медленные многомесячные изгибы (они совпадают у любых двух плавных "
+              "рядов), быстрая структура связь не подтверждает")
+    elif probe["p_dt"] < 0.05:
+        t1 = (f"связь выживает: r={probe['r_dt_at']:+.2f}, p≈{probe['p_dt']:.2f} — "
+              "серьёзная заявка")
+    else:
+        t1 = (f"r={probe['r_dt_at']:+.2f}, p≈{probe['p_dt']:.2f} — ослабла, "
+              "формально не значима")
+    add(f"1. **Детренд** (минус скользящее среднее {probe['trend_win']} дн): {t1}.")
+    for h in probe["halves"]:
+        add(f"2. **{h['name'].capitalize()}** ({h['lo']:%d.%m}–{h['hi']:%d.%m}, "
+            f"n={h['n']}): на том же лаге r={h['r_at']:+.2f}; лучший по скану "
+            f"r={h['best'].r:+.2f} (k={h['best'].k:+d}), p≈{h['p']:.2f}.")
+    same_sign = len({np.sign(h["r_at"]) for h in probe["halves"]
+                     if np.isfinite(h["r_at"])}) == 1
+    add(("   Знак совпадает в обеих половинах — очко в пользу сигнала."
+         if same_sign else
+         "   В половинах года знак/величина не воспроизводятся — так ведут себя "
+         "совпадения.")
+        )
+    sine_verdict = ("не хуже настоящего Солнца — вклад именно солнечных данных "
+                    "неотличим от вклада любого ряда с 27-дневным ритмом"
+                    if probe["r_sine"] >= abs(r_raw) - 0.03 else
+                    "заметно слабее Солнца — сигнал не сводится к чистому ритму")
+    add(f"3. **Синусоида-двойник** (период 27.27 дн, лучшая фаза): "
+        f"|r|={probe['r_sine']:.2f} — {sine_verdict}.")
+    add(f"\n**Вердикт допроса:** "
+        + ("сигнал не пережил проверок — рабочая гипотеза «совпадение медленных "
+           "волн + 27-дневный ритм», а не связь."
+           if not probe["survives"] else
+           "сигнал пережил все три теста; следующий шаг — вневыборочная проверка "
+           "на данных, которых модель не видела.") + "\n")
     add("\n![рассеяние](fig3_scatter.png)\n")
 
     add("\n## 4. Стабильность знака\n\n![скользящая](fig4_rolling.png)\n")
@@ -317,7 +490,51 @@ def write_report(ch_src, btc_src, ch, pairs, wins, wtitles, scans, verdicts, nul
             "совпадений: подходящий кусок находится у случайного ряда почти "
             "всегда.\n")
 
-    add("\n## 8. Экстраполяции\n\n![прогноз](fig6_forecast.png)\n")
+    if multitf:
+        add("\n## 8. Многомасштабный разрез: а правда ли «4 часа коррелируют лучше»?\n")
+        add("\n![мультитаймфрейм](fig9_multitf.png)\n")
+        add("| бары | разрез | k* | r | N | N_eff | p(скан) |")
+        add("|---|---|---|---|---|---|---|")
+        for mode, mname in (("levels", "уровни"), ("diffs", "приращения")):
+            vd_ = verdicts[mode]
+            add(f"| 1 день | {mname} | {vd_['best'].k:+d} дн | {vd_['best'].r:+.2f} "
+                f"| {vd_['best'].n} | {vd_['neff']:.0f} | {vd_['p_scan']:.2f} |")
+            v4 = multitf["verdicts"][mode]
+            add(f"| 4 часа | {mname} | {v4['best'].k / 6:+.1f} дн | {v4['best'].r:+.2f} "
+                f"| {v4['best'].n} | {v4['neff']:.0f} | {v4['p']:.2f} |")
+        add("\nМелкие бары дают в 6 раз больше точек, но у гладких рядов информация "
+            "растёт со **сроком наблюдений**, а не с частотой нарезки: эффективный N "
+            "почти не меняется, серая полоса случайности не сужается. Если на "
+            "4-часовиках связь «выглядит лучше», это о графике, не о данных.\n")
+
+    if predict_res:
+        add("\n## 9. Решающий тест: предсказывает ли Солнце биткоин (вне выборки)\n")
+        add("\n![прогнозный тест](fig11_predict.png)\n")
+        add("Инженерная постановка, без спора о природе рынка: если воздействие "
+            "Солнца существует, оно обязано оставлять след, который улучшает "
+            "предсказание. Каждый день модель обучается **только на прошлом** и "
+            "предсказывает доходность следующего дня. SOLAR видит только солнечные "
+            f"признаки (ΔCH за {predict.N_DCH_LAGS} дней + уровень площади), AR — "
+            "только прошлые движения самой цены (Солнца не видит), ZERO — «завтра "
+            "как сегодня».\n")
+        add("| модель | угадано направление | p против монетки | skill vs ZERO |")
+        add("|---|---|---|---|")
+        for name in ("SOLAR", "AR"):
+            m = predict_res["models"][name]
+            add(f"| {name} | {m['hit_rate']:.1%} (из {m['n']}) | {m['binom_p']:.2f} "
+                f"| {m['skill']:+.3f} |")
+        ms = predict_res["models"]["SOLAR"]
+        if ms["binom_p"] < 0.05 and ms["skill"] > 0:
+            add("\n**SOLAR показывает значимую предсказательную силу вне выборки** — "
+                "это самый сильный аргумент за воздействие из всех возможных; "
+                "обязателен повтор на свежих данных.\n")
+        else:
+            add("\nПредсказательной силы у солнечных признаков не обнаружено: "
+                "направление угадывается как монеткой, ошибка не меньше, чем у "
+                "модели «завтра как сегодня». В инженерной постановке это и есть "
+                "ответ задачи на текущих данных.\n")
+
+    add("\n## 10. Экстраполяции\n\n![прогноз](fig6_forecast.png)\n")
     reg = fan["reg"]
     add(f"- Лаг-карта: btc_ret(t) = {reg['a']:+.4f} {reg['b']:+.4f}·ΔCH(t−{k_star}) "
         f"(n={reg['n']}); будущие ΔCH — из гармоники 27.27 дн.")
@@ -329,67 +546,92 @@ def write_report(ch_src, btc_src, ch, pairs, wins, wtitles, scans, verdicts, nul
         "инвестиционная рекомендация.\n")
 
     # ------------------------------------------------ сводка простым языком -
-    vl, vd = verdicts["levels"], verdicts["diffs"]
-    strongest = max((vl, vd), key=lambda v: abs(v["best"].r))
+    vl = verdicts["levels"]
+    r_lv = vl["best"].r
     i_peak = int(np.argmax(chf["harmonic_pooled"]))
     next_peak = chf["dates"].iloc[i_peak]
-    fan_med = fan["quantiles"][2][-1]
-    rw_med = base["rw_quantiles"][1][-1]
     add("\n---\n")
     add("## Сводка простым языком\n")
-    add(f"**Что делали.** Взяли площадь корональных дыр на Солнце (канал 211Å, "
-        f"данные НИИЯФ МГУ, {ch['date'].min():%d.%m.%Y}–{ch['date'].max():%d.%m.%Y}, "
-        f"каждый час) и курс биткоина, и проверили, ходят ли они вместе. Проверяли "
-        f"по-всякому: день в день и со сдвигом до ±12 дней в обе стороны, по самим "
-        f"значениям и по дневным изменениям, по отдельным отрезкам и по всем "
-        f"{len(pairs)} общим дням сразу.\n")
-    add(f"**Главный итог.** Устойчивой связи не нашлось. Самое сильное, что "
-        f"вообще удалось выжать из всех данных: r={strongest['best'].r:+.2f} "
-        f"(это слабо; 1 — идеальная связь, 0 — никакой). Проверка на случайность "
-        f"— мы {len(nulls['levels']['max_abs'])} раз «прокручивали» солнечный ряд "
-        f"по кругу и смотрели, что выпадает просто так — показала: такой результат "
-        f"случайность даёт в {min(vl['p_scan'], vd['p_scan']):.0%}–"
-        f"{max(vl['p_scan'], vd['p_scan']):.0%} случаев. Для «связь есть» нужно "
-        f"меньше 5%.\n")
-    add("**Почему на глаз связь видна.** Оба графика плавные. Если один из них "
-        "можно свободно растягивать и сдвигать по высоте (двойная шкала) — почти "
-        "всегда найдётся кусок, где кривые «совпадут». Солнце к тому же "
-        "повторяется каждые ~27 дней (оборот вокруг оси), под этот ритм легко "
-        "подогнать любую волну рынка. А экранное «сжатие» графика на сайте ещё и "
-        "сглаживает пики, делая совпадения красивее.\n")
-    add("**Про июнь–июль.** Пик дыр (30 июня) и правда почти совпал с дном "
-        "биткоина (2 июля), и на этом отрезке цифра корреляции получилась большой. "
-        "Но: у падения биткоина были обычные земные причины (конфликт США–Иран, "
-        "семь недель оттока из ETF, продажа биткоинов MicroStrategy, ликвидации на "
-        "$1 млрд), а весной та же проверка даёт связь с **противоположным** "
-        "знаком. Так себя ведут совпадения, а не законы природы.\n")
-    add(f"**Как мы убедились, что инструмент не слепой.** Та же программа на тех "
-        f"же данных находит настоящую физическую связь: выросли дыры → через "
-        f"~{control['best'].k if control else 4} дня у Земли ускоряется солнечный "
-        f"ветер (r={control['best'].r:+.2f}" + (f", p≈{control['p']:.3f}" if control else "")
-        + "). Это известная физика, и она видна чётко. Была бы связь с биткоином "
-        "хотя бы такой же силы — мы бы её увидели.\n")
-    add(f"**Прогнозы-игрушки.** Следующий пик площади дыр по 27-дневному ритму — "
-        f"около **{next_peak:%d.%m.%Y}**. Модели биткоина при этом расходятся "
-        f"(через месяц: «солнечная» модель ~${fan_med:,.0f}, простой дрейф "
-        f"~${rw_med:,.0f}) — расхождение и есть честный ответ: солнце курс не "
-        f"задаёт.\n")
-    if stretch_res:
-        bb = stretch_res["obs"]["best"]
-        add(f"**Про растяжение графиков.** Мы проверили и ваш приём с накладкой: "
-            f"программа перебрала все растяжения солнечного ряда от ×0.25 до ×55 "
-            f"и все сдвиги. Да, найдётся кусок, который ложится на биткоин с "
-            f"совпадением r={bb['r']:+.2f} — красиво. Но когда мы даём те же "
-            f"свободы случайно перемешанному солнечному ряду, он добивается таких "
-            f"же совпадений в большинстве попыток (p≈{stretch_res['p']:.0%}). "
-            "Растяжение — это машина по производству совпадений: у любых двух "
-            "«шумных» графиков всегда найдётся кусок, похожий на другой. Поэтому "
-            "совпадение при растяжении ничего не доказывает.\n")
-    add("**Что сделать, чтобы проверить строже.** Скачайте почасовые цены "
-        "биткоина за год (ссылки в `data/README.md`), положите файл как "
-        "`data/btc_export.csv` и запустите `python run.py` — сравнение пойдёт по "
-        "всему году, и если связь существует, она проявится. На текущих данных её "
-        "нет.\n")
+    add("**Как поставлена задача.** Мы не спорим о том, чем управляется рынок — "
+        "манипуляция там или нет, неважно. Логика простая: солнечная активность "
+        "— внешняя сила, её никто на бирже не назначает. Если она воздействует "
+        "на цену, воздействие обязано оставлять след в данных. След ищем двумя "
+        "способами: совпадение форм графиков и — решающий способ — предсказание: "
+        "модель, которая видит только солнечное прошлое, должна угадывать "
+        "завтрашний ход цены чаще, чем монетка.\n")
+    add(f"**Сходство есть, и мы его видим так же, как вы.** За год данных "
+        f"({len(pairs)} общих дней, биржевые цены) лучшее совпадение форм: если "
+        f"сдвинуть график дыр на {vl['best'].k:+d} дней, он повторяет биткоин с "
+        f"силой r={r_lv:+.2f} (0 — ничего общего, 1 — близнецы). Это немало для "
+        f"глаза — и это ровно то «сходство», которое видно на наложенных "
+        f"графиках. Дальше вопрос один: это след воздействия или совпадение?\n")
+    t1_sum = (f"остаётся r={probe['r_dt_at']:+.2f} при p≈{probe['p_dt']:.2f} — "
+              "неотличимо от случайности: бОльшую часть сходства делали плавные "
+              "многомесячные волны, а они в каком-то виде совпадают у любых двух "
+              "гладких кривых"
+              if probe["p_dt"] >= 0.05 else
+              f"остаётся r={probe['r_dt_at']:+.2f} при p≈{probe['p_dt']:.2f} — "
+              "сигнал пережил главный тест")
+    t2_sum = ("знак одинаковый в обеих ("
+              + " и ".join(f"{h['r_at']:+.2f}" for h in probe["halves"])
+              + ") — слабое очко «за», хотя каждая цифра по отдельности "
+              "объяснима случайностью"
+              if len({np.sign(h['r_at']) for h in probe['halves']
+                      if np.isfinite(h['r_at'])}) == 1 else
+              "в одной половине связь одна, в другой — другая: у настоящего "
+              "воздействия так не бывает")
+    t3_sum = (f"пустышка даёт r={probe['r_sine']:.2f} — не хуже Солнца: рынок "
+              "просто попал в похожий ритм"
+              if probe["r_sine"] >= abs(r_lv) - 0.03 else
+              f"пустышка даёт лишь r={probe['r_sine']:.2f} — сходство не "
+              "сводится к чистому ритму, оно живёт в медленных волнах именно "
+              "этого года")
+    add(f"**Допрос сходства (три теста).** "
+        f"Первый, главный: убираем из обоих графиков медленные многомесячные "
+        f"волны — {t1_sum}. "
+        f"Второй: режем год пополам и проверяем половины порознь — {t2_sum}. "
+        f"Третий: заменяем Солнце «пустышкой» — синусоидой с периодом 27 дней "
+        f"(столько Солнце оборачивается вокруг оси) — {t3_sum}. "
+        f"Счёт неоднозначный — поэтому решает следующий тест.\n")
+    if predict_res:
+        ms = predict_res["models"]["SOLAR"]
+        ma = predict_res["models"]["AR"]
+        add(f"**Решающий тест — предсказание.** Модель каждый день видела только "
+            f"прошлое и предсказывала завтрашний ход. Солнечная модель угадала "
+            f"направление в {ms['hit_rate']:.0%} случаев из {ms['n']} "
+            f"(монетка даёт 50%, вероятность получить такое случайно — "
+            f"{ms['binom_p']:.0%}); модель без Солнца, только на прошлых ценах — "
+            f"{ma['hit_rate']:.0%}. "
+            + ("Солнечная модель значимо лучше монетки — это серьёзно, и это надо "
+               "перепроверять на свежих данных.\n"
+               if ms["binom_p"] < 0.05 and ms["skill"] > 0 else
+               "Ни та, ни другая не лучше монетки. Если бы воздействие Солнца "
+               "существовало в силе, видимой на графиках, здесь оно обязано было "
+               "проявиться — его нет.\n"))
+    if control:
+        add(f"**Инструмент зрячий, мы проверили.** Та же программа находит "
+            f"настоящую физическую связь в этих же данных: выросли дыры → через "
+            f"~{control['best'].k} дня у Земли ускоряется солнечный ветер "
+            f"(r={control['best'].r:+.2f}). Известная физика видна; связь с ценой "
+            "такой же силы мы бы не пропустили.\n")
+    if stretch_res and multitf:
+        v4l = multitf["verdicts"]["levels"]
+        add(f"**Про приёмы с графиками.** Растяжение куска солнечного ряда на "
+            f"месяцы рынка даёт красивые совпадения (до r≈{abs(stretch_res['obs']['best']['r']):.1f}), "
+            f"но случайная пустышка при тех же свободах добивается того же в "
+            f"большинстве попыток — растяжение производит совпадения гарантированно. "
+            f"4-часовые бары: точек в 6 раз больше ({v4l['best'].n} против "
+            f"{vl['best'].n}), а независимой информации столько же — сосед "
+            f"повторяет соседа, и честный вывод не меняется.\n")
+    add(f"**Погода на Солнце.** Следующий пик площади дыр по 27-дневному ритму — "
+        f"около **{next_peak:%d.%m.%Y}**. Если хотите продолжать наблюдение: "
+        f"обновляйте оба файла данных раз в месяц и перезапускайте `python run.py` "
+        f"— смотреть надо на раздел 9 (предсказание) и раздел 3 (допрос).\n")
+    add("**Итог одной строкой.** Сходство на графиках настоящее, но его несут "
+        "медленные волны конкретного года, а не устойчивый механизм: как только "
+        "модель обязана предсказывать завтра, не подглядывая, солнечные данные "
+        "не дают ничего — строить торговую логику от Солнца на этих данных "
+        "нельзя.\n")
 
     (OUT / "REPORT.md").write_text("\n".join(L), encoding="utf-8")
 

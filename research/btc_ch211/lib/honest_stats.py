@@ -50,13 +50,10 @@ def r_pvalue(r: float, n_eff: float) -> float:
 # --------------------------------------------------- циркулярный суррогат ---
 
 def _window_arrays(pairs: pd.DataFrame, mode: str) -> list[tuple[np.ndarray, np.ndarray]]:
-    out = []
-    for _, g in pairs.groupby("window", sort=False):
-        if mode == "levels":
-            out.append((g["ch_z"].to_numpy(), g["btc_z"].to_numpy()))
-        else:
-            out.append((g["dch"].to_numpy(), g["btc_ret"].to_numpy()))
-    return out
+    from .slices import MODE_COLS
+    cx, cy = MODE_COLS.get(mode, MODE_COLS["diffs"])
+    return [(g[cx].to_numpy(), g[cy].to_numpy())
+            for _, g in pairs.groupby("window", sort=False)]
 
 
 def _pooled_lag_r(wins: list[tuple[np.ndarray, np.ndarray]], ks: np.ndarray) -> np.ndarray:
