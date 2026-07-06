@@ -59,17 +59,35 @@ research/btc_ch211/data/sinp_export.csv
 до дневных значений. Чем длиннее диапазон — тем лучше (лаг-скан и суррогатные
 тесты становятся осмысленными от ~6 месяцев, т.е. ~7 кэррингтоновских оборотов).
 
-### 2. Курс BTC
-Любой дневной CSV: экспорт Binance/Bybit (`open_time,open,high,low,close,...`),
-investing.com («"Jul 05, 2026","62,883.8",…»), CoinMarketCap, Yahoo. Положите как:
+### 2. Курс BTC — где скачать почасовые данные за год (бесплатно)
+
+**Вариант А — CryptoDataDownload (проще всего, один файл).**
+https://www.cryptodatadownload.com/data/bitstamp/ → строка «Bitstamp BTC/USD
+1h» → один CSV со всей почасовой историей с 2017 года. Есть те же файлы по
+Binance/Gemini/Coinbase.
+
+**Вариант Б — официальный портал Binance (без регистрации).**
+https://data.binance.vision/?prefix=data/spot/monthly/klines/BTCUSDT/1h/ —
+помесячные ZIP с CSV (12 файлов за год; можно склеить в один, шапки нет).
+Из РФ может понадобиться VPN.
+
+**Вариант В — одна строка Python (yfinance).**
+```python
+import yfinance as yf
+yf.download("BTC-USD", interval="1h", period="1y").to_csv("btc_export.csv")
+```
+
+Полученный файл положите как:
 
 ```
 research/btc_ch211/data/btc_export.csv
 ```
 
-Загрузчик распознаёт колонки дат (`date/time/open_time/Дата`) и цены закрытия
-(`close/price/Цена`), включая кавычки/разделители тысяч/запятую как десятичный
-знак.
+Загрузчик понимает все три формата без конвертации (а также investing.com,
+CoinMarketCap и любой CSV с колонками даты и `close/price`): баннерные строки,
+файлы без заголовка (Binance klines), unix-время в секундах/миллисекундах,
+кавычки и разделители тысяч, обратный хронологический порядок. Почасовые
+данные автоматически агрегируются к дневным закрытиям (последний час дня).
 
 ### 3. Перезапуск
 ```

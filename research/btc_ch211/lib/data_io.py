@@ -139,28 +139,50 @@ def load_btc() -> tuple[pd.DataFrame, str]:
     return df.reset_index(drop=True), "btc_usd_daily.csv (оцифровка свечей + якоря из поиска)"
 
 
+_BINANCE_KLINE_COLS = ["open_time", "open", "high", "low", "close", "volume",
+                       "close_time", "quote_volume", "trades",
+                       "taker_base", "taker_quote", "ignore"]
+
+
 def _parse_btc_export(path: Path) -> pd.DataFrame:
-    df = pd.read_csv(path)
+    """Понимает без конвертации:
+    - Binance Data Vision (data.binance.vision, klines CSV без заголовка);
+    - CryptoDataDownload (строка-баннер с URL, затем заголовок unix,date,...);
+    - yfinance/Yahoo (Datetime,Open,...,Close,...);
+    - investing.com и любой CSV с колонками даты и close/price.
+    Почасовые данные автоматически агрегируются в дневные закрытия.
+    """
+    head = path.read_text(encoding="utf-8-sig", errors="replace").splitlines()[:3]
+    skip = 1 if head and ("http" in head[0].lower() or "," not in head[0]) else 0
+    first_data = head[skip] if len(head) > skip else ""
+    headerless_kline = bool(re.match(r"^\d{10,13}[.,]", first_data.replace(" ", "")))
+
+    if headerless_kline:
+        df = pd.read_csv(path, header=None, skiprows=skip)
+        df.columns = _BINANCE_KLINE_COLS[: len(df.columns)]
+    else:
+        df = pd.read_csv(path, skiprows=skip)
     date_col = next((c for c in df.columns if _DATE_RX.search(str(c))), df.columns[0])
     close_col = next((c for c in df.columns if _CLOSE_RX.search(str(c))), None)
     if close_col is None:
         raise ValueError(f"В {path.name} нет колонки закрытия; колонки: {list(df.columns)}")
     close = df[close_col]
-    if close.dtype == object:  # investing.com: "62,883.8"
+    if not pd.api.types.is_numeric_dtype(close):  # investing.com: "62,883.8"
         close = pd.to_numeric(
             close.astype(str).str.replace('"', "").str.replace(",", "", regex=False),
             errors="coerce",
         )
     dt = df[date_col]
-    if np.issubdtype(dt.dtype, np.number):  # unix ms/s (Binance open_time)
+    if pd.api.types.is_numeric_dtype(dt):  # unix ms/s (Binance open_time)
         dt = pd.to_datetime(dt, unit="ms" if float(dt.iloc[0]) > 1e11 else "s")
     else:
-        dt = pd.to_datetime(dt, errors="coerce")
+        dt = pd.to_datetime(dt, errors="coerce", utc=True).dt.tz_localize(None)
     out = (
-        pd.DataFrame({"date": dt.dt.normalize(), "close_usd": close})
+        pd.DataFrame({"dt": dt, "close_usd": close})
         .dropna()
+        .sort_values("dt")  # файлы бывают от новых к старым — закрытие дня = последний час
+        .assign(date=lambda d: d["dt"].dt.normalize())
         .groupby("date", as_index=False)["close_usd"].last()
-        .sort_values("date")
         .reset_index(drop=True)
     )
     out["sigma_usd"] = 0.0
