@@ -45,12 +45,45 @@ def _f(v) -> float:
         return 0.0
 
 
+def _wb_reports_save_db(rows: list) -> None:
+    try:
+        import db
+        import json
+        db.execute("CREATE TABLE IF NOT EXISTS kv_cache (k TEXT PRIMARY KEY, v TEXT)")
+        db.execute("DELETE FROM kv_cache WHERE k = 'wb_reports'")
+        db.execute("INSERT INTO kv_cache (k, v) VALUES ('wb_reports', ?)",
+                   (json.dumps(rows, ensure_ascii=False),))
+    except Exception as exc:
+        _log.warning("wb_reports save to db failed: %s", exc)
+
+
+def _wb_reports_load_db() -> list:
+    try:
+        import db
+        import json
+        rows = db.fetchall("SELECT v FROM kv_cache WHERE k = 'wb_reports'")
+        return json.loads(rows[0][0]) if rows else []
+    except Exception:
+        return []
+
+
 async def _get_wb_reports_cached(months: int = 6, refresh: bool = False) -> list[dict]:
     """Внутренняя функция — возвращает нормализованные отчёты WB (с кешем)."""
     global _wb_cache, _wb_cache_ts
 
     if not refresh and _wb_cache and _time.monotonic() - _wb_cache_ts < _WB_TTL:
         return _wb_cache.get("reports", [])
+
+    # После рестарта/сна память пуста, а WB Finance API (1 req/мин) мог только
+    # что отработать в прогреве → запрос падал 502. Отдаём последний снапшот
+    # из БД сразу, свежие данные подтянутся фоном.
+    if not refresh and not _wb_cache:
+        db_rows = await asyncio.to_thread(_wb_reports_load_db)
+        if db_rows:
+            _wb_cache = {"reports": db_rows}
+            _wb_cache_ts = 0.0   # заведомо протухший — фон обновит
+            _spawn(_get_wb_reports_cached(months, True), light=True)
+            return db_rows
 
     async with _wb_lock:
         if not refresh and _wb_cache and _time.monotonic() - _wb_cache_ts < _WB_TTL:
@@ -74,6 +107,12 @@ async def _get_wb_reports_cached(months: int = 6, refresh: bool = False) -> list
                 _log.warning("WB Finance: отдаём устаревший кеш (%d отчётов)",
                              len(_wb_cache["reports"]))
                 return _wb_cache["reports"]
+            db_rows = await asyncio.to_thread(_wb_reports_load_db)
+            if db_rows:
+                _log.warning("WB Finance: отдаём снапшот из БД (%d отчётов)", len(db_rows))
+                _wb_cache = {"reports": db_rows}
+                _wb_cache_ts = 0.0
+                return db_rows
             raise HTTPException(status_code=502, detail=f"WB Finance API: {exc}")
 
         rows = []
@@ -103,6 +142,8 @@ async def _get_wb_reports_cached(months: int = 6, refresh: bool = False) -> list
         result = {"reports": rows, "fetched_at": datetime.utcnow().strftime("%d.%m.%Y %H:%M UTC")}
         _wb_cache = result
         _wb_cache_ts = _time.monotonic()
+        if rows:
+            await asyncio.to_thread(_wb_reports_save_db, rows)
         return rows
 
 
