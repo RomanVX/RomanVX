@@ -98,15 +98,52 @@ async def _warm_finance():
         await asyncio.sleep(_PREFETCH_INTERVAL)
 
 
+async def _keep_awake():
+    """Не даём Render free усыпить сервис (спит после 15 мин без входящих).
+
+    Пингуем собственный внешний URL (запрос идёт через прокси Render и
+    считается входящим) и второй кабинет. RENDER_EXTERNAL_URL Render
+    подставляет сам. Окно активности — KEEP_AWAKE_HOURS по МСК
+    (по умолчанию 7-24), ночью сервис спит и экономит бесплатные часы.
+    Выключить: KEEP_AWAKE=0."""
+    if os.getenv("KEEP_AWAKE", "1") != "1":
+        return
+    self_url = os.getenv("KEEP_AWAKE_URL") or os.getenv("RENDER_EXTERNAL_URL") or ""
+    from config import OTHER_CABINET_URL
+    urls = [u.rstrip("/") + "/api/health"
+            for u in (self_url, OTHER_CABINET_URL or "") if u]
+    if not urls:
+        return
+    try:
+        lo, hi = (int(x) for x in os.getenv("KEEP_AWAKE_HOURS", "7-24").split("-"))
+    except ValueError:
+        lo, hi = 7, 24
+    import httpx
+    klog = logging.getLogger("keep_awake")
+    klog.info("keep-awake: %s, окно %d-%d МСК", urls, lo, hi)
+    while True:
+        msk_hour = (datetime.utcnow() + timedelta(hours=3)).hour
+        if lo <= msk_hour < hi:
+            for u in urls:
+                try:
+                    async with httpx.AsyncClient(timeout=25) as c:
+                        await c.get(u)
+                except Exception as exc:
+                    klog.warning("keep-awake ping %s failed: %s", u, exc)
+        await asyncio.sleep(600)   # пинг каждые 10 мин (< 15 мин до сна)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     cost_store.init()
     _auth.ensure_bootstrap()
     task = asyncio.create_task(_prefetch_weekly())
     task2 = asyncio.create_task(_warm_finance())
+    task3 = asyncio.create_task(_keep_awake())
     yield
     task.cancel()
     task2.cancel()
+    task3.cancel()
 
 
 app = FastAPI(title="WB Analytics Dashboard", version="1.0.0", lifespan=lifespan)
