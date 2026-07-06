@@ -2160,6 +2160,8 @@ def _oz_pnl_partial(month_groups: dict, cogs_by_month: dict, costs: dict) -> Non
         "fetched_at": datetime.utcnow().strftime("%d.%m.%Y %H:%M UTC"),
     }
     _snapshot_pnl("OZON", _oz_pnl_cache)
+    import snapshot as _snapmod
+    _snapmod.save("oz_pnl_payload", _oz_pnl_cache)
 
 
 @router.get("/ozon/pnl")
@@ -2168,10 +2170,16 @@ async def get_ozon_pnl(
     refresh: bool = Query(default=False),
 ):
     """P&L Ozon по месяцам. Сборка в фоне (несколько запросов к API)."""
-    global _oz_pnl_ts
+    global _oz_pnl_ts, _oz_pnl_cache
     fresh = _oz_pnl_cache and _time.monotonic() - _oz_pnl_ts < _OZ_PNL_TTL
     if not refresh and fresh:
         return _oz_pnl_cache
+    # холодный старт: последний собранный P&L из БД — сразу, пересборка фоном
+    if not _oz_pnl_cache:
+        import snapshot as _snapmod
+        snap = await asyncio.to_thread(_snapmod.load, "oz_pnl_payload", None)
+        if snap:
+            _oz_pnl_cache = snap
     if refresh:
         _oz_pnl_ts = 0.0
     _spawn(_build_ozon_pnl(months))
@@ -2361,6 +2369,16 @@ async def get_payouts(refresh: bool = Query(default=False)):
     if not refresh and _payouts_cache and _time.monotonic() - _payouts_ts < 1800:
         return _payouts_cache
 
+    # холодный старт: последний расчёт из БД (свежесть 60с) — живой баланс WB
+    # и оценки Ozon/YM пересчитаются следующим запросом, когда P&L прогреются
+    if not refresh and not _payouts_cache and _payouts_ts == 0.0:
+        import snapshot as _snapmod
+        snap = await asyncio.to_thread(_snapmod.load, "payouts", None)
+        if snap:
+            _payouts_cache = snap
+            _payouts_ts = _time.monotonic() - 1800 + 60
+            return snap
+
     from config import CABINET_MARKETPLACES
     today = (datetime.utcnow() + timedelta(hours=3)).date()
     cur_mk = today.strftime("%Y-%m")
@@ -2429,6 +2447,8 @@ async def get_payouts(refresh: bool = Query(default=False)):
     }
     _payouts_cache = result
     _payouts_ts = _time.monotonic()
+    import snapshot as _snapmod
+    await asyncio.to_thread(_snapmod.save, "payouts", result)
     return result
 
 

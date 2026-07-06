@@ -102,10 +102,20 @@ async def get_docs_summary(refresh: bool = Query(default=False)):
     """Сводка: сертификаты Ozon + ручной реестр + покрытие артикулов."""
     global _oz_cache, _oz_ts
     _init_tables()
+    # холодный старт: сертификаты из БД сразу (N+1 запросов к Ozon по 0.3с
+    # может превысить 100с лимит Render), свежее подтянется по refresh/TTL
+    if not refresh and not _oz_cache:
+        import snapshot as _snapmod
+        snap = await asyncio.to_thread(_snapmod.load, "ozon_certs", None)
+        if snap:
+            _oz_cache = snap
+            _oz_ts = _time.monotonic() - 6 * 3600 + 600  # свежесть 10 мин
     if refresh or not _oz_cache or _time.monotonic() - _oz_ts > 6 * 3600:
         try:
             _oz_cache = await _fetch_ozon_certs()
             _oz_ts = _time.monotonic()
+            import snapshot as _snapmod
+            await asyncio.to_thread(_snapmod.save, "ozon_certs", _oz_cache)
         except Exception as e:
             _log.warning("ozon certs: %s", e)
             if not _oz_cache:

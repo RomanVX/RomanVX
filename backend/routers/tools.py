@@ -996,6 +996,15 @@ async def get_funnel(refresh: bool = Query(default=False)):
     if not refresh and _funnel_cache and _t.monotonic() - _funnel_ts < 6 * 3600:
         return _funnel_cache
 
+    # холодный старт: последняя воронка из БД (свежесть 10 мин), потом обновим
+    if not refresh and not _funnel_cache:
+        import snapshot as _snapmod
+        snap = await asyncio.to_thread(_snapmod.load, "oz_funnel", None)
+        if snap:
+            _funnel_cache = snap
+            _funnel_ts = _t.monotonic() - 6 * 3600 + 600
+            return snap
+
     import ozon_client
     import catalog as _cat
     from datetime import date
@@ -1041,4 +1050,6 @@ async def get_funnel(refresh: bool = Query(default=False)):
               "fetched_at": datetime.utcnow().strftime("%d.%m.%Y %H:%M UTC")}
     _funnel_cache = result
     _funnel_ts = _t.monotonic()
+    import snapshot as _snapmod
+    await asyncio.to_thread(_snapmod.save, "oz_funnel", result)
     return result

@@ -30,6 +30,16 @@ class _Store:
 _store = _Store()
 _lock  = asyncio.Lock()
 
+# фоновые задачи (держим ссылки, иначе GC их убьёт)
+_bg_tasks: set = set()
+
+
+def _spawn(coro) -> None:
+    import heavy
+    t = asyncio.get_event_loop().create_task(heavy.guard(coro))
+    _bg_tasks.add(t)
+    t.add_done_callback(_bg_tasks.discard)
+
 
 def _filter(records: list, date_from: datetime, date_to: datetime) -> list:
     lo = date_from.strftime("%Y-%m-%d")
@@ -52,7 +62,24 @@ async def get_raw_data(date_from: datetime, date_to: datetime) -> tuple[list, li
     if _is_stale():
         async with _lock:
             if _is_stale():
-                await _refresh()
+                # холодный старт: сначала пробуем снапшот из БД — отдаём его
+                # сразу, свежие данные тянутся фоном (иначе синхронный поход
+                # в WB API в request-path даёт 502 при rate-limit/таймауте)
+                if _store.fetched_at == 0.0:
+                    import snapshot
+                    snap = await asyncio.to_thread(snapshot.load, "wb_raw", None)
+                    if snap:
+                        _store.sales  = snap.get("sales", [])
+                        _store.orders = snap.get("orders", [])
+                        _store.stocks = snap.get("stocks", [])
+                        _store.fetched_at = time.monotonic()
+                        _log.info("WB raw: снапшот из БД (%d sales, %d orders), фон-обновление",
+                                  len(_store.sales), len(_store.orders))
+                        _spawn(_refresh())
+                    else:
+                        await _refresh()
+                else:
+                    await _refresh()
 
     sales  = _filter(_store.sales,  date_from, date_to)
     orders = _filter(_store.orders, date_from, date_to)
@@ -80,6 +107,12 @@ async def _refresh() -> None:
             sales_history.persist_wb_bg(sales)
         except Exception as exc:
             _log.warning("sales_history persist (WB) failed: %s", exc)
+        try:
+            import snapshot
+            await asyncio.to_thread(snapshot.save, "wb_raw",
+                                    {"sales": sales, "orders": orders, "stocks": stocks})
+        except Exception as exc:
+            _log.warning("wb_raw snapshot save failed: %s", exc)
     except Exception as exc:
         stale = bool(_store.sales or _store.orders)
         _log.warning("WB API refresh failed (%s) — %s", exc,
@@ -146,7 +179,25 @@ async def get_report_data(date_from: datetime, date_to: datetime) -> list:
                 and rs.date_from is not None
                 and rs.date_from <= date_from
                 and rs.date_to   >= date_to):
-            await _refresh_report(date_from, date_to)
+            # холодный старт: снапшот из БД, если он покрывает запрошенный
+            # диапазон — отдаём сразу, свежий отчёт тянется фоном
+            if rs.fetched_at == 0.0:
+                import snapshot
+                snap = await asyncio.to_thread(snapshot.load, "wb_report", None)
+                try:
+                    sf = datetime.fromisoformat(snap["date_from"]) if snap else None
+                    st = datetime.fromisoformat(snap["date_to"])   if snap else None
+                except (KeyError, ValueError, TypeError):
+                    sf = st = None
+                if sf is not None and sf <= date_from and st >= date_to:
+                    rs.records, rs.date_from, rs.date_to = snap.get("records", []), sf, st
+                    rs.fetched_at = time.monotonic()
+                    _log.info("WB report: снапшот из БД (%d строк), фон-обновление", len(rs.records))
+                    _spawn(_refresh_report(date_from, date_to))
+                else:
+                    await _refresh_report(date_from, date_to)
+            else:
+                await _refresh_report(date_from, date_to)
 
     return _filter_report(rs.records, date_from, date_to)
 
@@ -161,6 +212,14 @@ async def _refresh_report(date_from: datetime, date_to: datetime) -> None:
     _report_store.date_to    = date_to
     _report_store.fetched_at = time.monotonic()
     _log.info("Report cache: %d records", len(records))
+    try:
+        import snapshot
+        await asyncio.to_thread(snapshot.save, "wb_report",
+                                {"records": records,
+                                 "date_from": date_from.isoformat(),
+                                 "date_to": date_to.isoformat()})
+    except Exception as exc:
+        _log.warning("wb_report snapshot save failed: %s", exc)
 
 
 def invalidate_report() -> None:

@@ -13,6 +13,16 @@ import sales_history
 import wb_client
 import ym_client
 
+# фоновые задачи вкладок (держим ссылки, иначе GC их убьёт)
+_dbg_tasks: set = set()
+
+
+def _dspawn(coro) -> None:
+    import heavy
+    t = asyncio.get_event_loop().create_task(heavy.guard(coro))
+    _dbg_tasks.add(t)
+    t.add_done_callback(_dbg_tasks.discard)
+
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
 
@@ -139,6 +149,16 @@ async def get_stocks_table():
     if _stocks_cache and _time.monotonic() - _stocks_cache_ts < _STOCKS_TTL:
         return _stocks_cache
 
+    # холодный старт: отдаём последний снапшот из БД (свежесть 60с — реальная
+    # пересборка случится следующим запросом или фоновым прогревом)
+    if _stocks_cache_ts == 0.0:
+        import snapshot as _snapmod
+        snap = await asyncio.to_thread(_snapmod.load, "stocks_table", None)
+        if snap:
+            _stocks_cache = snap
+            _stocks_cache_ts = _time.monotonic() - _STOCKS_TTL + 60
+            return snap
+
     async with _stocks_lock:
         if _stocks_cache and _time.monotonic() - _stocks_cache_ts < _STOCKS_TTL:
             return _stocks_cache
@@ -166,6 +186,8 @@ async def get_stocks_table():
         )
         _stocks_cache = result
         _stocks_cache_ts = _time.monotonic()
+        import snapshot as _snapmod
+        await asyncio.to_thread(_snapmod.save, "stocks_table", result)
         return result
 
 # Группировка остатков как в UI: спец-подгруппы по SKU, затем бренд, иначе «Прочее»
@@ -767,109 +789,132 @@ async def get_weekly_summary():
     if _weekly_cache and _wtime.monotonic() - _weekly_cache_ts < _WEEKLY_TTL:
         return _weekly_cache
 
+    # холодный старт: последний снапшот из БД отдаём сразу, пересборка — фоном
+    # (WB-воронка строится минутами и в request-path упиралась в 100с лимит Render)
+    if _weekly_cache_ts == 0.0:
+        import snapshot as _snapmod
+        snap = await asyncio.to_thread(_snapmod.load, "weekly_summary", None)
+        if snap:
+            _weekly_cache = snap
+            _weekly_cache_ts = _wtime.monotonic()
+            _dspawn(_weekly_refresh_bg())
+            return snap
+
     async with _weekly_fetch_lock:
         # double-check: пока ждали лок, кто-то уже наполнил кеш
         if _weekly_cache and _wtime.monotonic() - _weekly_cache_ts < _WEEKLY_TTL:
             return _weekly_cache
-        weeks = _week_ranges(8)
-        n = len(weeks)
-        dt_from = datetime.combine(weeks[0][0], datetime.min.time())
-        dt_to   = datetime.combine(weeks[-1][1], datetime.min.time())
+        return await _build_weekly_summary()
 
-        import logging as _wslog
-        _wslog = _wslog.getLogger("weekly_summary")
 
-        date_from_str = weeks[0][0].strftime("%Y-%m-%d")
-        date_to_str   = weeks[-1][1].strftime("%Y-%m-%d")
-        week_str_ranges = [(s.strftime("%Y-%m-%d"), e.strftime("%Y-%m-%d")) for s, e in weeks]
+async def _weekly_refresh_bg():
+    async with _weekly_fetch_lock:
+        await _build_weekly_summary()
 
-        # OZON/YM — быстрые, отдельный короткий таймаут
+
+async def _build_weekly_summary():
+    global _weekly_cache, _weekly_cache_ts
+    weeks = _week_ranges(8)
+    n = len(weeks)
+    dt_from = datetime.combine(weeks[0][0], datetime.min.time())
+    dt_to   = datetime.combine(weeks[-1][1], datetime.min.time())
+
+    import logging as _wslog
+    _wslog = _wslog.getLogger("weekly_summary")
+
+    date_from_str = weeks[0][0].strftime("%Y-%m-%d")
+    date_to_str   = weeks[-1][1].strftime("%Y-%m-%d")
+    week_str_ranges = [(s.strftime("%Y-%m-%d"), e.strftime("%Y-%m-%d")) for s, e in weeks]
+
+    # OZON/YM — быстрые, отдельный короткий таймаут
+    try:
+        oz_rows, ym_rows = await asyncio.wait_for(
+            asyncio.gather(
+                ozon_client.get_sales_detail(date_from_str, date_to_str),
+                ym_client.get_sales_detail(date_from_str, date_to_str),
+            ),
+            timeout=90,
+        )
+    except Exception as _exc:
+        _wslog.error("[WS] OZON/YM fetch failed: %s", _exc)
+        oz_rows, ym_rows = [], []
+
+    # WB воронка — медленная (8 запросов с лимитом), длинный таймаут
+    try:
+        wb_funnel_weeks = await asyncio.wait_for(
+            wb_client.get_nm_report_weeks(week_str_ranges), timeout=300,
+        )
+    except Exception as _exc:
+        _wslog.error("[WS] WB funnel fetch failed: %s", _exc)
+        wb_funnel_weeks = []
+    wb_ok = any(f.get("orders_rub") or f.get("orders_qty") for f in wb_funnel_weeks)
+
+    def week_index(date_str: str):
         try:
-            oz_rows, ym_rows = await asyncio.wait_for(
-                asyncio.gather(
-                    ozon_client.get_sales_detail(date_from_str, date_to_str),
-                    ym_client.get_sales_detail(date_from_str, date_to_str),
-                ),
-                timeout=90,
-            )
-        except Exception as _exc:
-            _wslog.error("[WS] OZON/YM fetch failed: %s", _exc)
-            oz_rows, ym_rows = [], []
-
-        # WB воронка — медленная (8 запросов с лимитом), длинный таймаут
-        try:
-            wb_funnel_weeks = await asyncio.wait_for(
-                wb_client.get_nm_report_weeks(week_str_ranges), timeout=300,
-            )
-        except Exception as _exc:
-            _wslog.error("[WS] WB funnel fetch failed: %s", _exc)
-            wb_funnel_weeks = []
-        wb_ok = any(f.get("orders_rub") or f.get("orders_qty") for f in wb_funnel_weeks)
-
-        def week_index(date_str: str):
-            try:
-                d = datetime.strptime((date_str or "")[:10], "%Y-%m-%d").date()
-            except ValueError:
-                return None
-            for i, (s, e) in enumerate(weeks):
-                if s <= d <= e:
-                    return i
+            d = datetime.strptime((date_str or "")[:10], "%Y-%m-%d").date()
+        except ValueError:
             return None
+        for i, (s, e) in enumerate(weeks):
+            if s <= d <= e:
+                return i
+        return None
 
-        rub = {mp: {"sales": [0.0] * n, "buyout": [0.0] * n} for mp in ("WB", "OZON", "YM")}
-        qty = {mp: {"sales": [0] * n, "buyout": [0] * n} for mp in ("WB", "OZON", "YM")}
+    rub = {mp: {"sales": [0.0] * n, "buyout": [0.0] * n} for mp in ("WB", "OZON", "YM")}
+    qty = {mp: {"sales": [0] * n, "buyout": [0] * n} for mp in ("WB", "OZON", "YM")}
 
-        for i, fw in enumerate(wb_funnel_weeks):
-            if i >= n:
-                break
-            rub["WB"]["sales"][i]  = fw.get("orders_rub", 0.0)
-            qty["WB"]["sales"][i]  = fw.get("orders_qty", 0)
-            rub["WB"]["buyout"][i] = fw.get("buyouts_rub", 0.0)
-            qty["WB"]["buyout"][i] = fw.get("buyouts_qty", 0)
+    for i, fw in enumerate(wb_funnel_weeks):
+        if i >= n:
+            break
+        rub["WB"]["sales"][i]  = fw.get("orders_rub", 0.0)
+        qty["WB"]["sales"][i]  = fw.get("orders_qty", 0)
+        rub["WB"]["buyout"][i] = fw.get("buyouts_rub", 0.0)
+        qty["WB"]["buyout"][i] = fw.get("buyouts_qty", 0)
 
-        for r in oz_rows:
-            idx = week_index(r.get("date"))
-            if idx is None:
-                continue
-            rub["OZON"]["sales"][idx] += r["revenue"]
-            qty["OZON"]["sales"][idx] += r["qty"]
-            if (r.get("status") or "").lower() == "delivered":
-                # выкупы по дате доставки (как в Excel-запросе "Выкупы ШТ OZON")
-                idx_d = week_index(r.get("delivered_date") or r.get("date"))
-                if idx_d is not None:
-                    rub["OZON"]["buyout"][idx_d] += r["revenue"]
-                    qty["OZON"]["buyout"][idx_d] += r["qty"]
+    for r in oz_rows:
+        idx = week_index(r.get("date"))
+        if idx is None:
+            continue
+        rub["OZON"]["sales"][idx] += r["revenue"]
+        qty["OZON"]["sales"][idx] += r["qty"]
+        if (r.get("status") or "").lower() == "delivered":
+            # выкупы по дате доставки (как в Excel-запросе "Выкупы ШТ OZON")
+            idx_d = week_index(r.get("delivered_date") or r.get("date"))
+            if idx_d is not None:
+                rub["OZON"]["buyout"][idx_d] += r["revenue"]
+                qty["OZON"]["buyout"][idx_d] += r["qty"]
 
-        for r in ym_rows:
-            idx = week_index(r.get("date"))
-            if idx is not None:
-                rub["YM"]["sales"][idx] += r["revenue"]
-                qty["YM"]["sales"][idx] += r["qty"]
-            if (r.get("status") or "") == "DELIVERED":
-                idx_d = week_index(r.get("update_date"))
-                if idx_d is not None:
-                    rub["YM"]["buyout"][idx_d] += r["revenue"]
-                    qty["YM"]["buyout"][idx_d] += r["qty"]
+    for r in ym_rows:
+        idx = week_index(r.get("date"))
+        if idx is not None:
+            rub["YM"]["sales"][idx] += r["revenue"]
+            qty["YM"]["sales"][idx] += r["qty"]
+        if (r.get("status") or "") == "DELIVERED":
+            idx_d = week_index(r.get("update_date"))
+            if idx_d is not None:
+                rub["YM"]["buyout"][idx_d] += r["revenue"]
+                qty["YM"]["buyout"][idx_d] += r["qty"]
 
-        def block(d: dict, mp: str) -> dict:
-            return {"sales": [round(v, 2) for v in d[mp]["sales"]],
-                    "buyout": [round(v, 2) for v in d[mp]["buyout"]]}
+    def block(d: dict, mp: str) -> dict:
+        return {"sales": [round(v, 2) for v in d[mp]["sales"]],
+                "buyout": [round(v, 2) for v in d[mp]["buyout"]]}
 
-        def total(d: dict) -> dict:
-            return {
-                "sales":  [round(sum(d[mp]["sales"][i]  for mp in ("WB", "OZON", "YM")), 2) for i in range(n)],
-                "buyout": [round(sum(d[mp]["buyout"][i] for mp in ("WB", "OZON", "YM")), 2) for i in range(n)],
-            }
-
-        result = {
-            "weeks": [_week_label(s, e) for s, e in weeks],
-            "rub": {"OZON": block(rub, "OZON"), "WB": block(rub, "WB"), "YM": block(rub, "YM"), "total": total(rub)},
-            "qty": {"OZON": block(qty, "OZON"), "WB": block(qty, "WB"), "YM": block(qty, "YM"), "total": total(qty)},
+    def total(d: dict) -> dict:
+        return {
+            "sales":  [round(sum(d[mp]["sales"][i]  for mp in ("WB", "OZON", "YM")), 2) for i in range(n)],
+            "buyout": [round(sum(d[mp]["buyout"][i] for mp in ("WB", "OZON", "YM")), 2) for i in range(n)],
         }
-        if wb_ok:                      # кешируем только полный результат с данными WB
-            _weekly_cache = result
-            _weekly_cache_ts = _wtime.monotonic()
-        return result
+
+    result = {
+        "weeks": [_week_label(s, e) for s, e in weeks],
+        "rub": {"OZON": block(rub, "OZON"), "WB": block(rub, "WB"), "YM": block(rub, "YM"), "total": total(rub)},
+        "qty": {"OZON": block(qty, "OZON"), "WB": block(qty, "WB"), "YM": block(qty, "YM"), "total": total(qty)},
+    }
+    if wb_ok:                      # кешируем только полный результат с данными WB
+        _weekly_cache = result
+        _weekly_cache_ts = _wtime.monotonic()
+        import snapshot as _snapmod
+        await asyncio.to_thread(_snapmod.save, "weekly_summary", result)
+    return result
 
 
 # ── Заказы по неделям с разбивкой по SKU ──────────────────────────────────────
@@ -888,6 +933,16 @@ async def get_weekly_orders():
     global _wo_cache, _wo_cache_ts
     if _wo_cache and _wtime.monotonic() - _wo_cache_ts < _WO_TTL:
         return _wo_cache
+
+    # холодный старт: последний снапшот из БД (свежесть 60с — пересборка
+    # придёт со следующим запросом или фоновым прогревом)
+    if _wo_cache_ts == 0.0:
+        import snapshot as _snapmod
+        snap = await asyncio.to_thread(_snapmod.load, "weekly_orders", None)
+        if snap:
+            _wo_cache = snap
+            _wo_cache_ts = _wtime.monotonic() - _WO_TTL + 60
+            return snap
 
     async with _wo_lock:
         if _wo_cache and _wtime.monotonic() - _wo_cache_ts < _WO_TTL:
@@ -1015,6 +1070,9 @@ async def get_weekly_orders():
         # чтобы при следующем заходе попробовать снова; если всё ок — 30 мин.
         _wo_cache = result
         _wo_cache_ts = _wtime.monotonic() if (oz_ok and ym_ok) else (_wtime.monotonic() - _WO_TTL + 300)
+        if oz_ok and ym_ok:
+            import snapshot as _snapmod
+            await asyncio.to_thread(_snapmod.save, "weekly_orders", result)
         return result
 
 
@@ -1149,103 +1207,124 @@ async def get_monthly_summary():
     if _monthly_cache and _wtime.monotonic() - _monthly_cache_ts < _MONTHLY_TTL:
         return _monthly_cache
 
+    # холодный старт: снапшот из БД сразу, пересборка — фоном (см. weekly_summary)
+    if _monthly_cache_ts == 0.0:
+        import snapshot as _snapmod
+        snap = await asyncio.to_thread(_snapmod.load, "monthly_summary", None)
+        if snap:
+            _monthly_cache = snap
+            _monthly_cache_ts = _wtime.monotonic()
+            _dspawn(_monthly_refresh_bg())
+            return snap
+
     async with _monthly_fetch_lock:
         if _monthly_cache and _wtime.monotonic() - _monthly_cache_ts < _MONTHLY_TTL:
             return _monthly_cache
+        return await _build_monthly_summary()
 
-        months = _month_ranges(6)
-        n = len(months)
 
-        import logging as _mslog
-        _mslog = _mslog.getLogger("monthly_summary")
+async def _monthly_refresh_bg():
+    async with _monthly_fetch_lock:
+        await _build_monthly_summary()
 
-        date_from_str = months[0][0].strftime("%Y-%m-%d")
-        date_to_str   = months[-1][1].strftime("%Y-%m-%d")
-        month_str_ranges = [(s.strftime("%Y-%m-%d"), e.strftime("%Y-%m-%d")) for s, e in months]
 
+async def _build_monthly_summary():
+    global _monthly_cache, _monthly_cache_ts
+    months = _month_ranges(6)
+    n = len(months)
+
+    import logging as _mslog
+    _mslog = _mslog.getLogger("monthly_summary")
+
+    date_from_str = months[0][0].strftime("%Y-%m-%d")
+    date_to_str   = months[-1][1].strftime("%Y-%m-%d")
+    month_str_ranges = [(s.strftime("%Y-%m-%d"), e.strftime("%Y-%m-%d")) for s, e in months]
+
+    try:
+        oz_rows, ym_rows = await asyncio.wait_for(
+            asyncio.gather(
+                ozon_client.get_sales_detail(date_from_str, date_to_str),
+                ym_client.get_sales_detail(date_from_str, date_to_str),
+            ),
+            timeout=90,
+        )
+    except Exception as _exc:
+        _mslog.error("[MS] OZON/YM fetch failed: %s", _exc)
+        oz_rows, ym_rows = [], []
+
+    try:
+        wb_funnel_months = await asyncio.wait_for(
+            wb_client.get_nm_report_weeks(month_str_ranges), timeout=300,
+        )
+    except Exception as _exc:
+        _mslog.error("[MS] WB funnel fetch failed: %s", _exc)
+        wb_funnel_months = []
+    wb_ok = any(f.get("orders_rub") or f.get("orders_qty") for f in wb_funnel_months)
+
+    def month_index(date_str: str):
         try:
-            oz_rows, ym_rows = await asyncio.wait_for(
-                asyncio.gather(
-                    ozon_client.get_sales_detail(date_from_str, date_to_str),
-                    ym_client.get_sales_detail(date_from_str, date_to_str),
-                ),
-                timeout=90,
-            )
-        except Exception as _exc:
-            _mslog.error("[MS] OZON/YM fetch failed: %s", _exc)
-            oz_rows, ym_rows = [], []
-
-        try:
-            wb_funnel_months = await asyncio.wait_for(
-                wb_client.get_nm_report_weeks(month_str_ranges), timeout=300,
-            )
-        except Exception as _exc:
-            _mslog.error("[MS] WB funnel fetch failed: %s", _exc)
-            wb_funnel_months = []
-        wb_ok = any(f.get("orders_rub") or f.get("orders_qty") for f in wb_funnel_months)
-
-        def month_index(date_str: str):
-            try:
-                d = datetime.strptime((date_str or "")[:10], "%Y-%m-%d").date()
-            except ValueError:
-                return None
-            for i, (s, e) in enumerate(months):
-                if s <= d <= e:
-                    return i
+            d = datetime.strptime((date_str or "")[:10], "%Y-%m-%d").date()
+        except ValueError:
             return None
+        for i, (s, e) in enumerate(months):
+            if s <= d <= e:
+                return i
+        return None
 
-        rub = {mp: {"sales": [0.0] * n, "buyout": [0.0] * n} for mp in ("WB", "OZON", "YM")}
-        qty = {mp: {"sales": [0] * n, "buyout": [0] * n} for mp in ("WB", "OZON", "YM")}
+    rub = {mp: {"sales": [0.0] * n, "buyout": [0.0] * n} for mp in ("WB", "OZON", "YM")}
+    qty = {mp: {"sales": [0] * n, "buyout": [0] * n} for mp in ("WB", "OZON", "YM")}
 
-        for i, fw in enumerate(wb_funnel_months):
-            if i >= n:
-                break
-            rub["WB"]["sales"][i]  = fw.get("orders_rub", 0.0)
-            qty["WB"]["sales"][i]  = fw.get("orders_qty", 0)
-            rub["WB"]["buyout"][i] = fw.get("buyouts_rub", 0.0)
-            qty["WB"]["buyout"][i] = fw.get("buyouts_qty", 0)
+    for i, fw in enumerate(wb_funnel_months):
+        if i >= n:
+            break
+        rub["WB"]["sales"][i]  = fw.get("orders_rub", 0.0)
+        qty["WB"]["sales"][i]  = fw.get("orders_qty", 0)
+        rub["WB"]["buyout"][i] = fw.get("buyouts_rub", 0.0)
+        qty["WB"]["buyout"][i] = fw.get("buyouts_qty", 0)
 
-        for r in oz_rows:
-            idx = month_index(r.get("date"))
-            if idx is None:
-                continue
-            rub["OZON"]["sales"][idx] += r["revenue"]
-            qty["OZON"]["sales"][idx] += r["qty"]
-            if (r.get("status") or "").lower() == "delivered":
-                idx_d = month_index(r.get("delivered_date") or r.get("date"))
-                if idx_d is not None:
-                    rub["OZON"]["buyout"][idx_d] += r["revenue"]
-                    qty["OZON"]["buyout"][idx_d] += r["qty"]
+    for r in oz_rows:
+        idx = month_index(r.get("date"))
+        if idx is None:
+            continue
+        rub["OZON"]["sales"][idx] += r["revenue"]
+        qty["OZON"]["sales"][idx] += r["qty"]
+        if (r.get("status") or "").lower() == "delivered":
+            idx_d = month_index(r.get("delivered_date") or r.get("date"))
+            if idx_d is not None:
+                rub["OZON"]["buyout"][idx_d] += r["revenue"]
+                qty["OZON"]["buyout"][idx_d] += r["qty"]
 
-        for r in ym_rows:
-            idx = month_index(r.get("date"))
-            if idx is not None:
-                rub["YM"]["sales"][idx] += r["revenue"]
-                qty["YM"]["sales"][idx] += r["qty"]
-            if (r.get("status") or "") == "DELIVERED":
-                idx_d = month_index(r.get("update_date"))
-                if idx_d is not None:
-                    rub["YM"]["buyout"][idx_d] += r["revenue"]
-                    qty["YM"]["buyout"][idx_d] += r["qty"]
+    for r in ym_rows:
+        idx = month_index(r.get("date"))
+        if idx is not None:
+            rub["YM"]["sales"][idx] += r["revenue"]
+            qty["YM"]["sales"][idx] += r["qty"]
+        if (r.get("status") or "") == "DELIVERED":
+            idx_d = month_index(r.get("update_date"))
+            if idx_d is not None:
+                rub["YM"]["buyout"][idx_d] += r["revenue"]
+                qty["YM"]["buyout"][idx_d] += r["qty"]
 
-        def block(d: dict, mp: str) -> dict:
-            return {"sales": [round(v, 2) for v in d[mp]["sales"]],
-                    "buyout": [round(v, 2) for v in d[mp]["buyout"]]}
+    def block(d: dict, mp: str) -> dict:
+        return {"sales": [round(v, 2) for v in d[mp]["sales"]],
+                "buyout": [round(v, 2) for v in d[mp]["buyout"]]}
 
-        def total(d: dict) -> dict:
-            return {
-                "sales":  [round(sum(d[mp]["sales"][i]  for mp in ("WB", "OZON", "YM")), 2) for i in range(n)],
-                "buyout": [round(sum(d[mp]["buyout"][i] for mp in ("WB", "OZON", "YM")), 2) for i in range(n)],
-            }
-
-        result = {
-            "months": [_month_label(s) for s, e in months],
-            "rub": {"OZON": block(rub, "OZON"), "WB": block(rub, "WB"), "YM": block(rub, "YM"), "total": total(rub)},
-            "qty": {"OZON": block(qty, "OZON"), "WB": block(qty, "WB"), "YM": block(qty, "YM"), "total": total(qty)},
+    def total(d: dict) -> dict:
+        return {
+            "sales":  [round(sum(d[mp]["sales"][i]  for mp in ("WB", "OZON", "YM")), 2) for i in range(n)],
+            "buyout": [round(sum(d[mp]["buyout"][i] for mp in ("WB", "OZON", "YM")), 2) for i in range(n)],
         }
-        if wb_ok:
-            _monthly_cache = result
-            _monthly_cache_ts = _wtime.monotonic()
-        return result
+
+    result = {
+        "months": [_month_label(s) for s, e in months],
+        "rub": {"OZON": block(rub, "OZON"), "WB": block(rub, "WB"), "YM": block(rub, "YM"), "total": total(rub)},
+        "qty": {"OZON": block(qty, "OZON"), "WB": block(qty, "WB"), "YM": block(qty, "YM"), "total": total(qty)},
+    }
+    if wb_ok:
+        _monthly_cache = result
+        _monthly_cache_ts = _wtime.monotonic()
+        import snapshot as _snapmod
+        await asyncio.to_thread(_snapmod.save, "monthly_summary", result)
+    return result
 
 
