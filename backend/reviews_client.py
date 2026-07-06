@@ -2,7 +2,7 @@
 import asyncio
 import logging
 import time
-from datetime import date
+from datetime import date, datetime, timedelta
 
 import httpx
 
@@ -374,6 +374,50 @@ def get_stats() -> dict:
     }
 
 
+# ─── Инкрементальная загрузка ────────────────────────────────────────────────
+# Полная перекачка всей истории каждые 15-30 мин — это сотни запросов к Ozon/YM
+# (у YM ещё и запрос комментариев на КАЖДЫЙ отзыв). Отзывы уже лежат в БД,
+# поэтому обычно догружаем только новое (с перехлёстом 3 дня), а полный скан —
+# раз в сутки или по ручному «Обновить».
+
+_FULL_SCAN_EVERY = 24 * 3600
+
+
+def _incr_cutoff(platform: str) -> str:
+    """ISO-дата, старше которой отзывы не качаем (уже есть в БД)."""
+    try:
+        rows = db.fetchall("SELECT MAX(created_at) FROM reviews WHERE platform = ?",
+                           (platform,))
+        newest = (rows[0][0] or "") if rows else ""
+        if not newest:
+            return ""
+        return (datetime.fromisoformat(newest[:19]) - timedelta(days=3)).isoformat()
+    except Exception:
+        return ""
+
+
+def _answered_ids(platform: str) -> set:
+    try:
+        rows = db.fetchall("SELECT id FROM reviews WHERE platform = ? AND answer != ''",
+                           (platform,))
+        return {r[0] for r in rows}
+    except Exception:
+        return set()
+
+
+def _full_scan_due(platform: str, force: bool) -> bool:
+    if force:
+        return True
+    import snapshot
+    ts = snapshot.load(f"reviews_fullscan_{platform}", 0) or 0
+    return time.time() - float(ts) > _FULL_SCAN_EVERY
+
+
+def _mark_full_scan(platform: str) -> None:
+    import snapshot
+    snapshot.save(f"reviews_fullscan_{platform}", time.time())
+
+
 # ─── WB ──────────────────────────────────────────────────────────────────────
 
 async def fetch_wb_reviews():
@@ -427,9 +471,10 @@ async def fetch_wb_reviews():
 
 # ─── OZON ────────────────────────────────────────────────────────────────────
 
-async def fetch_ozon_reviews():
+async def fetch_ozon_reviews(full: bool = True):
     if not OZON_CLIENT_ID or not OZON_API_KEY:
         return
+    cutoff = "" if full else _incr_cutoff("Ozon")
     rows = []
     headers = {"Client-Id": str(OZON_CLIENT_ID), "Api-Key": OZON_API_KEY,
                "Content-Type": "application/json"}
@@ -472,19 +517,24 @@ async def fetch_ozon_reviews():
                 has_next = payload.get("has_next")
                 if not last_id or has_next is False or len(items) < 100:
                     break
+                # инкремент: дошли до отзывов, которые уже есть в БД — стоп
+                if cutoff and rows and rows[-1]["created_at"] and rows[-1]["created_at"] < cutoff:
+                    break
                 await asyncio.sleep(0.3)
     except Exception as e:
         _log.warning("Ozon reviews exception: %s", e)
 
     _upsert_reviews(rows)
-    _log.info("Ozon: fetched %d reviews", len(rows))
+    _log.info("Ozon: fetched %d reviews%s", len(rows), "" if full else " (инкремент)")
 
 
 # ─── YM ──────────────────────────────────────────────────────────────────────
 
-async def fetch_ym_reviews():
+async def fetch_ym_reviews(full: bool = True):
     if not YM_API_KEY or not YM_BUSINESS_ID:
         return
+    cutoff = "" if full else _incr_cutoff("YM")
+    answered = _answered_ids("YM")
     rows = []
     headers = {"Api-Key": YM_API_KEY, "Content-Type": "application/json"}
     url = f"https://api.partner.market.yandex.ru/businesses/{YM_BUSINESS_ID}/goods-feedback"
@@ -527,10 +577,16 @@ async def fetch_ym_reviews():
                 page_token = (result.get("paging") or {}).get("nextPageToken")
                 if not page_token:
                     break
+                # инкремент: дошли до отзывов, которые уже есть в БД — стоп
+                if cutoff and rows and rows[-1]["created_at"] and rows[-1]["created_at"] < cutoff:
+                    break
                 await asyncio.sleep(0.3)
 
-            # Подтягиваем наши ответы (комментарии продавца) по каждому отзыву
+            # Подтягиваем наши ответы (комментарии продавца) — только для
+            # отзывов, у которых в БД ещё нет ответа (иначе N+1 по всей истории)
             comments_url = f"{url}/comments"
+            fb_ids = [(idx, fid) for idx, fid in fb_ids
+                      if rows[idx]["id"] not in answered]
             for idx, fid in fb_ids:
                 try:
                     cr = await client.post(comments_url, headers=headers,
@@ -552,7 +608,7 @@ async def fetch_ym_reviews():
         _log.warning("YM reviews exception: %s", e)
 
     _upsert_reviews(rows)
-    _log.info("YM: fetched %d feedbacks", len(rows))
+    _log.info("YM: fetched %d feedbacks%s", len(rows), "" if full else " (инкремент)")
 
 
 # ─── REFRESH ──────────────────────────────────────────────────────────────────
@@ -570,11 +626,17 @@ async def refresh_all(force=False):
         if not force and _last_refresh and time.monotonic() - _last_refresh < REFRESH_INTERVAL:
             return
         _last_refresh = time.monotonic()
+        full_oz = _full_scan_due("Ozon", force)
+        full_ym = _full_scan_due("YM", force)
         await asyncio.gather(
             fetch_wb_reviews(),
-            fetch_ozon_reviews(),
-            fetch_ym_reviews(),
+            fetch_ozon_reviews(full=full_oz),
+            fetch_ym_reviews(full=full_ym),
             return_exceptions=True,
         )
+        if full_oz:
+            _mark_full_scan("Ozon")
+        if full_ym:
+            _mark_full_scan("YM")
         _save_snapshot()
         _log.info("Reviews refresh done. Total: %d", get_stats()["total"])
