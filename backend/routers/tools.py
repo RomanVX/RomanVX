@@ -844,6 +844,19 @@ async def analyze_niche(payload: dict):
                             detail="WB не вернул выдачу по запросу"
                                    + (f" ({_niche_last_err})." if _niche_last_err else "") + hint)
 
+    # Анти-бот WB иногда отдаёт «приманку» — 1-2 случайных товара (MacBook
+    # на запрос про крем). Проверяем релевантность: хоть какие-то товары
+    # должны содержать слова запроса, иначе это мусор, а не выдача.
+    q_tokens = [w[:max(4, len(w) - 2)].lower() for w in query.split() if len(w) > 3]
+    if q_tokens:
+        matched = sum(1 for p in products
+                      if any(t in (p.get("name") or "").lower() for t in q_tokens))
+        if matched == 0:
+            raise HTTPException(status_code=502, detail=(
+                "WB подсунул нерелевантную выдачу (анти-бот-приманку) вместо "
+                "результатов по запросу. Подождите минуту-две и повторите — "
+                "обычно со второй попытки приходит настоящая выдача."))
+
     today = datetime.utcnow().date().isoformat()
     # прошлые замеры — для оценки продаж по приросту отзывов
     prev_rows = await asyncio.to_thread(
