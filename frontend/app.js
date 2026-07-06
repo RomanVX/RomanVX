@@ -67,7 +67,7 @@ async function loadCabinetInfo() {
     const div = document.createElement('div');
     div.id = 'cabOther';
     div.className = 'mp-cab-card';
-    div.onclick = () => { window.location.href = _cab.other.url.replace(/\/+$/, '') + '/?enter=1'; };
+    div.onclick = () => { window.location.href = _cab.other.url.replace(/\/+$/, '') + '/app/?enter=1'; };
     // иконка второй карточки — по тому, КУДА она ведёт: у ФК ссылка на Biomed (лев BN), у Biomed — на ФК (помада)
     const otherIcon = _cab.id === 'fk'
       ? '<img src="/static/lion_logo.svg" alt="BN" style="width:64px;height:64px" />'

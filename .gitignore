@@ -8,3 +8,4 @@ build/
 .venv/
 venv/
 .claude/
+backend/data/leads.jsonl

@@ -8,11 +8,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 
 from datetime import datetime, timedelta
 
-from routers import dashboard, upload, advert, reviews, finance, tools, docs
+from routers import dashboard, upload, advert, reviews, finance, tools, docs, lead
 import cache
 import cost_store
 import heavy
@@ -164,6 +164,7 @@ app.include_router(reviews.router)
 app.include_router(finance.router)
 app.include_router(tools.router)
 app.include_router(docs.router)
+app.include_router(lead.router)
 
 import auth as _auth
 app.include_router(_auth.router)
@@ -205,13 +206,35 @@ def get_cabinet():
     return out
 
 FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
+LANDING_DIR = Path(__file__).parent.parent / "landing"
 
-if FRONTEND_DIR.exists():
+_NO_CACHE = {"Cache-Control": "no-cache, no-store, must-revalidate"}
+
+if FRONTEND_DIR.exists() and LANDING_DIR.exists():
+    # Публичный лендинг marketpartners.ru живёт на корне, дашборд — на /app
+    @app.get("/app", include_in_schema=False)
+    async def dashboard_slash_redirect():
+        # без завершающего слэша относительные пути дашборда резолвятся в корень
+        return RedirectResponse("/app/", status_code=307)
+
+    @app.get("/app/", include_in_schema=False)
+    async def dashboard_root():
+        return FileResponse(str(FRONTEND_DIR / "index.html"), headers=_NO_CACHE)
+
+    app.mount("/app", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="dashboard")
+    # в разметке дашборда логотипы прописаны абсолютно (/static/…)
+    app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR / "static")), name="dashboard-static")
+
     @app.get("/", include_in_schema=False)
     async def root():
-        return FileResponse(
-            str(FRONTEND_DIR / "index.html"),
-            headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
-        )
+        return FileResponse(str(LANDING_DIR / "index.html"), headers=_NO_CACHE)
+
+    app.mount("/", StaticFiles(directory=str(LANDING_DIR), html=True), name="landing")
+
+elif FRONTEND_DIR.exists():
+    # лендинга в сборке нет — прежнее поведение: дашборд на корне
+    @app.get("/", include_in_schema=False)
+    async def root():
+        return FileResponse(str(FRONTEND_DIR / "index.html"), headers=_NO_CACHE)
 
     app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="static")
