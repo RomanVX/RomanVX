@@ -2019,7 +2019,11 @@ function renderFinanceTable() {
   });
 
   html += `</tbody></table></div>`;
-  if (!d.cogs_loaded) {
+  // предупреждаем только если себестоимости реально нет в цифрах:
+  // флаг cogs_loaded может отсутствовать в сводных/восстановленных данных
+  const cogsRow = rows.find(r => r.key === 'cogs');
+  const cogsEmpty = !cogsRow || !Object.values(cogsRow.values || {}).some(v => Math.abs(v) > 0);
+  if (!d.cogs_loaded && cogsEmpty) {
     html += `<div class="text-warning small mt-2">⚠ Себестоимость не загружена — строка COGS показывает 0. Загрузите справочник через раздел загрузки.</div>`;
   }
   if (mp === 'WB' && d.detail_upto) {
