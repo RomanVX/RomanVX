@@ -595,31 +595,62 @@ async def _wb_throttle():
         _wb_search_last = _t.monotonic()
 
 
+def _parse_loose(text: str) -> dict | None:
+    """Максимально терпеливый разбор ответа WB search.
+
+    Тело бывает испорчено: прокси оставляет маркеры chunked-передачи,
+    а анти-бот WB дописывает к metadata-JSON хвост «Not Found». Пробуем
+    по очереди: чистый json → чистка чанков → raw_decode (берёт первый
+    валидный JSON-объект и игнорирует мусорный хвост)."""
+    import re as _re
+    for candidate in (text, _re.sub(r"\r?\n[0-9a-fA-F]{1,6}\r?\n", "", text)):
+        try:
+            return json.loads(candidate)
+        except ValueError:
+            pass
+        try:
+            obj, _ = json.JSONDecoder().raw_decode(candidate.lstrip())
+            if isinstance(obj, dict):
+                return obj
+        except ValueError:
+            pass
+    return None
+
+
 async def _wb_search_stage2(client, params: dict, meta_text: str) -> dict | None:
-    """Вторая ступень поиска WB: metadata-ответ содержит анти-бот-токены
-    qv/kcl — повторяем тот же запрос с ними, чтобы получить товары."""
+    """Анти-бот WB: metadata-ответ несёт токены qv/kcl — повторяем запрос
+    с ними. Иногда и второй ответ metadata-только (с новыми токенами),
+    поэтому идём до 3 переходов, каждый раз со свежими qv/kcl."""
     import re as _re
     global _niche_last_body
-    qv = _re.search(r'"qv":"([^"]+)"', meta_text)
-    if not qv:
-        return None
-    p2 = dict(params)
-    p2["qv"] = qv.group(1)
-    kcl = _re.search(r'"kcl":"([^"]+)"', meta_text)
-    if kcl:
-        p2["kcl"] = kcl.group(1)
-    await _wb_throttle()
-    try:
-        r = await client.get(
-            "https://search.wb.ru/exactmatch/ru/common/v13/search", params=p2)
-        _niche_last_body += f"\n\n=== STAGE2 qv → HTTP {r.status_code} ===\n" + r.text[:1500]
-        if not r.is_success:
+    body = meta_text
+    for hop in range(1, 4):
+        qv = _re.search(r'"qv":"([^"]+)"', body)
+        if not qv:
             return None
-        payload = r.json()
-        if ((payload.get("data") or {}).get("products")):
-            return payload
-    except Exception as e:
-        _niche_last_body += f"\n\n=== STAGE2 qv → EXC {str(e)[:200]} ==="
+        p2 = dict(params)
+        p2["qv"] = qv.group(1)
+        kcl = _re.search(r'"kcl":"([^"]+)"', body)
+        if kcl:
+            p2["kcl"] = kcl.group(1)
+        await _wb_throttle()
+        try:
+            r = await client.get(
+                "https://search.wb.ru/exactmatch/ru/common/v13/search", params=p2)
+            _niche_last_body += f"\n\n=== STAGE2 hop{hop} qv → HTTP {r.status_code} ===\n" + r.text[:1500]
+            if not r.is_success:
+                return None
+            payload = _parse_loose(r.text)
+            if payload and ((payload.get("data") or {}).get("products")):
+                return payload
+            # metadata снова — берём свежие токены из нового тела и повторяем
+            new_body = r.text
+            if new_body == body:
+                return None
+            body = new_body
+        except Exception as e:
+            _niche_last_body += f"\n\n=== STAGE2 hop{hop} qv → EXC {str(e)[:200]} ==="
+            return None
     return None
 
 
@@ -670,27 +701,14 @@ async def _wb_public_search(query: str, limit: int = 60) -> tuple[list[dict], in
                 if not r.is_success:
                     _niche_last_err = f"v13: HTTP {r.status_code}"
                     raise ValueError(_niche_last_err)
-                try:
-                    payload = r.json()
-                except ValueError as je:
-                    # дешёвые прокси иногда портят chunked-передачу: в теле
-                    # остаются размеры чанков (hex + CRLF) — вычищаем и пробуем снова
-                    import re as _re
-                    txt = r.text
-                    cleaned = _re.sub(r"\r?\n[0-9a-fA-F]{1,6}\r?\n", "", txt)
-                    try:
-                        payload = json.loads(cleaned)
-                    except ValueError:
-                        # пресетный запрос: WB отдаёт только metadata + Not Found,
-                        # товары живут в каталожном эндпоинте по preset id
-                        payload = await _wb_search_stage2(client, params, txt)
-                        if payload:
-                            pass
-                        else:
-                            pos = getattr(je, "pos", 0) or 0
-                            frag = txt[max(0, pos - 60):pos + 60]
-                            _niche_last_err = f"v13: битый JSON у позиции {pos}: {frag!r}"
-                            raise
+                txt = r.text
+                payload = _parse_loose(txt)
+                if payload is None:
+                    # совсем не JSON — последняя надежда на qv-ступень
+                    payload = await _wb_search_stage2(client, params, txt)
+                    if not payload:
+                        _niche_last_err = f"v13: не-JSON ответ ({txt[:80]!r})"
+                        raise ValueError(_niche_last_err)
                 data = payload.get("data") or {}
                 products = data.get("products") or []
                 if not products and '"qv"' in r.text:
@@ -723,6 +741,10 @@ async def _wb_public_search(query: str, limit: int = 60) -> tuple[list[dict], in
                     if out:
                         return out, total
                     _niche_last_err = "v13: пустая выдача"
+                elif '"qv"' in txt:
+                    _niche_last_err = ("WB отдаёт только анти-бот metadata (qv) даже после "
+                                       "повторных попыток — IP под подозрением. Подождите "
+                                       "минуту и попробуйте ещё раз; детали в last_response")
                 else:
                     _niche_last_err = "v13: пустая выдача"
             except Exception as e:
