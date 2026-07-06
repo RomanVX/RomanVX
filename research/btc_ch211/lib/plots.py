@@ -59,10 +59,19 @@ def win_title(g: pd.DataFrame) -> str:
 
 
 def _date_axis(ax, weekly: bool = True, interval: int = 1) -> None:
-    loc = mdates.WeekdayLocator(byweekday=0, interval=interval) if weekly \
-        else mdates.DayLocator(interval=interval)
-    ax.xaxis.set_major_locator(loc)
-    ax.xaxis.set_major_formatter(FuncFormatter(lambda x, _: _ru_date(mdates.num2date(x))))
+    """Адаптивная ось дат: до ~3 мес — недели, дальше — месяцы (с годом)."""
+    lo, hi = ax.get_xlim()
+    span = hi - lo
+    if span > 200:
+        ax.xaxis.set_major_locator(mdates.MonthLocator())
+        ax.xaxis.set_major_formatter(FuncFormatter(
+            lambda x, _: (lambda d: f"{RU_MONTHS[d.month]} {d:%y}")(mdates.num2date(x))))
+    else:
+        if span > 100 and interval == 1:
+            interval = 2
+        ax.xaxis.set_major_locator(mdates.WeekdayLocator(byweekday=0, interval=interval))
+        ax.xaxis.set_major_formatter(FuncFormatter(
+            lambda x, _: _ru_date(mdates.num2date(x))))
     ax.grid(axis="x", visible=False)
 
 

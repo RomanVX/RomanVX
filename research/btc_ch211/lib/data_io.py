@@ -31,15 +31,18 @@ def _label_contiguous_windows(dates: pd.Series, max_gap_days: int = 3) -> pd.Ser
 
 def _daily_from_hourly(dt: pd.Series, val: pd.Series,
                        interp_limit: int = 2) -> pd.DataFrame:
-    """Дневные средние из почасовых значений; дырки ≤ interp_limit дней
-    интерполируются, длинные разрывы остаются NaN и режут окна."""
+    """Дневные средние из почасовых значений + n_obs (сколько часов реально
+    вошло в среднее). Дырки ≤ interp_limit дней интерполируются (n_obs=0),
+    длинные разрывы остаются NaN и режут окна."""
     d = (
         pd.DataFrame({"date": dt.dt.normalize(), "v": val})
-        .groupby("date", as_index=False)["v"].mean()
+        .groupby("date", as_index=False)
+        .agg(v=("v", "mean"), n_obs=("v", "count"))
     )
     full = pd.DataFrame({"date": pd.date_range(d["date"].min(), d["date"].max())})
     d = full.merge(d, on="date", how="left")
     d["v"] = d["v"].interpolate(limit=interp_limit, limit_area="inside")
+    d["n_obs"] = d["n_obs"].fillna(0).astype(int)
     return d.dropna(subset=["v"]).reset_index(drop=True)
 
 
