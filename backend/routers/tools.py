@@ -574,10 +574,12 @@ def _niche_init():
 
 _niche_last_body = ""   # сырое тело последнего ответа поиска (для диагностики)
 
-# WB жёстко банит IP за очереди запросов — один запрос раз в 12+ секунд
+# WB жёстко банит IP за очереди запросов; после серии 429 бан «липкий»
+# и держится часами. Темп по умолчанию — 1 запрос в 45 сек (можно менять
+# переменной окружения WB_SEARCH_INTERVAL без деплоя).
 _wb_search_lock = asyncio.Lock()
 _wb_search_last: float = 0.0
-_WB_SEARCH_INTERVAL = 12.0
+_WB_SEARCH_INTERVAL = float(os.getenv("WB_SEARCH_INTERVAL", "45") or 45)
 
 
 async def _wb_throttle():
@@ -654,9 +656,10 @@ async def _wb_public_search(query: str, limit: int = 60) -> tuple[list[dict], in
             global _niche_last_body
             _niche_last_body = f"HTTP {r.status_code}\n" + r.text[:6000]
             if r.status_code == 429:
-                _niche_last_err = ("HTTP 429 — лимит WB на IP; подождите 15-20 минут "
-                                   "без запросов, бан отойдёт")
-                await asyncio.sleep(25)
+                _niche_last_err = ("HTTP 429 — WB всё ещё ограничивает IP. После серии "
+                                   "429 бан держится часами: дайте инструменту отдохнуть "
+                                   "несколько часов и попробуйте одним запросом")
+                await asyncio.sleep(70)
                 continue
             break
         if r is not None:

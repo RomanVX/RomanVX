@@ -2696,7 +2696,7 @@ async function runNiche() {
   const q = document.getElementById('nicheQuery').value.trim();
   if (!q) return;
   btn.disabled = true;
-  out.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>Анализируем выдачу WB и считаем вердикт (~15 сек)…</div>';
+  out.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>Анализируем выдачу WB и считаем вердикт (1-3 мин: WB отдаёт данные в два шага с паузами)…</div>';
   try {
     const r = await fetch('/api/tools/niche', { method: 'POST',
       headers: { 'Content-Type': 'application/json' },
