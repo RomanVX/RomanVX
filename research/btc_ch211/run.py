@@ -18,7 +18,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from lib import data_io, extrapolate, honest_stats, plots, slices  # noqa: E402
+from lib import data_io, extrapolate, honest_stats, plots, slices, stretch  # noqa: E402
 
 OUT = Path(__file__).resolve().parent / "out"
 KMAX = 12          # максимум лага в скане, дней
@@ -119,6 +119,28 @@ def main() -> None:
         print(f"[контроль CH×СВ] лучший k={sw_best.k:+d} r={sw_best.r:+.2f} "
               f"(n={sw_best.n}); p(скан)≈{sw_p:.4f}")
 
+    # --------------------------------------- разрез с растяжением времени ---
+    # формализация «наложения N дней СДО на месяцы рынка»: перебор масштабов
+    # 0.25x…55x и всех сдвигов против такого же перебора на прокрученном ряде
+    stretch_res = None
+    if data_io.QLOOK.exists():
+        hourly = data_io._parse_qlook_hourly()
+        st_t, st_v, st_ok = stretch.hourly_arrays(hourly)
+        scales_grid = [0.25, 0.5, 1, 2, 3, 5, 8, 12, 20, 30, 55]
+        obs = stretch.scale_scan(st_t, st_v, st_ok, btc["date"],
+                                 btc["close_usd"].to_numpy(), scales_grid)
+        nul = stretch.scale_scan_null(st_t, st_v, st_ok, btc["date"],
+                                      btc["close_usd"].to_numpy(), scales_grid,
+                                      n_iter=300)
+        p_glob = honest_stats.null_pvalue(abs(obs["best"]["r"]), nul["global_max"])
+        stretch_res = {"obs": obs, "null": nul, "p": p_glob, "scales": scales_grid}
+        b = obs["best"]
+        print(f"[растяжение] лучшее s=×{b['s']:g}, r={b['r']:+.2f} "
+              f"(кусок CH от {b['anchor']:%d.%m.%Y}, {b['len_days']:.1f} дн) "
+              f"→ p(всего перебора)≈{p_glob:.2f}; "
+              f"случайный ряд даёт max|r|≥{float(np.quantile(nul['global_max'], 0.5)):.2f} "
+              f"в половине попыток")
+
     # -------------------------------------------------- прочие разрезы ------
     roll_lv = pd.concat([slices.rolling_corr(pairs, w, ROLL_WIN, "levels") for w in wins],
                         ignore_index=True)
@@ -164,17 +186,21 @@ def main() -> None:
     if control:
         plots.fig_control(control["pairs"], control["scan"], control["null"],
                           control["best"], OUT / "fig7_control.png")
+    if stretch_res:
+        plots.fig_stretch(btc, stretch_res["obs"], stretch_res["null"],
+                          stretch_res["p"], stretch_res["scales"],
+                          OUT / "fig8_stretch.png")
 
     # ------------------------------------------------------------- отчёт ----
     write_report(ch_src, btc_src, ch, pairs, wins, wtitles, scans, verdicts, nulls,
                  neg_share, events, chf, fan, base, k_star, control, digit_rmse,
-                 win_checks, coverage)
-    print(f"\nГотово: {OUT}/fig1…fig7.png, {OUT}/REPORT.md")
+                 win_checks, coverage, stretch_res)
+    print(f"\nГотово: {OUT}/fig1…fig8.png, {OUT}/REPORT.md")
 
 
 def write_report(ch_src, btc_src, ch, pairs, wins, wtitles, scans, verdicts, nulls,
                  neg_share, events, chf, fan, base, k_star, control,
-                 digit_rmse, win_checks, coverage) -> None:
+                 digit_rmse, win_checks, coverage, stretch_res) -> None:
     L: list[str] = []
     add = L.append
 
@@ -275,7 +301,23 @@ def write_report(ch_src, btc_src, ch, pairs, wins, wtitles, scans, verdicts, nul
             "**настоящая** физическая связь проходит порог 0.05 лишь впритык — "
             "вот насколько строг честный тест. Сравните с разделом 3.\n")
 
-    add("\n## 7. Экстраполяции\n\n![прогноз](fig6_forecast.png)\n")
+    if stretch_res:
+        b = stretch_res["obs"]["best"]
+        med_null = float(np.median(stretch_res["null"]["global_max"]))
+        add("\n## 7. Разрез «с растяжением времени» (как на накладке из TradingView)\n")
+        add("\n![растяжение](fig8_stretch.png)\n")
+        add(f"Формализуем приём «кусок солнечного ряда растягивается на месяцы "
+            f"рынка»: перебраны масштабы ×0.25…×55 и все сдвиги куска по году "
+            f"данных. Лучшее совпадение: s=×{b['s']:g} (кусок CH длиной "
+            f"{b['len_days']:.1f} дн от {b['anchor']:%d.%m.%Y}), r={b['r']:+.2f}. "
+            f"Но случайно прокрученный солнечный ряд при том же переборе достигает "
+            f"max|r| с медианой {med_null:.2f} — наблюдаемое даёт "
+            f"**p ≈ {stretch_res['p']:.2f}**. Вывод: растяжение — это не разрез, "
+            "в котором связь «проявляется», а генератор гарантированных "
+            "совпадений: подходящий кусок находится у случайного ряда почти "
+            "всегда.\n")
+
+    add("\n## 8. Экстраполяции\n\n![прогноз](fig6_forecast.png)\n")
     reg = fan["reg"]
     add(f"- Лаг-карта: btc_ret(t) = {reg['a']:+.4f} {reg['b']:+.4f}·ΔCH(t−{k_star}) "
         f"(n={reg['n']}); будущие ΔCH — из гармоники 27.27 дн.")
@@ -332,6 +374,17 @@ def write_report(ch_src, btc_src, ch, pairs, wins, wtitles, scans, verdicts, nul
         f"(через месяц: «солнечная» модель ~${fan_med:,.0f}, простой дрейф "
         f"~${rw_med:,.0f}) — расхождение и есть честный ответ: солнце курс не "
         f"задаёт.\n")
+    if stretch_res:
+        bb = stretch_res["obs"]["best"]
+        add(f"**Про растяжение графиков.** Мы проверили и ваш приём с накладкой: "
+            f"программа перебрала все растяжения солнечного ряда от ×0.25 до ×55 "
+            f"и все сдвиги. Да, найдётся кусок, который ложится на биткоин с "
+            f"совпадением r={bb['r']:+.2f} — красиво. Но когда мы даём те же "
+            f"свободы случайно перемешанному солнечному ряду, он добивается таких "
+            f"же совпадений в большинстве попыток (p≈{stretch_res['p']:.0%}). "
+            "Растяжение — это машина по производству совпадений: у любых двух "
+            "«шумных» графиков всегда найдётся кусок, похожий на другой. Поэтому "
+            "совпадение при растяжении ничего не доказывает.\n")
     add("**Что сделать, чтобы проверить строже.** Скачайте почасовые цены "
         "биткоина за год (ссылки в `data/README.md`), положите файл как "
         "`data/btc_export.csv` и запустите `python run.py` — сравнение пойдёт по "

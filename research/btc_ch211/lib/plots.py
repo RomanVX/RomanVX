@@ -329,6 +329,55 @@ def fig_forecast(ch: pd.DataFrame, chf: dict, btc: pd.DataFrame, fan: dict,
     plt.close(fig)
 
 
+# ------------------------------------------------------------- fig 8 --------
+
+def fig_stretch(btc: pd.DataFrame, obs: dict, null: dict, global_p: float,
+                scales: list[float], path: str) -> None:
+    """Разрез с растяжением времени: лучшее наложение + скан по масштабам."""
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10.4, 8.2))
+    fig.subplots_adjust(hspace=0.42, left=0.08, right=0.9, top=0.93, bottom=0.08)
+
+    best = obs["best"]
+    y = np.log(btc["close_usd"].to_numpy())
+    yz = (y - y.mean()) / y.std(ddof=1)
+    sv = best["stretched"]
+    svz = (sv - sv.mean()) / sv.std(ddof=1)
+    ax1.plot(btc["date"], yz, color=C_BTC, lw=2)
+    ax1.plot(btc["date"], svz, color=C_CH, lw=2)
+    _endlabel(ax1, btc["date"].iloc[-1], yz[-1], "BTC (лог, z)", C_BTC)
+    _endlabel(ax1, btc["date"].iloc[-1], svz[-1], "CH растянутый", C_CH)
+    ax1.set_ylabel("z-score")
+    _date_axis(ax1)
+    a0, a1 = best["anchor"], best["anchor"] + pd.Timedelta(days=best["len_days"])
+    ax1.set_title(f"Лучшее из всех растяжений: s=×{best['s']:g} — кусок CH "
+                  f"{_ru_date(a0)}–{_ru_date(a1)} растянут на весь период BTC; "
+                  f"r={best['r']:+.2f}")
+
+    xs = np.arange(len(scales))
+    obs_r = [abs(p["r"]) if np.isfinite(p["r"]) else np.nan
+             for p in obs["per_scale"]]
+    band = [null["per_scale_q95"].get(s, np.nan) for s in scales]
+    ax2.fill_between(xs, 0, band, color=NULLBAND, zorder=0)
+    ax2.plot(xs, obs_r, color=C_BTC, lw=2, marker="o", ms=6,
+             markeredgecolor=SURFACE, markeredgewidth=0.9)
+    ax2.annotate("серое: 95% лучших совпадений, которых добивается\n"
+                 "СЛУЧАЙНО прокрученный солнечный ряд с теми же свободами",
+                 (0.02, 0.05), xycoords="axes fraction", fontsize=8.4, color=MUTED)
+    i55 = int(np.argmin(np.abs(np.array(scales) - 55)))
+    ax2.annotate("≈ масштаб вашей накладки", (xs[i55], obs_r[i55]),
+                 xytext=(0, 10), textcoords="offset points", ha="right",
+                 fontsize=8.6, color=INK2)
+    ax2.set_xticks(xs, [f"×{s:g}" for s in scales])
+    ax2.set_xlabel("растяжение s (1 день солнечного ряда = s дней рынка)")
+    ax2.set_ylabel("лучший |r| по всем сдвигам")
+    ax2.set_ylim(0, 1.05)
+    ax2.set_title(f"Скан масштабов: наблюдаемое против случайности — "
+                  f"p(всего перебора) ≈ {global_p:.2f}")
+
+    fig.savefig(path, bbox_inches="tight")
+    plt.close(fig)
+
+
 # ------------------------------------------------------------- fig 7 --------
 
 def fig_control(sw_pairs: pd.DataFrame, scan, null: dict, best, path: str) -> None:
