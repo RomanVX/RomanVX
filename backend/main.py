@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from routers import dashboard, upload, advert, reviews, finance, tools, docs
 import cache
 import cost_store
+import heavy
 import ozon_client
 import reviews_client
 import ym_client
@@ -65,13 +66,13 @@ async def _prefetch_weekly():
             _log.warning("stocks_table prefetch failed: %s", exc)
         try:
             _log.info("Refreshing reviews...")
-            await reviews_client.refresh_all()
+            await heavy.guard(reviews_client.refresh_all(), "reviews")
             _log.info("reviews refreshed")
         except Exception as exc:
             _log.warning("reviews refresh failed: %s", exc)
         try:
             _log.info("Accumulating sales history...")
-            await _accumulate_sales()
+            await heavy.guard(_accumulate_sales(), "accumulate_sales")
             _log.info("sales history accumulated")
         except Exception as exc:
             _log.warning("sales accumulation failed: %s", exc)
@@ -138,6 +139,17 @@ async def _auth_middleware(request, call_next):
     if denied is not None:
         return denied
     return await call_next(request)
+
+
+@app.get("/api/health")
+def get_health():
+    """Диагностика: память процесса (Render free — 512 МБ) и размер тяжёлых кешей."""
+    from routers import finance as _fin
+    return {
+        "ok": True,
+        "rss_mb": heavy.rss_mb(),
+        "wb_detail_rows": len(_fin._detail_cache.get("rows", [])),
+    }
 
 
 @app.get("/api/cabinet")

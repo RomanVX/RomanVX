@@ -152,6 +152,9 @@ _bg: set = set()
 
 
 def _spawn(coro):
+    # тяжёлый шлюз тут сознательно НЕ используется: сборки инструментов
+    # (LLM-анализ, fullstats 1 req/мин) длятся десятки минут, но памяти
+    # почти не потребляют — под heavy.guard они заблокировали бы финансы
     t = asyncio.get_event_loop().create_task(coro)
     _bg.add(t)
     t.add_done_callback(_bg.discard)

@@ -79,7 +79,7 @@ def _session_of(request: Request) -> dict | None:
 
 # ── Middleware-проверка (вызывается из main) ─────────────────────────────────
 
-_PUBLIC_PREFIXES = ("/api/auth/", "/api/cabinet")
+_PUBLIC_PREFIXES = ("/api/auth/", "/api/cabinet", "/api/health")
 # менеджеру закрыты деньги: P&L, выплаты, ручные статьи, загрузка себеса.
 # Юнитка (…/unit) — разрешена.
 _MANAGER_BLOCKED = ("/api/finance/", "/api/upload/", "/api/dashboard/finance")

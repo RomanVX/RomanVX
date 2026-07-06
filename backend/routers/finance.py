@@ -18,8 +18,12 @@ _log = logging.getLogger(__name__)
 _bg_tasks: set = set()
 
 
-def _spawn(coro) -> None:
-    t = asyncio.create_task(coro)
+def _spawn(coro, light: bool = False) -> None:
+    """light=True — долгие, но лёгкие по памяти сборки (fullstats 1 req/мин):
+    их не пускаем через heavy.guard, иначе они на десятки минут заблокируют
+    тяжёлые финансовые сборки."""
+    import heavy
+    t = asyncio.create_task(coro if light else heavy.guard(coro))
     _bg_tasks.add(t)
     t.add_done_callback(_bg_tasks.discard)
 
@@ -188,6 +192,7 @@ async def _fetch_detail_bg(date_from: str, date_to: str) -> None:
                     datetime.strptime(date_to, "%Y-%m-%d"),
                 )
                 rows = _normalize_stat_rows(stat_rows)
+                del stat_rows  # сырой ответ statistics-api больше не нужен
                 if rows:
                     _log.info("Detail via statistics-api: %d rows", len(rows))
             except Exception as e:
@@ -523,7 +528,7 @@ async def get_wb_pnl(
     await _adv_nm_ensure_loaded()
     if not _adv_nm_building and (not _adv_nm_cache
                                  or _time.monotonic() - _adv_nm_ts >= _ADV_NM_TTL):
-        _spawn(_build_adv_nm_bg(months))
+        _spawn(_build_adv_nm_bg(months), light=True)
 
     # ── Единая структура P&L ──────────────────────────────────────────────────
     # Комиссия WB (вкл. эквайринг) = выручка − «к перечислению за товар» (forPay).
@@ -813,7 +818,7 @@ async def get_wb_unit(
     await _adv_nm_ensure_loaded()
     if not _adv_nm_building and (not _adv_nm_cache
                                  or _time.monotonic() - _adv_nm_ts >= _ADV_NM_TTL):
-        _spawn(_build_adv_nm_bg(months))
+        _spawn(_build_adv_nm_bg(months), light=True)
     adv_sku_by_month: dict[str, dict[str, float]] = {}
     for mk, per_nm in _adv_nm_cache.items():
         agg: dict[str, float] = {}
