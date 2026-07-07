@@ -140,6 +140,40 @@ async def healthz():
     return {"ok": True, "browser": _ctx is not None}
 
 
+@app.get("/diag")
+async def diag(token: str = ""):
+    """Диагностика: каким IP выходит браузер и что отдают нейтральный сайт
+    и WB. Отделяет проблему прокси (498 везде) от блокировки WB."""
+    if TOKEN and token != TOKEN:
+        raise HTTPException(status_code=401, detail="bad token")
+    out = {"proxy": bool(PROXY)}
+    async with _lock:
+        page = None
+        try:
+            await _ensure_browser()
+            page = await _ctx.new_page()
+            for name, u in (("ipify", "https://api.ipify.org?format=json"),
+                            ("wb_home", "https://www.wildberries.ru/")):
+                try:
+                    r = await page.goto(u, wait_until="domcontentloaded", timeout=40000)
+                    body = (await page.content())[:200]
+                    out[name] = {"status": r.status if r else None, "body": body}
+                except Exception as e:
+                    out[name] = {"error": str(e)[:200]}
+            try:
+                cookies = await _ctx.cookies()
+                out["wb_cookies"] = sorted(c["name"] for c in cookies)
+            except Exception:
+                pass
+        finally:
+            try:
+                if page is not None:
+                    await page.close()
+            except Exception:
+                pass
+    return out
+
+
 @app.get("/search")
 async def search(query: str, token: str = "", limit: int = 60):
     if TOKEN and token != TOKEN:
