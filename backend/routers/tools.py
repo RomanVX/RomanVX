@@ -897,6 +897,67 @@ async def _wb_commission(subject_id: int | None) -> float | None:
 
 _niche_job: dict = {"status": "idle"}
 
+# ── Локальный агент (сбор выдачи WB с домашнего IP пользователя) ──────────────
+# WB банит IP дата-центров/прокси, но домашний IP пользователя пускает.
+# Агент на ПК пользователя опрашивает /niche/pending, тянет выдачу и
+# отдаёт её в /niche/ingest. Очередь и «почтовый ящик» — в памяти.
+_agent_pending: dict = {}     # query -> запрошено (monotonic)
+_agent_inbox: dict = {}       # query -> {products, total} или {error}
+
+
+@router.get("/niche/pending")
+async def niche_pending(token: str = ""):
+    """Список запросов, ждущих сбора локальным агентом."""
+    if os.getenv("WB_AGENT_TOKEN", "") and token != os.getenv("WB_AGENT_TOKEN", ""):
+        raise HTTPException(status_code=401, detail="bad token")
+    now = _t_mono()
+    # чистим протухшие (агент офлайн > 5 мин)
+    for q in [q for q, ts in _agent_pending.items() if now - ts > 300]:
+        _agent_pending.pop(q, None)
+    return {"queries": list(_agent_pending.keys())}
+
+
+@router.post("/niche/ingest")
+async def niche_ingest(payload: dict, token: str = ""):
+    """Агент отдаёт собранную выдачу: {query, products:[...], total} или {query, error}."""
+    if os.getenv("WB_AGENT_TOKEN", "") and token != os.getenv("WB_AGENT_TOKEN", ""):
+        raise HTTPException(status_code=401, detail="bad token")
+    query = str(payload.get("query") or "").strip().lower()
+    if not query:
+        raise HTTPException(status_code=400, detail="query required")
+    _agent_pending.pop(query, None)
+    if payload.get("error"):
+        _agent_inbox[query] = {"error": str(payload["error"])[:300]}
+    else:
+        _agent_inbox[query] = {"products": payload.get("products") or [],
+                               "total": int(payload.get("total") or 0)}
+    return {"ok": True}
+
+
+def _t_mono() -> float:
+    import time as _t
+    return _t.monotonic()
+
+
+async def _wb_agent_search(query: str) -> tuple[list, int]:
+    """Ставит запрос в очередь агента и ждёт результат (агент на ПК юзера)."""
+    global _niche_last_err
+    _agent_inbox.pop(query, None)
+    _agent_pending[query] = _t_mono()
+    for _ in range(60):            # ~3 мин ожидания результата от агента
+        await asyncio.sleep(3)
+        res = _agent_inbox.pop(query, None)
+        if res is None:
+            continue
+        if res.get("error"):
+            _niche_last_err = f"агент: {res['error']}"
+            return [], 0
+        return res.get("products") or [], int(res.get("total") or 0)
+    _agent_pending.pop(query, None)
+    _niche_last_err = ("локальный агент не ответил за 3 мин — запущен ли он на ПК "
+                       "и открыт ли доступ к WB?")
+    return [], 0
+
 
 def _niche_relevant(products: list, query: str) -> bool:
     """Анти-бот WB иногда отдаёт «приманку» — 1-2 случайных товара (MacBook
@@ -944,6 +1005,27 @@ async def _niche_job_run(payload: dict, query: str) -> None:
     global _niche_job, _niche_last_err
     import os
     try:
+        # Локальный агент (домашний IP пользователя) — приоритетный путь:
+        # WB банит IP серверов/прокси, но домашний адрес пускает.
+        if os.getenv("WB_AGENT_MODE", "").strip() == "1":
+            for attempt in (1, 2):
+                _niche_job["stage"] = (f"ждём локальный агент — сбор выдачи WB "
+                                       f"с вашего ПК (попытка {attempt}/2)")
+                products, total = await _wb_agent_search(query)
+                if products and not _niche_relevant(products, query):
+                    _niche_last_err = "агент получил нерелевантную выдачу"
+                    products = []
+                if products:
+                    _niche_job["stage"] = "выдача получена — считаем метрики и вердикт"
+                    await _analyze_niche_impl(payload, query, products, total)
+                    _niche_job = {"status": "done", "query": query}
+                    return
+                if attempt == 1:
+                    await asyncio.sleep(5)
+            _niche_job = {"status": "error", "query": query,
+                          "error": _niche_last_err or "агент не дал выдачу"}
+            return
+
         # wb-fetch настроен → он единственный путь: прямые запросы всё равно
         # получают 429/заглушку, а перебор только затягивает и жжёт лимиты
         if os.getenv("WB_FETCH_URL", "").strip():
