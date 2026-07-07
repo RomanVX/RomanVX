@@ -2694,13 +2694,17 @@ async function openNiche(q) {
   } catch (e) {}
 }
 
-async function runNiche() {
+function _nicheSpin(text) {
   const out = document.getElementById('nicheOut');
+  if (out) out.innerHTML = `<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>${esc(text)}</div>`;
+}
+
+async function runNiche() {
   const btn = document.getElementById('nicheGo');
   const q = document.getElementById('nicheQuery').value.trim();
   if (!q) return;
   btn.disabled = true;
-  out.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>Анализируем выдачу WB и считаем вердикт (1-3 мин: WB отдаёт данные в два шага с паузами)…</div>';
+  _nicheSpin('Запускаем анализ — WB отдаёт данные в несколько шагов с паузами, обычно 1-4 мин…');
   try {
     const r = await fetch('/api/tools/niche', { method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2708,13 +2712,37 @@ async function runNiche() {
         price: parseFloat(document.getElementById('nichePrice').value) || 0,
         cost: parseFloat(document.getElementById('nicheCost').value) || 0,
         logistics: parseFloat(document.getElementById('nicheLog').value) || 0 }) });
-    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.status);
-    _nicheResult = await r.json();
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.detail || r.status);
+    if (j.building) { setTimeout(() => pollNiche(j.query || q), 6000); return; }
+    _nicheResult = j;
+    renderNicheResult();
+    btn.disabled = false;
+  } catch (e) {
+    const out = document.getElementById('nicheOut');
+    if (out) out.innerHTML = `<div class="alert alert-danger">Ошибка: ${esc(e.message)}</div>`;
+    btn.disabled = false;
+  }
+}
+
+async function pollNiche(q) {
+  if (_toolActive !== 'niche') return;   // ушли с вкладки — не дёргаем DOM
+  const btn = document.getElementById('nicheGo');
+  try {
+    const st = await fetchJSON('/api/tools/niche/status');
+    if (st.status === 'running') {
+      _nicheSpin((st.stage || 'анализируем…') + ' — страница обновится сама');
+      setTimeout(() => pollNiche(q), 8000);
+      return;
+    }
+    if (st.status === 'error') throw new Error(st.error || 'анализ не удался');
+    _nicheResult = await fetchJSON('/api/tools/niche/get?query=' + encodeURIComponent(q));
     renderNicheResult();
   } catch (e) {
-    out.innerHTML = `<div class="alert alert-danger">Ошибка: ${e.message}</div>`;
+    const out = document.getElementById('nicheOut');
+    if (out) out.innerHTML = `<div class="alert alert-danger">Ошибка: ${esc(e.message)}</div>`;
   }
-  btn.disabled = false;
+  if (btn) btn.disabled = false;
 }
 
 function renderNicheResult() {

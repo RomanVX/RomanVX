@@ -860,40 +860,82 @@ async def _wb_commission(subject_id: int | None) -> float | None:
     return _commission_cache.get(int(subject_id))
 
 
+_niche_job: dict = {"status": "idle"}
+
+
+def _niche_relevant(products: list, query: str) -> bool:
+    """Анти-бот WB иногда отдаёт «приманку» — 1-2 случайных товара (MacBook
+    на запрос про крем). Хоть какие-то товары должны содержать слова запроса."""
+    q_tokens = [w[:max(4, len(w) - 2)].lower() for w in query.split() if len(w) > 3]
+    if not q_tokens:
+        return True
+    return any(any(t in (p.get("name") or "").lower() for t in q_tokens)
+               for p in products)
+
+
+async def _niche_job_run(payload: dict, query: str) -> None:
+    """Фоновый анализ ниши с автоповторами.
+
+    Многоступенчатая схема (qv/preset, троттлинг 45с, ретраи при приманке)
+    занимает больше 100с — лимита запроса на Render, поэтому анализ идёт
+    фоном, а фронт опрашивает /niche/status."""
+    global _niche_job
+    try:
+        last_reason = ""
+        for attempt in range(1, 4):
+            _niche_job["stage"] = f"запрашиваем выдачу WB (попытка {attempt}/3)"
+            products, total = await _wb_public_search(query)
+            if products and not _niche_relevant(products, query):
+                last_reason = "WB подсовывает нерелевантную приманку вместо выдачи"
+                products = []
+            elif not products:
+                last_reason = _niche_last_err or "пустая выдача"
+            if products:
+                _niche_job["stage"] = "выдача получена — считаем метрики и вердикт"
+                await _analyze_niche_impl(payload, query, products, total)
+                _niche_job = {"status": "done", "query": query}
+                return
+            if attempt < 3:
+                _niche_job["stage"] = f"{last_reason} — пауза и новая попытка ({attempt}/3)"
+                await asyncio.sleep(75)
+        hint = (" WB ограничивает IP: подождите час-другой или смените IP прокси "
+                "в ЛК proxy6." if "429" in last_reason else
+                " Если повторяется на каждой попытке — WB пометил IP прокси как бота; "
+                "надёжное лечение — резидентский прокси.")
+        _niche_job = {"status": "error", "query": query, "error": last_reason + hint}
+    except Exception as e:
+        _log.warning("niche job: %s", e)
+        _niche_job = {"status": "error", "query": query, "error": str(e)[:300]}
+
+
 @router.post("/niche")
 async def analyze_niche(payload: dict):
     """Скоринг ниши по поисковому запросу WB.
 
-    {query, price?, cost?, logistics?} → конкуренты, метрики ниши,
-    юнит-прикидка и вердикт Claude. Прирост отзывов между замерами
-    даёт оценку продаж конкурентов (как в MPStats)."""
+    {query, price?, cost?, logistics?} → запускает фоновый анализ
+    (конкуренты, метрики ниши, юнит-прикидка, вердикт Claude); статус —
+    в /niche/status, результат — в /niche/get."""
     query = str(payload.get("query") or "").strip().lower()
     if not query:
         raise HTTPException(status_code=400, detail="Введите поисковый запрос")
     _niche_init()
+    global _niche_job
+    if _niche_job.get("status") == "running":
+        return {"building": True, "query": _niche_job.get("query"),
+                "stage": _niche_job.get("stage", "")}
+    _niche_job = {"status": "running", "query": query, "stage": "старт"}
+    _spawn(_niche_job_run(payload, query))
+    return {"building": True, "query": query, "stage": "старт"}
 
-    products, total = await _wb_public_search(query)
-    if not products:
-        hint = (" WB ограничивает запросы с IP сервера — повторите через минуту; "
-                "если ошибка постоянная, нужен российский прокси (WB_SEARCH_PROXY)."
-                if "429" in _niche_last_err else "")
-        raise HTTPException(status_code=502,
-                            detail="WB не вернул выдачу по запросу"
-                                   + (f" ({_niche_last_err})." if _niche_last_err else "") + hint)
 
-    # Анти-бот WB иногда отдаёт «приманку» — 1-2 случайных товара (MacBook
-    # на запрос про крем). Проверяем релевантность: хоть какие-то товары
-    # должны содержать слова запроса, иначе это мусор, а не выдача.
-    q_tokens = [w[:max(4, len(w) - 2)].lower() for w in query.split() if len(w) > 3]
-    if q_tokens:
-        matched = sum(1 for p in products
-                      if any(t in (p.get("name") or "").lower() for t in q_tokens))
-        if matched == 0:
-            raise HTTPException(status_code=502, detail=(
-                "WB подсунул нерелевантную выдачу (анти-бот-приманку) вместо "
-                "результатов по запросу. Подождите минуту-две и повторите — "
-                "обычно со второй попытки приходит настоящая выдача."))
+@router.get("/niche/status")
+async def niche_status():
+    """Состояние фонового анализа ниши."""
+    return dict(_niche_job)
 
+
+async def _analyze_niche_impl(payload: dict, query: str,
+                              products: list, total: int) -> dict:
     today = datetime.utcnow().date().isoformat()
     # прошлые замеры — для оценки продаж по приросту отзывов
     prev_rows = await asyncio.to_thread(
