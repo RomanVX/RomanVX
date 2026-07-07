@@ -699,28 +699,6 @@ async def _wb_public_search(query: str, limit: int = 60) -> tuple[list[dict], in
     import os
     proxy = os.getenv("WB_SEARCH_PROXY", "").strip() or None
 
-    # Основной путь: сервис wb-fetch (headless-Chrome проходит анти-бот WB
-    # как обычный посетитель). Прямые запросы ниже — фолбэк на случай,
-    # если сервис спит/упал.
-    fetch_url = os.getenv("WB_FETCH_URL", "").strip()
-    if fetch_url:
-        try:
-            async with httpx.AsyncClient(timeout=120) as fc:
-                fr = await fc.get(fetch_url.rstrip("/") + "/search",
-                                  params={"query": query, "limit": limit,
-                                          "token": os.getenv("WB_FETCH_TOKEN", "")})
-                fj = fr.json()
-                if fj.get("ok") and fj.get("products"):
-                    _niche_last_body = (f"WB-FETCH (headless): {len(fj['products'])} "
-                                        f"товаров, total={fj.get('total')}")
-                    return fj["products"], int(fj.get("total") or len(fj["products"]))
-                _niche_last_err = f"wb-fetch: {fj.get('error') or 'пусто'}"
-                _niche_last_body = f"WB-FETCH ответ: {str(fj)[:1200]}"
-        except Exception as e:
-            _niche_last_err = f"wb-fetch недоступен: {str(e)[:150]}"
-            _niche_last_body = f"WB-FETCH exc: {str(e)[:400]}"
-        _log.warning("wb-fetch не дал выдачу (%s) — пробуем прямые запросы", _niche_last_err)
-
     # Сайт WB (июль 2026) получает выдачу через v18 c appType=64 — старый
     # v13/appType=1 отдаёт всем preset-заглушку с qv (снято с DevTools).
     # Пробуем варианты от нового к старому; для старого остаётся qv-цепочка.
@@ -930,14 +908,65 @@ def _niche_relevant(products: list, query: str) -> bool:
                for p in products)
 
 
+async def _wb_fetch_search(query: str, limit: int = 60) -> tuple[list, int]:
+    """Выдача через сервис wb-fetch (headless-Chrome проходит анти-бот WB).
+
+    Холодный старт браузера на free-CPU занимает до 2-3 минут — таймаут
+    щедрый, прогресс виден в стадии задачи."""
+    global _niche_last_err, _niche_last_body
+    import os
+    fetch_url = os.getenv("WB_FETCH_URL", "").strip()
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=300) as fc:
+            fr = await fc.get(fetch_url.rstrip("/") + "/search",
+                              params={"query": query, "limit": limit,
+                                      "token": os.getenv("WB_FETCH_TOKEN", "")})
+            fj = fr.json()
+            if fj.get("ok") and fj.get("products"):
+                _niche_last_body = (f"WB-FETCH (headless): {len(fj['products'])} "
+                                    f"товаров, total={fj.get('total')}")
+                return fj["products"], int(fj.get("total") or len(fj["products"]))
+            _niche_last_err = f"wb-fetch: {fj.get('error') or f'HTTP {fr.status_code}, пусто'}"
+            _niche_last_body = f"WB-FETCH ответ: {str(fj)[:1200]}"
+    except Exception as e:
+        _niche_last_err = f"wb-fetch недоступен: {str(e)[:150]}"
+        _niche_last_body = f"WB-FETCH exc: {str(e)[:400]}"
+    return [], 0
+
+
 async def _niche_job_run(payload: dict, query: str) -> None:
     """Фоновый анализ ниши с автоповторами.
 
-    Многоступенчатая схема (qv/preset, троттлинг 45с, ретраи при приманке)
+    Многоступенчатая схема (qv/preset, троттлинг, ретраи при приманке)
     занимает больше 100с — лимита запроса на Render, поэтому анализ идёт
     фоном, а фронт опрашивает /niche/status."""
-    global _niche_job
+    global _niche_job, _niche_last_err
+    import os
     try:
+        # wb-fetch настроен → он единственный путь: прямые запросы всё равно
+        # получают 429/заглушку, а перебор только затягивает и жжёт лимиты
+        if os.getenv("WB_FETCH_URL", "").strip():
+            for attempt in (1, 2):
+                _niche_job["stage"] = (f"wb-fetch: браузер открывает WB "
+                                       f"(попытка {attempt}/2; холодный старт — до 2-3 мин)")
+                products, total = await _wb_fetch_search(query)
+                if products and not _niche_relevant(products, query):
+                    _niche_last_err = "браузер получил нерелевантную выдачу"
+                    products = []
+                if products:
+                    _niche_job["stage"] = "выдача получена — считаем метрики и вердикт"
+                    await _analyze_niche_impl(payload, query, products, total)
+                    _niche_job = {"status": "done", "query": query}
+                    return
+                if attempt == 1:
+                    _niche_job["stage"] = f"{_niche_last_err} — повтор через 45с"
+                    await asyncio.sleep(45)
+            _niche_job = {"status": "error", "query": query,
+                          "error": (_niche_last_err or "wb-fetch не дал выдачу")
+                          + ". Смотрите лог сервиса wb-fetch в Render."}
+            return
+
         last_reason = ""
         for attempt in range(1, 4):
             _niche_job["stage"] = f"запрашиваем выдачу WB (попытка {attempt}/3)"
