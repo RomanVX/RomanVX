@@ -799,6 +799,35 @@ async def niche_last_response():
     return PlainTextResponse(_niche_last_body or "ещё не было запросов")
 
 
+@router.get("/niche/proxycheck", include_in_schema=False)
+async def niche_proxycheck():
+    """Каким выходным IP ходим в WB: маскированный прокси из env + egress-IP.
+
+    Проверка идёт на нейтральный ipify (не WB), лимиты не жжёт."""
+    import httpx
+    import os
+    proxy = os.getenv("WB_SEARCH_PROXY", "").strip() or None
+    masked = None
+    if proxy:
+        # прячем пароль: http://user:pass@host:port → http://user:***@host:port
+        import re as _re
+        masked = _re.sub(r"(://[^:/@]+):[^@]*@", r"\1:***@", proxy)
+    out = {"proxy_env": masked or "не задан (прямое соединение)"}
+    try:
+        async with httpx.AsyncClient(timeout=20, proxy=proxy) as client:
+            r = await client.get("https://api.ipify.org?format=json")
+            out["egress_ip"] = r.json().get("ip")
+        try:
+            async with httpx.AsyncClient(timeout=20, proxy=proxy) as client:
+                g = await client.get(f"http://ip-api.com/json/{out['egress_ip']}?fields=country,isp")
+                out.update(g.json())
+        except Exception:
+            pass
+    except Exception as e:
+        out["error"] = f"через прокси не удалось выйти в сеть: {str(e)[:200]}"
+    return out
+
+
 @router.get("/niche/debug", include_in_schema=False)
 async def niche_debug(query: str = Query(default="крем для лица"),
                       full: bool = Query(default=False)):
