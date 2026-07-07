@@ -699,6 +699,28 @@ async def _wb_public_search(query: str, limit: int = 60) -> tuple[list[dict], in
     import os
     proxy = os.getenv("WB_SEARCH_PROXY", "").strip() or None
 
+    # Основной путь: сервис wb-fetch (headless-Chrome проходит анти-бот WB
+    # как обычный посетитель). Прямые запросы ниже — фолбэк на случай,
+    # если сервис спит/упал.
+    fetch_url = os.getenv("WB_FETCH_URL", "").strip()
+    if fetch_url:
+        try:
+            async with httpx.AsyncClient(timeout=120) as fc:
+                fr = await fc.get(fetch_url.rstrip("/") + "/search",
+                                  params={"query": query, "limit": limit,
+                                          "token": os.getenv("WB_FETCH_TOKEN", "")})
+                fj = fr.json()
+                if fj.get("ok") and fj.get("products"):
+                    _niche_last_body = (f"WB-FETCH (headless): {len(fj['products'])} "
+                                        f"товаров, total={fj.get('total')}")
+                    return fj["products"], int(fj.get("total") or len(fj["products"]))
+                _niche_last_err = f"wb-fetch: {fj.get('error') or 'пусто'}"
+                _niche_last_body = f"WB-FETCH ответ: {str(fj)[:1200]}"
+        except Exception as e:
+            _niche_last_err = f"wb-fetch недоступен: {str(e)[:150]}"
+            _niche_last_body = f"WB-FETCH exc: {str(e)[:400]}"
+        _log.warning("wb-fetch не дал выдачу (%s) — пробуем прямые запросы", _niche_last_err)
+
     # Сайт WB (июль 2026) получает выдачу через v18 c appType=64 — старый
     # v13/appType=1 отдаёт всем preset-заглушку с qv (снято с DevTools).
     # Пробуем варианты от нового к старому; для старого остаётся qv-цепочка.
