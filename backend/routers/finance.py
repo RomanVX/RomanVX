@@ -182,17 +182,23 @@ def _normalize_stat_rows(stat_rows: list[dict]) -> list[dict]:
     Кабинетная «Финансовая аналитика» строится из этого же отчёта,
     поэтому цифры сходятся с ЛК.
     """
+    import sys as _sys
+    _i = _sys.intern   # даты/типы/артикулы повторяются в тысячах строк
     out = []
-    for r in stat_rows:
+    # деструктивно: pop() освобождает исходные записи по ходу — иначе на
+    # Render free (512 МБ) две копии полугодового отчёта дают OOM
+    stat_rows.reverse()
+    while stat_rows:
+        r = stat_rows.pop()
         qty = r.get("quantity") or 0
         # «до СПП»: retail_amount в v5 — фактическая сумма ПОСЛЕ СПП;
         # цена продавца до СПП — retail_price_withdisc_rub (за единицу)
         pre_spp = (r.get("retail_price_withdisc_rub") or 0) * (qty or 1)
         out.append({
-            "rrDate":          (r.get("rr_dt") or r.get("sale_dt") or "")[:10],
-            "saleDate":        (r.get("sale_dt") or r.get("rr_dt") or "")[:10],
-            "docTypeName":     r.get("doc_type_name") or "",
-            "operName":        r.get("supplier_oper_name") or "",
+            "rrDate":          _i((r.get("rr_dt") or r.get("sale_dt") or "")[:10]),
+            "saleDate":        _i((r.get("sale_dt") or r.get("rr_dt") or "")[:10]),
+            "docTypeName":     _i(r.get("doc_type_name") or ""),
+            "operName":        _i(r.get("supplier_oper_name") or ""),
             "retailAmount":    r.get("retail_amount") or 0,
             "retailPreSpp":    pre_spp,
             "forPay":          r.get("ppvz_for_pay") or 0,
@@ -203,7 +209,7 @@ def _normalize_stat_rows(stat_rows: list[dict]) -> list[dict]:
             "deduction":       r.get("deduction") or 0,
             "cashbackAmount":  0,
             "acquiringFee":    r.get("acquiring_fee") or 0,
-            "vendorCode":      (r.get("sa_name") or "").strip(),
+            "vendorCode":      _i((r.get("sa_name") or "").strip()),
             "nmId":            r.get("nm_id"),
             "quantity":        qty,
         })

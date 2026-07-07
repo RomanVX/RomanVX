@@ -263,7 +263,7 @@ _REPORT_KEEP = frozenset({
     "storage_fee", "acceptance", "penalty", "deduction", "additional_payment",
 })
 
-_REPORT_PAGE = 20_000  # меньше страница → меньше пиковая память при парсинге
+_REPORT_PAGE = 10_000  # меньше страница → меньше пиковая память при парсинге
 
 
 async def get_report_detail(date_from: datetime, date_to: datetime) -> list[dict]:
@@ -306,10 +306,32 @@ async def get_report_detail(date_from: datetime, date_to: datetime) -> list[dict
             break
         got = len(data)
         rrdid = data[-1]["rrd_id"]
-        all_records.extend(await asyncio.to_thread(
-            lambda d: [{k: r[k] for k in _REPORT_KEEP if k in r} for r in d], data))
+
+        def _slim(d):
+            import sys as _sys
+            out = []
+            for r in d:
+                row = {}
+                for k in _REPORT_KEEP:
+                    v = r.get(k)
+                    if v is None:
+                        continue
+                    if isinstance(v, str):
+                        # бренды/артикулы/даты/типы повторяются в тысячах строк —
+                        # интернирование хранит каждую строку в памяти один раз
+                        v = _sys.intern(v)
+                    row[k] = v
+                out.append(row)
+            return out
+
+        all_records.extend(await asyncio.to_thread(_slim, data))
         del data  # сырые записи с полным набором полей больше не нужны
-        _log.info("reportDetailByPeriod: got %d records (total %d)", got, len(all_records))
+        try:
+            import heavy
+            _log.info("reportDetailByPeriod: got %d records (total %d, rss %.0f MB)",
+                      got, len(all_records), heavy.rss_mb())
+        except Exception:
+            _log.info("reportDetailByPeriod: got %d records (total %d)", got, len(all_records))
         if got < _REPORT_PAGE:
             break
         await asyncio.sleep(62)  # лимит между страницами

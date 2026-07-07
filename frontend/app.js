@@ -2737,12 +2737,20 @@ async function runNiche(_retry) {
 }
 
 let _nicheFails = 0;
+let _nicheRestarts = 0;
 async function pollNiche(q) {
   if (_toolActive !== 'niche') return;   // ушли с вкладки — не дёргаем DOM
   const btn = document.getElementById('nicheGo');
   try {
     const st = await fetchJSON('/api/tools/niche/status');
     _nicheFails = 0;
+    if ((!st.status || st.status === 'idle') && _nicheRestarts < 2) {
+      // сервер перезапустился и потерял фоновую задачу — стартуем заново
+      _nicheRestarts++;
+      _nicheSpin(`сервер перезапускался — перезапускаем анализ (${_nicheRestarts}/2)…`);
+      setTimeout(() => runNiche(), 3000);
+      return;
+    }
     if (st.status === 'running') {
       _nicheSpin((st.stage || 'анализируем…') + ' — страница обновится сама');
       setTimeout(() => pollNiche(q), 8000);
@@ -2750,6 +2758,7 @@ async function pollNiche(q) {
     }
     if (st.status === 'error') throw new Error(st.error || 'анализ не удался');
     _nicheResult = await fetchJSON('/api/tools/niche/get?query=' + encodeURIComponent(q));
+    _nicheRestarts = 0;
     renderNicheResult();
   } catch (e) {
     // сервер на free-тарифе может на минуту зависнуть на тяжёлой фоновой
