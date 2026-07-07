@@ -19,7 +19,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from lib import (data_io, extrapolate, honest_stats, plots, predict, slices,  # noqa: E402
-                 stretch)
+                 stretch, swtrade)
 
 OUT = Path(__file__).resolve().parent / "out"
 KMAX = 12          # максимум лага в скане, дней
@@ -181,7 +181,8 @@ def main() -> None:
     control = None
     sw = data_io.load_solar_wind()
     if sw is not None:
-        sw_pairs = data_io.make_pairs(ch, sw, value_col="bulk_kms")
+        sw_pairs = data_io.make_pairs(ch, sw.dropna(subset=["bulk_kms"]),
+                                      value_col="bulk_kms")
         sw_scan = slices.lag_scan(sw_pairs, "levels", "pooled", kmax=KMAX)
         sw_best = slices.best_lag([r for r in sw_scan if np.isfinite(r.r)])
         sw_ks = [r.k for r in sw_scan]
@@ -241,6 +242,48 @@ def main() -> None:
             multitf["verdicts"][mode] = {"best": b4, "p": p4, "neff": neff4}
             print(f"[4ч {mode}] лучший k={b4.k:+d} бар ({b4.k / 6:+.1f} дн) "
                   f"r={b4.r:+.2f} (N={b4.n}, N_eff≈{neff4:.0f}); p(скан)≈{p4:.3f}")
+
+    # -------------------- торговый тест от горбов скорости СВ (SW-211) ------
+    # модель SW-211 прогнозная (~4 дня форы): дно/верх горба видны заранее;
+    # сетка входов от «за 2 дня до экстремума» до «+3», удержание 2-10 дней
+    swtrade_res = None
+    if sw is not None and sw["sw211_kms"].notna().sum() > 100:
+        both_sw = sw.dropna()
+        r_model = float(np.corrcoef(both_sw["sw211_kms"], both_sw["bulk_kms"])[0, 1])
+        ev = swtrade.find_events(sw)
+        bt = swtrade.backtest(ev, btc)
+        if len(bt):
+            best_row = bt.loc[bt["p_rand"].idxmin()]
+            n_sig = int((bt["p_rand"] < 0.05).sum())
+            swtrade_res = {"events": ev, "table": bt, "best": best_row,
+                           "n_sig": n_sig, "n_cells": len(bt), "r_model": r_model}
+            n_tr = int((ev["kind"] == "trough").sum())
+            n_pk = int((ev["kind"] == "peak").sum())
+            print(f"[SW-модель vs факт (ACE)] r={r_model:+.2f} на {len(both_sw)} дн "
+                  f"— сильная связь с сайта воспроизведена")
+            print(f"[торговый тест] горбов: {n_tr} доньев, {n_pk} вершин; "
+                  f"клеток сетки {len(bt)}, из них p<0.05: {n_sig} "
+                  f"(у шума ожидается ~{0.05 * len(bt):.1f})")
+            print(f"[торговый тест] лучшая клетка: {best_row['kind']} "
+                  f"d={best_row['delay']:+.0f} h={best_row['hold']:.0f} → "
+                  f"средняя сделка {best_row['mean_pct']:+.2f}% "
+                  f"(случайные даты {best_row['rand_mean_pct']:+.2f}%), "
+                  f"p={best_row['p_rand']:.3f}")
+
+            # прямые корреляции SW-211 x BTC по году (та же батарея, что для CH)
+            sw_as = sw.dropna(subset=["sw211_kms"]).rename(
+                columns={"sw211_kms": "ch211_pct"})[["date", "ch211_pct"]]
+            pairs_sw = data_io.make_pairs(sw_as, btc)
+            swtrade_res["btc_scans"] = {}
+            for mode in ("levels", "diffs"):
+                sc = slices.lag_scan(pairs_sw, mode, "pooled", kmax=KMAX)
+                nu = honest_stats.circular_null(pairs_sw, mode,
+                                                [r.k for r in sc], n_iter=2000)
+                bb = slices.best_lag([r for r in sc if np.isfinite(r.r)])
+                pp = honest_stats.null_pvalue(abs(bb.r), nu["max_abs"])
+                swtrade_res["btc_scans"][mode] = {"best": bb, "p": pp}
+                print(f"[SW-211 x BTC {mode}] лучший k={bb.k:+d} r={bb.r:+.2f} "
+                      f"(n={bb.n}); p(скан)≈{pp:.3f}")
 
     # ---------------------- решающий тест: предсказание вне выборки ---------
     # инженерная постановка «строим логику от воздействия Солнца»: каждый день
@@ -309,19 +352,23 @@ def main() -> None:
     plots.fig_probe(probe, verdicts["levels"]["best"].r, OUT / "fig10_probe.png")
     if predict_res:
         plots.fig_predict(predict_res, OUT / "fig11_predict.png")
+    if swtrade_res:
+        plots.fig_swtrade(sw, swtrade_res["events"], swtrade_res["table"],
+                          list(swtrade.DELAYS), list(swtrade.HOLDS),
+                          OUT / "fig13_swtrade.png")
 
     # ------------------------------------------------------------- отчёт ----
     write_report(ch_src, btc_src, ch, pairs, wins, wtitles, scans, verdicts, nulls,
                  neg_share, events, chf, fan, base, k_star, control, digit_rmse,
                  win_checks, coverage, stretch_res, btc_rmse, multitf, probe,
-                 predict_res)
-    print(f"\nГотово: {OUT}/fig1…fig11.png, {OUT}/REPORT.md")
+                 predict_res, swtrade_res)
+    print(f"\nГотово: {OUT}/fig1…fig13.png, {OUT}/REPORT.md")
 
 
 def write_report(ch_src, btc_src, ch, pairs, wins, wtitles, scans, verdicts, nulls,
                  neg_share, events, chf, fan, base, k_star, control,
                  digit_rmse, win_checks, coverage, stretch_res, btc_rmse,
-                 multitf, probe, predict_res) -> None:
+                 multitf, probe, predict_res, swtrade_res) -> None:
     L: list[str] = []
     add = L.append
 
@@ -534,7 +581,42 @@ def write_report(ch_src, btc_src, ch, pairs, wins, wtitles, scans, verdicts, nul
                 "модели «завтра как сегодня». В инженерной постановке это и есть "
                 "ответ задачи на текущих данных.\n")
 
-    add("\n## 10. Экстраполяции\n\n![прогноз](fig6_forecast.png)\n")
+    if swtrade_res:
+        b = swtrade_res["best"]
+        add("\n## 10. Торговый тест: сделки от горбов скорости солнечного ветра\n")
+        add("\n![торговый тест](fig13_swtrade.png)\n")
+        add(f"Модель V_sw(SDO 211Å) — прогнозная (~{swtrade.FORECAST_LEAD} дня форы), "
+            f"и она реально работает по своему назначению: с фактической скоростью "
+            f"ветра (ACE) r = **{swtrade_res['r_model']:+.2f}** за год — это та самая "
+            "сильная корреляция, которая видна на сайте SINP. Вопрос теста: "
+            "конвертируется ли она в сделки по биткоину.\n")
+        add(f"Правила: LONG после подтверждённого дна, SHORT после подтверждённого "
+            f"верха; вход от −2 дней до экстремума (фора прогноза минус "
+            f"{swtrade.CONFIRM_RUN} дня на разворот) до +3; удержание 2–10 дней; "
+            f"каждая клетка против тех же входов в случайные даты.\n")
+        add("| правило | вход | удержание | сделок | средняя | случайные даты | избыток | p |")
+        add("|---|---|---|---|---|---|---|---|")
+        top = swtrade_res["table"].sort_values("p_rand").head(6)
+        for _, r in top.iterrows():
+            rname = "LONG со дна" if r["kind"] == "trough" else "SHORT с верха"
+            add(f"| {rname} | {r['delay']:+.0f}д | {r['hold']:.0f}д | {r['n']:.0f} "
+                f"| {r['mean_pct']:+.2f}% | {r['rand_mean_pct']:+.2f}% "
+                f"| {r['excess_pct']:+.2f} п.п. | {r['p_rand']:.3f} |")
+        add(f"\nКлеток в сетке: {swtrade_res['n_cells']}, с p<0.05: "
+            f"{swtrade_res['n_sig']} (шум при таком переборе даёт "
+            f"~{0.05 * swtrade_res['n_cells']:.1f}). Лучшая клетка после поправки "
+            f"на перебор: p≈{min(1.0, b['p_rand'] * swtrade_res['n_cells']):.2f}.\n")
+        if "btc_scans" in swtrade_res:
+            add("Прямые корреляции V_sw(211Å) × BTC по году (та же батарея, что "
+                "для площади CH):\n")
+            add("| разрез | лучший лаг | r | p(скан) |")
+            add("|---|---|---|---|")
+            for mode, mname in (("levels", "уровни"), ("diffs", "приращения")):
+                s = swtrade_res["btc_scans"][mode]
+                add(f"| {mname} | {s['best'].k:+d} дн | {s['best'].r:+.2f} "
+                    f"| {s['p']:.2f} |")
+
+    add("\n## 11. Экстраполяции\n\n![прогноз](fig6_forecast.png)\n")
     reg = fan["reg"]
     add(f"- Лаг-карта: btc_ret(t) = {reg['a']:+.4f} {reg['b']:+.4f}·ΔCH(t−{k_star}) "
         f"(n={reg['n']}); будущие ΔCH — из гармоники 27.27 дн.")
@@ -623,6 +705,23 @@ def write_report(ch_src, btc_src, ch, pairs, wins, wtitles, scans, verdicts, nul
             f"4-часовые бары: точек в 6 раз больше ({v4l['best'].n} против "
             f"{vl['best'].n}), а независимой информации столько же — сосед "
             f"повторяет соседа, и честный вывод не меняется.\n")
+    if swtrade_res:
+        b = swtrade_res["best"]
+        rname = "шорт с верха горба" if b["kind"] == "peak" else "лонг со дна"
+        add(f"**Торговый тест от горбов ветра.** Сильная корреляция здесь "
+            f"действительно есть — модель скорости ветра против фактической: "
+            f"r={swtrade_res['r_model']:+.2f} за год. Это физика, она работает. "
+            f"Мы проверили, конвертируется ли она в сделки: {swtrade_res['n_cells']} "
+            f"вариантов входа/удержания от доньев и вершин горбов, каждый против "
+            f"случайных дат. Лучший вариант ({rname}, вход {b['delay']:+.0f}д, "
+            f"удержание {b['hold']:.0f}д) даёт {b['mean_pct']:+.1f}% за сделку против "
+            f"{b['rand_mean_pct']:+.1f}% у случайных входов; p={b['p_rand']:.2f} "
+            f"до поправки и ≈{min(1.0, b['p_rand'] * swtrade_res['n_cells']):.2f} "
+            f"после поправки на перебор {swtrade_res['n_cells']} клеток — "
+            + ("значимо даже после поправки: этот вариант стоит гонять вперёд на "
+               "новых данных, прежде чем делать выводы.\n"
+               if b["p_rand"] * swtrade_res["n_cells"] < 0.05 else
+               "преимущество не отличимо от везения.\n"))
     add(f"**Погода на Солнце.** Следующий пик площади дыр по 27-дневному ритму — "
         f"около **{next_peak:%d.%m.%Y}**. Если хотите продолжать наблюдение: "
         f"обновляйте оба файла данных раз в месяц и перезапускайте `python run.py` "

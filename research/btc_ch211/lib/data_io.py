@@ -117,12 +117,15 @@ def _parse_sinp_export(path: Path) -> pd.DataFrame:
 # ----------------------------------------------------- солнечный ветер ------
 
 def load_solar_wind() -> pd.DataFrame | None:
-    """Дневная фактическая скорость СВ (Bulk speed) из qlookdata, если есть."""
+    """Дневные скорости СВ из qlookdata: фактическая (Bulk) и модельная
+    (SW speed by SDO 211A)."""
     if not QLOOK.exists():
         return None
     h = _parse_qlook_hourly()
-    d = _daily_from_hourly(h["dt"], h["bulk"]).rename(columns={"v": "bulk_kms"})
-    return d
+    bulk = _daily_from_hourly(h["dt"], h["bulk"]).rename(columns={"v": "bulk_kms"})
+    sw = _daily_from_hourly(h["dt"], h["sw211"]).rename(columns={"v": "sw211_kms"})
+    return bulk[["date", "bulk_kms"]].merge(sw[["date", "sw211_kms"]],
+                                            on="date", how="outer").sort_values("date")
 
 
 # -------------------------------------------------------------------- BTC ---

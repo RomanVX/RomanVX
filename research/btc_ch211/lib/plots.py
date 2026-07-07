@@ -332,6 +332,72 @@ def fig_forecast(ch: pd.DataFrame, chf: dict, btc: pd.DataFrame, fan: dict,
     plt.close(fig)
 
 
+# ------------------------------------------------------------ fig 13 --------
+
+C_SW = "#4a3aa7"  # слот 5 (violet) — скорость СВ как отдельная сущность
+
+
+def fig_swtrade(sw: pd.DataFrame, events: pd.DataFrame, table: pd.DataFrame,
+                delays, holds, path: str) -> None:
+    """Торговый тест: горбы скорости + матрицы (d,h) избыточной доходности."""
+    fig = plt.figure(figsize=(11.6, 9.0))
+    gs = fig.add_gridspec(2, 2, height_ratios=[1.05, 1], hspace=0.42, wspace=0.22,
+                          left=0.07, right=0.97, top=0.93, bottom=0.07)
+    ax = fig.add_subplot(gs[0, :])
+    d = sw.dropna(subset=["sw211_kms"])
+    ax.plot(d["date"], d["sw211_kms"], color=C_SW, lw=1.8)
+    _endlabel(ax, d["date"].iloc[-1], d["sw211_kms"].iloc[-1], "SW 211Å", C_SW)
+    for kind, marker, color, label in (("trough", "^", C_CH, "подтверждено дно"),
+                                       ("peak", "v", C_NEG, "подтверждён верх")):
+        e = events[events["kind"] == kind]
+        vals = [float(d.loc[d["date"] == t, "sw211_kms"].iloc[0])
+                if (d["date"] == t).any() else np.nan for t in e["confirmed"]]
+        ax.scatter(e["confirmed"], vals, marker=marker, s=64, color=color,
+                   zorder=3, edgecolor=SURFACE, linewidth=1, label=label)
+    ax.legend(loc="upper right", ncols=2)
+    ax.set_ylabel("модельная скорость СВ, км/с")
+    _date_axis(ax)
+    ax.set_title("Скорость солнечного ветра (модель по SDO 211Å): горбы и причинные "
+                 "точки входа (подтверждение = 2 движения от экстремума)")
+
+    for j, (kind, ttl) in enumerate((("trough", "LONG со дна"),
+                                     ("peak", "SHORT с верха"))):
+        axh = fig.add_subplot(gs[1, j])
+        mat = np.full((len(delays), len(holds)), np.nan)
+        pm = np.full_like(mat, np.nan)
+        for _, r in table[table["kind"] == kind].iterrows():
+            i, k = delays.index(int(r["delay"])), holds.index(int(r["hold"]))
+            mat[i, k] = r["excess_pct"]
+            pm[i, k] = r["p_rand"]
+        vmax = np.nanmax(np.abs(mat)) or 1.0
+        im = axh.imshow(mat, cmap=_diverging_cmap(), vmin=-vmax, vmax=vmax,
+                        aspect="auto")
+        for i in range(len(delays)):
+            for k in range(len(holds)):
+                if np.isfinite(mat[i, k]):
+                    star = "*" if pm[i, k] < 0.05 else ""
+                    axh.text(k, i, f"{mat[i, k]:+.1f}{star}", ha="center",
+                             va="center", fontsize=8.6, color=INK)
+        axh.set_xticks(range(len(holds)), [f"{h}д" for h in holds])
+        axh.set_yticks(range(len(delays)), [f"{dd:+d}д" for dd in delays])
+        axh.set_xlabel("удержание")
+        if j == 0:
+            axh.set_ylabel("вход относительно экстремума")
+        axh.grid(visible=False)
+        axh.set_title(f"{ttl} (избыток, п.п.)", fontsize=10)
+    fig.suptitle("Торговый тест от горбов скорости СВ — избыток каждой клетки "
+                 "к таким же входам в случайные даты (* = p<0.05 до поправки)",
+                 fontsize=11.5, fontweight="bold")
+    fig.savefig(path, bbox_inches="tight")
+    plt.close(fig)
+
+
+def _diverging_cmap():
+    from matplotlib.colors import LinearSegmentedColormap
+    return LinearSegmentedColormap.from_list(
+        "div", ["#e34948", "#f0efec", "#2a78d6"])
+
+
 # ------------------------------------------------------------ fig 11 --------
 
 def fig_predict(pr: dict, path: str) -> None:
