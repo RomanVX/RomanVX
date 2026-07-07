@@ -162,20 +162,27 @@ async def search(query: str, token: str = "", limit: int = 60):
 
                 # 1) заходим на страницу поиска — браузер проходит
                 #    JS-челлендж WB и получает куки (_wbauid, x_wbaas_token)
-                await page.goto(url, wait_until="domcontentloaded", timeout=60000)
-                await page.wait_for_timeout(2000)
+                nav = await page.goto(url, wait_until="domcontentloaded", timeout=60000)
+                await page.wait_for_timeout(2500)
 
-                # 2) собираем x-queryid по формуле WB (qid + _wbauid + время)
-                #    и сами запрашиваем v18/appType=64 из контекста страницы —
-                #    куки подставит браузер. Это тот запрос, что даёт товары.
+                # 2) _wbauid — httpOnly-кука, JS её не видит; читаем движком
+                cookies = await _ctx.cookies()
+                wbauid = next((c["value"] for c in cookies if c["name"] == "_wbauid"), "")
+                nav_status = nav.status if nav else "?"
+                if not wbauid:
+                    last_err = (f"нет куки _wbauid (страница отдала HTTP {nav_status}); "
+                                f"куки: {sorted(c['name'] for c in cookies)[:12]}")
+                    _log.warning("search %r attempt %d: %s", query, attempt, last_err)
+                    await _reset_browser()
+                    continue
+
+                # 3) x-queryid = qid + _wbauid + время МСК; сам запрос
+                #    v18/appType=64 делаем из страницы (куки подставит браузер)
+                from datetime import datetime as _dt, timedelta as _td
+                ts = (_dt.utcnow() + _td(hours=3)).strftime("%Y%m%d%H%M%S")
+                qid = "qid" + wbauid + ts
                 data = await page.evaluate(
-                    r"""async (query) => {
-                        const wbauid = (document.cookie.match(/_wbauid=([^;]+)/) || [])[1] || '';
-                        const n = new Date();
-                        const p = x => String(x).padStart(2, '0');
-                        const ts = '' + n.getFullYear() + p(n.getMonth()+1) + p(n.getDate())
-                                 + p(n.getHours()) + p(n.getMinutes()) + p(n.getSeconds());
-                        const qid = 'qid' + wbauid + ts;
+                    r"""async ({query, qid}) => {
                         const u = 'https://www.wildberries.ru/__internal/u-search/exactmatch/'
                                 + 'ru/common/v18/search?appType=64&curr=rub&dest=-1257786'
                                 + '&hide_dtype=15&lang=ru&locale=ru&resultset=catalog'
@@ -185,9 +192,9 @@ async def search(query: str, token: str = "", limit: int = 60):
                             const r = await fetch(u, {headers: {
                                 'x-queryid': qid, 'x-requested-with': 'XMLHttpRequest'}});
                             const j = await r.json().catch(() => null);
-                            return {status: r.status, wbauid: wbauid, data: j};
-                        } catch (e) { return {status: -1, error: String(e), wbauid: wbauid}; }
-                    }""", query)
+                            return {status: r.status, data: j};
+                        } catch (e) { return {status: -1, error: String(e)}; }
+                    }""", {"query": query, "qid": qid})
 
                 prods = []
                 if isinstance(data, dict) and isinstance(data.get("data"), dict):
@@ -199,8 +206,7 @@ async def search(query: str, token: str = "", limit: int = 60):
                     return {"ok": True, "total": total, "products": products}
 
                 st = data.get("status") if isinstance(data, dict) else "?"
-                wbauid = data.get("wbauid") if isinstance(data, dict) else "?"
-                last_err = f"appType=64+x-queryid → status={st}, wbauid={'есть' if wbauid else 'НЕТ'}, товаров 0"
+                last_err = f"appType=64+x-queryid → status={st}, wbauid=есть, товаров 0"
                 _log.warning("search %r attempt %d: %s", query, attempt, last_err)
                 await _reset_browser()
                 continue
