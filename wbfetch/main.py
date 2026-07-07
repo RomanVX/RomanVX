@@ -143,38 +143,52 @@ async def search(query: str, token: str = "", limit: int = 60):
                         await route.continue_()
                 await page.route("**/*", _block)
 
-                # сначала открываем страницу поиска — браузер проходит
-                # JS-челлендж и получает анти-бот-куки в контекст
+                # открываем страницу поиска — WB сам отрисовывает карточки
+                # товаров (прямой fetch к u-search даёт 403 без анти-бот
+                # заголовка x-queryid, который считает их JS). Поэтому не
+                # воюем с API, а читаем товары из отрисованного DOM.
                 await page.goto(url, wait_until="domcontentloaded", timeout=60000)
-                await page.wait_for_timeout(2500)
+                try:
+                    await page.wait_for_selector("div.product-card, article.product-card, [data-nm-id]",
+                                                 timeout=45000)
+                except Exception:
+                    pass
+                await page.wait_for_timeout(1500)
 
-                # затем сами делаем fetch к u-search с appType=64 ИЗ страницы:
-                # куки/заголовки подставит браузер, а appType страница по
-                # умолчанию шлёт 1 (и получает preset-заглушку с products=0)
-                q_enc = quote(query)
-                search_url = (
-                    "https://www.wildberries.ru/__internal/u-search/exactmatch/"
-                    "ru/common/v18/search?appType=64&curr=rub&dest=-1257786"
-                    "&hide_dtype=15&lang=ru&locale=ru&resultset=catalog"
-                    "&sort=popular&spp=30&suppressSpellcheck=false&query=" + q_enc)
-                data = await page.evaluate(
-                    """async (u) => {
-                        const r = await fetch(u, {headers: {'x-requested-with': 'XMLHttpRequest'}});
-                        try { return await r.json(); } catch(e) { return {__status: r.status}; }
-                    }""", search_url)
-                prods = (data.get("data") or {}).get("products") or [] if isinstance(data, dict) else []
-                if not prods:
-                    last_err = f"appType=64 из браузера вернул products=0 (raw: {str(data)[:200]})"
-                    _log.warning("search %r attempt %d: %s", query, attempt, last_err)
-                    await _reset_browser()
-                    continue
-                products, total = _norm_products(data, limit)
-                if products:
-                    _log.info("search %r: %d товаров (total %d)", query, len(products), total)
-                    return {"ok": True, "total": total, "products": products}
-                last_err = "страница ответила, но товаров в JSON нет"
-                _log.warning("search %r attempt %d: %s (%s)", query, attempt,
-                             last_err, "; ".join(seen[-5:]))
+                items = await page.evaluate(
+                    r"""() => {
+                        const out = [];
+                        const cards = document.querySelectorAll(
+                            'div.product-card, article.product-card, [data-nm-id]');
+                        cards.forEach(c => {
+                            const nm = c.getAttribute('data-nm-id') ||
+                                (c.querySelector('a[href*="/catalog/"]')?.href.match(/catalog\/(\d+)\//)?.[1]);
+                            if (!nm) return;
+                            const txt = s => c.querySelector(s)?.textContent?.trim() || '';
+                            const priceRaw = txt('.price__lower-price, ins.price__lower-price, .product-card__price');
+                            const price = parseInt((priceRaw.match(/[\d\s]+/)?.[0] || '').replace(/\s/g,'')) || null;
+                            const fbRaw = txt('.product-card__count, .address-rate-mini, .product-card__feedback');
+                            const fb = parseInt((fbRaw.match(/[\d\s]+/)?.[0] || '').replace(/\s/g,'')) || 0;
+                            const rtRaw = txt('.address-rate-mini, .product-card__rating, [class*="rating"]');
+                            const rt = parseFloat((rtRaw.match(/[\d.,]+/)?.[0] || '0').replace(',','.')) || 0;
+                            out.push({
+                                nm: parseInt(nm),
+                                name: txt('.product-card__name, .goods-name').replace(/^\/\s*/,''),
+                                brand: txt('.product-card__brand, .brand-name'),
+                                price: price, rating: rt, feedbacks: fb,
+                                subject_id: null, supplier: '',
+                            });
+                        });
+                        return out;
+                    }""")
+                items = [p for p in (items or []) if p.get("nm")][:limit]
+                if items:
+                    _log.info("search %r: %d товаров из DOM", query, len(items))
+                    return {"ok": True, "total": len(items), "products": items}
+                last_err = "карточки товаров не отрисовались (DOM пуст)"
+                _log.warning("search %r attempt %d: %s", query, attempt, last_err)
+                await _reset_browser()
+                continue
             except Exception as e:
                 last_err = str(e)[:300]
                 _log.warning("search %r attempt %d: %s", query, attempt, last_err)
