@@ -582,7 +582,8 @@ _niche_last_body = ""   # сырое тело последнего ответа 
 # переменной окружения WB_SEARCH_INTERVAL без деплоя).
 _wb_search_lock = asyncio.Lock()
 _wb_search_last: float = 0.0
-_WB_SEARCH_INTERVAL = float(os.getenv("WB_SEARCH_INTERVAL", "45") or 45)
+# 45с было под сожжённый серверный IP; на резидентском прокси хватает 15с
+_WB_SEARCH_INTERVAL = float(os.getenv("WB_SEARCH_INTERVAL", "15") or 15)
 
 
 async def _wb_throttle():
@@ -631,7 +632,9 @@ async def _wb_search_preset(client, params: dict, meta_text: str) -> dict | None
         p2["preset"] = preset_id
         if drop_query:
             p2.pop("query", None)
-        await _wb_throttle()
+        # без троттлинга: браузер шлёт follow-up мгновенно, пауза только
+        # протухшивает токены и провоцирует анти-бот на приманку
+        await asyncio.sleep(1.0)
         try:
             r = await client.get(
                 "https://search.wb.ru/exactmatch/ru/common/v13/search", params=p2)
@@ -663,7 +666,8 @@ async def _wb_search_stage2(client, params: dict, meta_text: str) -> dict | None
         kcl = _re.search(r'"kcl":"([^"]+)"', body)
         if kcl:
             p2["kcl"] = kcl.group(1)
-        await _wb_throttle()
+        # qv-токен короткоживущий: повтор должен уйти сразу, как в браузере
+        await asyncio.sleep(0.7)
         try:
             r = await client.get(
                 "https://search.wb.ru/exactmatch/ru/common/v13/search", params=p2)
@@ -928,7 +932,7 @@ async def _niche_job_run(payload: dict, query: str) -> None:
                 break   # бан по IP держится часами — повторы его только продлевают
             if attempt < 3:
                 _niche_job["stage"] = f"{last_reason} — пауза и новая попытка ({attempt}/3)"
-                await asyncio.sleep(75)
+                await asyncio.sleep(30)
         hint = (" WB ограничивает IP: подождите час-другой или смените IP прокси "
                 "в ЛК proxy6." if "429" in last_reason else
                 " Если повторяется на каждой попытке — WB пометил IP прокси как бота; "
