@@ -285,6 +285,61 @@ def main() -> None:
                 print(f"[SW-211 x BTC {mode}] лучший k={bb.k:+d} r={bb.r:+.2f} "
                       f"(n={bb.n}); p(скан)≈{pp:.3f}")
 
+    # -------------------- скрининг всей плазмы СВ против BTC (qlook 2) ------
+    # 6 серий x 2 разреза = 12 сканов: хотя бы один «p<0.05» у чистого шума
+    # выпадает с вероятностью ~46%, поэтому решает семейная поправка
+    screening = None
+    plasma = data_io.load_plasma()
+    if plasma is not None:
+        srows = []
+        for col, label in data_io.PLASMA_LABELS.items():
+            s = plasma.dropna(subset=[col])[["date", col]].rename(
+                columns={col: "ch211_pct"})
+            if len(s) < 150:
+                continue
+            prs = data_io.make_pairs(s, btc)
+            if len(prs) < 100:
+                continue
+            for mode in ("levels", "diffs"):
+                sc = slices.lag_scan(prs, mode, "pooled", kmax=KMAX)
+                fin = [r for r in sc if np.isfinite(r.r)]
+                if not fin:
+                    continue
+                bb = slices.best_lag(fin)
+                nu = honest_stats.circular_null(prs, mode, [r.k for r in sc],
+                                                n_iter=1500)
+                pp = honest_stats.null_pvalue(abs(bb.r), nu["max_abs"])
+                row = {"label": label, "mode": mode, "k": bb.k,
+                       "r": bb.r, "n": bb.n, "p": pp,
+                       "q95": float(np.quantile(nu["max_abs"], 0.95)),
+                       "r_dt": np.nan, "p_dt": np.nan}
+                if mode == "levels":  # переживает ли попадание удаление тренда
+                    gW2 = prs.groupby("window")
+                    for src, dst in (("ch_z", "ch_dt"), ("btc_z", "btc_dt")):
+                        prs[dst] = prs[src] - gW2[src].transform(
+                            lambda s: s.rolling(27, center=True,
+                                                min_periods=13).mean())
+                    sc_dt = slices.lag_scan(prs, "levels_dt", "pooled", kmax=KMAX)
+                    fin_dt = [r for r in sc_dt if np.isfinite(r.r)]
+                    if fin_dt:
+                        b_dt = slices.best_lag(fin_dt)
+                        nu_dt = honest_stats.circular_null(
+                            prs, "levels_dt", [r.k for r in sc_dt], n_iter=1000)
+                        row["r_dt"] = b_dt.r
+                        row["p_dt"] = honest_stats.null_pvalue(
+                            abs(b_dt.r), nu_dt["max_abs"])
+                srows.append(row)
+                extra = (f"; детренд: r={row['r_dt']:+.2f} p≈{row['p_dt']:.2f}"
+                         if np.isfinite(row["p_dt"]) else "")
+                print(f"[скрин {label} | {mode}] k={bb.k:+d} r={bb.r:+.2f} "
+                      f"(n={bb.n}) p(скан)≈{pp:.3f}{extra}")
+        if srows:
+            screening = pd.DataFrame(srows).sort_values("p").reset_index(drop=True)
+            n_sig = int((screening["p"] < 0.05).sum())
+            print(f"[скрин итог] сканов {len(screening)}, p<0.05: {n_sig} "
+                  f"(у шума ~{0.05 * len(screening):.1f}); порог Бонферрони "
+                  f"{0.05 / len(screening):.4f}")
+
     # ---------------------- решающий тест: предсказание вне выборки ---------
     # инженерная постановка «строим логику от воздействия Солнца»: каждый день
     # модель видит только прошлое и предсказывает завтрашнюю доходность BTC
@@ -356,19 +411,21 @@ def main() -> None:
         plots.fig_swtrade(sw, swtrade_res["events"], swtrade_res["table"],
                           list(swtrade.DELAYS), list(swtrade.HOLDS),
                           OUT / "fig13_swtrade.png")
+    if screening is not None:
+        plots.fig_screening(screening, OUT / "fig14_screening.png")
 
     # ------------------------------------------------------------- отчёт ----
     write_report(ch_src, btc_src, ch, pairs, wins, wtitles, scans, verdicts, nulls,
                  neg_share, events, chf, fan, base, k_star, control, digit_rmse,
                  win_checks, coverage, stretch_res, btc_rmse, multitf, probe,
-                 predict_res, swtrade_res)
-    print(f"\nГотово: {OUT}/fig1…fig13.png, {OUT}/REPORT.md")
+                 predict_res, swtrade_res, screening)
+    print(f"\nГотово: {OUT}/fig1…fig14.png, {OUT}/REPORT.md")
 
 
 def write_report(ch_src, btc_src, ch, pairs, wins, wtitles, scans, verdicts, nulls,
                  neg_share, events, chf, fan, base, k_star, control,
                  digit_rmse, win_checks, coverage, stretch_res, btc_rmse,
-                 multitf, probe, predict_res, swtrade_res) -> None:
+                 multitf, probe, predict_res, swtrade_res, screening) -> None:
     L: list[str] = []
     add = L.append
 
@@ -616,7 +673,34 @@ def write_report(ch_src, btc_src, ch, pairs, wins, wtitles, scans, verdicts, nul
                 add(f"| {mname} | {s['best'].k:+d} дн | {s['best'].r:+.2f} "
                     f"| {s['p']:.2f} |")
 
-    add("\n## 11. Экстраполяции\n\n![прогноз](fig6_forecast.png)\n")
+    if screening is not None:
+        add("\n## 11. Скрининг всей плазмы солнечного ветра × BTC\n")
+        add("\n![скрининг](fig14_screening.png)\n")
+        add(f"Вторая выгрузка SINP: скорость/плотность/температура (факт, ACE) и "
+            f"модельные скорость/давление/температура по 193Å — {len(screening)} "
+            "сканов той же батареей.\n")
+        add("| серия | разрез | лучший лаг | r | p(скан) | после детренда |")
+        add("|---|---|---|---|---|---|")
+        for _, r in screening.iterrows():
+            mname = "уровни" if r["mode"] == "levels" else "приращения"
+            dt_txt = (f"r={r['r_dt']:+.2f}, p={r['p_dt']:.2f}"
+                      if np.isfinite(r["p_dt"]) else "—")
+            add(f"| {r['label']} | {mname} | {r['k']:+d} дн | {r['r']:+.2f} "
+                f"| {r['p']:.3f} | {dt_txt} |")
+        add("\nМодельные серии по 193Å (скорость/давление/температура) выводятся "
+            "из одной и той же площади дыр — это не независимые проверки, а "
+            "варианты сигнала из раздела 3.\n")
+        n_sig = int((screening["p"] < 0.05).sum())
+        bonf = 0.05 / len(screening)
+        best_s = screening.iloc[0]
+        add(f"\nСканов: {len(screening)}; с p<0.05: {n_sig} (шум при таком переборе "
+            f"даёт ~{0.05 * len(screening):.1f}); порог Бонферрони {bonf:.4f} — "
+            + ("**ни одна серия его не проходит**."
+               if (screening["p"] >= bonf).all() else
+               f"проходит: {best_s['label']} ({best_s['mode']}), p={best_s['p']:.4f} "
+               "— кандидат на вневыборочную проверку.") + "\n")
+
+    add("\n## 12. Экстраполяции\n\n![прогноз](fig6_forecast.png)\n")
     reg = fan["reg"]
     add(f"- Лаг-карта: btc_ret(t) = {reg['a']:+.4f} {reg['b']:+.4f}·ΔCH(t−{k_star}) "
         f"(n={reg['n']}); будущие ΔCH — из гармоники 27.27 дн.")
@@ -722,6 +806,20 @@ def write_report(ch_src, btc_src, ch, pairs, wins, wtitles, scans, verdicts, nul
                "новых данных, прежде чем делать выводы.\n"
                if b["p_rand"] * swtrade_res["n_cells"] < 0.05 else
                "преимущество не отличимо от везения.\n"))
+    if screening is not None:
+        n_sig = int((screening["p"] < 0.05).sum())
+        add(f"**Скрининг всей плазмы ветра.** Мы проверили против биткоина ещё "
+            f"шесть параметров солнечного ветра (скорость, плотность и температуру "
+            f"— фактические и модельные): {len(screening)} проверок, из них "
+            f"«подозрительных» (p<0.05) — {n_sig}, а чистый шум при таком переборе "
+            f"даёт в среднем {0.05 * len(screening):.1f}. "
+            + ("Семейный порог (поправку на перебор) не прошла ни одна серия: "
+               "солнечный ветер целиком — не только площадь дыр — курс не "
+               "объясняет.\n"
+               if (screening["p"] >= 0.05 / len(screening)).all() else
+               f"Одна серия прошла даже семейный порог — {screening.iloc[0]['label']} "
+               "— её обязательно проверять вне выборки, прежде чем что-то "
+               "заключать.\n"))
     add(f"**Погода на Солнце.** Следующий пик площади дыр по 27-дневному ритму — "
         f"около **{next_peak:%d.%m.%Y}**. Если хотите продолжать наблюдение: "
         f"обновляйте оба файла данных раз в месяц и перезапускайте `python run.py` "

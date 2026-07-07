@@ -332,6 +332,37 @@ def fig_forecast(ch: pd.DataFrame, chf: dict, btc: pd.DataFrame, fan: dict,
     plt.close(fig)
 
 
+# ------------------------------------------------------------ fig 14 --------
+
+def fig_screening(df: pd.DataFrame, path: str) -> None:
+    """Скрининг серий плазмы СВ: лучший |r| против своей полосы случайности."""
+    d = df.copy()
+    d["row"] = d["label"] + " · " + d["mode"].map({"levels": "уровни",
+                                                   "diffs": "приращения"})
+    d = d.sort_values(["label", "mode"]).reset_index(drop=True)
+    fig, ax = plt.subplots(figsize=(10.6, 0.52 * len(d) + 2.2))
+    fig.subplots_adjust(left=0.34, right=0.96, top=0.9, bottom=0.1)
+    y = np.arange(len(d))[::-1]
+    colors = [C_POS if r >= 0 else C_NEG for r in d["r"]]
+    ax.barh(y, d["r"].abs(), height=0.6, color=colors)
+    ax.scatter(d["q95"], y, marker="|", s=220, color=INK2, zorder=3,
+               label="95% случайности (циркулярные суррогаты)")
+    for yi, (_, row) in zip(y, d.iterrows()):
+        ax.annotate(f" r={row['r']:+.2f}, k={row['k']:+d}д, p={row['p']:.2f}",
+                    (max(row["r"].__abs__(), row["q95"]), yi), xytext=(6, 0),
+                    textcoords="offset points", va="center", fontsize=8.6,
+                    color=INK2)
+    ax.set_yticks(y, d["row"], fontsize=9)
+    ax.set_xlim(0, max(0.65, float((d["q95"].max() + 0.18))))
+    ax.set_xlabel("лучший |r| по лаг-скану ±12 дн")
+    ax.grid(axis="y", visible=False)
+    ax.legend(loc="lower right")
+    ax.set_title("Скрининг плазмы солнечного ветра × BTC (год): столбик правее "
+                 "чёрточки = сильнее случайности", fontsize=11)
+    fig.savefig(path, bbox_inches="tight")
+    plt.close(fig)
+
+
 # ------------------------------------------------------------ fig 13 --------
 
 C_SW = "#4a3aa7"  # слот 5 (violet) — скорость СВ как отдельная сущность

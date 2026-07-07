@@ -18,6 +18,18 @@ import pandas as pd
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 QLOOK = DATA_DIR / "sinp_qlookdata.txt"
+QLOOK2 = DATA_DIR / "sinp_qlookdata2.txt"
+
+# колонки второй выгрузки (плазма СВ), в порядке следования в файле
+PLASMA_COLS = ["bulk_kms", "sw193_kms", "p193_npa", "pdens_cm3", "itemp_k", "t193_k"]
+PLASMA_LABELS = {
+    "bulk_kms": "скорость СВ, факт (Bulk)",
+    "sw193_kms": "скорость СВ, модель 193Å",
+    "p193_npa": "давление СВ, модель 193Å",
+    "pdens_cm3": "плотность протонов, факт",
+    "itemp_k": "температура ионов, факт",
+    "t193_k": "температура СВ, модель 193Å",
+}
 
 
 # ------------------------------------------------------------ helpers -------
@@ -112,6 +124,41 @@ def _parse_sinp_export(path: Path) -> pd.DataFrame:
     d["sigma_pct"] = 0.0
     d["window"] = _label_contiguous_windows(d["date"])
     return d
+
+
+# --------------------------------------------------- плазма СВ (qlook 2) ----
+
+def _parse_qlook2_hourly() -> pd.DataFrame:
+    lines = QLOOK2.read_text(encoding="utf-8-sig").splitlines()
+    start = next(i for i, l in enumerate(lines) if re.match(r"^\d{4}-\d{2}-\d{2}", l))
+    rows = []
+    for l in lines[start:]:
+        parts = [p.strip() for p in l.split(",")]
+        dt = pd.to_datetime(parts[0], errors="coerce")
+        if pd.isna(dt):
+            continue
+        vals = []
+        for p in parts[1:7]:
+            try:
+                vals.append(float(p))
+            except ValueError:
+                vals.append(np.nan)
+        vals += [np.nan] * (6 - len(vals))
+        rows.append([dt, *vals])
+    return pd.DataFrame(rows, columns=["dt", *PLASMA_COLS])
+
+
+def load_plasma() -> pd.DataFrame | None:
+    """Дневные средние шести плазменных параметров СВ из второй выгрузки."""
+    if not QLOOK2.exists():
+        return None
+    h = _parse_qlook2_hourly()
+    out = None
+    for col in PLASMA_COLS:
+        d = _daily_from_hourly(h["dt"], h[col])[["date", "v"]].rename(
+            columns={"v": col})
+        out = d if out is None else out.merge(d, on="date", how="outer")
+    return out.sort_values("date").reset_index(drop=True)
 
 
 # ----------------------------------------------------- солнечный ветер ------
