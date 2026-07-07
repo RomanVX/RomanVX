@@ -618,7 +618,7 @@ def _parse_loose(text: str) -> dict | None:
     return None
 
 
-async def _wb_search_preset(client, params: dict, meta_text: str) -> dict | None:
+async def _wb_search_preset(client, params: dict, meta_text: str, ver: str = "v13") -> dict | None:
     """Preset-ответ WB: metadata несёт catalog_value=preset=N — сама выдача
     отдаётся тем же эндпоинтом при повторе с параметром preset."""
     import re as _re
@@ -637,7 +637,7 @@ async def _wb_search_preset(client, params: dict, meta_text: str) -> dict | None
         await asyncio.sleep(1.0)
         try:
             r = await client.get(
-                "https://search.wb.ru/exactmatch/ru/common/v13/search", params=p2)
+                f"https://search.wb.ru/exactmatch/ru/common/{ver}/search", params=p2)
             _niche_last_body += (f"\n\n=== PRESET {preset_id}{' (без query)' if drop_query else ''}"
                                  f" → HTTP {r.status_code} ===\n" + r.text[:1500])
             if not r.is_success:
@@ -650,7 +650,7 @@ async def _wb_search_preset(client, params: dict, meta_text: str) -> dict | None
     return None
 
 
-async def _wb_search_stage2(client, params: dict, meta_text: str) -> dict | None:
+async def _wb_search_stage2(client, params: dict, meta_text: str, ver: str = "v13") -> dict | None:
     """Анти-бот WB: metadata-ответ несёт токены qv/kcl — повторяем запрос
     с ними. Иногда и второй ответ metadata-только (с новыми токенами),
     поэтому идём до 3 переходов, каждый раз со свежими qv/kcl."""
@@ -670,7 +670,7 @@ async def _wb_search_stage2(client, params: dict, meta_text: str) -> dict | None
         await asyncio.sleep(0.7)
         try:
             r = await client.get(
-                "https://search.wb.ru/exactmatch/ru/common/v13/search", params=p2)
+                f"https://search.wb.ru/exactmatch/ru/common/{ver}/search", params=p2)
             _niche_last_body += f"\n\n=== STAGE2 hop{hop} qv → HTTP {r.status_code} ===\n" + r.text[:1500]
             if not r.is_success:
                 return None
@@ -694,66 +694,68 @@ async def _wb_public_search(query: str, limit: int = 60) -> tuple[list[dict], in
     Тот же эндпоинт, что использует сайт wildberries.ru (и все сервисы
     аналитики). Формат периодически меняется — пробуем v5 и v4."""
     import httpx
-    params = {"ab_testing": "false", "appType": 1, "curr": "rub", "dest": -1257786,
-              "sort": "popular", "resultset": "catalog", "page": 1, "spp": 30,
-              "lang": "ru", "locale": "ru", "reg": 1,
-              "regions": "80,38,83,4,64,33,68,70,30,40,86,75,69,1,66,110,22,31,48,71,114",
-              "suppressSpellcheck": "false", "query": query}
-    global _niche_last_err
+    global _niche_last_err, _niche_last_body
     _niche_last_err = ""
     import os
     proxy = os.getenv("WB_SEARCH_PROXY", "").strip() or None
+
+    # Сайт WB (июль 2026) получает выдачу через v18 c appType=64 — старый
+    # v13/appType=1 отдаёт всем preset-заглушку с qv (снято с DevTools).
+    # Пробуем варианты от нового к старому; для старого остаётся qv-цепочка.
+    variants = [("v18", 64), ("v13", 64), ("v13", 1)]
+    env_ver = os.getenv("WB_SEARCH_VER", "").strip()
+    if env_ver:
+        variants.insert(0, (env_ver, int(os.getenv("WB_SEARCH_APPTYPE", "64") or 64)))
+
+    def _mk_params(ver: str, apptype: int) -> dict:
+        p = {"ab_testing": "false", "appType": apptype, "curr": "rub",
+             "dest": -1257786, "sort": "popular", "resultset": "catalog",
+             "page": 1, "spp": 30, "lang": "ru", "locale": "ru",
+             "suppressSpellcheck": "false", "query": query}
+        if ver >= "v18":
+            p["hide_dtype"] = 15   # как шлёт сайт
+        else:
+            p["reg"] = 1
+            p["regions"] = "80,38,83,4,64,33,68,70,30,40,86,75,69,1,66,110,22,31,48,71,114"
+        return p
+
     async with httpx.AsyncClient(timeout=30, proxy=proxy, headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
-            "Accept": "application/json", "Origin": "https://www.wildberries.ru",
-            "Referer": "https://www.wildberries.ru/",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
+            "Accept": "*/*", "Origin": "https://www.wildberries.ru",
+            "Referer": "https://www.wildberries.ru/catalog/0/search.aspx",
+            "x-requested-with": "XMLHttpRequest",
             "Accept-Encoding": "identity"}) as client:
-        # Одна версия (v13), терпеливые ретраи: каскад версий с ретраями
-        # сам выжигает рейт-лимит WB на IP (даже на свежем прокси).
-        r = None
-        for attempt in range(2):
+        _niche_last_body = ""
+        for ver, apptype in variants:
+            params = _mk_params(ver, apptype)
+            tag = f"{ver}/appType={apptype}"
             try:
                 await _wb_throttle()
-                ver = os.getenv("WB_SEARCH_VER", "v13").strip() or "v13"
                 r = await client.get(
                     f"https://search.wb.ru/exactmatch/ru/common/{ver}/search", params=params)
             except Exception as e:
-                _niche_last_err = f"search: {str(e)[:120]}"
-                r = None
-                break
-            global _niche_last_body
-            _niche_last_body = f"HTTP {r.status_code}\n" + r.text[:6000]
-            if r.status_code == 429:
-                _niche_last_err = ("HTTP 429 — WB всё ещё ограничивает IP. После серии "
-                                   "429 бан держится часами: дайте инструменту отдохнуть "
-                                   "несколько часов и попробуйте одним запросом")
-                await asyncio.sleep(70)
+                _niche_last_err = f"{tag}: {str(e)[:120]}"
                 continue
-            break
-        if r is not None:
+            _niche_last_body += f"\n\n=== {tag} → HTTP {r.status_code} ===\n" + r.text[:4000]
+            if r.status_code == 429:
+                _niche_last_err = ("HTTP 429 — WB ограничивает IP; дайте инструменту "
+                                   "пару минут отдыха")
+                break   # с этого IP сейчас всё будет 429 — варианты не помогут
+            if not r.is_success:
+                _niche_last_err = f"{tag}: HTTP {r.status_code}"
+                continue
             try:
-                if not r.is_success:
-                    _niche_last_err = f"v13: HTTP {r.status_code}"
-                    raise ValueError(_niche_last_err)
                 txt = r.text
                 payload = _parse_loose(txt)
-                if payload is None:
-                    # совсем не JSON (обрезано прокси) — токены qv/preset
-                    # достаём регекспами прямо из битого текста
-                    payload = (await _wb_search_stage2(client, params, txt)
-                               or await _wb_search_preset(client, params, txt))
-                    if not payload:
-                        _niche_last_err = f"v13: не-JSON ответ ({txt[:80]!r})"
-                        raise ValueError(_niche_last_err)
-                data = payload.get("data") or {}
+                data = (payload.get("data") or {}) if payload else {}
                 products = data.get("products") or []
                 if not products and '"qv"' in txt:
-                    p2 = await _wb_search_stage2(client, params, txt)
+                    p2 = await _wb_search_stage2(client, params, txt, ver)
                     if p2:
                         data = p2.get("data") or {}
                         products = data.get("products") or []
                 if not products and '"catalog_value":"preset=' in txt:
-                    p3 = await _wb_search_preset(client, params, txt)
+                    p3 = await _wb_search_preset(client, params, txt, ver)
                     if p3:
                         data = p3.get("data") or {}
                         products = data.get("products") or []
@@ -781,15 +783,15 @@ async def _wb_public_search(query: str, limit: int = 60) -> tuple[list[dict], in
                         })
                     if out:
                         return out, total
-                    _niche_last_err = "v13: пустая выдача"
-                elif '"qv"' in txt:
-                    _niche_last_err = ("WB отдаёт только анти-бот metadata (qv) даже после "
-                                       "повторных попыток — IP под подозрением. Подождите "
-                                       "минуту и попробуйте ещё раз; детали в last_response")
+                    _niche_last_err = f"{tag}: пустая выдача"
+                elif '"qv"' in txt or '"preset=' in txt:
+                    _niche_last_err = (f"{tag}: только анти-бот metadata — пробуем "
+                                       "следующий вариант")
                 else:
-                    _niche_last_err = "v13: пустая выдача"
+                    _niche_last_err = f"{tag}: пустая выдача"
             except Exception as e:
-                _log.warning("wb public search v13: %s", e)
+                _log.warning("wb public search %s: %s", tag, e)
+                _niche_last_err = f"{tag}: {str(e)[:120]}"
     return [], 0
 
 
