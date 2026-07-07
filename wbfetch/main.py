@@ -57,7 +57,11 @@ async def _ensure_browser():
         headless=True,
         proxy=_proxy_cfg(),
         args=["--no-sandbox", "--disable-dev-shm-usage",
-              "--disable-gpu", "--disable-extensions"],
+              "--disable-gpu", "--disable-extensions",
+              # экономия памяти: инстанс 512МБ, страница WB тяжёлая
+              "--blink-settings=imagesEnabled=false",
+              "--mute-audio", "--disable-background-networking",
+              "--js-flags=--max-old-space-size=192"],
     )
     _ctx = await _browser.new_context(
         locale="ru-RU",
@@ -147,6 +151,15 @@ async def search(query: str, token: str = "", limit: int = 60):
                     seen.append(f"{r.status} products={len(prods)} {r.url[:120]}")
                     if prods and not found.done():
                         found.set_result(data)
+
+                # не грузим картинки/шрифты/медиа — для JSON выдачи они не
+                # нужны, а память 512МБ (страница WB без этого не влезает)
+                async def _block(route):
+                    if route.request.resource_type in ("image", "media", "font"):
+                        await route.abort()
+                    else:
+                        await route.continue_()
+                await page.route("**/*", _block)
 
                 page.on("response", lambda r: asyncio.create_task(_inspect(r)))
                 await page.goto(url, wait_until="domcontentloaded", timeout=60000)
