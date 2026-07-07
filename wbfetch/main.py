@@ -74,6 +74,13 @@ async def _ensure_browser():
         user_agent=("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                     "AppleWebKit/537.36 (KHTML, like Gecko) "
                     "Chrome/149.0.0.0 Safari/537.36"),
+        extra_http_headers={
+            "accept-language": "ru,en-US;q=0.9,en;q=0.8",
+            "sec-ch-ua": '"Google Chrome";v="149", "Chromium";v="149", "Not)A;Brand";v="24"',
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"Windows"',
+            "upgrade-insecure-requests": "1",
+        },
     )
     # стелс: прячем признаки headless-автоматизации (webdriver, plugins,
     # languages, chrome.runtime) — WB проверяет их и по ним режет выдачу
@@ -160,8 +167,12 @@ async def search(query: str, token: str = "", limit: int = 60):
                         await route.continue_()
                 await page.route("**/*", _block)
 
-                # 1) заходим на страницу поиска — браузер проходит
-                #    JS-челлендж WB и получает куки (_wbauid, x_wbaas_token)
+                # 1) прогрев: сперва главная WB (легче, отдаёт стартовые
+                #    куки), потом страница поиска — как настоящий посетитель
+                nav = await page.goto("https://www.wildberries.ru/",
+                                      wait_until="domcontentloaded", timeout=60000)
+                _log.info("goto главная → HTTP %s", nav.status if nav else "?")
+                await page.wait_for_timeout(2000)
                 nav = await page.goto(url, wait_until="domcontentloaded", timeout=60000)
                 await page.wait_for_timeout(2500)
 
