@@ -895,6 +895,8 @@ async def _niche_job_run(payload: dict, query: str) -> None:
                 await _analyze_niche_impl(payload, query, products, total)
                 _niche_job = {"status": "done", "query": query}
                 return
+            if "429" in last_reason:
+                break   # бан по IP держится часами — повторы его только продлевают
             if attempt < 3:
                 _niche_job["stage"] = f"{last_reason} — пауза и новая попытка ({attempt}/3)"
                 await asyncio.sleep(75)
