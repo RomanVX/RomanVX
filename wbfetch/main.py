@@ -130,19 +130,41 @@ async def search(query: str, token: str = "", limit: int = 60):
                 url = ("https://www.wildberries.ru/catalog/0/search.aspx?search="
                        + quote(query))
 
-                def _is_search_resp(r):
-                    return ("u-search" in r.url and "/search" in r.url
-                            and r.status == 200)
+                # Страница WB делает НЕСКОЛЬКО запросов к u-search (служебные
+                # + собственно выдача) — ждём именно тот, где есть товары.
+                found: asyncio.Future = asyncio.get_event_loop().create_future()
+                seen: list[str] = []
 
-                async with page.expect_response(_is_search_resp, timeout=45000) as ri:
-                    await page.goto(url, wait_until="domcontentloaded", timeout=45000)
-                resp = await ri.value
-                data = await resp.json()
+                async def _inspect(r):
+                    if "u-search" not in r.url or "/search" not in r.url:
+                        return
+                    try:
+                        data = await r.json()
+                    except Exception:
+                        seen.append(f"{r.status} не-JSON {r.url[:120]}")
+                        return
+                    prods = (data.get("data") or {}).get("products") or []
+                    seen.append(f"{r.status} products={len(prods)} {r.url[:120]}")
+                    if prods and not found.done():
+                        found.set_result(data)
+
+                page.on("response", lambda r: asyncio.create_task(_inspect(r)))
+                await page.goto(url, wait_until="domcontentloaded", timeout=60000)
+                try:
+                    data = await asyncio.wait_for(asyncio.shield(found), timeout=50)
+                except asyncio.TimeoutError:
+                    last_err = ("выдача с товарами не пришла за 50с; ответы u-search: "
+                                + ("; ".join(seen[-5:]) or "не было"))
+                    _log.warning("search %r attempt %d: %s", query, attempt, last_err)
+                    await _reset_browser()
+                    continue
                 products, total = _norm_products(data, limit)
                 if products:
                     _log.info("search %r: %d товаров (total %d)", query, len(products), total)
                     return {"ok": True, "total": total, "products": products}
                 last_err = "страница ответила, но товаров в JSON нет"
+                _log.warning("search %r attempt %d: %s (%s)", query, attempt,
+                             last_err, "; ".join(seen[-5:]))
             except Exception as e:
                 last_err = str(e)[:300]
                 _log.warning("search %r attempt %d: %s", query, attempt, last_err)
