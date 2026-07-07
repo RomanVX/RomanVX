@@ -2699,7 +2699,7 @@ function _nicheSpin(text) {
   if (out) out.innerHTML = `<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>${esc(text)}</div>`;
 }
 
-async function runNiche() {
+async function runNiche(_retry) {
   const btn = document.getElementById('nicheGo');
   const q = document.getElementById('nicheQuery').value.trim();
   if (!q) return;
@@ -2712,6 +2712,12 @@ async function runNiche() {
         price: parseFloat(document.getElementById('nichePrice').value) || 0,
         cost: parseFloat(document.getElementById('nicheCost').value) || 0,
         logistics: parseFloat(document.getElementById('nicheLog').value) || 0 }) });
+    // 502/503 = сервер перезапускается (деплой/пробуждение) — подождём и повторим
+    if ((r.status === 502 || r.status === 503) && (_retry || 0) < 6) {
+      _nicheSpin(`сервер перезапускается — повторим через 20с (${(_retry || 0) + 1}/6)…`);
+      setTimeout(() => runNiche((_retry || 0) + 1), 20000);
+      return;
+    }
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.detail || r.status);
     if (j.building) { setTimeout(() => pollNiche(j.query || q), 6000); return; }
@@ -2719,6 +2725,11 @@ async function runNiche() {
     renderNicheResult();
     btn.disabled = false;
   } catch (e) {
+    if (/Failed to fetch|NetworkError/i.test(e.message) && (_retry || 0) < 6) {
+      _nicheSpin(`сервер недоступен — повторим через 20с (${(_retry || 0) + 1}/6)…`);
+      setTimeout(() => runNiche((_retry || 0) + 1), 20000);
+      return;
+    }
     const out = document.getElementById('nicheOut');
     if (out) out.innerHTML = `<div class="alert alert-danger">Ошибка: ${esc(e.message)}</div>`;
     btn.disabled = false;
