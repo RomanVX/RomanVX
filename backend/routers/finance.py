@@ -232,7 +232,7 @@ async def _fetch_detail_bg(date_from: str, date_to: str) -> None:
                     datetime.strptime(date_from, "%Y-%m-%d"),
                     datetime.strptime(date_to, "%Y-%m-%d"),
                 )
-                rows = _normalize_stat_rows(stat_rows)
+                rows = await asyncio.to_thread(_normalize_stat_rows, stat_rows)
                 del stat_rows  # сырой ответ statistics-api больше не нужен
                 if rows:
                     _log.info("Detail via statistics-api: %d rows", len(rows))

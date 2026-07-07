@@ -2725,11 +2725,13 @@ async function runNiche() {
   }
 }
 
+let _nicheFails = 0;
 async function pollNiche(q) {
   if (_toolActive !== 'niche') return;   // ушли с вкладки — не дёргаем DOM
   const btn = document.getElementById('nicheGo');
   try {
     const st = await fetchJSON('/api/tools/niche/status');
+    _nicheFails = 0;
     if (st.status === 'running') {
       _nicheSpin((st.stage || 'анализируем…') + ' — страница обновится сама');
       setTimeout(() => pollNiche(q), 8000);
@@ -2739,6 +2741,15 @@ async function pollNiche(q) {
     _nicheResult = await fetchJSON('/api/tools/niche/get?query=' + encodeURIComponent(q));
     renderNicheResult();
   } catch (e) {
+    // сервер на free-тарифе может на минуту зависнуть на тяжёлой фоновой
+    // задаче — разовый таймаут не повод бросать опрос
+    if (/Таймаут|Failed to fetch|NetworkError/i.test(e.message) && _nicheFails < 5) {
+      _nicheFails++;
+      _nicheSpin(`сервер занят (попытка опроса ${_nicheFails}/5) — ждём…`);
+      setTimeout(() => pollNiche(q), 15000);
+      return;
+    }
+    _nicheFails = 0;
     const out = document.getElementById('nicheOut');
     if (out) out.innerHTML = `<div class="alert alert-danger">Ошибка: ${esc(e.message)}</div>`;
   }

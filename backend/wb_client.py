@@ -1,5 +1,6 @@
 """Async client for Wildberries Statistics API."""
 import asyncio
+import json
 import logging
 from datetime import datetime, timedelta
 
@@ -297,13 +298,16 @@ async def get_report_detail(date_from: datetime, date_to: datetime) -> list[dict
             if not resp.is_success:
                 _log.error("reportDetailByPeriod → %s %s", resp.status_code, resp.text[:300])
                 resp.raise_for_status()
-            data = resp.json()
+            # парсинг в потоке: на 0.1 CPU Render free разбор 20k строк держит
+            # event loop десятки секунд и все запросы получают таймауты
+            data = await asyncio.to_thread(json.loads, resp.text)
             break
         if not data:
             break
         got = len(data)
         rrdid = data[-1]["rrd_id"]
-        all_records.extend({k: r[k] for k in _REPORT_KEEP if k in r} for r in data)
+        all_records.extend(await asyncio.to_thread(
+            lambda d: [{k: r[k] for k in _REPORT_KEEP if k in r} for r in d], data))
         del data  # сырые записи с полным набором полей больше не нужны
         _log.info("reportDetailByPeriod: got %d records (total %d)", got, len(all_records))
         if got < _REPORT_PAGE:
