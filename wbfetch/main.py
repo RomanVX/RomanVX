@@ -134,24 +134,6 @@ async def search(query: str, token: str = "", limit: int = 60):
                 url = ("https://www.wildberries.ru/catalog/0/search.aspx?search="
                        + quote(query))
 
-                # Страница WB делает НЕСКОЛЬКО запросов к u-search (служебные
-                # + собственно выдача) — ждём именно тот, где есть товары.
-                found: asyncio.Future = asyncio.get_event_loop().create_future()
-                seen: list[str] = []
-
-                async def _inspect(r):
-                    if "u-search" not in r.url or "/search" not in r.url:
-                        return
-                    try:
-                        data = await r.json()
-                    except Exception:
-                        seen.append(f"{r.status} не-JSON {r.url[:120]}")
-                        return
-                    prods = (data.get("data") or {}).get("products") or []
-                    seen.append(f"{r.status} products={len(prods)} {r.url[:120]}")
-                    if prods and not found.done():
-                        found.set_result(data)
-
                 # не грузим картинки/шрифты/медиа — для JSON выдачи они не
                 # нужны, а память 512МБ (страница WB без этого не влезает)
                 async def _block(route):
@@ -161,13 +143,28 @@ async def search(query: str, token: str = "", limit: int = 60):
                         await route.continue_()
                 await page.route("**/*", _block)
 
-                page.on("response", lambda r: asyncio.create_task(_inspect(r)))
+                # сначала открываем страницу поиска — браузер проходит
+                # JS-челлендж и получает анти-бот-куки в контекст
                 await page.goto(url, wait_until="domcontentloaded", timeout=60000)
-                try:
-                    data = await asyncio.wait_for(asyncio.shield(found), timeout=50)
-                except asyncio.TimeoutError:
-                    last_err = ("выдача с товарами не пришла за 50с; ответы u-search: "
-                                + ("; ".join(seen[-5:]) or "не было"))
+                await page.wait_for_timeout(2500)
+
+                # затем сами делаем fetch к u-search с appType=64 ИЗ страницы:
+                # куки/заголовки подставит браузер, а appType страница по
+                # умолчанию шлёт 1 (и получает preset-заглушку с products=0)
+                q_enc = quote(query)
+                search_url = (
+                    "https://www.wildberries.ru/__internal/u-search/exactmatch/"
+                    "ru/common/v18/search?appType=64&curr=rub&dest=-1257786"
+                    "&hide_dtype=15&lang=ru&locale=ru&resultset=catalog"
+                    "&sort=popular&spp=30&suppressSpellcheck=false&query=" + q_enc)
+                data = await page.evaluate(
+                    """async (u) => {
+                        const r = await fetch(u, {headers: {'x-requested-with': 'XMLHttpRequest'}});
+                        try { return await r.json(); } catch(e) { return {__status: r.status}; }
+                    }""", search_url)
+                prods = (data.get("data") or {}).get("products") or [] if isinstance(data, dict) else []
+                if not prods:
+                    last_err = f"appType=64 из браузера вернул products=0 (raw: {str(data)[:200]})"
                     _log.warning("search %r attempt %d: %s", query, attempt, last_err)
                     await _reset_browser()
                     continue
