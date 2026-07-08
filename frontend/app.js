@@ -1203,14 +1203,28 @@ function toggleOrdersCompact() {
 
 // цвета групп для бубликов (совпадают с GROUP_ORDER)
 const _GROUP_COLORS = {
+  // Biomed
   'Фисты':            '#ef4444',
   'Aloe':             '#22c55e',
   'Спреи для минета': '#f59e0b',
   'Satisfucktion':    '#ec4899',
   'Джага':            '#8b5cf6',
+  // Фабрика красоты
+  'Крема':            '#0ea5e9',
+  'Сыворотки':        '#a855f7',
   'Прочее':           CHART_C.tick2,
 };
-function _groupColor(g) { return _GROUP_COLORS[g] || CHART_C.tick2; }
+// запасная палитра для любых незнакомых групп (в любом кабинете) —
+// стабильный цвет по имени, чтобы не сваливались все в серый
+const _GROUP_PALETTE = ['#0ea5e9', '#a855f7', '#f59e0b', '#22c55e', '#ec4899',
+                        '#8b5cf6', '#ef4444', '#14b8a6', '#eab308', '#6366f1'];
+function _groupColor(g) {
+  if (_GROUP_COLORS[g]) return _GROUP_COLORS[g];
+  if (g === 'Прочее' || !g) return CHART_C.tick2;
+  let h = 0;
+  for (let i = 0; i < g.length; i++) h = (h * 31 + g.charCodeAt(i)) >>> 0;
+  return _GROUP_PALETTE[h % _GROUP_PALETTE.length];
+}
 
 // разбивка выбранной площадки по группам (как в остатках)
 function _ordersGrouped() {
