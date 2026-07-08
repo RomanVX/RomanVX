@@ -202,17 +202,23 @@ async def get_productolog(refresh: bool = Query(default=False)):
             continue
         info = _cat.lookup(sku)
         a, built = analyzed.get(sku, ({}, None))
+        # анализировать можно только по ТЕКСТОВЫМ отзывам; если их мало —
+        # товар не «ждёт анализа», а просто не подлежит ему (звёзды без слов)
+        n_texts = sum(1 for _, t, _ in revs if t)
+        analyzable = n_texts >= _MIN_TEXTS
         items.append({
             "sku": sku, "name": info.get("name", sku), "group": info.get("brand", ""),
             **st,
             "pluses": a.get("pluses") or [],
             "minuses": a.get("minuses") or [],
             "recommendation": a.get("recommendation") or "",
-            "analyzed": bool(a), "built_at": (built or "")[:10],
+            "analyzed": bool(a), "analyzable": analyzable,
+            "text_reviews": n_texts, "built_at": (built or "")[:10],
         })
     # проблемные сверху: доля негатива, затем количество отзывов
     items.sort(key=lambda x: (-x["neg"], -x["count"]))
-    pending = sum(1 for it in items if not it["analyzed"])
+    # «ждут анализа» — только те, что реально можно проанализировать
+    pending = sum(1 for it in items if not it["analyzed"] and it["analyzable"])
     if pending and not _building:
         _spawn(_build_bg(force=False))
     return {"items": items, "building": _building, "progress": _progress,
@@ -288,7 +294,9 @@ async def export_productolog():
         ws2.append([
             it.get("sku", ""), it.get("name", ""), it.get("count", 0),
             round(it.get("avg", 0), 2) if it.get("avg") is not None else "",
-            _chips(it.get("pluses")) if it.get("analyzed") else "⏳ анализируется",
+            _chips(it.get("pluses")) if it.get("analyzed")
+            else ("⏳ анализируется" if it.get("analyzable", True)
+                  else f"мало текстовых отзывов ({it.get('text_reviews', 0)})"),
             _chips(it.get("minuses")) if it.get("analyzed") else "",
             it.get("recommendation", "") if it.get("analyzed") else "",
         ])

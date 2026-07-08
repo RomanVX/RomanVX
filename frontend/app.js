@@ -3103,7 +3103,9 @@ function renderProductolog() {
         <b style="color:var(--val)">${fmt(it.count)}</b>${bar}
         <span style="color:${avgClr};font-weight:700">${it.avg.toFixed(2)}★</span>
         <div class="text-secondary" style="font-size:.7rem">🟢${it.pos}% · ⚪${it.neu}% · 🔴${it.neg}%</div></td>
-      <td style="vertical-align:top;padding:8px">${it.analyzed ? _prodChips(it.pluses, 'plus') : '<span class="text-secondary small">⏳ анализируется…</span>'}</td>
+      <td style="vertical-align:top;padding:8px">${it.analyzed ? _prodChips(it.pluses, 'plus')
+        : it.analyzable ? '<span class="text-secondary small">⏳ анализируется…</span>'
+        : `<span class="text-secondary small">мало текстовых отзывов (${it.text_reviews||0}) — только оценки</span>`}</td>
       <td style="vertical-align:top;padding:8px">${it.analyzed ? _prodChips(it.minuses, 'minus') : ''}</td>
       <td style="vertical-align:top;padding:8px" class="small">${it.analyzed
         ? `<span style="color:var(--ink-2)">🛠 ${esc(it.recommendation)}</span>`
