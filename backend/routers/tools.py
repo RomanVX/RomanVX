@@ -219,47 +219,18 @@ async def get_productolog(refresh: bool = Query(default=False)):
             "error": _error, "pending": pending}
 
 
-def _prod_verdict(it: dict) -> tuple[str, str, str]:
-    """Вердикт по товару → (решение, обоснование, цвет-заливки hex).
-
-    Логика: рейтинг + число отзывов + доля негатива. «Востребованный» —
-    много отзывов при хорошем рейтинге (продаётся и нравится)."""
+def _prod_reason(it: dict) -> str:
+    """Сухое обоснование по фактам: рейтинг, отзывы, доля оценок."""
     avg = float(it.get("avg") or 0)
     n = int(it.get("count") or 0)
-    neg = int(it.get("neg") or 0)
-
-    if avg >= 4.7 and neg <= 10:
-        base = "✅ Оставляем"
-        clr = "C6EFCE"
-    elif avg >= 4.3 and neg <= 25:
-        base = "✅ Оставляем"
-        clr = "C6EFCE"
-    elif avg < 4.0 or neg >= 40:
-        base = "❌ Убираем/дорабатываем"
-        clr = "FFC7CE"
-    else:
-        base = "⚠️ Наблюдаем"
-        clr = "FFEB9C"
-
-    # «востребованный» — заметный объём отзывов и хороший приём
-    hot = n >= 20 and avg >= 4.4
-    if hot and base.startswith("✅"):
-        base = "⭐ Оставляем (востребованный)"
-        clr = "9BE7A0"
-
-    why = (f"рейтинг {avg:.2f}★, отзывов {n}, негатива {neg}%. "
-           + ("Покупатели довольны, товар продаётся — держим и масштабируем."
-              if base.startswith("⭐") else
-              "Оценка и приём хорошие — оставляем." if base.startswith("✅") else
-              "Низкая оценка / много негатива — снимать или срочно дорабатывать по рекомендации."
-              if base.startswith("❌") else
-              "Оценка средняя — оставляем под наблюдением, поработать над минусами."))
-    return base, why, clr
+    return (f"Рейтинг {avg:.2f}★, отзывов {n}. "
+            f"Положительных {it.get('pos', 0)}%, нейтральных {it.get('neu', 0)}%, "
+            f"негативных {it.get('neg', 0)}%.")
 
 
 @router.get("/productolog/export")
 async def export_productolog():
-    """Выгрузка продуктолога в Excel: лист 1 — сжатый вердикт (оставить/убрать),
+    """Выгрузка продуктолога в Excel: лист 1 — сводка с обоснованием,
     лист 2 — подробные плюсы/минусы/рекомендации."""
     import io
     import openpyxl
@@ -270,13 +241,8 @@ async def export_productolog():
     data = await get_productolog(refresh=False)
     items = data.get("items", [])
 
-    # Порядок для листа «Вердикт»: сначала востребованные и «оставляем»
-    # (по убыванию отзывов), затем спорные, в конце «убираем».
-    def _rank(it):
-        v, _, _ = _prod_verdict(it)
-        pr = 0 if v.startswith("⭐") else 1 if v.startswith("✅") else 2 if v.startswith("⚠") else 3
-        return (pr, -int(it.get("count") or 0))
-    verdict_items = sorted(items, key=_rank)
+    # нейтральный порядок — по числу отзывов (сортировку делает сам пользователь)
+    verdict_items = sorted(items, key=lambda x: -int(x.get("count") or 0))
 
     wb = openpyxl.Workbook()
     hfill = PatternFill("solid", fgColor="4F46E5")
@@ -287,26 +253,22 @@ async def export_productolog():
             c.fill = hfill
             c.alignment = Alignment(vertical="center", wrap_text=True)
 
-    # ── Лист 1: Вердикт ──
+    # ── Лист 1: Сводка ──
     ws1 = wb.active
-    ws1.title = "Вердикт"
+    ws1.title = "Сводка"
     ws1.append(["Артикул", "Наименование", "Группа", "Кол-во отзывов",
-                "Рейтинг", "% негатива", "Вердикт", "Обоснование"])
+                "Рейтинг", "% негатива", "Обоснование"])
     _style_header(ws1)
     for it in verdict_items:
         if not it.get("analyzed") and it.get("count", 0) < _MIN_TEXTS:
             continue
-        verdict, why, clr = _prod_verdict(it)
         ws1.append([
             it.get("sku", ""), it.get("name", ""), it.get("group", ""),
             it.get("count", 0),
             round(it.get("avg", 0), 2) if it.get("avg") is not None else "",
-            f'{it.get("neg", 0)}%', verdict, why,
+            f'{it.get("neg", 0)}%', _prod_reason(it),
         ])
-        fill = PatternFill("solid", fgColor=clr)
-        for c in ws1[ws1.max_row]:
-            c.fill = fill
-    for i, w in enumerate([12, 34, 14, 13, 10, 11, 26, 60], 1):
+    for i, w in enumerate([12, 34, 14, 13, 10, 11, 55], 1):
         ws1.column_dimensions[get_column_letter(i)].width = w
     for row in ws1.iter_rows(min_row=2):
         for c in row:
