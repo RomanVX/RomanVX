@@ -47,6 +47,16 @@ async def _get(url: str, params: dict) -> list[dict]:
     return resp.json()
 
 
+async def analytics_post(path: str, body: dict) -> tuple[int, dict | str]:
+    """POST на seller-analytics-api (Джем-методы). Возвращает (status, json|text)
+    без raise — для пробника и штатных вызовов с мягкой обработкой."""
+    resp = await _http().post(ANALYTICS_BASE + path, headers=_headers(), json=body)
+    try:
+        return resp.status_code, resp.json()
+    except ValueError:
+        return resp.status_code, resp.text[:600]
+
+
 def _learn_sku_map(rows: list[dict]) -> list[dict]:
     """Выучиваем связки nmId→артикул (нужны для остатков, где артикула нет)."""
     try:

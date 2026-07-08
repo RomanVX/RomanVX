@@ -955,6 +955,47 @@ async def _wb_public_search(query: str, limit: int = 60) -> tuple[list[dict], in
 _niche_last_err = ""
 
 
+@router.get("/jam/probe", include_in_schema=False)
+async def jam_probe(query: str = Query(default="шторы блэкаут")):
+    """Диагностика Джем-методов на живом ключе: какие эндпоинты доступны
+    и что возвращают. Проверяем и «по своим товарам» (nmIds из каталога),
+    и кандидатов на отчёт «Поисковые запросы на WB» по свободному слову."""
+    import wb_client
+    import catalog as _cat
+    from datetime import date, timedelta
+
+    nmids = [int(x) for x in list(getattr(_cat, "WB_ID_TO_ART", {}).keys())[:20] if str(x).isdigit()]
+    cur_e = date.today() - timedelta(days=1)
+    cur_s = cur_e - timedelta(days=6)
+    pw_e = cur_s - timedelta(days=1)
+    pw_s = pw_e - timedelta(days=6)
+    per = lambda s, e: {"start": s.isoformat(), "end": e.isoformat()}
+
+    tests = [
+        ("search-report/report (свои товары)", "/api/v2/search-report/report",
+         {"currentPeriod": per(cur_s, cur_e), "pastPeriod": per(pw_s, pw_e),
+          "nmIds": nmids, "orderBy": {"field": "avgPosition", "mode": "asc"},
+          "includeSubstitutedSKUs": True, "includeSearchTexts": False, "limit": 30}),
+        ("product/search-texts (свои)", "/api/v2/search-report/product/search-texts",
+         {"period": per(cur_s, cur_e), "nmId": nmids[0] if nmids else 0}),
+        # кандидаты на отчёт «по любому слову»
+        ("search-texts (по слову) v2", "/api/v2/search-report/search-texts",
+         {"currentPeriod": per(cur_s, cur_e), "pastPeriod": per(pw_s, pw_e),
+          "searchTexts": [query], "limit": 30}),
+        ("search-words v1", "/api/v1/search-report/search-words",
+         {"currentPeriod": per(cur_s, cur_e), "searchTexts": [query], "limit": 30}),
+    ]
+    out = []
+    for name, path, body in tests:
+        try:
+            st, resp = await wb_client.analytics_post(path, body)
+            head = json.dumps(resp, ensure_ascii=False)[:500] if isinstance(resp, (dict, list)) else str(resp)[:500]
+            out.append({"метод": name, "path": path, "status": st, "ответ": head})
+        except Exception as e:
+            out.append({"метод": name, "path": path, "error": str(e)[:300]})
+    return {"nmids_проверено": len(nmids), "результаты": out}
+
+
 @router.get("/niche/last_response", include_in_schema=False)
 async def niche_last_response():
     """Сырое тело последнего ответа поиска WB — без нового запроса."""
