@@ -2565,12 +2565,13 @@ const _TOOL_HINTS = {
   clusters: 'Сток и продажи по федеральным округам складов WB, локализация и дозаказ',
   adv: 'Кампании, куда уходят деньги, ДРР, ключевые фразы и советы по оптимизации',
   niche: 'Спрос по вашим товарам из Джем: поисковые запросы, частотность, ваша позиция, заказы и точки роста',
+  nichecalc: 'Выходить ли с товаром: конкуренты из выдачи WB, цены, спрос и вердикт (сбор через агент)',
 };
 
 function setTool(t) {
   if (_toolActive === t) return;
   _toolActive = t;
-  ['Prod', 'Clusters', 'Adv', 'Niche'].forEach(k => {
+  ['Prod', 'Clusters', 'Adv', 'Niche', 'Nichecalc'].forEach(k => {
     document.getElementById('tool' + k)?.classList.toggle('active', k.toLowerCase() === t);
   });
   const hint = document.getElementById('toolHint');
@@ -2580,11 +2581,12 @@ function setTool(t) {
 
 function reloadTool() {
   ({ prod: () => loadProductolog(true), clusters: () => loadClusters(true),
-     adv: () => loadAdv(true), niche: () => loadDemand(true) })[_toolActive]();
+     adv: () => loadAdv(true), niche: () => loadDemand(true),
+     nichecalc: () => renderNicheForm() })[_toolActive]();
 }
 function loadTools() {
   ({ prod: loadProductolog, clusters: loadClusters, adv: loadAdv,
-     niche: loadDemand })[_toolActive]();
+     niche: loadDemand, nichecalc: renderNicheForm })[_toolActive]();
 }
 
 // ── Воронка Ozon (Premium) ────────────────────────────────────────────────────
@@ -2740,7 +2742,7 @@ function renderDemand() {
 let _nicheResult = null;
 
 async function renderNicheForm() {
-  if (_toolActive !== 'niche') return;
+  if (_toolActive !== 'nichecalc') return;
   const wrap = document.getElementById('toolsWrap');
   if (!wrap) return;
   let hist = [];
@@ -2820,7 +2822,7 @@ async function runNiche(_retry) {
 let _nicheFails = 0;
 let _nicheRestarts = 0;
 async function pollNiche(q) {
-  if (_toolActive !== 'niche') return;   // ушли с вкладки — не дёргаем DOM
+  if (_toolActive !== 'nichecalc') return;   // ушли с вкладки — не дёргаем DOM
   const btn = document.getElementById('nicheGo');
   try {
     const st = await fetchJSON('/api/tools/niche/status');
