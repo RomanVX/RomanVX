@@ -3063,6 +3063,8 @@ function renderProductolog() {
     return;
   }
   let html = '';
+  html += `<div class="d-flex justify-content-end mb-2">
+    <a href="/api/tools/productolog/export" class="btn btn-sm btn-outline-success" download>⬇ Экспорт в Excel</a></div>`;
   if (d.pending > 0 || d.building) {
     html += `<div class="alert alert-info py-2 small">⏳ Анализируем отзывы (${d.progress || `осталось ${d.pending} арт.`}) — страница обновится сама.</div>`;
     if (!_prodTimer) _prodTimer = setTimeout(() => { _prodTimer = null; if (currentTab === 'tools' && _toolActive === 'prod') loadProductolog('poll'); }, 25000);

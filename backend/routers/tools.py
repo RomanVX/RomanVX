@@ -195,6 +195,62 @@ async def get_productolog(refresh: bool = Query(default=False)):
             "error": _error, "pending": pending}
 
 
+@router.get("/productolog/export")
+async def export_productolog():
+    """Выгрузка продуктолога в Excel: артикул, наименование, отзывы,
+    рейтинг, плюсы/минусы/рекомендация — для исследования «что реабилитировать»."""
+    import io
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from fastapi.responses import StreamingResponse
+
+    data = await get_productolog(refresh=False)
+    items = data.get("items", [])
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Продуктолог"
+    headers = ["Артикул", "Наименование", "Группа", "Кол-во отзывов",
+               "Рейтинг карточки", "% негатива", "Плюсы (тема · %)",
+               "Минусы (тема · %)", "Рекомендация к доработке"]
+    ws.append(headers)
+    hfill = PatternFill("solid", fgColor="4F46E5")
+    for c in ws[1]:
+        c.font = Font(bold=True, color="FFFFFF")
+        c.fill = hfill
+        c.alignment = Alignment(vertical="center", wrap_text=True)
+
+    def _chips(lst):
+        return "\n".join(f"{p.get('tag','')} · {p.get('pct','')}%" for p in (lst or []))
+
+    for it in items:
+        ws.append([
+            it.get("sku", ""), it.get("name", ""), it.get("group", ""),
+            it.get("count", 0),
+            round(it.get("avg", 0), 2) if it.get("avg") is not None else "",
+            f'{it.get("neg", 0)}%',
+            _chips(it.get("pluses")) if it.get("analyzed") else "⏳ анализируется",
+            _chips(it.get("minuses")) if it.get("analyzed") else "",
+            it.get("recommendation", "") if it.get("analyzed") else "",
+        ])
+    widths = [12, 34, 14, 13, 15, 11, 34, 34, 55]
+    for i, w in enumerate(widths, 1):
+        ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = w
+    for row in ws.iter_rows(min_row=2):
+        for c in row:
+            c.alignment = Alignment(vertical="top", wrap_text=True)
+    ws.freeze_panes = "A2"
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    fname = "productolog.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+
+
 # ══ Остатки по кластерам (федеральным округам) ════════════════════════════════
 
 _CLUSTER_KEYS = [
