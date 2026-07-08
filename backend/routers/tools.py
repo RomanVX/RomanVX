@@ -972,18 +972,23 @@ async def jam_probe(query: str = Query(default="шторы блэкаут")):
     per = lambda s, e: {"start": s.isoformat(), "end": e.isoformat()}
 
     tests = [
-        ("search-report/report (свои товары)", "/api/v2/search-report/report",
+        ("report (свои)", "/api/v2/search-report/report",
          {"currentPeriod": per(cur_s, cur_e), "pastPeriod": per(pw_s, pw_e),
-          "nmIds": nmids, "orderBy": {"field": "avgPosition", "mode": "asc"},
+          "nmIds": nmids, "positionCluster": "all", "offset": 0,
+          "orderBy": {"field": "avgPosition", "mode": "asc"},
           "includeSubstitutedSKUs": True, "includeSearchTexts": False, "limit": 30}),
-        ("product/search-texts (свои)", "/api/v2/search-report/product/search-texts",
-         {"period": per(cur_s, cur_e), "nmId": nmids[0] if nmids else 0}),
-        # кандидаты на отчёт «по любому слову»
-        ("search-texts (по слову) v2", "/api/v2/search-report/search-texts",
+        ("table/details (свои — тексты запросов+метрики)", "/api/v2/search-report/table/details",
          {"currentPeriod": per(cur_s, cur_e), "pastPeriod": per(pw_s, pw_e),
-          "searchTexts": [query], "limit": 30}),
-        ("search-words v1", "/api/v1/search-report/search-words",
-         {"currentPeriod": per(cur_s, cur_e), "searchTexts": [query], "limit": 30}),
+          "nmIds": nmids, "positionCluster": "all", "includeSubstitutedSKUs": True,
+          "includeSearchTexts": True, "orderBy": {"field": "avgPosition", "mode": "asc"},
+          "limit": 30, "offset": 0}),
+        ("product/search-texts (топ запросов товара)", "/api/v2/search-report/product/search-texts",
+         {"currentPeriod": per(cur_s, cur_e), "pastPeriod": per(pw_s, pw_e),
+          "nmIds": [nmids[0]] if nmids else [0], "topOrderBy": "openToCart",
+          "orderBy": {"field": "avgPosition", "mode": "asc"}, "limit": 30}),
+        ("product/orders (заказы по запросам)", "/api/v2/search-report/product/orders",
+         {"period": per(cur_s, cur_e), "nmId": nmids[0] if nmids else 0,
+          "searchTexts": []}),
     ]
     out = []
     for name, path, body in tests:
