@@ -2564,7 +2564,7 @@ const _TOOL_HINTS = {
   prod: 'Анализ отзывов WB по каждому артикулу',
   clusters: 'Сток и продажи по федеральным округам складов WB, локализация и дозаказ',
   adv: 'Кампании, куда уходят деньги, ДРР, ключевые фразы и советы по оптимизации',
-  niche: 'Выходить ли с товаром: конкуренты из выдачи WB, цены, спрос и вердикт',
+  niche: 'Спрос по вашим товарам из Джем: поисковые запросы, частотность, ваша позиция, заказы и точки роста',
 };
 
 function setTool(t) {
@@ -2580,11 +2580,11 @@ function setTool(t) {
 
 function reloadTool() {
   ({ prod: () => loadProductolog(true), clusters: () => loadClusters(true),
-     adv: () => loadAdv(true), niche: renderNicheForm })[_toolActive]();
+     adv: () => loadAdv(true), niche: () => loadDemand(true) })[_toolActive]();
 }
 function loadTools() {
   ({ prod: loadProductolog, clusters: loadClusters, adv: loadAdv,
-     niche: renderNicheForm })[_toolActive]();
+     niche: loadDemand })[_toolActive]();
 }
 
 // ── Воронка Ozon (Premium) ────────────────────────────────────────────────────
@@ -2668,7 +2668,74 @@ function renderFunnel() {
   wrap.innerHTML = html;
 }
 
-// ── Калькулятор ниши ──────────────────────────────────────────────────────────
+// ── Спрос WB (Джем): поисковые запросы по своим товарам ───────────────────────
+
+let _demandData = null;
+let _demandTimer = null;
+
+async function loadDemand(refresh) {
+  const wrap = document.getElementById('toolsWrap');
+  if (!wrap || _toolActive !== 'niche') return;
+  if (_demandData && !refresh) { renderDemand(); return; }
+  if (!_demandData) wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>Загружаем спрос из Джем…</div>';
+  try {
+    _demandData = await fetchJSON('/api/tools/demand' + (refresh ? '?refresh=true' : ''), 60000);
+    renderDemand();
+  } catch (e) {
+    wrap.innerHTML = `<div class="alert alert-danger mt-3">Ошибка: ${esc(e.message)}</div>`;
+  }
+}
+
+function _dChip(cur, dyn, unit) {
+  const d = dyn || 0;
+  const arrow = d > 0 ? `<span style="color:var(--pos)">▲${fmt(Math.abs(d))}</span>`
+              : d < 0 ? `<span style="color:var(--neg)">▼${fmt(Math.abs(d))}</span>` : '';
+  return `<b>${fmt(cur)}${unit||''}</b> ${arrow}`;
+}
+
+function renderDemand() {
+  if (_toolActive !== 'niche') return;
+  const wrap = document.getElementById('toolsWrap');
+  if (!wrap || !_demandData) return;
+  const d = _demandData;
+  const items = d.items || [];
+  if (!items.length) {
+    wrap.innerHTML = `<div class="alert alert-info">${d.message || 'Данных по спросу пока нет.'}</div>`;
+    if (d.building && !_demandTimer)
+      _demandTimer = setTimeout(() => { _demandTimer = null; if (_toolActive === 'niche') loadDemand(true); }, 20000);
+    return;
+  }
+  let html = '';
+  if (d.building) html += `<div class="alert alert-info py-2 small">⏳ Обновляем спрос из Джем — страница обновится сама.</div>`;
+  const opp = items.filter(i => i.opportunity).length;
+  html += `<div class="d-flex flex-wrap gap-3 mb-2 align-items-center">
+    <div class="text-secondary small">Период: ${esc(d.period||'')} · запросов: ${items.length}${opp?` · <span style="color:var(--warn-c)">точек роста: ${opp}</span>`:''}</div></div>`;
+  html += `<div class="card border-0 bg-card"><div class="card-body p-0"><div class="table-responsive" style="max-height:78vh">
+    <table class="table table-sm align-middle mb-0"><thead><tr>
+      <th style="min-width:200px">Поисковый запрос</th>
+      <th style="min-width:180px">Товар</th>
+      <th class="text-end" style="min-width:110px">Частотность</th>
+      <th class="text-end" style="min-width:100px">Ваша позиция</th>
+      <th class="text-end" style="min-width:100px">Заказы</th>
+      <th class="text-end" style="min-width:90px">→ корзина %</th>
+    </tr></thead><tbody>`;
+  items.forEach(it => {
+    const posClr = it.position <= 10 ? 'var(--pos)' : it.position <= 30 ? 'var(--warn-c)' : 'var(--neg)';
+    html += `<tr style="background:var(--t-row)${it.opportunity ? ';box-shadow:inset 3px 0 0 var(--warn-c)':''}">
+      <td style="padding:8px 12px"><b>${esc(it.query)}</b>${it.opportunity?' <span title="высокий спрос, низкая позиция — точка роста">🌱</span>':''}</td>
+      <td class="small"><code style="color:var(--val-soft)">${esc(it.sku||'')}</code> ${esc(it.name||'')}</td>
+      <td class="text-end">${_dChip(it.freq, it.freq_dyn)}<div class="text-secondary" style="font-size:.7rem">нед: ${fmt(it.week_freq)}</div></td>
+      <td class="text-end"><span style="color:${posClr};font-weight:700">${it.position}</span> ${it.pos_dyn?`<span class="text-secondary" style="font-size:.7rem">${it.pos_dyn>0?'▼':'▲'}${Math.abs(it.pos_dyn)}</span>`:''}</td>
+      <td class="text-end">${_dChip(it.orders, it.orders_dyn)}</td>
+      <td class="text-end">${it.open_to_cart||0}%</td>
+    </tr>`;
+  });
+  html += `</tbody></table></div></div></div>
+    <div class="text-secondary small mt-2">Данные из отчёта Джем «Поисковые запросы: ваши товары». 🌱 — точка роста: высокая частотность при низкой позиции (есть куда подниматься рекламой/SEO). Частотность — сколько раз искали запрос; позиция — ваше среднее место в выдаче (меньше = лучше).</div>`;
+  wrap.innerHTML = html;
+}
+
+// ── Калькулятор ниши (устар., публичная выдача WB закрыта анти-ботом) ─────────
 
 let _nicheResult = null;
 

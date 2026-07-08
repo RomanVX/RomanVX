@@ -955,6 +955,114 @@ async def _wb_public_search(query: str, limit: int = 60) -> tuple[list[dict], in
 _niche_last_err = ""
 
 
+# ══ Спрос WB (Джем): поисковые запросы по своим товарам ═══════════════════════
+_demand_cache: dict = {}
+_demand_ts: float = 0.0
+_demand_building: bool = False
+_demand_error: str = ""
+_DEMAND_TTL = 6 * 3600
+
+
+def _num(v):
+    """{current,dynamics} → (current, dynamics) безопасно."""
+    if isinstance(v, dict):
+        return v.get("current") or 0, v.get("dynamics") or 0
+    return (v or 0), 0
+
+
+async def _build_demand_bg() -> None:
+    global _demand_cache, _demand_ts, _demand_building, _demand_error
+    if _demand_building:
+        return
+    _demand_building = True
+    _demand_error = ""
+    try:
+        import wb_client
+        import catalog as _cat
+        from datetime import date
+        nmids = [int(x) for x in getattr(_cat, "WB_ID_TO_ART", {}).keys() if str(x).isdigit()]
+        if not nmids:
+            _demand_error = "нет nmId в каталоге кабинета"
+            return
+        cur_e = date.today() - timedelta(days=1)
+        cur_s = cur_e - timedelta(days=6)
+        pw_e = cur_s - timedelta(days=1)
+        pw_s = pw_e - timedelta(days=6)
+        per = lambda s, e: {"start": s.isoformat(), "end": e.isoformat()}
+
+        items = []
+        # nmIds батчами по 50 — топ запросов по каждому товару
+        for i in range(0, len(nmids), 50):
+            batch = nmids[i:i + 50]
+            body = {"currentPeriod": per(cur_s, cur_e), "pastPeriod": per(pw_s, pw_e),
+                    "nmIds": batch, "topOrderBy": "openToCart",
+                    "orderBy": {"field": "avgPosition", "mode": "asc"}, "limit": 30}
+            st, resp = await wb_client.analytics_post(
+                "/api/v2/search-report/product/search-texts", body)
+            if st != 200 or not isinstance(resp, dict):
+                _demand_error = f"search-texts HTTP {st}: {str(resp)[:200]}"
+                continue
+            for it in (resp.get("data") or {}).get("items", []):
+                text = str(it.get("text") or "")
+                if text.startswith("#"):    # артикул вместо фразы — пропускаем
+                    continue
+                freq_c, freq_d = _num(it.get("frequency"))
+                pos_c, pos_d = _num(it.get("avgPosition"))
+                ord_c, ord_d = _num(it.get("orders"))
+                o2c_c, _ = _num(it.get("openToCart"))
+                c2o_c, _ = _num(it.get("cartToOrder"))
+                art = _cat.resolve_wb(it.get("nmId")) if it.get("nmId") else ""
+                items.append({
+                    "query": text, "nm": it.get("nmId"),
+                    "sku": art if art and not str(art).isdigit() else it.get("vendorCode", ""),
+                    "name": it.get("name") or "", "group": it.get("subjectName") or "",
+                    "freq": int(freq_c), "freq_dyn": int(freq_d),
+                    "week_freq": int(it.get("weekFrequency") or 0),
+                    "position": round(pos_c, 1), "pos_dyn": round(pos_d, 1),
+                    "orders": int(ord_c), "orders_dyn": int(ord_d),
+                    "open_to_cart": round(o2c_c, 1), "cart_to_order": round(c2o_c, 1),
+                })
+            await asyncio.sleep(1)
+        # точка роста: высокий спрос + низкая позиция (глубоко в выдаче)
+        for it in items:
+            it["opportunity"] = it["freq"] >= 100 and it["position"] >= 20
+        items.sort(key=lambda x: -x["freq"])
+        _demand_cache = {"items": items,
+                         "period": f"{cur_s.isoformat()} — {cur_e.isoformat()}",
+                         "fetched_at": datetime.utcnow().strftime("%d.%m.%Y %H:%M UTC")}
+        _demand_ts = _t_mono()
+        import snapshot as _snap
+        _snap.save("demand_jam", _demand_cache)
+    except Exception as e:
+        _demand_error = str(e)[:300]
+        _log.warning("demand build: %s", e)
+    finally:
+        _demand_building = False
+
+
+@router.get("/demand")
+async def get_demand(refresh: bool = Query(default=False)):
+    """Спрос по своим товарам (Джем): поисковые запросы, частотность,
+    позиция, заказы, точки роста."""
+    global _demand_cache, _demand_ts
+    fresh = _demand_cache and _t_mono() - _demand_ts < _DEMAND_TTL
+    if refresh or not fresh:
+        if not _demand_cache:
+            import snapshot as _snap
+            snap = await asyncio.to_thread(_snap.load, "demand_jam", None)
+            if snap:
+                _demand_cache = snap
+                _demand_ts = _t_mono() - _DEMAND_TTL + 300
+        if not _demand_building:
+            _spawn(_build_demand_bg())
+    if _demand_cache:
+        return {**_demand_cache, "building": _demand_building, "error": _demand_error}
+    if _demand_error and not _demand_building:
+        return {"items": [], "message": f"⚠ Джем: {_demand_error}"}
+    return {"items": [], "building": True,
+            "message": "⏳ Собираем спрос по товарам из Джем — обновится само"}
+
+
 @router.get("/jam/probe", include_in_schema=False)
 async def jam_probe(query: str = Query(default="шторы блэкаут")):
     """Диагностика Джем-методов на живом ключе: какие эндпоинты доступны
