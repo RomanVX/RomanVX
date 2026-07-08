@@ -219,60 +219,131 @@ async def get_productolog(refresh: bool = Query(default=False)):
             "error": _error, "pending": pending}
 
 
+def _prod_verdict(it: dict) -> tuple[str, str, str]:
+    """Вердикт по товару → (решение, обоснование, цвет-заливки hex).
+
+    Логика: рейтинг + число отзывов + доля негатива. «Востребованный» —
+    много отзывов при хорошем рейтинге (продаётся и нравится)."""
+    avg = float(it.get("avg") or 0)
+    n = int(it.get("count") or 0)
+    neg = int(it.get("neg") or 0)
+
+    if avg >= 4.7 and neg <= 10:
+        base = "✅ Оставляем"
+        clr = "C6EFCE"
+    elif avg >= 4.3 and neg <= 25:
+        base = "✅ Оставляем"
+        clr = "C6EFCE"
+    elif avg < 4.0 or neg >= 40:
+        base = "❌ Убираем/дорабатываем"
+        clr = "FFC7CE"
+    else:
+        base = "⚠️ Наблюдаем"
+        clr = "FFEB9C"
+
+    # «востребованный» — заметный объём отзывов и хороший приём
+    hot = n >= 20 and avg >= 4.4
+    if hot and base.startswith("✅"):
+        base = "⭐ Оставляем (востребованный)"
+        clr = "9BE7A0"
+
+    why = (f"рейтинг {avg:.2f}★, отзывов {n}, негатива {neg}%. "
+           + ("Покупатели довольны, товар продаётся — держим и масштабируем."
+              if base.startswith("⭐") else
+              "Оценка и приём хорошие — оставляем." if base.startswith("✅") else
+              "Низкая оценка / много негатива — снимать или срочно дорабатывать по рекомендации."
+              if base.startswith("❌") else
+              "Оценка средняя — оставляем под наблюдением, поработать над минусами."))
+    return base, why, clr
+
+
 @router.get("/productolog/export")
 async def export_productolog():
-    """Выгрузка продуктолога в Excel: артикул, наименование, отзывы,
-    рейтинг, плюсы/минусы/рекомендация — для исследования «что реабилитировать»."""
+    """Выгрузка продуктолога в Excel: лист 1 — сжатый вердикт (оставить/убрать),
+    лист 2 — подробные плюсы/минусы/рекомендации."""
     import io
     import openpyxl
     from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
     from fastapi.responses import StreamingResponse
 
     data = await get_productolog(refresh=False)
     items = data.get("items", [])
 
+    # Порядок для листа «Вердикт»: сначала востребованные и «оставляем»
+    # (по убыванию отзывов), затем спорные, в конце «убираем».
+    def _rank(it):
+        v, _, _ = _prod_verdict(it)
+        pr = 0 if v.startswith("⭐") else 1 if v.startswith("✅") else 2 if v.startswith("⚠") else 3
+        return (pr, -int(it.get("count") or 0))
+    verdict_items = sorted(items, key=_rank)
+
     wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "Продуктолог"
-    headers = ["Артикул", "Наименование", "Группа", "Кол-во отзывов",
-               "Рейтинг карточки", "% негатива", "Плюсы (тема · %)",
-               "Минусы (тема · %)", "Рекомендация к доработке"]
-    ws.append(headers)
     hfill = PatternFill("solid", fgColor="4F46E5")
-    for c in ws[1]:
-        c.font = Font(bold=True, color="FFFFFF")
-        c.fill = hfill
-        c.alignment = Alignment(vertical="center", wrap_text=True)
+
+    def _style_header(ws):
+        for c in ws[1]:
+            c.font = Font(bold=True, color="FFFFFF")
+            c.fill = hfill
+            c.alignment = Alignment(vertical="center", wrap_text=True)
+
+    # ── Лист 1: Вердикт ──
+    ws1 = wb.active
+    ws1.title = "Вердикт"
+    ws1.append(["Артикул", "Наименование", "Группа", "Кол-во отзывов",
+                "Рейтинг", "% негатива", "Вердикт", "Обоснование"])
+    _style_header(ws1)
+    for it in verdict_items:
+        if not it.get("analyzed") and it.get("count", 0) < _MIN_TEXTS:
+            continue
+        verdict, why, clr = _prod_verdict(it)
+        ws1.append([
+            it.get("sku", ""), it.get("name", ""), it.get("group", ""),
+            it.get("count", 0),
+            round(it.get("avg", 0), 2) if it.get("avg") is not None else "",
+            f'{it.get("neg", 0)}%', verdict, why,
+        ])
+        fill = PatternFill("solid", fgColor=clr)
+        for c in ws1[ws1.max_row]:
+            c.fill = fill
+    for i, w in enumerate([12, 34, 14, 13, 10, 11, 26, 60], 1):
+        ws1.column_dimensions[get_column_letter(i)].width = w
+    for row in ws1.iter_rows(min_row=2):
+        for c in row:
+            c.alignment = Alignment(vertical="top", wrap_text=True)
+    ws1.freeze_panes = "A2"
+
+    # ── Лист 2: Плюсы / Минусы / Рекомендации ──
+    ws2 = wb.create_sheet("Плюсы-минусы")
+    ws2.append(["Артикул", "Наименование", "Кол-во отзывов", "Рейтинг",
+                "Плюсы (тема · %)", "Минусы (тема · %)", "Рекомендация к доработке"])
+    _style_header(ws2)
 
     def _chips(lst):
         return "\n".join(f"{p.get('tag','')} · {p.get('pct','')}%" for p in (lst or []))
 
-    for it in items:
-        ws.append([
-            it.get("sku", ""), it.get("name", ""), it.get("group", ""),
-            it.get("count", 0),
+    for it in sorted(items, key=lambda x: (-int(x.get("neg") or 0), -int(x.get("count") or 0))):
+        ws2.append([
+            it.get("sku", ""), it.get("name", ""), it.get("count", 0),
             round(it.get("avg", 0), 2) if it.get("avg") is not None else "",
-            f'{it.get("neg", 0)}%',
             _chips(it.get("pluses")) if it.get("analyzed") else "⏳ анализируется",
             _chips(it.get("minuses")) if it.get("analyzed") else "",
             it.get("recommendation", "") if it.get("analyzed") else "",
         ])
-    widths = [12, 34, 14, 13, 15, 11, 34, 34, 55]
-    for i, w in enumerate(widths, 1):
-        ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = w
-    for row in ws.iter_rows(min_row=2):
+    for i, w in enumerate([12, 34, 13, 10, 34, 34, 55], 1):
+        ws2.column_dimensions[get_column_letter(i)].width = w
+    for row in ws2.iter_rows(min_row=2):
         for c in row:
             c.alignment = Alignment(vertical="top", wrap_text=True)
-    ws.freeze_panes = "A2"
+    ws2.freeze_panes = "A2"
 
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
-    fname = "productolog.xlsx"
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+        headers={"Content-Disposition": 'attachment; filename="productolog.xlsx"'})
 
 
 # ══ Остатки по кластерам (федеральным округам) ════════════════════════════════
