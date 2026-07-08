@@ -95,6 +95,11 @@ async def _analyze_sku(sku: str, name: str, reviews: list) -> dict | None:
             "recommendation": str(data.get("recommendation") or "")}
 
 
+def _set_progress(msg: str) -> None:
+    global _progress
+    _progress = msg
+
+
 async def _build_bg(force: bool = False) -> None:
     global _building, _error, _progress
     if _building:
@@ -120,25 +125,44 @@ async def _build_bg(force: bool = False) -> None:
                 continue
             todo.append((sku, revs, n_texts))
         todo.sort(key=lambda x: -x[2])
-        for i, (sku, revs, n_texts) in enumerate(todo):
-            _progress = f"{i + 1}/{len(todo)}: {sku}"
+        total = len(todo)
+        done = 0
+        errors = 0
+        sem = asyncio.Semaphore(4)   # 4 товара анализируем параллельно
+
+        async def _one(sku, revs, n_texts):
+            nonlocal done, errors
             name = _cat.lookup(sku).get("name", sku)
-            try:
-                data = await _analyze_sku(sku, name, revs)
-            except Exception as e:
-                _error = f"{sku}: {str(e)[:200]}"
-                _log.warning("productolog %s: %s", sku, e)
-                continue
-            if not data:
-                continue
-            await asyncio.to_thread(
-                db.execute,
-                "INSERT INTO productolog (sku, data, reviews_count, built_at) VALUES (?,?,?,?) "
-                "ON CONFLICT (sku) DO UPDATE SET data = excluded.data, "
-                "reviews_count = excluded.reviews_count, built_at = excluded.built_at",
-                (sku, json.dumps(data, ensure_ascii=False), n_texts,
-                 datetime.utcnow().isoformat()))
-        _log.info("productolog: обновлено %d SKU", len(todo))
+            async with sem:
+                try:
+                    data = await _analyze_sku(sku, name, revs)
+                except Exception as e:
+                    errors += 1
+                    _log.warning("productolog %s: %s", sku, e)
+                    return f"{sku}: {str(e)[:150]}"
+                if data:
+                    await asyncio.to_thread(
+                        db.execute,
+                        "INSERT INTO productolog (sku, data, reviews_count, built_at) VALUES (?,?,?,?) "
+                        "ON CONFLICT (sku) DO UPDATE SET data = excluded.data, "
+                        "reviews_count = excluded.reviews_count, built_at = excluded.built_at",
+                        (sku, json.dumps(data, ensure_ascii=False), n_texts,
+                         datetime.utcnow().isoformat()))
+            return None
+
+        async def _tracked(sku, revs, n_texts):
+            nonlocal done
+            err = await _one(sku, revs, n_texts)
+            done += 1
+            _set_progress(f"проанализировано {done} из {total}"
+                          + (f", ошибок {errors}" if errors else ""))
+            return err
+
+        errs = await asyncio.gather(*[_tracked(s, r, n) for s, r, n in todo])
+        errs = [e for e in errs if e]
+        if errs:
+            _error = f"{len(errs)} арт. с ошибкой (напр. {errs[0]})"
+        _log.info("productolog: обновлено %d SKU, ошибок %d", total - len(errs), len(errs))
     except Exception as e:
         _error = str(e)[:300]
         _log.error("productolog build: %s", e)

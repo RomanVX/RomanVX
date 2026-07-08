@@ -3066,9 +3066,10 @@ function renderProductolog() {
   html += `<div class="d-flex justify-content-end mb-2">
     <a href="/api/tools/productolog/export" class="btn btn-sm btn-outline-success" download>⬇ Экспорт в Excel</a></div>`;
   if (d.pending > 0 || d.building) {
-    html += `<div class="alert alert-info py-2 small">⏳ Анализируем отзывы (${d.progress || `осталось ${d.pending} арт.`}) — страница обновится сама.</div>`;
-    if (!_prodTimer) _prodTimer = setTimeout(() => { _prodTimer = null; if (currentTab === 'tools' && _toolActive === 'prod') loadProductolog('poll'); }, 25000);
-  } else if (d.error) {
+    html += `<div class="alert alert-info py-2 small">⏳ Анализируем отзывы (${d.progress || `осталось ${d.pending} арт.`}) — по 4 товара сразу, страница обновится сама.</div>`;
+    if (!_prodTimer) _prodTimer = setTimeout(() => { _prodTimer = null; if (currentTab === 'tools' && _toolActive === 'prod') loadProductolog('poll'); }, 15000);
+  }
+  if (d.error) {
     html += `<div class="alert alert-warning py-2 small">⚠ ${d.error}</div>`;
   }
   html += `<div class="card border-0 bg-card"><div class="card-body p-0"><div class="table-responsive" style="max-height:78vh">
