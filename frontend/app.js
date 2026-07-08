@@ -3110,7 +3110,9 @@ function renderProductolog() {
     const avgClr = it.avg >= 4.8 ? 'var(--pos)' : it.avg >= 4.5 ? 'var(--warn-c)' : 'var(--neg)';
     const row = `<tr style="background:var(--t-row)">
       <td style="position:sticky;left:0;background:var(--t-sticky);padding:8px 12px;vertical-align:top">
-        <code style="color:var(--val-soft)">${esc(it.sku)}</code>
+        ${it.wb_link
+          ? `<a href="${it.wb_link}" target="_blank" rel="noopener" style="text-decoration:none"><code style="color:var(--val-soft)">${esc(it.sku)}</code> <span style="font-size:.7rem">🔗</span></a>`
+          : `<code style="color:var(--val-soft)">${esc(it.sku)}</code>`}
         <div class="small" style="color:var(--ink)">${esc(it.name)}</div>
         <div class="text-secondary" style="font-size:.72rem">${esc(it.group || '')}</div></td>
       <td class="text-center" style="vertical-align:top;padding-top:10px">

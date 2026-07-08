@@ -214,6 +214,7 @@ async def get_productolog(refresh: bool = Query(default=False)):
             "recommendation": a.get("recommendation") or "",
             "analyzed": bool(a), "analyzable": analyzable,
             "text_reviews": n_texts, "built_at": (built or "")[:10],
+            "wb_link": _wb_link(sku),
         })
     # проблемные сверху: доля негатива, затем количество отзывов
     items.sort(key=lambda x: (-x["neg"], -x["count"]))
@@ -223,6 +224,27 @@ async def get_productolog(refresh: bool = Query(default=False)):
         _spawn(_build_bg(force=False))
     return {"items": items, "building": _building, "progress": _progress,
             "error": _error, "pending": pending}
+
+
+_ART_TO_NM: dict = {}
+
+
+def _wb_link(sku: str) -> str:
+    """Ссылка на карточку WB по артикулу (через nmId из каталога)."""
+    global _ART_TO_NM
+    if not _ART_TO_NM:
+        try:
+            import catalog as _cat
+            m = getattr(_cat, "WB_ID_TO_ART", {}) or {}
+            # nmId→art  ⇒  art(upper)→nmId (первый выигрывает)
+            for nm, art in m.items():
+                key = str(art).strip().upper()
+                if key and key not in _ART_TO_NM:
+                    _ART_TO_NM[key] = str(nm)
+        except Exception:
+            pass
+    nm = _ART_TO_NM.get(str(sku).strip().upper())
+    return f"https://www.wildberries.ru/catalog/{nm}/detail.aspx" if nm else ""
 
 
 def _prod_reason(it: dict) -> str:
@@ -263,8 +285,9 @@ async def export_productolog():
     ws1 = wb.active
     ws1.title = "Сводка"
     ws1.append(["Артикул", "Наименование", "Группа", "Кол-во отзывов",
-                "Рейтинг", "% негатива", "Обоснование"])
+                "Рейтинг", "% негатива", "Обоснование", "Ссылка WB"])
     _style_header(ws1)
+    link_font = Font(color="0563C1", underline="single")
     for it in verdict_items:
         if not it.get("analyzed") and it.get("count", 0) < _MIN_TEXTS:
             continue
@@ -272,9 +295,15 @@ async def export_productolog():
             it.get("sku", ""), it.get("name", ""), it.get("group", ""),
             it.get("count", 0),
             round(it.get("avg", 0), 2) if it.get("avg") is not None else "",
-            f'{it.get("neg", 0)}%', _prod_reason(it),
+            f'{it.get("neg", 0)}%', _prod_reason(it), "",
         ])
-    for i, w in enumerate([12, 34, 14, 13, 10, 11, 55], 1):
+        link = _wb_link(it.get("sku", ""))
+        if link:
+            cell = ws1.cell(ws1.max_row, 8)
+            cell.value = "Открыть на WB"
+            cell.hyperlink = link
+            cell.font = link_font
+    for i, w in enumerate([12, 34, 14, 13, 10, 11, 55, 16], 1):
         ws1.column_dimensions[get_column_letter(i)].width = w
     for row in ws1.iter_rows(min_row=2):
         for c in row:
@@ -284,7 +313,8 @@ async def export_productolog():
     # ── Лист 2: Плюсы / Минусы / Рекомендации ──
     ws2 = wb.create_sheet("Плюсы-минусы")
     ws2.append(["Артикул", "Наименование", "Кол-во отзывов", "Рейтинг",
-                "Плюсы (тема · %)", "Минусы (тема · %)", "Рекомендация к доработке"])
+                "Плюсы (тема · %)", "Минусы (тема · %)", "Рекомендация к доработке",
+                "Ссылка WB"])
     _style_header(ws2)
 
     def _chips(lst):
@@ -298,9 +328,15 @@ async def export_productolog():
             else ("⏳ анализируется" if it.get("analyzable", True)
                   else f"мало текстовых отзывов ({it.get('text_reviews', 0)})"),
             _chips(it.get("minuses")) if it.get("analyzed") else "",
-            it.get("recommendation", "") if it.get("analyzed") else "",
+            it.get("recommendation", "") if it.get("analyzed") else "", "",
         ])
-    for i, w in enumerate([12, 34, 13, 10, 34, 34, 55], 1):
+        link = _wb_link(it.get("sku", ""))
+        if link:
+            cell = ws2.cell(ws2.max_row, 8)
+            cell.value = "Открыть на WB"
+            cell.hyperlink = link
+            cell.font = link_font
+    for i, w in enumerate([12, 34, 13, 10, 34, 34, 55, 16], 1):
         ws2.column_dimensions[get_column_letter(i)].width = w
     for row in ws2.iter_rows(min_row=2):
         for c in row:
