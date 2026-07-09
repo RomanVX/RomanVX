@@ -1671,7 +1671,7 @@ async def get_visuals(query: str = Query(...), refresh: bool = Query(default=Fal
                         "type": "base64", "media_type": mt, "data": b64}})
                 import anthropic
                 client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
-                msg = await client.messages.create(model=_MODEL, max_tokens=1400,
+                msg = await client.messages.create(model=_MODEL, max_tokens=3000,
                                                    messages=[{"role": "user", "content": content}])
                 analysis = msg.content[0].text.strip()
     except Exception as e:
@@ -1738,7 +1738,7 @@ async def visuals_prompt(payload: dict):
     try:
         import anthropic
         client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
-        msg = await client.messages.create(model=_MODEL, max_tokens=1200,
+        msg = await client.messages.create(model=_MODEL, max_tokens=2200,
                                            messages=[{"role": "user", "content": sys_prompt}])
         return {"prompt": msg.content[0].text.strip()}
     except Exception as e:
