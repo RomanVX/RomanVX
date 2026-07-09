@@ -1615,18 +1615,27 @@ async def get_visuals(query: str = Query(...), refresh: bool = Query(default=Fal
     # их сам (WB CDN отдаёт браузеру, но не серверу-фетчеру Anthropic)
     async def _fetch_img(it):
         import httpx
-        # пробуем несколько размеров/номеров: заглавное не всегда 1.webp/big
-        for url in (it["photo_big"], it["photo"],
-                    _wb_photo(it["nm"], "big"), _wb_photo(it["nm"], "c246x328")):
-            if not url:
-                continue
-            try:
-                async with httpx.AsyncClient(timeout=15) as c:
+        nm = it.get("nm")
+        # у видео-карточек статичного 1.webp нет — перебираем размеры,
+        # соседние basket-хосты и первые кадры (2.webp/3.webp)
+        urls = []
+        for size in ("c516x688", "big", "c246x328"):
+            for frame in (1, 2, 3):
+                u = _wb_photo(nm, size)
+                if u:
+                    urls.append(u.replace("/1.webp", f"/{frame}.webp"))
+        seen_u = set()
+        async with httpx.AsyncClient(timeout=12) as c:
+            for url in urls:
+                if url in seen_u:
+                    continue
+                seen_u.add(url)
+                try:
                     r = await c.get(url, headers={"Referer": "https://www.wildberries.ru/"})
-                if r.status_code == 200 and r.content and len(r.content) > 800:
-                    return it, base64.b64encode(r.content).decode(), "image/webp"
-            except Exception:
-                continue
+                    if r.status_code == 200 and r.content and len(r.content) > 800:
+                        return it, base64.b64encode(r.content).decode(), "image/webp"
+                except Exception:
+                    continue
         return it, None, None
 
     analysis = None

@@ -2955,7 +2955,8 @@ function renderVisualsResult() {
   (d.items || []).forEach(it => {
     html += `<div style="width:150px">
       <a href="${it.wb_url}" target="_blank" rel="noopener">
-        <img src="${it.photo}" loading="lazy" onerror="this.style.opacity=.2"
+        <img src="${it.photo}" loading="lazy" data-fallback="0"
+             onerror="const f=+this.dataset.fallback; if(f<2){this.dataset.fallback=f+1; this.src=this.src.replace(/\\/[0-9]+\\.webp/, '/'+(f+2)+'.webp');} else {this.style.opacity=.2;}"
              style="width:150px;height:200px;object-fit:cover;border-radius:8px;border:1px solid var(--border)"></a>
       <div class="small mt-1" style="color:var(--ink)"><b>${it.position}.</b> ${esc(it.brand || '')}</div>
       <div class="text-secondary" style="font-size:.72rem;line-height:1.2">${esc((it.name || '').slice(0,44))}</div>
