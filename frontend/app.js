@@ -2566,12 +2566,13 @@ const _TOOL_HINTS = {
   adv: 'Кампании, куда уходят деньги, ДРР, ключевые фразы и советы по оптимизации',
   niche: 'Спрос по вашим товарам из Джем: поисковые запросы, частотность, ваша позиция, заказы и точки роста',
   nichecalc: 'Выходить ли с товаром: конкуренты из выдачи WB, цены, спрос и вердикт (сбор через агент)',
+  visuals: 'Заглавные фото топ-20 карточек конкурентов + разбор визуала через Claude',
 };
 
 function setTool(t) {
   if (_toolActive === t) return;
   _toolActive = t;
-  ['Prod', 'Clusters', 'Adv', 'Niche', 'Nichecalc'].forEach(k => {
+  ['Prod', 'Clusters', 'Adv', 'Niche', 'Nichecalc', 'Visuals'].forEach(k => {
     document.getElementById('tool' + k)?.classList.toggle('active', k.toLowerCase() === t);
   });
   const hint = document.getElementById('toolHint');
@@ -2582,11 +2583,12 @@ function setTool(t) {
 function reloadTool() {
   ({ prod: () => loadProductolog(true), clusters: () => loadClusters(true),
      adv: () => loadAdv(true), niche: () => loadDemand(true),
-     nichecalc: () => renderNicheForm() })[_toolActive]();
+     nichecalc: () => renderNicheForm(), visuals: () => renderVisualsForm() })[_toolActive]();
 }
 function loadTools() {
   ({ prod: loadProductolog, clusters: loadClusters, adv: loadAdv,
-     niche: loadDemand, nichecalc: renderNicheForm })[_toolActive]();
+     niche: loadDemand, nichecalc: renderNicheForm,
+     visuals: renderVisualsForm })[_toolActive]();
 }
 
 // ── Воронка Ozon (Premium) ────────────────────────────────────────────────────
@@ -2900,6 +2902,68 @@ function renderNicheResult() {
   });
   html += `</tbody></table></div></div></div>
   <div class="text-secondary small mt-2">Топ-30 выдачи WB по популярности. ~Прод/мес — оценка по приросту отзывов между замерами (÷4% оставляющих отзыв); чтобы она появилась, повтори анализ этого запроса через 3+ дня. ${d.analyzed_at}</div>`;
+  out.innerHTML = html;
+}
+
+// ── Визуалы топ-20 ────────────────────────────────────────────────────────────
+let _visualsResult = null;
+async function renderVisualsForm() {
+  if (_toolActive !== 'visuals') return;
+  const wrap = document.getElementById('toolsWrap');
+  if (!wrap) return;
+  let hist = [];
+  try { hist = (await fetchJSON('/api/tools/niche/history')).items || []; } catch (e) {}
+  wrap.innerHTML = `<div class="card bg-card p-3 mb-3">
+    <div class="fw-semibold mb-2" style="color:var(--ink)">Анализ визуалов заглавных карточек топ-20</div>
+    <div class="d-flex gap-2 flex-wrap align-items-center">
+      <input id="visualsQuery" class="form-control form-control-sm" style="max-width:340px" placeholder="Поисковый запрос (как в калькуляторе ниши)"
+             onkeydown="if(event.key==='Enter')runVisuals()">
+      <button id="visualsGo" class="btn btn-sm btn-outline-danger" onclick="runVisuals()">Показать и разобрать</button>
+    </div>
+    <div class="text-secondary small mt-2">Берёт топ-20 из собранной ниши по этому запросу: показывает заглавные фото и разбирает визуал через Claude. ${hist.length ? 'Уже собраны: ' + hist.slice(0,6).map(h => `<a href="#" onclick="document.getElementById('visualsQuery').value='${esc(h.query)}';runVisuals();return false" style="color:var(--dim)">${esc(h.query)}</a>`).join(' · ') : 'Сначала соберите нишу в «Калькуляторе ниши».'}</div>
+  </div><div id="visualsOut"></div>`;
+  if (_visualsResult) renderVisualsResult();
+}
+
+async function runVisuals() {
+  const q = document.getElementById('visualsQuery').value.trim();
+  const out = document.getElementById('visualsOut');
+  const btn = document.getElementById('visualsGo');
+  if (!q || !out) return;
+  btn.disabled = true;
+  out.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>Собираем фото и разбираем визуал через Claude (до минуты)…</div>';
+  try {
+    _visualsResult = await fetchJSON('/api/tools/visuals?query=' + encodeURIComponent(q) + '&refresh=true', 120000);
+    renderVisualsResult();
+  } catch (e) {
+    out.innerHTML = `<div class="alert alert-danger">Ошибка: ${esc(e.message)}</div>`;
+  }
+  btn.disabled = false;
+}
+
+function renderVisualsResult() {
+  const out = document.getElementById('visualsOut');
+  if (!out || !_visualsResult) return;
+  const d = _visualsResult;
+  if (d.message) { out.innerHTML = `<div class="alert alert-info">${esc(d.message)}</div>`; return; }
+  let html = '';
+  if (d.analysis) {
+    html += `<details class="rev-fold mb-3" open><summary>🎨 Разбор визуала (Claude)</summary>
+      <div class="card bg-card mt-2 p-3 small" style="white-space:pre-wrap;line-height:1.6;color:var(--ink)">${esc(d.analysis)}</div></details>`;
+  }
+  html += `<div class="d-flex flex-wrap gap-3">`;
+  (d.items || []).forEach(it => {
+    html += `<div style="width:150px">
+      <a href="${it.wb_url}" target="_blank" rel="noopener">
+        <img src="${it.photo}" loading="lazy" onerror="this.style.opacity=.2"
+             style="width:150px;height:200px;object-fit:cover;border-radius:8px;border:1px solid var(--border)"></a>
+      <div class="small mt-1" style="color:var(--ink)"><b>${it.position}.</b> ${esc(it.brand || '')}</div>
+      <div class="text-secondary" style="font-size:.72rem;line-height:1.2">${esc((it.name || '').slice(0,44))}</div>
+      <div class="small"><span style="color:var(--val);font-weight:600">${it.price ? fmtRub(it.price) : '—'}</span>
+        <span class="text-secondary">· ${it.rating}★ · ${fmt(it.feedbacks)}</span></div>
+    </div>`;
+  });
+  html += `</div><div class="text-secondary small mt-2">Заглавные фото топ-20 выдачи WB. ${d.analyzed_at || ''}</div>`;
   out.innerHTML = html;
 }
 

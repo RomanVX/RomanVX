@@ -1555,6 +1555,99 @@ async def niche_get(query: str = Query(...)):
     return json.loads(row[0])
 
 
+_WB_BASKETS = [143, 287, 431, 719, 1007, 1061, 1115, 1169, 1313, 1601, 1655,
+               1919, 2045, 2189, 2405, 2621, 2837, 3053, 3269, 3485, 3701,
+               3917, 4133, 4349, 4565, 4877, 5189, 5501, 5813, 6125, 6437]
+
+
+def _wb_photo(nm, size: str = "c516x688") -> str:
+    """URL заглавного фото карточки WB (basket-XX по vol)."""
+    try:
+        nm = int(nm)
+    except (TypeError, ValueError):
+        return ""
+    if not nm:
+        return ""
+    vol, part = nm // 100000, nm // 1000
+    b = len(_WB_BASKETS) + 1
+    for i, r in enumerate(_WB_BASKETS):
+        if vol <= r:
+            b = i + 1
+            break
+    return (f"https://basket-{b:02d}.wbbasket.ru/vol{vol}/part{part}/{nm}"
+            f"/images/{size}/1.webp")
+
+
+@router.get("/visuals")
+async def get_visuals(query: str = Query(...), refresh: bool = Query(default=False)):
+    """Анализ визуалов топ-20: заглавные фото карточек конкурентов +
+    сравнение через Claude (общие приёмы, что работает, как выделиться).
+    Берёт товары из последнего анализа ниши по этому запросу."""
+    _niche_init()
+    q = query.strip().lower()
+    db.execute("CREATE TABLE IF NOT EXISTS visuals_history "
+               "(query TEXT PRIMARY KEY, data TEXT, built_at TEXT)")
+    if not refresh:
+        row = await asyncio.to_thread(
+            db.fetchone, "SELECT data FROM visuals_history WHERE query = ?", (q,))
+        if row:
+            return json.loads(row[0])
+
+    nrow = await asyncio.to_thread(
+        db.fetchone, "SELECT data FROM niche_history WHERE query = ?", (q,))
+    if not nrow:
+        return {"items": [], "message": "Сначала соберите нишу в «Калькуляторе ниши» "
+                "по этому запросу — визуалы берутся из неё."}
+    nd = json.loads(nrow[0])
+    products = (nd.get("products") or [])[:20]
+    items = [{
+        "position": p.get("position") or (i + 1), "nm": p.get("nm"),
+        "name": p.get("name", ""), "brand": p.get("brand", ""),
+        "price": p.get("price"), "rating": p.get("rating"),
+        "feedbacks": p.get("feedbacks"),
+        "photo": _wb_photo(p.get("nm"), "c246x328"),
+        "photo_big": _wb_photo(p.get("nm"), "c516x688"),
+        "wb_url": p.get("wb_url") or (f"https://www.wildberries.ru/catalog/{p['nm']}/detail.aspx" if p.get("nm") else ""),
+    } for i, p in enumerate(products) if p.get("nm")]
+
+    analysis = None
+    try:
+        if ANTHROPIC_API_KEY and items:
+            content = [{"type": "text", "text":
+                f"""Ты — арт-директор и маркетолог маркетплейсов. Перед тобой заглавные фото
+топ-{len(items)} карточек WB по запросу «{query}» (в порядке позиций в выдаче).
+Проанализируй их ВИЗУАЛ как единую выборку и дай практику:
+
+1) ОБЩИЕ ПРИЁМЫ топа: композиция (продукт крупно / модель / флэтлей), фон и цвета,
+   текст на фото (что пишут, где), инфографика, бейджи, эмоции.
+2) ЧТО ДЕЛАЮТ ЛИДЕРЫ (позиции 1-5) иначе, чем нижняя часть.
+3) ПАТТЕРНЫ, которые повторяются у большинства (значит, работают в нише).
+4) КАК ВЫДЕЛИТЬСЯ: 3-5 конкретных рекомендаций для НОВОЙ карточки, чтобы
+   попасть в стандарт ниши, но зацепить взгляд.
+Кратко, по делу, с привязкой к тому, что видишь на фото."""}]
+            for it in items:
+                if it["photo_big"]:
+                    content.append({"type": "text", "text": f"Позиция {it['position']}: {it['brand']} — {it['name'][:60]}, {it['price']}₽"})
+                    content.append({"type": "image", "source": {"type": "url", "url": it["photo_big"]}})
+            import anthropic
+            client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
+            msg = await client.messages.create(model=_MODEL, max_tokens=1400,
+                                               messages=[{"role": "user", "content": content}])
+            analysis = msg.content[0].text.strip()
+    except Exception as e:
+        _log.warning("visuals analysis: %s", e)
+        analysis = f"⚠ Не удалось получить анализ: {str(e)[:200]}"
+
+    result = {"query": query, "items": items, "analysis": analysis,
+              "analyzed_at": datetime.utcnow().strftime("%d.%m.%Y %H:%M UTC")}
+    await asyncio.to_thread(
+        db.execute,
+        "INSERT INTO visuals_history (query, data, built_at) VALUES (?,?,?) "
+        "ON CONFLICT (query) DO UPDATE SET data = excluded.data, built_at = excluded.built_at",
+        (q, json.dumps(result, ensure_ascii=False), datetime.utcnow().isoformat()))
+    return result
+
+
 @router.get("/niche/export")
 async def niche_export(query: str = Query(...)):
     """Выгрузка анализа ниши в Excel: лист 1 — сводка+вердикт, лист 2 —
