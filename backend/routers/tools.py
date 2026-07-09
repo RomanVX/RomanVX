@@ -1688,6 +1688,64 @@ async def get_visuals(query: str = Query(...), refresh: bool = Query(default=Fal
     return result
 
 
+@router.post("/visuals/prompt")
+async def visuals_prompt(payload: dict):
+    """Генерирует промт для nano banana (Gemini image) — заглавная карточка
+    WB на основе разбора топ-20 визуалов + комментарии пользователя."""
+    query = str(payload.get("query") or "").strip().lower()
+    notes = str(payload.get("notes") or "").strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="Нужен запрос")
+    if not ANTHROPIC_API_KEY:
+        raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY не настроен")
+    _niche_init()
+    db.execute("CREATE TABLE IF NOT EXISTS visuals_history "
+               "(query TEXT PRIMARY KEY, data TEXT, built_at TEXT)")
+    row = await asyncio.to_thread(
+        db.fetchone, "SELECT data FROM visuals_history WHERE query = ?", (query,))
+    if not row:
+        raise HTTPException(status_code=404, detail="Сначала соберите визуалы топ-20 по этому запросу")
+    vd = json.loads(row[0])
+    analysis = vd.get("analysis") or ""
+    items = vd.get("items") or []
+    comp = "\n".join(f"- поз.{it.get('position')}: {it.get('brand','')}, {it.get('price')}₽, "
+                     f"★{it.get('rating')}, отзывов {it.get('feedbacks')}" for it in items[:20])
+
+    sys_prompt = f"""Ты — промт-инженер для генератора изображений nano banana (Google Gemini image).
+Задача: составить ГОТОВЫЙ промт для генерации ЗАГЛАВНОГО фото карточки Wildberries
+по нише «{query}», опираясь на разбор визуалов топ-20 конкурентов и пожелания селлера.
+
+РАЗБОР ВИЗУАЛОВ ТОП-20:
+{analysis}
+
+ТОП-20 (позиции/цены/рейтинги):
+{comp}
+
+ПОЖЕЛАНИЯ СЕЛЛЕРА (обязательно учесть, приоритет над общим стандартом):
+{notes or '(нет — ориентируйся на стандарт ниши и на то, как выделиться)'}
+
+Верни ответ СТРОГО в таком виде, без лишних пояснений:
+
+ПРОМТ (для nano banana, на английском):
+<детальный промт: тип кадра/композиция, продукт (что на флаконе/упаковке), фон и цвета,
+текст и инфографика на карточке (крупная цифра-крючок, бейджи, мини-иконки свойств),
+стиль освещения, соотношение сторон 3:4 (вертикаль под WB), фотореализм/студийность.
+Промт должен и попадать в стандарт ниши, и содержать элемент-отстройку.>
+
+ЧТО ОТСТРАИВАЕТ (на русском, 2-3 пункта):
+<чем эта карточка зацепит на фоне топа>"""
+
+    try:
+        import anthropic
+        client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
+        msg = await client.messages.create(model=_MODEL, max_tokens=1200,
+                                           messages=[{"role": "user", "content": sys_prompt}])
+        return {"prompt": msg.content[0].text.strip()}
+    except Exception as e:
+        _log.warning("visuals prompt: %s", e)
+        raise HTTPException(status_code=500, detail=f"Не удалось сгенерировать промт: {str(e)[:200]}")
+
+
 @router.get("/niche/export")
 async def niche_export(query: str = Query(...)):
     """Выгрузка анализа ниши в Excel: лист 1 — сводка+вердикт, лист 2 —

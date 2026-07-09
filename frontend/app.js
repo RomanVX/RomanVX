@@ -2950,6 +2950,12 @@ function renderVisualsResult() {
   if (d.analysis) {
     html += `<details class="rev-fold mb-3" open><summary>🎨 Разбор визуала (Claude)</summary>
       <div class="card bg-card mt-2 p-3 small" style="white-space:pre-wrap;line-height:1.6;color:var(--ink)">${esc(d.analysis)}</div></details>`;
+    html += `<div class="card bg-card p-3 mb-3">
+      <div class="fw-semibold mb-2" style="color:var(--ink)">✍ Написать промт для nano banana</div>
+      <textarea id="visualsNotes" class="form-control form-control-sm mb-2" rows="2"
+        placeholder="Ваши комментарии (необязательно): что на флаконе, объём, вкус, фишка, цвет бренда, что подчеркнуть…"></textarea>
+      <button id="visualsPromptGo" class="btn btn-sm btn-outline-warning" onclick="genVisualsPrompt('${esc(d.query || '')}')">Сгенерировать промт</button>
+      <div id="visualsPromptOut" class="mt-2"></div></div>`;
   }
   html += `<div class="d-flex flex-wrap gap-3">`;
   (d.items || []).forEach(it => {
@@ -2966,6 +2972,30 @@ function renderVisualsResult() {
   });
   html += `</div><div class="text-secondary small mt-2">Заглавные фото топ-20 выдачи WB. ${d.analyzed_at || ''}</div>`;
   out.innerHTML = html;
+}
+
+async function genVisualsPrompt(query) {
+  const notes = document.getElementById('visualsNotes')?.value.trim() || '';
+  const out = document.getElementById('visualsPromptOut');
+  const btn = document.getElementById('visualsPromptGo');
+  if (!out) return;
+  btn.disabled = true;
+  out.innerHTML = '<div class="text-secondary small"><span class="spinner-border spinner-border-sm me-2"></span>Пишу промт по разбору топ-20…</div>';
+  try {
+    const r = await fetch('/api/tools/visuals/prompt', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, notes }) });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.detail || r.status);
+    const txt = j.prompt || '';
+    out.innerHTML = `<div class="card bg-card p-3 small" style="white-space:pre-wrap;line-height:1.6;color:var(--ink);position:relative">
+      <button class="btn btn-sm btn-outline-secondary" style="position:absolute;top:8px;right:8px" onclick="navigator.clipboard.writeText(this.parentNode.dataset.txt);this.textContent='✓ Скопировано'">Копировать</button>
+      ${esc(txt)}</div>`;
+    out.querySelector('.card').dataset.txt = txt;
+  } catch (e) {
+    out.innerHTML = `<div class="alert alert-danger py-2 small">Ошибка: ${esc(e.message)}</div>`;
+  }
+  btn.disabled = false;
 }
 
 // ── Контроль рекламы ──────────────────────────────────────────────────────────
