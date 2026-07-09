@@ -6,6 +6,7 @@
 только для артикулов, где появились новые отзывы.
 """
 import asyncio
+import base64
 import os
 import json
 import logging
@@ -1610,30 +1611,54 @@ async def get_visuals(query: str = Query(...), refresh: bool = Query(default=Fal
         "wb_url": p.get("wb_url") or (f"https://www.wildberries.ru/catalog/{p['nm']}/detail.aspx" if p.get("nm") else ""),
     } for i, p in enumerate(products) if p.get("nm")]
 
+    # фото качаем на СЕРВЕРЕ и кодируем base64 — Anthropic не может тянуть
+    # их сам (WB CDN отдаёт браузеру, но не серверу-фетчеру Anthropic)
+    async def _fetch_img(it):
+        import httpx
+        # пробуем несколько размеров/номеров: заглавное не всегда 1.webp/big
+        for url in (it["photo_big"], it["photo"],
+                    _wb_photo(it["nm"], "big"), _wb_photo(it["nm"], "c246x328")):
+            if not url:
+                continue
+            try:
+                async with httpx.AsyncClient(timeout=15) as c:
+                    r = await c.get(url, headers={"Referer": "https://www.wildberries.ru/"})
+                if r.status_code == 200 and r.content and len(r.content) > 800:
+                    return it, base64.b64encode(r.content).decode(), "image/webp"
+            except Exception:
+                continue
+        return it, None, None
+
     analysis = None
     try:
         if ANTHROPIC_API_KEY and items:
-            content = [{"type": "text", "text":
-                f"""Ты — арт-директор и маркетолог маркетплейсов. Перед тобой заглавные фото
-топ-{len(items)} карточек WB по запросу «{query}» (в порядке позиций в выдаче).
+            fetched = await asyncio.gather(*[_fetch_img(it) for it in items])
+            got = [(it, b64, mt) for it, b64, mt in fetched if b64]
+            if not got:
+                analysis = ("⚠ Не удалось скачать фото карточек для анализа "
+                            "(WB CDN недоступен серверу). Фото видно в сетке ниже.")
+            else:
+                content = [{"type": "text", "text":
+                    f"""Ты — арт-директор и маркетолог маркетплейсов. Перед тобой заглавные фото
+топ-{len(got)} карточек WB по запросу «{query}» (в порядке позиций в выдаче).
 Проанализируй их ВИЗУАЛ как единую выборку и дай практику:
 
 1) ОБЩИЕ ПРИЁМЫ топа: композиция (продукт крупно / модель / флэтлей), фон и цвета,
    текст на фото (что пишут, где), инфографика, бейджи, эмоции.
-2) ЧТО ДЕЛАЮТ ЛИДЕРЫ (позиции 1-5) иначе, чем нижняя часть.
+2) ЧТО ДЕЛАЮТ ЛИДЕРЫ (первые позиции) иначе, чем нижняя часть.
 3) ПАТТЕРНЫ, которые повторяются у большинства (значит, работают в нише).
 4) КАК ВЫДЕЛИТЬСЯ: 3-5 конкретных рекомендаций для НОВОЙ карточки, чтобы
    попасть в стандарт ниши, но зацепить взгляд.
 Кратко, по делу, с привязкой к тому, что видишь на фото."""}]
-            for it in items:
-                if it["photo_big"]:
+                for it, b64, mt in got:
                     content.append({"type": "text", "text": f"Позиция {it['position']}: {it['brand']} — {it['name'][:60]}, {it['price']}₽"})
-                    content.append({"type": "image", "source": {"type": "url", "url": it["photo_big"]}})
-            import anthropic
-            client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
-            msg = await client.messages.create(model=_MODEL, max_tokens=1400,
-                                               messages=[{"role": "user", "content": content}])
-            analysis = msg.content[0].text.strip()
+                    content.append({"type": "image", "source": {
+                        "type": "base64", "media_type": mt, "data": b64}})
+                import anthropic
+                client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
+                msg = await client.messages.create(model=_MODEL, max_tokens=1400,
+                                                   messages=[{"role": "user", "content": content}])
+                analysis = msg.content[0].text.strip()
     except Exception as e:
         _log.warning("visuals analysis: %s", e)
         analysis = f"⚠ Не удалось получить анализ: {str(e)[:200]}"
