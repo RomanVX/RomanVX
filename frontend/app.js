@@ -2863,7 +2863,9 @@ function renderNicheResult() {
   const out = document.getElementById('nicheOut');
   if (!out || !_nicheResult) return;
   const d = _nicheResult;
-  let html = `<div class="d-flex gap-3 flex-wrap mb-3">
+  let html = `<div class="d-flex justify-content-end mb-2">
+    <a href="/api/tools/niche/export?query=${encodeURIComponent(d.query || '')}" class="btn btn-sm btn-outline-success" download>⬇ Экспорт в Excel</a></div>
+    <div class="d-flex gap-3 flex-wrap mb-3">
     <div class="metric-card"><div class="mc-head">Товаров по запросу</div><div class="mc-val">${fmt(d.total)}</div></div>
     <div class="metric-card"><div class="mc-head">Цены (медиана)</div><div class="mc-val">${fmtRub(d.median_price)}</div><div class="mc-sub">${fmtRub(d.price_min)} – ${fmtRub(d.price_max)}</div></div>
     <div class="metric-card"><div class="mc-head">Отзывы топ-30</div><div class="mc-val">${fmt(d.feedbacks_top30)}</div><div class="mc-sub">ср. рейтинг ${d.avg_rating}★</div></div>

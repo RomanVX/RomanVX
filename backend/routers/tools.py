@@ -1433,7 +1433,9 @@ async def _analyze_niche_impl(payload: dict, query: str,
             first_seen[int(nm)] = (int(fb or 0), dt_)
 
     sales_est_available = False
-    for p in products:
+    for idx, p in enumerate(products):
+        p["position"] = idx + 1          # позиция в выдаче WB (порядок)
+        p["wb_url"] = f"https://www.wildberries.ru/catalog/{p['nm']}/detail.aspx" if p.get("nm") else ""
         p["sales_month_est"] = None
         base = first_seen.get(int(p["nm"] or 0))
         if base:
@@ -1551,6 +1553,106 @@ async def niche_get(query: str = Query(...)):
     if not row:
         raise HTTPException(status_code=404, detail="Нет сохранённого анализа")
     return json.loads(row[0])
+
+
+@router.get("/niche/export")
+async def niche_export(query: str = Query(...)):
+    """Выгрузка анализа ниши в Excel: лист 1 — сводка+вердикт, лист 2 —
+    топ-30 конкурентов (позиция, цена, рейтинг, отзывы, оценка продаж, ссылка)."""
+    import io
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+    from fastapi.responses import StreamingResponse
+
+    _niche_init()
+    row = await asyncio.to_thread(
+        db.fetchone, "SELECT data FROM niche_history WHERE query = ?", (query.strip().lower(),))
+    if not row:
+        raise HTTPException(status_code=404, detail="Нет сохранённого анализа")
+    d = json.loads(row[0])
+    products = d.get("products", [])
+
+    wb = openpyxl.Workbook()
+    hfill = PatternFill("solid", fgColor="4F46E5")
+    link_font = Font(color="0563C1", underline="single")
+
+    def _hdr(ws):
+        for c in ws[1]:
+            c.font = Font(bold=True, color="FFFFFF")
+            c.fill = hfill
+            c.alignment = Alignment(vertical="center", wrap_text=True)
+
+    # ── Лист 1: Сводка ──
+    ws1 = wb.active
+    ws1.title = "Сводка ниши"
+    ws1.append(["Показатель", "Значение"])
+    _hdr(ws1)
+    unit = d.get("unit") or {}
+    rows1 = [
+        ("Запрос", d.get("query", "")),
+        ("Товаров найдено", d.get("total", "")),
+        ("Медианная цена, ₽", d.get("median_price", "")),
+        ("Мин. цена, ₽", d.get("price_min", "")),
+        ("Макс. цена, ₽", d.get("price_max", "")),
+        ("Средний рейтинг топ-30", d.get("avg_rating", "")),
+        ("Отзывов у топ-30", d.get("feedbacks_top30", "")),
+        ("Монополизация (доля топ-3 брендов), %", d.get("top3_brand_share", "")),
+        ("Карточек с <50 отзывов (шанс новичку)", d.get("newcomers_top30", "")),
+    ]
+    if unit:
+        rows1 += [
+            ("— Юнит-прикидка —", ""),
+            ("Цена, ₽", unit.get("price", "")),
+            ("Комиссия WB, %", unit.get("commission_pct", "")),
+            ("Логистика, ₽", unit.get("logistics", "")),
+            ("Себестоимость, ₽", unit.get("cost", "")),
+            ("Прибыль с единицы, ₽", unit.get("profit", "")),
+            ("Маржа, %", unit.get("margin", "")),
+        ]
+    for k, v in rows1:
+        ws1.append([k, v])
+    if d.get("verdict"):
+        ws1.append(["", ""])
+        ws1.append(["Вердикт (Claude)", d["verdict"]])
+        ws1.cell(ws1.max_row, 2).alignment = Alignment(wrap_text=True, vertical="top")
+    ws1.column_dimensions["A"].width = 42
+    ws1.column_dimensions["B"].width = 80
+
+    # ── Лист 2: Топ-30 конкурентов ──
+    ws2 = wb.create_sheet("Конкуренты топ-30")
+    ws2.append(["Позиция", "Артикул WB", "Название", "Бренд", "Продавец",
+                "Цена, ₽", "Рейтинг", "Отзывы", "~Продаж/мес", "Ссылка WB"])
+    _hdr(ws2)
+    for p in products:
+        ws2.append([
+            p.get("position", ""), p.get("nm", ""), p.get("name", ""),
+            p.get("brand", ""), p.get("supplier", ""),
+            p.get("price", ""), p.get("rating", ""), p.get("feedbacks", ""),
+            p.get("sales_month_est") if p.get("sales_month_est") is not None else "—", "",
+        ])
+        link = p.get("wb_url") or (f"https://www.wildberries.ru/catalog/{p['nm']}/detail.aspx"
+                                   if p.get("nm") else "")
+        if link:
+            cell = ws2.cell(ws2.max_row, 10)
+            cell.value = "Открыть"
+            cell.hyperlink = link
+            cell.font = link_font
+    for i, w in enumerate([9, 13, 40, 18, 22, 10, 9, 10, 12, 12], 1):
+        ws2.column_dimensions[get_column_letter(i)].width = w
+    for r in ws2.iter_rows(min_row=2):
+        r[2].alignment = Alignment(wrap_text=True, vertical="top")
+    ws2.freeze_panes = "A2"
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    safe = "".join(ch for ch in query if ch.isalnum() or ch in " -_")[:40].strip() or "niche"
+    from urllib.parse import quote as _q
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename=niche.xlsx; filename*=UTF-8''{_q(safe)}.xlsx"})
 
 
 # ══ Воронка Ozon (Premium-аналитика) ═══════════════════════════════════════════
