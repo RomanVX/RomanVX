@@ -45,12 +45,19 @@ _DOM_JS = r"""
         const fb = parseInt((fbRaw.match(/\d[\d\s]*/)?.[0] || '').replace(/\s/g,'')) || 0;
         const rtRaw = txt('.address-rate-mini, .product-card__rating, [class*="rating"]');
         const rt = parseFloat((rtRaw.match(/[\d.,]+/)?.[0] || '0').replace(',','.')) || 0;
+        // реальный URL заглавного фото/превью прямо из карточки
+        const img = c.querySelector('img.j-thumbnail, img.product-card__img, img');
+        const photo = img ? (img.src || img.getAttribute('src') || img.getAttribute('data-src') || '') : '';
+        const name = txt('.product-card__name, .goods-name').replace(/^\/\s*/,'');
+        // пропускаем рекламные/пустые вставки (нет названия и данных)
+        if (!name && !fb && !price) return;
         out.push({
             nm: parseInt(nm),
-            name: txt('.product-card__name, .goods-name').replace(/^\/\s*/,''),
+            name: name,
             brand: txt('.product-card__brand, .brand-name'),
             price: price, rating: rt, feedbacks: fb,
-            subject_id: null, supplier: txt('.product-card__brand-name') || '',
+            photo: photo, subject_id: null,
+            supplier: txt('.product-card__brand-name') || '',
         });
     });
     return out;

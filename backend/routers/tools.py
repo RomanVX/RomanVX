@@ -1600,25 +1600,31 @@ async def get_visuals(query: str = Query(...), refresh: bool = Query(default=Fal
         return {"items": [], "message": "Сначала соберите нишу в «Калькуляторе ниши» "
                 "по этому запросу — визуалы берутся из неё."}
     nd = json.loads(nrow[0])
-    products = (nd.get("products") or [])[:20]
+    # только реальные товары (у рекламных/пустых вставок нет ни имени, ни данных)
+    products = [p for p in (nd.get("products") or [])
+                if p.get("nm") and (p.get("name") or p.get("feedbacks") or p.get("price"))][:20]
     items = [{
         "position": p.get("position") or (i + 1), "nm": p.get("nm"),
         "name": p.get("name", ""), "brand": p.get("brand", ""),
         "price": p.get("price"), "rating": p.get("rating"),
         "feedbacks": p.get("feedbacks"),
-        "photo": _wb_photo(p.get("nm"), "c246x328"),
-        "photo_big": _wb_photo(p.get("nm"), "c516x688"),
+        # реальное фото из карточки (агент) в приоритете, иначе — по формуле
+        "photo": p.get("photo") or _wb_photo(p.get("nm"), "c246x328"),
+        "photo_big": p.get("photo") or _wb_photo(p.get("nm"), "c516x688"),
         "wb_url": p.get("wb_url") or (f"https://www.wildberries.ru/catalog/{p['nm']}/detail.aspx" if p.get("nm") else ""),
-    } for i, p in enumerate(products) if p.get("nm")]
+    } for i, p in enumerate(products)]
 
     # фото качаем на СЕРВЕРЕ и кодируем base64 — Anthropic не может тянуть
     # их сам (WB CDN отдаёт браузеру, но не серверу-фетчеру Anthropic)
     async def _fetch_img(it):
         import httpx
         nm = it.get("nm")
-        # у видео-карточек статичного 1.webp нет — перебираем размеры,
-        # соседние basket-хосты и первые кадры (2.webp/3.webp)
         urls = []
+        # реальный URL из карточки (агент) — самый надёжный, в т.ч. для видео
+        real = it.get("photo") or ""
+        if real.startswith("http"):
+            urls.append(real)
+        # запас: перебор размеров/кадров по формуле basket
         for size in ("c516x688", "big", "c246x328"):
             for frame in (1, 2, 3):
                 u = _wb_photo(nm, size)
