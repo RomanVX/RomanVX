@@ -2110,6 +2110,7 @@ const UNIT_PNL_ROWS = [
   ['penalty',    '− Штрафы',                'var(--warn-c)'],
   ['deductions', '− Удержания (распр.)',    'var(--warn-c)'],
   ['advert',     '− Продвижение (распр.)',  '#c084fc'],
+  ['advert_bonus', '↳ компенсировано баллами', 'var(--pos)'],
   ['payout',     'К перечислению',          'var(--pos)'],
   ['cogs',       '− Себестоимость',         'var(--neg)'],
   ['gross',      'Валовая прибыль',         'var(--pos)'],
@@ -2248,6 +2249,7 @@ function renderUnitMonth() {
     ['commission', isOz ? 'Комиссия Ozon' : isYm ? 'Комиссия ЯМ' : 'Комиссия WB'],
     ['acquiring',  'Эквайринг'],
     ['advert',     'Продвижение'],
+    ...(isOz || isYm ? [] : [['advert_bonus', 'Комп. баллами']]),
     ['other',      'Удерж./проч.'],
     ['tax',        _unitTax > 0 ? `Налог ${_unitTax}% с приб.` : 'Налог (—)'],
     ['profit',     'Прибыль/убыток'],
@@ -2286,6 +2288,11 @@ function renderUnitMonth() {
       return `<td class="text-end" style="padding:5px 10px"><span style="color:${clr};font-weight:700">${v < 0 ? '−' : ''}${fmtRub(Math.abs(Math.round(v)))}</span></td>`;
     }
     if (key === 'revenue') return `<td class="text-end" style="padding:5px 10px"><span style="color:var(--val);font-weight:600">${fmtRub(Math.round(v || 0))}</span></td>`;
+    // компенсация баллами — плюс (WB вернул на продвижение), зелёным
+    if (key === 'advert_bonus') {
+      if (!v) return `<td class="text-end" style="padding:5px 10px"><span class="text-muted small">—</span></td>`;
+      return `<td class="text-end" style="padding:5px 10px"><span style="color:var(--pos)">+${fmtRub(Math.abs(Math.round(v)))}</span></td>`;
+    }
     // затратные колонки
     if (!v) return `<td class="text-end" style="padding:5px 10px"><span class="text-muted small">—</span></td>`;
     return `<td class="text-end" style="padding:5px 10px;color:var(--ink)"><span style="color:var(--neg)">−</span>${fmtRub(Math.abs(Math.round(v)))}</td>`;

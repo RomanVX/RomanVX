@@ -660,6 +660,7 @@ async def get_wb_pnl(
             "advert": {mk: (advert_by_month.get(mk) or {}).get("total", 0.0)
                             - (advert_by_month.get(mk) or {}).get("bonus", 0.0)
                        for mk in month_totals},
+            "advert_bonus": {mk: advert_bonus_by_month.get(mk, 0.0) for mk in month_totals},
             "deductions": {mk: month_totals[mk].get("deductions", 0.0) for mk in month_totals},
             "detail_upto": last_detail_sale,
             "fetched_at": result["fetched_at"],
@@ -849,6 +850,7 @@ async def get_wb_unit(
     sku_data   = _wb_unit_data["sku"]
     totals     = _wb_unit_data["totals"]
     advert_m   = _wb_unit_data["advert"]
+    advbonus_m = _wb_unit_data.get("advert_bonus", {})
     deduct_m   = _wb_unit_data["deductions"]
     month_keys = sorted(totals.keys())
 
@@ -894,7 +896,7 @@ async def get_wb_unit(
 
     skus_out = []
     # аллокация с корректировкой остатка: крупнейший SKU месяца добирает разницу
-    alloc_sum = {mk: {"advert": 0.0, "deductions": 0.0} for mk in month_keys}
+    alloc_sum = {mk: {"advert": 0.0, "advert_bonus": 0.0, "deductions": 0.0} for mk in month_keys}
     top_sku_by_month = {
         mk: max(sku_data.items(),
                 key=lambda kv: kv[1].get(mk, {}).get("revenue", 0.0), default=(None,))[0]
@@ -924,8 +926,10 @@ async def get_wb_unit(
             else:
                 adv_share = share
             adv = advert_m.get(mk, 0.0) * adv_share
+            adv_bonus = advbonus_m.get(mk, 0.0) * adv_share   # компенсировано баллами
             ded = deduct_m.get(mk, 0.0) * share
             alloc_sum[mk]["advert"] += adv
+            alloc_sum[mk]["advert_bonus"] += adv_bonus
             alloc_sum[mk]["deductions"] += ded
             commission_full = rev - d["forPay"]      # комиссия WB + эквайринг
             acq = d.get("acquiring", 0.0)
@@ -942,6 +946,7 @@ async def get_wb_unit(
                 "acceptance": round(d["acceptance"]),
                 "penalty":    round(d["penalty"]),
                 "advert":     round(adv),
+                "advert_bonus": round(adv_bonus),
                 "deductions": round(ded),
                 "cogs":       round(d["cogs"]),
                 "payout":     round(rev - costs_sum),
@@ -962,6 +967,9 @@ async def get_wb_unit(
         cell = row["months"][mk]
         d_adv = round(advert_m.get(mk, 0.0) - alloc_sum[mk]["advert"])
         d_ded = round(deduct_m.get(mk, 0.0) - alloc_sum[mk]["deductions"])
+        d_bonus = round(advbonus_m.get(mk, 0.0) - alloc_sum[mk]["advert_bonus"])
+        if d_bonus:
+            cell["advert_bonus"] = cell.get("advert_bonus", 0) + d_bonus
         if d_adv or d_ded:
             cell["advert"] += d_adv
             cell["deductions"] += d_ded
@@ -992,6 +1000,7 @@ async def get_wb_unit(
             "acceptance": round(t.get("paidAcceptance", 0.0)),
             "penalty": round(t.get("penalty", 0.0)),
             "advert": round(t.get("advert", 0.0)),
+            "advert_bonus": round(advbonus_m.get(mk, 0.0)),
             "deductions": round(t.get("deductions", 0.0)),
             "cogs": round(cg),
             "payout": round(rev - costs_sum),
