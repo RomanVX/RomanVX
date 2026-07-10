@@ -1506,7 +1506,7 @@ async def _analyze_niche_impl(payload: dict, query: str,
 Дай вердикт: 1) итог одной строкой (ИДТИ / ИДТИ ОСТОРОЖНО / НЕ ИДТИ + почему); 2) 3-4 пункта обоснования с цифрами; 3) при каких условиях заходить (цена, на что давить). Кратко, без воды."""
             import anthropic
             client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
-            msg = await client.messages.create(model=_MODEL, max_tokens=800,
+            msg = await client.messages.create(model=_MODEL, max_tokens=2000,
                                                messages=[{"role": "user", "content": prompt}])
             verdict = msg.content[0].text.strip()
     except Exception as e:
