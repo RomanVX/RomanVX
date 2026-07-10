@@ -171,12 +171,13 @@ def get_drafts() -> dict:
 
 
 def get_unanswered(platform="WB", limit=20) -> list[dict]:
-    """Reviews we haven't answered yet and have no draft, with text, newest first."""
+    """Reviews we haven't answered yet and have no draft, newest first.
+    Включая беститекстовые (одни звёзды) — на них тоже отвечаем по рейтингу."""
     rows = db.fetchall(
         "SELECT r.id, r.platform, r.sku, r.name, r.rating, r.text "
         "FROM reviews r LEFT JOIN drafts d ON d.review_id = r.id "
         "WHERE r.platform=? AND (r.answer IS NULL OR r.answer='') "
-        "AND r.text != '' AND d.review_id IS NULL "
+        "AND d.review_id IS NULL "
         "ORDER BY r.created_at DESC LIMIT ?",
         (platform, limit),
     )
