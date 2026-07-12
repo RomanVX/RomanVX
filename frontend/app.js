@@ -2081,9 +2081,13 @@ function setUnitTax(v) {
 }
 
 function toggleUnitMode() {
-  _unitMode = _unitMode === 'month' ? 'dyn' : 'month';
+  // цикл: помесячная → динамика → на единицу → …
+  _unitMode = _unitMode === 'month' ? 'dyn' : _unitMode === 'dyn' ? 'perunit' : 'month';
   const btn = document.getElementById('unitModeBtn');
-  if (btn) btn.textContent = _unitMode === 'month' ? '📈 Динамика по месяцам' : '📋 Помесячная таблица';
+  // на кнопке — следующий режим
+  if (btn) btn.textContent = _unitMode === 'month' ? '📈 Динамика по месяцам'
+                          : _unitMode === 'dyn' ? '🧮 На единицу'
+                          : '📋 Помесячная таблица';
   renderUnitTable();
 }
 
@@ -2199,7 +2203,7 @@ function renderUnitTable() {
       _unitMonth = months.find(m => m.key === prevKey) ? prevKey
                  : (months.length ? months[months.length - 1].key : 'ALL');
     }
-    if (_unitMode === 'month') {
+    if (_unitMode === 'month' || _unitMode === 'perunit') {
       mBox.innerHTML = months.map(m =>
         `<button class="btn btn-sm btn-outline-info ${_unitMonth === m.key ? 'active' : ''}"
                  onclick="setUnitMonth('${m.key}')">${m.label}</button>`).join('') +
@@ -2211,7 +2215,111 @@ function renderUnitTable() {
   }
 
   if (_unitMode === 'month') { renderUnitMonth(); return; }
+  if (_unitMode === 'perunit') { renderUnitPerUnit(); return; }
   renderUnitDynamics();
+}
+
+// ── Режим «На единицу»: цена покупателя (редактируемая) → прибыль на штуку ─────
+let _perUnitBase = {};          // sku → фикс. затраты на единицу
+let _perUnitPrice = {};         // sku → изменённая цена (ручная правка)
+
+function renderUnitPerUnit() {
+  const wrap = document.getElementById('unitTableWrap');
+  const months = _unitData.months || [];
+  const selMonths = _unitMonth === 'ALL' ? months : months.filter(m => m.key === _unitMonth);
+  const skus = _unitData.skus || [];
+  _perUnitBase = {};
+
+  const rows = [];
+  skus.forEach(r => {
+    const c = _unitCellSum(r.months, selMonths);
+    const qty = c.qty || 0;
+    if (qty <= 0 || !c.revenue) return;
+    const per = k => (c[k] || 0) / qty;               // средняя величина на штуку
+    const price0 = Math.round(per('revenue'));         // цена до СПП = выручка/шт
+    const commPct = c.revenue ? (c.commission || 0) / c.revenue : 0;  // доля комиссии
+    const base = {
+      sku: r.sku, nmId: r.nmId, name: r.name, brand: r.brand,
+      price0,
+      commPct,                                         // комиссия масштабируется с ценой
+      acqPct: c.revenue ? (c.acquiring || 0) / c.revenue : 0,
+      logist: per('delivery'), storage: per('storage'),
+      advert: Math.max(0, per('advert') - per('advert_bonus')),   // за вычетом компенсации баллами
+      other: per('deductions') + per('penalty') + per('acceptance'),
+      cogs: r.unitCost || per('cogs'),
+    };
+    _perUnitBase[r.sku] = base;
+    rows.push(base);
+  });
+
+  // группировка как везде
+  const groupMap = {};
+  rows.forEach(b => {
+    const g = articleGroup({ supplierArticle: b.sku, brand: b.brand });
+    (groupMap[g] = groupMap[g] || []).push(b);
+  });
+  const orderedGroups = GROUP_ORDER.filter(g => groupMap[g]).map(g => [g, groupMap[g]]);
+
+  const COLS = ['Артикул', 'Название', 'Цена, ₽ (правьте)', 'Комиссия', 'Логистика',
+                'Хранение', 'Продвиж.', 'Эквайринг', 'Проч.', 'Себес.',
+                _unitTax > 0 ? `Налог ${_unitTax}%` : 'Налог', 'Прибыль/ед', 'Маржа %'];
+  let html = `<div class="text-secondary small mb-2">Цена — средняя за период (до СПП). Правьте её, чтобы проверить: продаём в плюс или минус. Комиссия и эквайринг пересчитываются от цены (%), остальные затраты фиксированы на штуку.</div>`;
+  html += `<div class="table-responsive"><table class="table table-sm align-middle mb-0 text-nowrap" style="font-size:0.83rem"><thead><tr>`
+    + COLS.map((l, i) => `<th class="${i > 1 ? 'text-end' : ''}" style="${i > 2 ? 'border-left:1px solid var(--sep);' : ''}">${l}</th>`).join('')
+    + `</tr></thead><tbody>`;
+
+  orderedGroups.forEach(([gname, list]) => {
+    list.sort((a, b) => b.price0 - a.price0);
+    html += `<tr style="background:var(--surface-3);font-weight:600"><td colspan="${COLS.length}" style="padding:6px 10px;color:var(--val)">${gname} <span class="text-secondary small">(${list.length} арт.)</span></td></tr>`;
+    list.forEach(b => {
+      const price = _perUnitPrice[b.sku] != null ? _perUnitPrice[b.sku] : b.price0;
+      html += `<tr style="background:var(--t-row)" data-sku="${esc(b.sku)}">
+        <td style="padding:5px 10px"><code style="color:var(--val-soft)">${esc(b.sku)}</code></td>
+        <td style="padding:5px 10px;max-width:300px;overflow:hidden;text-overflow:ellipsis"><span class="text-secondary small">${esc(b.name || '')}</span></td>
+        <td class="text-end" style="padding:3px 6px;border-left:1px solid var(--sep)">
+          <input type="number" value="${price}" oninput="recalcPerUnit('${esc(b.sku)}', this.value)"
+                 style="width:82px;text-align:right;background:rgba(201,168,76,.08);border:1px solid var(--border);border-radius:6px;color:var(--ink);padding:2px 6px"></td>
+        <td class="text-end pu-comm" style="padding:5px 10px;border-left:1px solid var(--sep)"></td>
+        <td class="text-end" style="padding:5px 10px"><span style="color:var(--neg)">−</span>${fmtRub(Math.round(b.logist))}</td>
+        <td class="text-end" style="padding:5px 10px"><span style="color:var(--neg)">−</span>${fmtRub(Math.round(b.storage))}</td>
+        <td class="text-end" style="padding:5px 10px"><span style="color:var(--neg)">−</span>${fmtRub(Math.round(b.advert))}</td>
+        <td class="text-end pu-acq" style="padding:5px 10px"></td>
+        <td class="text-end" style="padding:5px 10px"><span style="color:var(--neg)">−</span>${fmtRub(Math.round(b.other))}</td>
+        <td class="text-end" style="padding:5px 10px;background:rgba(201,168,76,.05)">${b.cogs ? '<span style="color:var(--neg)">−</span>' + fmtRub(Math.round(b.cogs)) : '—'}</td>
+        <td class="text-end pu-tax" style="padding:5px 10px"></td>
+        <td class="text-end pu-profit" style="padding:5px 10px;border-left:1px solid var(--sep)"></td>
+        <td class="text-end pu-margin" style="padding:5px 10px"></td>
+      </tr>`;
+    });
+  });
+  html += `</tbody></table></div>`;
+  wrap.innerHTML = html;
+  // первичный расчёт всех строк
+  Object.keys(_perUnitBase).forEach(sku => recalcPerUnit(sku,
+    _perUnitPrice[sku] != null ? _perUnitPrice[sku] : _perUnitBase[sku].price0, true));
+}
+
+function recalcPerUnit(sku, priceVal, silent) {
+  const b = _perUnitBase[sku];
+  if (!b) return;
+  const price = Math.max(0, parseFloat(priceVal) || 0);
+  if (!silent) _perUnitPrice[sku] = price;
+  const comm = price * b.commPct;
+  const acq = price * b.acqPct;
+  const grossBeforeTax = price - comm - acq - b.logist - b.storage - b.advert - b.other - b.cogs;
+  const tax = _unitTax > 0 ? Math.max(grossBeforeTax, 0) * _unitTax / 100 : 0;
+  const profit = grossBeforeTax - tax;
+  const margin = price > 0 ? Math.round(profit / price * 100) : 0;
+  const row = document.querySelector(`tr[data-sku="${CSS.escape(sku)}"]`);
+  if (!row) return;
+  row.querySelector('.pu-comm').innerHTML = `<span style="color:var(--neg)">−</span>${fmtRub(Math.round(comm))}`;
+  row.querySelector('.pu-acq').innerHTML = acq ? `<span style="color:var(--neg)">−</span>${fmtRub(Math.round(acq))}` : '<span class="text-muted small">—</span>';
+  row.querySelector('.pu-tax').innerHTML = tax ? `<span style="color:var(--neg)">−</span>${fmtRub(Math.round(tax))}` : '<span class="text-muted small">—</span>';
+  const pclr = profit >= 0 ? 'var(--pos)' : 'var(--neg)';
+  row.querySelector('.pu-profit').innerHTML = `<span style="color:${pclr};font-weight:700">${profit < 0 ? '−' : ''}${fmtRub(Math.abs(Math.round(profit)))}</span>`;
+  const mclr = margin >= 20 ? 'var(--pos)' : margin >= 0 ? 'var(--warn-c)' : 'var(--neg)';
+  row.querySelector('.pu-margin').innerHTML = `<span style="color:${mclr};font-weight:700">${margin}%</span>`;
+  row.style.background = profit < 0 ? 'rgba(248,113,113,.07)' : 'var(--t-row)';
 }
 
 // ── Режим «месяц»: формат управленческой таблицы (как Excel владельца) ────────
