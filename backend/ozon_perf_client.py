@@ -75,3 +75,37 @@ async def get_campaigns() -> list[dict]:
         _log.warning("Ozon Perf campaigns: HTTP %s %s", st, str(data)[:200])
         return []
     return data.get("list") or data.get("campaigns") or []
+
+
+def _num(v) -> float:
+    """'1 197,85' / '63' → float (Ozon отдаёт числа строками с запятой)."""
+    if v is None:
+        return 0.0
+    s = str(v).replace("\xa0", "").replace(" ", "").replace(",", ".")
+    try:
+        return float(s)
+    except ValueError:
+        return 0.0
+
+
+async def get_daily(date_from: str, date_to: str) -> list[dict]:
+    """Ежедневная статистика по кампаниям: показы, клики, расход, заказы,
+    выручка. Один вызов даёт все кампании за период."""
+    st, data = await api_get("/api/client/statistics/daily/json",
+                             {"dateFrom": date_from, "dateTo": date_to})
+    if st != 200 or not isinstance(data, dict):
+        _log.warning("Ozon Perf daily: HTTP %s %s", st, str(data)[:200])
+        return []
+    out = []
+    for r in data.get("rows") or []:
+        out.append({
+            "id": str(r.get("id") or ""),
+            "title": r.get("title") or "",
+            "date": (r.get("date") or "")[:10],
+            "views": int(_num(r.get("views"))),
+            "clicks": int(_num(r.get("clicks"))),
+            "spent": _num(r.get("moneySpent")),
+            "orders": int(_num(r.get("orders"))),
+            "orders_money": _num(r.get("ordersMoney")),
+        })
+    return out

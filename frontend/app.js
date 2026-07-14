@@ -2713,21 +2713,23 @@ let _ozTool = 'funnel';
 const _OZ_HINTS = {
   funnel: 'Premium-аналитика Ozon: показы → карточка → корзина → заказ по каждому SKU, где теряем продажи',
   clusters: 'Остатки по кластерам Ozon: покрытие, скорость, что везти / остальное (Ozon сам считает продажи/день и покрытие)',
+  ads: 'Реклама Ozon (Performance): расход, ДРР, ROAS, заказы и куда утекают деньги по каждой кампании',
 };
 function setOzTool(t) {
   if (_ozTool === t) return;
   _ozTool = t;
-  ['ozFunnel', 'ozClusters'].forEach(id =>
-    document.getElementById(id)?.classList.toggle('active', id.toLowerCase().includes(t)));
+  [['ozFunnel', 'funnel'], ['ozClusters', 'clusters'], ['ozAds', 'ads']].forEach(([id, k]) =>
+    document.getElementById(id)?.classList.toggle('active', k === t));
   const hint = document.getElementById('ozToolHint');
   if (hint) hint.textContent = _OZ_HINTS[t] || '';
   loadOzTool();
 }
 function loadOzTool() {
-  ({ funnel: loadFunnel, clusters: loadOzClusters })[_ozTool]();
+  ({ funnel: loadFunnel, clusters: loadOzClusters, ads: loadOzAds })[_ozTool]();
 }
 function reloadOzTool() {
-  ({ funnel: () => loadFunnel(true), clusters: () => loadOzClusters(true) })[_ozTool]();
+  ({ funnel: () => loadFunnel(true), clusters: () => loadOzClusters(true),
+     ads: () => loadOzAds(true) })[_ozTool]();
 }
 
 let _ozClustersData = null;
@@ -2878,6 +2880,94 @@ function renderFunnel() {
   });
   html += `</tbody></table></div></div></div>
   <div class="text-secondary small mt-2">Premium-аналитика Ozon за период <b>${d.period || d.days + ' дней'}</b> (полные дни, сегодня/вчера исключены — Ozon отдаёт с задержкой). «Показы» — только из поиска/каталога; карточку могут открыть и напрямую (реклама, ссылка, избранное), а заказ оформить без корзины («Купить сразу») — поэтому проценты в корзину/выкуп иногда выше 100%, это не ошибка, а не-строгая воронка. Товары с проблемной воронкой — сверху. Обновлено: ${d.fetched_at}</div>`;
+  wrap.innerHTML = html;
+}
+
+// ── Реклама Ozon (Performance) ────────────────────────────────────────────────
+let _ozAdsData = null;
+async function loadOzAds(refresh) {
+  const wrap = document.getElementById('toolsOzWrap');
+  if (!wrap || _ozTool !== 'ads') return;
+  if (_ozAdsData && !refresh) { renderOzAds(); return; }
+  if (!_ozAdsData) wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>Загружаем рекламу Ozon…</div>';
+  try {
+    _ozAdsData = await fetchJSON('/api/tools/ozads' + (refresh ? '?refresh=true' : ''), 120000);
+    renderOzAds();
+  } catch (e) {
+    wrap.innerHTML = `<div class="alert alert-danger mt-2">Ошибка: ${esc(e.message)}</div>`;
+  }
+}
+
+function _drrColor(drr) {
+  if (drr == null) return 'var(--muted)';
+  return drr <= 10 ? 'var(--pos)' : drr <= 20 ? 'var(--warn-c)' : 'var(--neg)';
+}
+
+function renderOzAds() {
+  if (_ozTool !== 'ads') return;
+  const wrap = document.getElementById('toolsOzWrap');
+  if (!wrap || !_ozAdsData) return;
+  const d = _ozAdsData;
+  if (d.error) { wrap.innerHTML = `<div class="alert alert-warning">⚠ ${esc(d.error)}</div>`; return; }
+  const T = d.total || {};
+  const items = d.items || [];
+  if (!items.length) { wrap.innerHTML = '<div class="alert alert-info">Нет активных рекламных кампаний за период</div>'; return; }
+
+  // карточки-итоги
+  let html = `<div class="d-flex justify-content-end mb-2">
+    <a href="/api/tools/ozads/export" class="btn btn-sm btn-outline-success" download>⬇ Экспорт в Excel</a></div>
+    <div class="d-flex gap-3 flex-wrap mb-3">
+    <div class="metric-card"><div class="mc-head">Расход</div><div class="mc-val">${fmtRub(Math.round(T.spent))}</div></div>
+    <div class="metric-card"><div class="mc-head">Выручка с рекламы</div><div class="mc-val" style="color:var(--pos)">${fmtRub(Math.round(T.orders_money))}</div><div class="mc-sub">${fmt(T.orders)} заказов</div></div>
+    <div class="metric-card"><div class="mc-head">ДРР</div><div class="mc-val" style="color:${_drrColor(T.drr)}">${T.drr != null ? T.drr + '%' : '—'}</div><div class="mc-sub">доля рекламы в выручке</div></div>
+    <div class="metric-card"><div class="mc-head">ROAS</div><div class="mc-val">${T.roas != null ? '×' + T.roas : '—'}</div><div class="mc-sub">выручка / расход</div></div>
+    <div class="metric-card"><div class="mc-head">Цена заказа</div><div class="mc-val">${fmtRub(T.cpo)}</div><div class="mc-sub">CTR ${T.ctr}%</div></div>
+  </div>`;
+
+  if (d.advice) {
+    html += `<details class="rev-fold mb-3" open><summary>🧠 Куда утекают деньги (Claude)</summary>
+      <div class="card bg-card mt-2 p-3 small" style="white-space:pre-wrap;line-height:1.6;color:var(--ink)">${esc(d.advice)}</div></details>`;
+  }
+
+  html += `<div class="card border-0 bg-card"><div class="card-body p-0"><div class="table-responsive" style="max-height:70vh">
+    <table class="table table-sm align-middle mb-0 text-nowrap"><thead><tr>
+      <th style="min-width:220px;position:sticky;left:0;background:var(--t-sticky);z-index:2">Кампания</th>
+      <th class="text-end">Расход</th><th class="text-end">Заказы</th><th class="text-end">Выручка</th>
+      <th class="text-end" title="Доля рекламных расходов">ДРР</th>
+      <th class="text-end" title="Окупаемость: выручка/расход">ROAS</th>
+      <th class="text-end" title="Цена заказа">Цена зак.</th>
+      <th class="text-end">Показы</th><th class="text-end">Клики</th>
+      <th class="text-end" title="Клики/показы">CTR</th>
+      <th class="text-end" title="Заказы/клики">CR</th>
+    </tr></thead><tbody>`;
+  // ИТОГО
+  html += `<tr style="background:var(--fin-total);font-weight:700">
+    <td style="position:sticky;left:0;background:var(--fin-total);padding:6px 12px;color:var(--val)">ИТОГО (${items.length})</td>
+    <td class="text-end">${fmtRub(Math.round(T.spent))}</td><td class="text-end">${fmt(T.orders)}</td>
+    <td class="text-end" style="color:var(--pos)">${fmtRub(Math.round(T.orders_money))}</td>
+    <td class="text-end" style="color:${_drrColor(T.drr)}">${T.drr != null ? T.drr + '%' : '—'}</td>
+    <td class="text-end">${T.roas != null ? '×' + T.roas : '—'}</td>
+    <td class="text-end">${fmtRub(T.cpo)}</td>
+    <td class="text-end">${fmt(T.views)}</td><td class="text-end">${fmt(T.clicks)}</td>
+    <td class="text-end">${T.ctr}%</td><td class="text-end">—</td></tr>`;
+  items.forEach(i => {
+    const noOrders = !i.orders && i.spent > 0;
+    html += `<tr style="background:${noOrders ? 'rgba(248,113,113,.08)' : 'var(--t-row)'}">
+      <td style="position:sticky;left:0;background:var(--t-sticky);padding:6px 12px">
+        <span style="color:var(--ink)">${esc(i.title || i.id)}</span>
+        <div class="text-secondary small">${esc(i.type)}${i.state ? ' · ' + esc(i.state.toLowerCase()) : ''}</div></td>
+      <td class="text-end" style="color:var(--ink)">${fmtRub(Math.round(i.spent))}</td>
+      <td class="text-end" style="color:var(--val);font-weight:600">${fmt(i.orders)}</td>
+      <td class="text-end" style="color:var(--pos)">${fmtRub(Math.round(i.orders_money))}</td>
+      <td class="text-end" style="color:${_drrColor(i.drr)};font-weight:600">${i.drr != null ? i.drr + '%' : (noOrders ? '∞' : '—')}</td>
+      <td class="text-end">${i.roas != null ? '×' + i.roas : '—'}</td>
+      <td class="text-end">${i.cpo ? fmtRub(i.cpo) : '—'}</td>
+      <td class="text-end">${fmt(i.views)}</td><td class="text-end">${fmt(i.clicks)}</td>
+      <td class="text-end" style="color:${i.ctr < 1 ? 'var(--neg)' : 'var(--ink)'}">${i.ctr}%</td>
+      <td class="text-end">${i.cr}%</td></tr>`;
+  });
+  html += `</tbody></table></div></div></div>
+  <div class="text-secondary small mt-2">Реклама Ozon (Performance API) за период <b>${d.period || d.days + ' дней'}</b> (полные дни). ДРР = расход / выручка с рекламы; красным — кампании без заказов (деньги в никуда) и ДРР >20%. Обновлено: ${d.fetched_at}</div>`;
   wrap.innerHTML = html;
 }
 

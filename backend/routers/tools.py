@@ -2127,6 +2127,188 @@ async def ozon_stocks_probe():
     return out
 
 
+_ozads_cache: dict = {}
+_ozads_ts: float = 0.0
+_OZADS_TTL = 3 * 3600
+_ADV_TYPE_RU = {
+    "SEARCH_PROMO": "Продвижение в поиске", "SKU": "Трафареты",
+    "REF_BLOGGER": "Блогеры", "BANNER": "Баннер", "BRAND_SHELF": "Брендовая полка",
+}
+
+
+def _ozads_advice_stub(camps: list, total: dict) -> str:
+    return ""
+
+
+@router.get("/ozads")
+async def get_ozads(refresh: bool = Query(default=False), days: int = Query(default=28)):
+    """Мега-аналитика рекламы Ozon: кампании, ДРР, воронка, куда уходят деньги."""
+    import time as _t
+    global _ozads_cache, _ozads_ts
+    if not refresh and _ozads_cache and _t.monotonic() - _ozads_ts < _OZADS_TTL:
+        return _ozads_cache
+
+    import ozon_perf_client as pc
+    if not pc.configured():
+        return {"items": [], "error": "Не заданы OZON_PERF_CLIENT_ID / OZON_PERF_CLIENT_SECRET "
+                "в переменных окружения."}
+
+    # холодный старт: снапшот из БД
+    if not refresh and not _ozads_cache:
+        import snapshot as _snap
+        snap = await asyncio.to_thread(_snap.load, "ozads", None)
+        if snap:
+            _ozads_cache = snap
+            _ozads_ts = _t.monotonic() - _OZADS_TTL + 300
+            return snap
+
+    from datetime import date
+    d_end = date.today() - timedelta(days=1)     # Ozon отдаёт с задержкой
+    d_start = d_end - timedelta(days=days - 1)
+    d_from, d_to = d_start.isoformat(), d_end.isoformat()
+
+    try:
+        daily = await pc.get_daily(d_from, d_to)
+        camps_meta = {str(c.get("id")): c for c in await pc.get_campaigns()}
+    except Exception as e:
+        return {"items": [], "error": f"Ozon Performance: {str(e)[:200]}"}
+
+    # агрегируем по кампании
+    agg: dict[str, dict] = {}
+    by_day: dict[str, dict] = {}
+    for r in daily:
+        a = agg.setdefault(r["id"], {"id": r["id"], "title": r["title"],
+                                     "views": 0, "clicks": 0, "spent": 0.0,
+                                     "orders": 0, "orders_money": 0.0})
+        for k in ("views", "clicks", "orders"):
+            a[k] += r[k]
+        a["spent"] += r["spent"]
+        a["orders_money"] += r["orders_money"]
+        if r["title"] and not a["title"]:
+            a["title"] = r["title"]
+        d = by_day.setdefault(r["date"], {"spent": 0.0, "orders_money": 0.0, "orders": 0})
+        d["spent"] += r["spent"]
+        d["orders_money"] += r["orders_money"]
+        d["orders"] += r["orders"]
+
+    def _metrics(a: dict) -> dict:
+        views, clicks, spent = a["views"], a["clicks"], a["spent"]
+        orders, om = a["orders"], a["orders_money"]
+        meta = camps_meta.get(a["id"], {})
+        typ = meta.get("advObjectType", "")
+        return {
+            **a,
+            "type": _ADV_TYPE_RU.get(typ, typ or "—"),
+            "state": meta.get("state", "").replace("CAMPAIGN_STATE_", ""),
+            "daily_budget": pc._num(meta.get("dailyBudget")),
+            "ctr": round(clicks / views * 100, 2) if views else 0,
+            "cpc": round(spent / clicks) if clicks else 0,
+            "cr": round(orders / clicks * 100, 1) if clicks else 0,   # заказ/клик
+            "cpo": round(spent / orders) if orders else 0,            # цена заказа
+            "drr": round(spent / om * 100, 1) if om else None,        # ДРР
+            "roas": round(om / spent, 1) if spent else None,          # окупаемость
+        }
+
+    items = [_metrics(a) for a in agg.values() if a["spent"] > 0 or a["orders"] > 0]
+    items.sort(key=lambda x: -x["spent"])
+
+    T = {"views": sum(i["views"] for i in items), "clicks": sum(i["clicks"] for i in items),
+         "spent": sum(i["spent"] for i in items), "orders": sum(i["orders"] for i in items),
+         "orders_money": sum(i["orders_money"] for i in items)}
+    T["ctr"] = round(T["clicks"] / T["views"] * 100, 2) if T["views"] else 0
+    T["cpo"] = round(T["spent"] / T["orders"]) if T["orders"] else 0
+    T["drr"] = round(T["spent"] / T["orders_money"] * 100, 1) if T["orders_money"] else None
+    T["roas"] = round(T["orders_money"] / T["spent"], 1) if T["spent"] else None
+
+    # советы Claude — по агрегатам
+    advice = None
+    try:
+        if ANTHROPIC_API_KEY and items:
+            top = "\n".join(
+                f"- «{i['title']}» ({i['type']}): расход {round(i['spent'])}₽, {i['orders']} заказов, "
+                f"выручка {round(i['orders_money'])}₽, ДРР {i['drr']}%, CTR {i['ctr']}%, цена заказа {i['cpo']}₽"
+                for i in items[:15])
+            prompt = f"""Ты — специалист по рекламе на Ozon. Вот кампании за {days} дней ({d_from}—{d_to}).
+ИТОГО: расход {round(T['spent'])}₽, выручка с рекламы {round(T['orders_money'])}₽, ДРР {T['drr']}%, заказов {T['orders']}.
+
+КАМПАНИИ:
+{top}
+
+Дай практику кратко: 1) куда утекают деньги (кампании с высоким ДРР / без заказов); 2) что масштабировать (низкий ДРР, хороший ROAS); 3) 3-4 конкретных действия. С цифрами, без воды."""
+            import anthropic
+            client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
+            msg = await client.messages.create(model=_MODEL, max_tokens=1200,
+                                               messages=[{"role": "user", "content": prompt}])
+            advice = msg.content[0].text.strip()
+    except Exception as e:
+        _log.warning("ozads advice: %s", e)
+
+    chart = [{"date": d, **v} for d, v in sorted(by_day.items())]
+    result = {"items": items, "total": T, "chart": chart, "advice": advice,
+              "period": f"{'.'.join(reversed(d_from.split('-')))} — {'.'.join(reversed(d_to.split('-')))}",
+              "days": days, "fetched_at": datetime.utcnow().strftime("%d.%m.%Y %H:%M UTC")}
+    _ozads_cache = result
+    _ozads_ts = _t.monotonic()
+    import snapshot as _snap
+    await asyncio.to_thread(_snap.save, "ozads", result)
+    return result
+
+
+@router.get("/ozads/export")
+async def ozads_export():
+    """Выгрузка рекламы Ozon в Excel: кампании + метрики + дни."""
+    import io
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+    from fastapi.responses import StreamingResponse
+
+    d = await get_ozads(refresh=False)
+    items = d.get("items", [])
+    T = d.get("total", {})
+    wb = openpyxl.Workbook()
+    hfill = PatternFill("solid", fgColor="4F46E5")
+
+    def _hdr(ws):
+        for c in ws[1]:
+            c.font = Font(bold=True, color="FFFFFF")
+            c.fill = hfill
+            c.alignment = Alignment(vertical="center", wrap_text=True)
+
+    ws1 = wb.active
+    ws1.title = "Кампании"
+    ws1.append(["Кампания", "Тип", "Статус", "Расход, ₽", "Заказы", "Выручка, ₽",
+                "ДРР %", "ROAS", "Цена заказа, ₽", "Показы", "Клики", "CTR %", "CR %"])
+    _hdr(ws1)
+    ws1.append(["ИТОГО", "", "", round(T.get("spent", 0)), T.get("orders", 0),
+                round(T.get("orders_money", 0)), T.get("drr"), T.get("roas"),
+                T.get("cpo"), T.get("views"), T.get("clicks"), T.get("ctr"), ""])
+    for i in items:
+        ws1.append([i.get("title") or i.get("id"), i.get("type"), i.get("state"),
+                    round(i.get("spent", 0)), i.get("orders"), round(i.get("orders_money", 0)),
+                    i.get("drr"), i.get("roas"), i.get("cpo"), i.get("views"),
+                    i.get("clicks"), i.get("ctr"), i.get("cr")])
+    for idx, w in enumerate([34, 20, 12, 12, 9, 13, 9, 8, 13, 11, 10, 9, 8], 1):
+        ws1.column_dimensions[get_column_letter(idx)].width = w
+    ws1.freeze_panes = "A3"
+
+    ws2 = wb.create_sheet("По дням")
+    ws2.append(["Дата", "Расход, ₽", "Заказы", "Выручка, ₽", "ДРР %"])
+    _hdr(ws2)
+    for r in d.get("chart", []):
+        drr = round(r["spent"] / r["orders_money"] * 100, 1) if r.get("orders_money") else None
+        ws2.append([r["date"], round(r["spent"]), r["orders"], round(r["orders_money"]), drr])
+    for idx, w in enumerate([14, 13, 9, 13, 9], 1):
+        ws2.column_dimensions[get_column_letter(idx)].width = w
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="ozon_ads.xlsx"'})
+
+
 @router.get("/ozads/probe", include_in_schema=False)
 async def ozads_probe():
     """Диагностика Ozon Performance API на живом токене: авторизация,
