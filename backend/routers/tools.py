@@ -2127,6 +2127,60 @@ async def ozon_stocks_probe():
     return out
 
 
+@router.get("/ozads/probe", include_in_schema=False)
+async def ozads_probe():
+    """Диагностика Ozon Performance API на живом токене: авторизация,
+    список кампаний и кандидаты эндпоинтов статистики/расходов."""
+    import ozon_perf_client as pc
+    from datetime import date, timedelta
+    out = {"configured": pc.configured()}
+    if not pc.configured():
+        out["hint"] = "не заданы OZON_PERF_CLIENT_ID / OZON_PERF_CLIENT_SECRET"
+        return out
+    # 1) токен
+    try:
+        tok = await pc._get_token()
+        out["token"] = "ok" if tok else "пусто"
+    except Exception as e:
+        out["token_error"] = str(e)[:300]
+        return out
+    # 2) кампании
+    try:
+        st, data = await pc.api_get("/api/client/campaign")
+        camps = (data.get("list") or data.get("campaigns") or []) if isinstance(data, dict) else []
+        out["campaigns"] = {"status": st, "count": len(camps),
+                            "keys": sorted(camps[0].keys()) if camps else [],
+                            "sample": camps[0] if camps else None}
+    except Exception as e:
+        out["campaigns_error"] = str(e)[:300]
+        camps = []
+    cid = str((camps[0].get("id") if camps else "")) or ""
+    d_to = (date.today() - timedelta(days=1)).isoformat()
+    d_from = (date.today() - timedelta(days=8)).isoformat()
+    # 3) кандидаты статистики/расходов — пробуем несколько путей
+    tests = [
+        ("expense/json GET", "GET", "/api/client/statistics/expense/json",
+         {"dateFrom": d_from, "dateTo": d_to}),
+        ("daily/json GET", "GET", "/api/client/statistics/daily/json",
+         {"campaignId": cid, "dateFrom": d_from, "dateTo": d_to}),
+        ("statistics POST (async→UUID)", "POST", "/api/client/statistics",
+         {"campaigns": [cid] if cid else [], "dateFrom": d_from, "dateTo": d_to, "groupBy": "DATE"}),
+    ]
+    out["stats_probe"] = {}
+    for name, method, path, arg in tests:
+        try:
+            st, data = await (pc.api_post(path, arg) if method == "POST" else pc.api_get(path, arg))
+            body = data if isinstance(data, dict) else str(data)[:600]
+            if isinstance(body, dict):
+                # укоротим — только ключи и первую строку
+                body = {"keys": sorted(body.keys()),
+                        "head": {k: body[k] for k in list(body)[:4]}}
+            out["stats_probe"][name] = {"status": st, "path": path, "body": body}
+        except Exception as e:
+            out["stats_probe"][name] = {"error": str(e)[:200]}
+    return out
+
+
 @router.get("/funnel/probe", include_in_schema=False)
 async def funnel_probe():
     """Диагностика воронки Ozon: сырые метрики по первым SKU + период."""
