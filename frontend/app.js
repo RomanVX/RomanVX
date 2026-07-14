@@ -2984,9 +2984,12 @@ async function loadOzPhrases(refresh) {
 
 function _phrCtrClr(ctr) { return ctr >= 5 ? 'var(--pos)' : ctr < 1 ? 'var(--neg)' : 'var(--ink)'; }
 function toggleOzPhrRow(sku) {
-  const box = document.getElementById('ozphr-' + sku);
+  const rows = document.querySelectorAll(`tr[data-ozphr="${CSS.escape(sku)}"]`);
+  if (!rows.length) return;
+  const open = rows[0].style.display !== 'none';
+  rows.forEach(r => { r.style.display = open ? 'none' : ''; });
   const car = document.getElementById('ozphrcar-' + sku);
-  if (box) { const open = box.style.display !== 'none'; box.style.display = open ? 'none' : ''; if (car) car.textContent = open ? '▸' : '▾'; }
+  if (car) car.textContent = open ? '▸' : '▾';
 }
 
 function renderOzPhrases() {
@@ -3034,7 +3037,7 @@ function renderOzPhrases() {
         <td class="text-end" style="color:${_phrCtrClr(it.ctr)}">${it.ctr}%</td></tr>`;
       // вложенные фразы (скрыты по умолчанию)
       (it.phrases || []).forEach(f => {
-        html += `<tr id="ozphr-${esc(it.sku)}" class="ozphr-child" style="display:none;background:var(--t-row)">
+        html += `<tr data-ozphr="${esc(it.sku)}" class="ozphr-child" style="display:none;background:var(--t-row)">
           <td style="position:sticky;left:0;background:var(--t-sticky);padding:4px 12px 4px 34px;color:var(--ink-2)">${esc(f.phrase)}</td>
           <td class="text-end small">${fmt(f.views)}</td>
           <td class="text-end small" style="color:var(--val)">${fmt(f.clicks)}</td>
@@ -3457,7 +3460,18 @@ function renderMargin() {
   const d = _marginData;
   if (d.error) { wrap.innerHTML = `<div class="alert alert-warning">⚠ ${esc(d.error)}</div>`; return; }
   const items = d.items || [];
-  if (!items.length) { wrap.innerHTML = `<div class="alert alert-info">${esc(d.message || 'Нет данных юнитки для расчёта')}</div>`; return; }
+  if (!items.length) {
+    const msg = d.message || 'Нет данных юнитки для расчёта';
+    const building = /собира|минут|готов/i.test(msg);
+    wrap.innerHTML = `<div class="alert alert-info">${esc(msg)}${building ? '<div class="text-secondary small mt-1">Обновится автоматически…</div>' : ''}</div>`;
+    if (building && !window._marginTimer) {
+      window._marginTimer = setTimeout(() => {
+        window._marginTimer = null;
+        if (_toolActive === 'margin') loadMargin(true);
+      }, 20000);
+    }
+    return;
+  }
 
   // группировка по категориям
   const groupMap = {};
