@@ -2117,6 +2117,23 @@ async def ozon_stocks_probe():
     return out
 
 
+@router.get("/funnel/probe", include_in_schema=False)
+async def funnel_probe():
+    """Диагностика воронки Ozon: сырые метрики по первым SKU + период."""
+    import ozon_client
+    from datetime import date
+    d_end = date.today() - timedelta(days=1)
+    d_from = (d_end - timedelta(days=27)).isoformat()
+    d_to = d_end.isoformat()
+    rows = await ozon_client.get_analytics_data(d_from, d_to, _FUNNEL_METRICS)
+    sample = []
+    for r in rows[:8]:
+        m = r["metrics"]
+        sample.append({"sku": r["sku"], "name": (r.get("name") or "")[:40], **m})
+    return {"period": f"{d_from} — {d_to}", "metrics_requested": _FUNNEL_METRICS,
+            "rows": len(rows), "sample": sample}
+
+
 @router.get("/funnel")
 async def get_funnel(refresh: bool = Query(default=False)):
     """Воронка Ozon по SKU: показы → карточка → корзина → заказ (Premium)."""
@@ -2137,8 +2154,12 @@ async def get_funnel(refresh: bool = Query(default=False)):
     import ozon_client
     import catalog as _cat
     from datetime import date
-    d_to = date.today().isoformat()
-    d_from = (date.today() - timedelta(days=28)).isoformat()
+    # Ozon отдаёт аналитику с задержкой — последний ПОЛНЫЙ день это вчера.
+    # Берём завершённое окно: с (вчера−27) по вчера = 28 полных дней.
+    d_end = date.today() - timedelta(days=1)
+    d_start = d_end - timedelta(days=27)
+    d_to = d_end.isoformat()
+    d_from = d_start.isoformat()
     try:
         rows = await ozon_client.get_analytics_data(d_from, d_to, _FUNNEL_METRICS)
     except Exception as e:
@@ -2175,7 +2196,9 @@ async def get_funnel(refresh: bool = Query(default=False)):
         })
     order = {"visibility": 0, "ctr": 1, "cart": 2, "checkout": 3, "ok": 4}
     items.sort(key=lambda x: (order.get(x["bottleneck"], 9), -x["revenue"]))
+    _d = lambda s: ".".join(reversed(s.split("-")))   # 2026-07-14 → 14.07.2026
     result = {"items": items, "days": 28,
+              "period": f"{_d(d_from)} — {_d(d_to)}",
               "fetched_at": datetime.utcnow().strftime("%d.%m.%Y %H:%M UTC")}
     _funnel_cache = result
     _funnel_ts = _t.monotonic()

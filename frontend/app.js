@@ -2866,16 +2866,16 @@ function renderFunnel() {
         <td class="text-end">${fmt(it.pdp)}</td>
         <td class="text-end" style="color:${it.ctr != null && it.ctr < 2 ? 'var(--neg)' : 'var(--ink)'}">${it.ctr != null ? it.ctr + '%' : '—'}</td>
         <td class="text-end">${fmt(it.tocart)}</td>
-        <td class="text-end" style="color:${it.cart_pct != null && it.cart_pct < 5 ? 'var(--neg)' : 'var(--ink)'}">${it.cart_pct != null ? it.cart_pct + '%' : '—'}</td>
+        <td class="text-end" style="color:${it.cart_pct != null && it.cart_pct < 5 ? 'var(--neg)' : it.cart_pct > 100 ? 'var(--muted)' : 'var(--ink)'}">${it.cart_pct != null ? it.cart_pct + '%' : '—'}</td>
         <td class="text-end" style="color:var(--val);font-weight:600">${fmt(it.orders)}</td>
-        <td class="text-end">${it.buy_pct != null ? it.buy_pct + '%' : '—'}</td>
+        <td class="text-end" style="color:${it.buy_pct > 100 ? 'var(--muted)' : 'var(--ink)'}">${it.buy_pct != null ? it.buy_pct + '%' : '—'}</td>
         <td class="text-end" style="color:var(--pos)">${fmtRub(it.revenue)}</td>
         <td class="small"><span style="color:${clr};font-weight:600">${lbl}</span> <span class="text-secondary">${esc(it.bottleneck_why)}</span></td>
       </tr>`;
     });
   });
   html += `</tbody></table></div></div></div>
-  <div class="text-secondary small mt-2">Данные Premium-аналитики Ozon за ${d.days} дней. Товары с проблемной воронкой — сверху. Обновлено: ${d.fetched_at}</div>`;
+  <div class="text-secondary small mt-2">Premium-аналитика Ozon за период <b>${d.period || d.days + ' дней'}</b> (полные дни, сегодня/вчера исключены — Ozon отдаёт с задержкой). «Показы» — только из поиска/каталога; карточку могут открыть и напрямую (реклама, ссылка, избранное), а заказ оформить без корзины («Купить сразу») — поэтому проценты в корзину/выкуп иногда выше 100%, это не ошибка, а не-строгая воронка. Товары с проблемной воронкой — сверху. Обновлено: ${d.fetched_at}</div>`;
   wrap.innerHTML = html;
 }
 
