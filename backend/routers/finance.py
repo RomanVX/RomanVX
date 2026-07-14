@@ -174,6 +174,28 @@ _detail_lock = asyncio.Lock()
 
 _detail_fetching: bool = False  # идёт ли фоновая загрузка
 _detail_last_error: str = ""
+_detail_snap_checked: bool = False  # снапшот из БД пробуем поднять один раз
+
+
+async def _detail_load_snapshot(cache_key: str) -> None:
+    """После рестарта поднимает детальный отчёт из kv_cache (zlib ~5 МБ),
+    если ключ (диапазон дат) совпадает и снапшот не старше TTL — юнитка и
+    точный P&L доступны сразу, без 5-8 минут перекачки с WB."""
+    global _detail_cache, _detail_cache_ts, _detail_snap_checked
+    if _detail_snap_checked or _detail_cache.get("rows"):
+        _detail_snap_checked = True
+        return
+    _detail_snap_checked = True
+    try:
+        import snapshot as _snapmod
+        snap = await asyncio.to_thread(_snapmod.load, "wb_detail", None)
+        if (snap and snap.get("key") == cache_key
+                and _time.time() - float(snap.get("ts") or 0) < _DETAIL_TTL):
+            _detail_cache = {"key": cache_key, "rows": snap["rows"]}
+            _detail_cache_ts = _time.monotonic()
+            _log.info("Detail поднят из снапшота БД: %d строк", len(snap["rows"]))
+    except Exception as e:
+        _log.warning("Detail snapshot load failed: %s", e)
 
 
 def _normalize_stat_rows(stat_rows: list[dict]) -> list[dict]:
@@ -252,6 +274,13 @@ async def _fetch_detail_bg(date_from: str, date_to: str) -> None:
             _detail_cache = {"key": cache_key, "rows": rows}
             _detail_cache_ts = _time.monotonic()
             _detail_last_error = ""
+            try:
+                import snapshot as _snapmod
+                await asyncio.to_thread(
+                    _snapmod.save, "wb_detail",
+                    {"key": cache_key, "ts": _time.time(), "rows": rows})
+            except Exception as e:
+                _log.warning("Detail snapshot save failed: %s", e)
         # детали готовы → сбрасываем P&L-кэш, чтобы следующий запрос пересобрал
         # отчёт по точным датам (иначе weekly-версия жила бы до конца TTL)
         _pnl_cache = {}
@@ -355,6 +384,7 @@ async def get_wb_pnl(
     # недели — так он подтянется сразу после формирования.
     detail_to = (dt_to + timedelta(days=7)).strftime("%Y-%m-%d")
     cache_key = f"{date_from}_{detail_to}"
+    await _detail_load_snapshot(cache_key)
     detail_ready = (_detail_cache.get("key") == cache_key
                     and _time.monotonic() - _detail_cache_ts < _DETAIL_TTL)
     if not detail_ready:
