@@ -2331,6 +2331,7 @@ async def get_ozphrases(refresh: bool = Query(default=False), days: int = Query(
             _ozphr_ts = _t.monotonic() - 6 * 3600 + 300
             return snap
 
+    import catalog as _cat
     from datetime import date
     d_to = (date.today() - timedelta(days=1)).isoformat()
     d_from = (date.today() - timedelta(days=days)).isoformat()
@@ -2339,32 +2340,42 @@ async def get_ozphrases(refresh: bool = Query(default=False), days: int = Query(
         sku_ids = [str(c.get("id")) for c in camps
                    if "SKU" in str(c.get("advObjectType", "")).upper()
                    and c.get("state") == "CAMPAIGN_STATE_RUNNING"]
-        titles = {str(c.get("id")): c.get("title", "") for c in camps}
         rows = await pc.get_phrases(sku_ids, d_from, d_to) if sku_ids else []
     except Exception as e:
         return {"items": [], "error": f"Ozon Performance: {str(e)[:200]}"}
 
-    # агрегируем по фразе (суммируем показы/клики по всем товарам/кампаниям)
-    agg: dict[str, dict] = {}
+    # агрегируем ПО ТОВАРУ (sku), внутри — фразы
+    prods: dict[str, dict] = {}
     for r in rows:
         ph = r["phrase"].strip()
-        if not ph:
+        skunum = str(r.get("sku") or "")
+        if not ph or not skunum:
             continue
-        a = agg.setdefault(ph.lower(), {"phrase": ph, "views": 0, "clicks": 0,
-                                        "camps": set(), "products": set()})
-        a["views"] += r["views"]
-        a["clicks"] += r["clicks"]
-        if r.get("campaign_id"):
-            a["camps"].add(titles.get(r["campaign_id"]) or r["campaign_id"])
-        if r.get("product"):
-            a["products"].add(r["product"][:40])
+        art = _cat.resolve_ozon(skunum) if skunum.isdigit() else skunum
+        p = prods.setdefault(skunum, {
+            "sku": skunum, "art": art if art and not str(art).isdigit() else "",
+            "name": r.get("product") or "", "views": 0, "clicks": 0, "phrases": {}})
+        p["views"] += r["views"]
+        p["clicks"] += r["clicks"]
+        f = p["phrases"].setdefault(ph.lower(), {"phrase": ph, "views": 0, "clicks": 0})
+        f["views"] += r["views"]
+        f["clicks"] += r["clicks"]
 
     items = []
-    for a in agg.values():
-        ctr = round(a["clicks"] / a["views"] * 100, 1) if a["views"] else 0
-        items.append({"phrase": a["phrase"], "views": a["views"], "clicks": a["clicks"],
-                      "ctr": ctr, "campaigns": sorted(a["camps"])[:3],
-                      "products": sorted(a["products"])[:3]})
+    for p in prods.values():
+        phrases = []
+        for f in p["phrases"].values():
+            f["ctr"] = round(f["clicks"] / f["views"] * 100, 1) if f["views"] else 0
+            phrases.append(f)
+        phrases.sort(key=lambda x: -x["views"])
+        items.append({
+            "sku": p["sku"], "art": p["art"], "name": p["name"],
+            "views": p["views"], "clicks": p["clicks"],
+            "ctr": round(p["clicks"] / p["views"] * 100, 1) if p["views"] else 0,
+            "phrase_count": len(phrases), "phrases": phrases,
+            # для группировки на фронте
+            "group": _cat.lookup(p["art"]).get("brand", "") if p["art"] else "",
+        })
     items.sort(key=lambda x: -x["views"])
 
     result = {"items": items,
@@ -2391,14 +2402,17 @@ async def ozphrases_export():
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Запросы Ozon"
-    ws.append(["Поисковый запрос", "Показы", "Клики", "CTR %", "Товары", "Кампании"])
+    ws.append(["Товар", "Артикул", "Поисковый запрос", "Показы", "Клики", "CTR %"])
     for c in ws[1]:
         c.font = Font(bold=True, color="FFFFFF")
         c.fill = PatternFill("solid", fgColor="4F46E5")
     for it in d.get("items", []):
-        ws.append([it["phrase"], it["views"], it["clicks"], it["ctr"],
-                   ", ".join(it.get("products") or []), ", ".join(it.get("campaigns") or [])])
-    for i, w in enumerate([46, 10, 9, 8, 40, 30], 1):
+        # строка-итог по товару
+        ws.append([it.get("name") or it.get("sku"), it.get("art") or "",
+                   f'ИТОГО {it.get("phrase_count")} фраз', it["views"], it["clicks"], it["ctr"]])
+        for f in it.get("phrases") or []:
+            ws.append(["", "", f["phrase"], f["views"], f["clicks"], f["ctr"]])
+    for i, w in enumerate([40, 12, 46, 10, 9, 8], 1):
         ws.column_dimensions[get_column_letter(i)].width = w
     ws.freeze_panes = "A2"
     buf = io.BytesIO()

@@ -2987,6 +2987,13 @@ async function loadOzPhrases(refresh) {
   }
 }
 
+function _phrCtrClr(ctr) { return ctr >= 5 ? 'var(--pos)' : ctr < 1 ? 'var(--neg)' : 'var(--ink)'; }
+function toggleOzPhrRow(sku) {
+  const box = document.getElementById('ozphr-' + sku);
+  const car = document.getElementById('ozphrcar-' + sku);
+  if (box) { const open = box.style.display !== 'none'; box.style.display = open ? 'none' : ''; if (car) car.textContent = open ? '▸' : '▾'; }
+}
+
 function renderOzPhrases() {
   if (_ozTool !== 'phrases') return;
   const wrap = document.getElementById('toolsOzWrap');
@@ -2996,31 +3003,52 @@ function renderOzPhrases() {
   const items = d.items || [];
   if (!items.length) { wrap.innerHTML = '<div class="alert alert-info">Нет данных по поисковым запросам (нужны активные SKU-кампании)</div>'; return; }
 
+  // группировка товаров по категориям (Спреи, Aloe, Фисты...)
+  const groupMap = {};
+  items.forEach(it => {
+    const g = articleGroup({ supplierArticle: it.art || it.sku, brand: it.group });
+    (groupMap[g] = groupMap[g] || []).push(it);
+  });
+  const orderedGroups = GROUP_ORDER.filter(g => groupMap[g]).map(g => [g, groupMap[g]]);
+
   let html = `<div class="d-flex gap-3 flex-wrap mb-3 align-items-center">
-    <div class="metric-card"><div class="mc-head">Запросов</div><div class="mc-val">${fmt(items.length)}</div></div>
+    <div class="metric-card"><div class="mc-head">Товаров</div><div class="mc-val">${fmt(items.length)}</div></div>
     <div class="metric-card"><div class="mc-head">Показы</div><div class="mc-val">${fmt(d.total_views)}</div></div>
     <div class="metric-card"><div class="mc-head">Клики</div><div class="mc-val">${fmt(d.total_clicks)}</div></div>
     <div class="metric-card"><div class="mc-head">CTR</div><div class="mc-val">${d.total_views ? (d.total_clicks / d.total_views * 100).toFixed(1) : 0}%</div></div>
     <a href="/api/tools/ozphrases/export" class="btn btn-sm btn-outline-success ms-auto" download>⬇ Экспорт в Excel</a>
   </div>`;
-  html += `<div class="card border-0 bg-card"><div class="card-body p-0"><div class="table-responsive" style="max-height:72vh">
+  html += `<div class="card border-0 bg-card"><div class="card-body p-0"><div class="table-responsive" style="max-height:74vh">
     <table class="table table-sm align-middle mb-0"><thead><tr>
-      <th style="min-width:260px;position:sticky;left:0;background:var(--t-sticky);z-index:2">Поисковый запрос</th>
+      <th style="min-width:280px;position:sticky;left:0;background:var(--t-sticky);z-index:2">Товар / запрос</th>
       <th class="text-end">Показы</th><th class="text-end">Клики</th>
       <th class="text-end" title="Клики/показы">CTR</th>
-      <th style="min-width:220px">Товары</th>
     </tr></thead><tbody>`;
-  items.forEach(it => {
-    html += `<tr style="background:var(--t-row)">
-      <td style="position:sticky;left:0;background:var(--t-sticky);padding:6px 12px;color:var(--ink)">${esc(it.phrase)}</td>
-      <td class="text-end">${fmt(it.views)}</td>
-      <td class="text-end" style="color:var(--val);font-weight:600">${fmt(it.clicks)}</td>
-      <td class="text-end" style="color:${it.ctr >= 5 ? 'var(--pos)' : it.ctr < 1 ? 'var(--neg)' : 'var(--ink)'}">${it.ctr}%</td>
-      <td class="small text-secondary" style="max-width:260px;overflow:hidden;text-overflow:ellipsis">${esc((it.products || []).join(', '))}</td>
-    </tr>`;
+  orderedGroups.forEach(([gname, list]) => {
+    html += `<tr class="table-secondary"><td colspan="4" style="padding:6px 12px"><strong>${gname}</strong> <span class="text-secondary small">(${list.length} тов.)</span></td></tr>`;
+    list.forEach(it => {
+      // строка товара — кликабельная, раскрывает фразы
+      html += `<tr style="background:var(--surface-3);cursor:pointer" onclick="toggleOzPhrRow('${esc(it.sku)}')">
+        <td style="position:sticky;left:0;background:var(--surface-3);padding:6px 12px">
+          <span id="ozphrcar-${esc(it.sku)}" style="color:var(--gold)">▸</span>
+          ${it.art ? `<code style="color:var(--val-soft)">${esc(it.art)}</code> ` : ''}
+          <span style="color:var(--ink)">${esc((it.name || it.sku).slice(0, 50))}</span>
+          <span class="text-secondary small">· ${it.phrase_count} фраз</span></td>
+        <td class="text-end" style="color:var(--ink)">${fmt(it.views)}</td>
+        <td class="text-end" style="color:var(--val);font-weight:600">${fmt(it.clicks)}</td>
+        <td class="text-end" style="color:${_phrCtrClr(it.ctr)}">${it.ctr}%</td></tr>`;
+      // вложенные фразы (скрыты по умолчанию)
+      (it.phrases || []).forEach(f => {
+        html += `<tr id="ozphr-${esc(it.sku)}" class="ozphr-child" style="display:none;background:var(--t-row)">
+          <td style="position:sticky;left:0;background:var(--t-sticky);padding:4px 12px 4px 34px;color:var(--ink-2)">${esc(f.phrase)}</td>
+          <td class="text-end small">${fmt(f.views)}</td>
+          <td class="text-end small" style="color:var(--val)">${fmt(f.clicks)}</td>
+          <td class="text-end small" style="color:${_phrCtrClr(f.ctr)}">${f.ctr}%</td></tr>`;
+      });
+    });
   });
   html += `</tbody></table></div></div></div>
-  <div class="text-secondary small mt-2">Поисковые запросы из рекламных SKU-кампаний Ozon за период <b>${d.period || d.days + ' дней'}</b>. По каким фразам показываются и кликают ваши товары. Высокий CTR (зелёный) — целевой запрос, стоит усилить; низкий при больших показах (красный) — фраза нецелевая, кандидат в минус-слова. Обновлено: ${d.fetched_at}</div>`;
+  <div class="text-secondary small mt-2">Поисковые запросы рекламы Ozon за <b>${d.period || d.days + ' дней'}</b>, сгруппированы по товарам и категориям. Клик по товару — раскрыть его фразы. Высокий CTR (зелёный) — целевой запрос, усилить ставку; низкий CTR при больших показах (красный) — нецелевой, в минус-слова. Обновлено: ${d.fetched_at}</div>`;
   wrap.innerHTML = html;
 }
 
