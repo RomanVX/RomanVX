@@ -383,11 +383,14 @@
   <!-- ── Инструменты Ozon ── -->
   <div id="pane-toolsoz" style="display:none">
     <div class="d-flex gap-2 mb-3 flex-wrap align-items-center">
-      <div class="mp-selector-bloc active" style="--mp-color:#3b82f6">
+      <div id="ozFunnel" class="mp-selector-bloc active" style="--mp-color:#3b82f6" onclick="setOzTool('funnel')">
         <span class="mp-selector-dot" style="background:#3b82f6"></span>📈 Воронка продаж
       </div>
-      <span class="text-secondary small">Premium-аналитика Ozon: показы → карточка → корзина → заказ по каждому SKU, где теряем продажи</span>
-      <button class="btn btn-sm btn-outline-secondary ms-auto" onclick="loadFunnel(true)">
+      <div id="ozClusters" class="mp-selector-bloc" style="--mp-color:#38bdf8" onclick="setOzTool('clusters')">
+        <span class="mp-selector-dot" style="background:#38bdf8"></span>📦 Остатки по кластерам
+      </div>
+      <span id="ozToolHint" class="text-secondary small">Premium-аналитика Ozon: показы → карточка → корзина → заказ по каждому SKU, где теряем продажи</span>
+      <button class="btn btn-sm btn-outline-secondary ms-auto" onclick="reloadOzTool()">
         <i class="bi bi-arrow-clockwise"></i> Обновить
       </button>
     </div>
@@ -433,6 +436,6 @@
 
 <script src="vendor/bootstrap.bundle.min.js"></script>
 <script src="vendor/chart.umd.min.js"></script>
-<script src="app.js?v=117"></script>
+<script src="app.js?v=118"></script>
 </body>
 </html>

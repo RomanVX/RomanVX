@@ -149,6 +149,28 @@ async def get_stocks() -> dict[str, int]:
         return dict(_stocks_cache)
 
 
+async def get_stocks_by_cluster() -> list[dict]:
+    """Аналитика остатков Ozon по кластерам: /v1/analytics/stocks.
+
+    Ozon сам считает ads (продажи/день), idc (дни покрытия), оборачиваемость
+    и излишки — общие и по кластеру. Возвращаем сырые строки (SKU × кластер)."""
+    if not OZON_CLIENT_ID or not OZON_API_KEY:
+        return []
+    skus_info = await _get_all_skus()
+    sku_list = [s["sku"] for s in skus_info if s["sku"]]
+    rows: list[dict] = []
+    for i in range(0, len(sku_list), 100):
+        batch = sku_list[i:i + 100]
+        try:
+            data = await _post("/v1/analytics/stocks", {"skus": batch})
+        except Exception as e:
+            _log.warning("OZON stocks-by-cluster batch failed: %s", e)
+            continue
+        rows.extend(data.get("items") or [])
+    _log.info("OZON stocks-by-cluster: %d строк (SKU×кластер)", len(rows))
+    return rows
+
+
 def _price_amount(v) -> float:
     """v3 отдаёт price объектом {amount, currency}, v2 отдавал строку."""
     if isinstance(v, dict):

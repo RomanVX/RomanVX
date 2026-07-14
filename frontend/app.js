@@ -239,7 +239,7 @@ function switchTab(name, linkEl) {
   if (dirty[name]) {
     dirty[name] = false;
     ({ salesan: loadSalesAnalytics, stocks: loadStocks,
-       reviews: loadReviews, finance: loadFinance, tools: loadTools, toolsoz: loadFunnel, docs: loadDocs,
+       reviews: loadReviews, finance: loadFinance, tools: loadTools, toolsoz: loadOzTool, docs: loadDocs,
        unit: loadUnitEconomics })[name]();
   }
 }
@@ -2708,15 +2708,107 @@ function loadTools() {
 
 // ── Воронка Ozon (Premium) ────────────────────────────────────────────────────
 
+// ── Инструменты Ozon: переключатель ──────────────────────────────────────────
+let _ozTool = 'funnel';
+const _OZ_HINTS = {
+  funnel: 'Premium-аналитика Ozon: показы → карточка → корзина → заказ по каждому SKU, где теряем продажи',
+  clusters: 'Остатки по кластерам Ozon: покрытие, скорость, что везти / остальное (Ozon сам считает продажи/день и покрытие)',
+};
+function setOzTool(t) {
+  if (_ozTool === t) return;
+  _ozTool = t;
+  ['ozFunnel', 'ozClusters'].forEach(id =>
+    document.getElementById(id)?.classList.toggle('active', id.toLowerCase().includes(t)));
+  const hint = document.getElementById('ozToolHint');
+  if (hint) hint.textContent = _OZ_HINTS[t] || '';
+  loadOzTool();
+}
+function loadOzTool() {
+  ({ funnel: loadFunnel, clusters: loadOzClusters })[_ozTool]();
+}
+function reloadOzTool() {
+  ({ funnel: () => loadFunnel(true), clusters: () => loadOzClusters(true) })[_ozTool]();
+}
+
+let _ozClustersData = null;
+async function loadOzClusters(refresh) {
+  const wrap = document.getElementById('toolsOzWrap');
+  if (!wrap || _ozTool !== 'clusters') return;
+  if (_ozClustersData && !refresh) { renderOzClusters(); return; }
+  wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>Загружаем остатки Ozon по кластерам…</div>';
+  try {
+    _ozClustersData = await fetchJSON('/api/tools/ozon/clusters' + (refresh ? '?refresh=true' : ''), 120000);
+    renderOzClusters();
+  } catch (e) {
+    wrap.innerHTML = `<div class="alert alert-danger mt-3">Ошибка: ${esc(e.message)}</div>`;
+  }
+}
+
+function renderOzClusters() {
+  if (_ozTool !== 'clusters') return;
+  const wrap = document.getElementById('toolsOzWrap');
+  if (!wrap || !_ozClustersData) return;
+  const d = _ozClustersData;
+  if (d.message) { wrap.innerHTML = `<div class="alert alert-info">${esc(d.message)}</div>`; return; }
+  let html = `<div class="d-flex justify-content-end mb-2">
+    <a href="/api/tools/ozon/clusters/export" class="btn btn-sm btn-outline-success" download>⬇ Экспорт в Excel</a></div>
+    <div class="d-flex gap-3 flex-wrap mb-3">
+    <div class="metric-card" style="min-width:160px"><div class="mc-head">⚠ Слабых кластеров</div>
+      <div class="mc-val" style="color:${d.weak ? 'var(--warn-c)' : 'var(--pos)'}">${d.weak}</div>
+      <div class="mc-sub">покрытие меньше 15 дней</div></div>
+    <div class="metric-card" style="min-width:160px"><div class="mc-head">📦 Излишки (всего)</div>
+      <div class="mc-val">${fmt(d.excess_total || 0)}</div><div class="mc-sub">шт сверх нужного (по оценке Ozon)</div></div>
+  </div><div class="row g-3">`;
+  (d.items || []).forEach(it => {
+    const [label, clr] = _CL_STATUS[it.status] || _CL_STATUS.ok;
+    html += `<div class="col-12 col-md-6 col-xl-4"><div class="metric-card h-100" style="border-left:3px solid ${clr}">
+      <div class="d-flex justify-content-between align-items-start">
+        <b style="color:var(--ink);font-size:15px">${esc(it.cluster)}</b>
+        <span class="small" style="color:${clr}">${label}</span></div>
+      <div class="small mb-2" style="color:${it.need ? 'var(--neg)' : 'var(--muted)'}">К заказу: ${it.need ? fmt(it.need) + ' шт' : 'не требуется'}</div>
+      <div class="d-flex gap-4">
+        <div><div style="font-size:20px;font-weight:700;color:var(--val)">${it.spd.toLocaleString('ru-RU')}</div><div class="text-secondary" style="font-size:11px">продаж/день</div></div>
+        <div><div style="font-size:20px;font-weight:700;color:var(--val)">${fmt(it.stock)}</div><div class="text-secondary" style="font-size:11px">остаток, шт</div></div>
+      </div>
+      <div class="small mt-2" style="color:var(--ink-2)">Покрытие: <b style="color:${clr}">${it.coverage != null ? it.coverage + ' дн' : '—'}</b>${it.excess ? ` · <span class="text-secondary">излишки ${fmt(it.excess)} шт</span>` : ''}</div>
+      ${(it.skus || []).length ? `
+      <details class="mt-2">
+        <summary class="small" style="cursor:pointer;color:var(--gold)">🚚 Что везти: ${it.skus.length} арт.</summary>
+        <table class="table table-sm mb-0 mt-1" style="font-size:.74rem">
+          <thead><tr><th>Артикул</th><th class="text-end">Прод/д</th><th class="text-end">Здесь</th><th class="text-end">Покр.</th><th class="text-end">Везти</th></tr></thead>
+          <tbody>${it.skus.map(s => `<tr>
+            <td><code style="color:var(--val-soft)">${esc(s.sku)}</code> <span class="text-secondary">${esc((s.name || '').slice(0, 20))}</span></td>
+            <td class="text-end">${s.ads}</td><td class="text-end">${fmt(s.stock)}</td>
+            <td class="text-end" style="color:${s.idc < 7 ? 'var(--neg)' : s.idc < 15 ? 'var(--warn-c)' : 'var(--ink)'}">${s.idc}</td>
+            <td class="text-end"><b style="color:var(--pos)">${fmt(s.need)}</b></td></tr>`).join('')}</tbody>
+        </table></details>` : ''}
+      ${(it.other_skus || []).length ? `
+      <details class="mt-1">
+        <summary class="small" style="cursor:pointer;color:var(--dim)">📦 Остальное: ${it.other_skus.length} арт.</summary>
+        <table class="table table-sm mb-0 mt-1" style="font-size:.74rem">
+          <thead><tr><th>Артикул</th><th class="text-end">Прод/д</th><th class="text-end">Здесь</th><th class="text-end">Покр.</th><th class="text-end">Оборач.</th></tr></thead>
+          <tbody>${it.other_skus.map(s => `<tr>
+            <td><code style="color:var(--val-soft)">${esc(s.sku)}</code> <span class="text-secondary">${esc((s.name || '').slice(0, 20))}</span></td>
+            <td class="text-end">${s.ads}</td><td class="text-end">${fmt(s.stock)}</td>
+            <td class="text-end" style="color:var(--ink-2)">${s.idc}</td>
+            <td class="text-end text-secondary">${esc(s.grade)}</td></tr>`).join('')}</tbody>
+        </table></details>` : ''}
+    </div></div>`;
+  });
+  html += `</div><div class="text-secondary small mt-3">Данные — из аналитики остатков Ozon (/v1/analytics/stocks): продажи/день (ads), покрытие (idc), оборачиваемость и излишки Ozon считает сам, по кластерам. Дозаказ — до ${d.target_days} дней покрытия. Обновлено: ${d.fetched_at}</div>`;
+  wrap.innerHTML = html;
+}
+
 let _funnelData = null;
 
 async function loadFunnel(refresh) {
   const wrap = document.getElementById('toolsOzWrap');
-  if (!wrap) return;
+  if (!wrap || _ozTool !== 'funnel') return;
   if (_funnelData && !refresh) { renderFunnel(); return; }
   wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>Загружаем аналитику Ozon…</div>';
   try {
     _funnelData = await fetchJSON('/api/tools/funnel' + (refresh ? '?refresh=true' : ''), 120000);
+    if (_ozTool !== 'funnel') return;
     renderFunnel();
   } catch (e) {
     wrap.innerHTML = `<div class="alert alert-danger mt-3">Ошибка: ${e.message}</div>`;

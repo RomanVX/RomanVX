@@ -1957,6 +1957,136 @@ def _funnel_bottleneck(m: dict) -> tuple[str, str]:
     return "ok", "воронка здоровая"
 
 
+_ozc_cache: dict = {}
+_ozc_ts: float = 0.0
+_OZ_TURNOVER = {"DEFICIT": "🔴 дефицит", "POPULAR": "🟢 ходовой",
+                "AVERAGE": "средний", "SURPLUS": "избыток",
+                "NO_SALES": "нет продаж", "UNKNOWN": "—"}
+_OZ_TARGET_DAYS = 30
+
+
+@router.get("/ozon/clusters")
+async def get_ozon_clusters(refresh: bool = Query(default=False)):
+    """Остатки Ozon по кластерам: покрытие, скорость, что везти / остальное.
+    Всё считает сам Ozon (ads/idc/оборачиваемость) — группируем по кластерам."""
+    import time as _t
+    global _ozc_cache, _ozc_ts
+    if not refresh and _ozc_cache and _t.monotonic() - _ozc_ts < 1800:
+        return _ozc_cache
+
+    import ozon_client
+    import catalog as _cat
+    rows = await ozon_client.get_stocks_by_cluster()
+    if not rows:
+        return {"items": [], "message": "Ozon не вернул аналитику остатков (нужен ключ с доступом к аналитике)"}
+
+    clusters: dict = {}
+    for r in rows:
+        cl = r.get("cluster_name") or "—"
+        ads = float(r.get("ads_cluster") or 0)              # продажи/день в кластере
+        idc = r.get("idc_cluster")                          # дни покрытия в кластере
+        stock = int(r.get("available_stock_count") or 0)
+        excess = int(r.get("excess_stock_count") or 0)
+        grade = r.get("turnover_grade_cluster") or r.get("turnover_grade") or "UNKNOWN"
+        offer = r.get("offer_id") or ""
+        sku = _cat.canon(offer) if offer else str(r.get("sku") or "")
+        name = r.get("name") or ""
+        c = clusters.setdefault(cl, {"cluster": cl, "stock": 0, "ads": 0.0,
+                                     "excess": 0, "skus": []})
+        c["stock"] += stock
+        c["ads"] += ads
+        c["excess"] += excess
+        # нужно довезти до целевого покрытия
+        need = 0
+        if ads > 0 and idc is not None and idc < _OZ_TARGET_DAYS:
+            need = max(0, round((_OZ_TARGET_DAYS - idc) * ads))
+        c["skus"].append({"sku": sku, "name": name, "ads": round(ads, 2),
+                          "stock": stock, "idc": idc if idc is not None else "∞",
+                          "grade": _OZ_TURNOVER.get(grade, grade), "need": need,
+                          "excess": excess})
+
+    items = []
+    for c in clusters.values():
+        spd = round(c["ads"], 2)
+        cov = round(c["stock"] / spd, 1) if spd > 0 else None
+        need_total = sum(s["need"] for s in c["skus"])
+        status = ("no_sales" if spd == 0 else "urgent" if (cov or 99) < 7
+                  else "warn" if (cov or 99) < 15 else "over" if (cov or 0) > 90 else "ok")
+        to_bring = sorted([s for s in c["skus"] if s["need"] > 0], key=lambda x: -x["need"])
+        other = sorted([s for s in c["skus"] if s["need"] == 0], key=lambda x: -x["stock"])
+        items.append({"cluster": c["cluster"], "stock": c["stock"], "spd": spd,
+                      "coverage": cov, "need": need_total, "status": status,
+                      "excess": c["excess"],
+                      "skus": to_bring[:20], "other_skus": other})
+    items.sort(key=lambda x: -x["stock"])
+
+    result = {"items": items, "target_days": _OZ_TARGET_DAYS,
+              "weak": sum(1 for it in items if it["status"] in ("urgent", "warn")),
+              "excess_total": sum(it["excess"] for it in items),
+              "fetched_at": datetime.utcnow().strftime("%d.%m.%Y %H:%M UTC")}
+    _ozc_cache = result
+    _ozc_ts = _t.monotonic()
+    return result
+
+
+@router.get("/ozon/clusters/export")
+async def export_ozon_clusters():
+    """Выгрузка остатков Ozon по кластерам в Excel."""
+    import io
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+    from fastapi.responses import StreamingResponse
+
+    data = await get_ozon_clusters(refresh=False)
+    items = data.get("items", [])
+    wb = openpyxl.Workbook()
+    hfill = PatternFill("solid", fgColor="3b82f6")
+
+    def _hdr(ws):
+        for c in ws[1]:
+            c.font = Font(bold=True, color="FFFFFF")
+            c.fill = hfill
+            c.alignment = Alignment(vertical="center", wrap_text=True)
+
+    ws1 = wb.active
+    ws1.title = "Кластеры Ozon"
+    ws1.append(["Кластер", "Продаж/день", "Остаток, шт", "Покрытие, дн",
+                "К заказу, шт", "Излишки, шт", "Статус"])
+    _hdr(ws1)
+    ST = {"urgent": "СРОЧНО", "warn": "мало", "ok": "ок", "over": "избыток", "no_sales": "нет продаж"}
+    for it in items:
+        ws1.append([it["cluster"], it["spd"], it["stock"], it["coverage"],
+                    it["need"], it["excess"], ST.get(it["status"], it["status"])])
+    for i, w in enumerate([32, 13, 13, 13, 12, 12, 12], 1):
+        ws1.column_dimensions[get_column_letter(i)].width = w
+    ws1.freeze_panes = "A2"
+
+    def _sheet(title, key):
+        ws = wb.create_sheet(title)
+        ws.append(["Кластер", "Артикул", "Название", "Продаж/день", "Остаток, шт",
+                   "Покрытие, дн", "Оборачиваемость", "Везти, шт", "Излишки, шт"])
+        _hdr(ws)
+        for it in items:
+            for s in it.get(key, []):
+                ws.append([it["cluster"], s["sku"], s["name"], s["ads"], s["stock"],
+                           s["idc"], s["grade"], s["need"], s["excess"]])
+        for i, w in enumerate([30, 14, 34, 12, 11, 12, 15, 10, 11], 1):
+            ws.column_dimensions[get_column_letter(i)].width = w
+        ws.freeze_panes = "A2"
+
+    _sheet("Что везти", "skus")
+    _sheet("Остальное", "other_skus")
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="ozon_clusters.xlsx"'})
+
+
 @router.get("/ozon/stocks_probe", include_in_schema=False)
 async def ozon_stocks_probe():
     """Диагностика: реальная структура ответа Ozon по остаткам с кластерами.
