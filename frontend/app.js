@@ -3263,7 +3263,9 @@ function renderClusters() {
   const wrap = document.getElementById('toolsWrap');
   if (!wrap || !_clustersData) return;
   const d = _clustersData;
-  let html = `<div class="d-flex gap-3 flex-wrap mb-3">
+  let html = `<div class="d-flex justify-content-end mb-2">
+    <a href="/api/tools/clusters/export" class="btn btn-sm btn-outline-success" download>⬇ Экспорт в Excel</a></div>
+    <div class="d-flex gap-3 flex-wrap mb-3">
     <div class="metric-card" style="min-width:160px"><div class="mc-head">📍 Локализация (всего)</div>
       <div class="mc-val">${d.localization_total != null ? d.localization_total + '%' : '—'}</div>
       <div class="mc-sub">доля продаж, отгруженных из округа покупателя</div></div>
@@ -3298,6 +3300,19 @@ function renderClusters() {
             <td class="text-end">${fmt(s.stock)}</td>
             <td class="text-end" style="color:${s.coverage < 7 ? 'var(--neg)' : s.coverage < 15 ? 'var(--warn-c)' : 'var(--ink)'}">${s.coverage}</td>
             <td class="text-end"><b style="color:var(--pos)">${fmt(s.need)}</b></td>
+          </tr>`).join('')}</tbody>
+        </table>
+      </details>` : ''}
+      ${(it.other_skus || []).length ? `
+      <details class="mt-1">
+        <summary class="small" style="cursor:pointer;color:var(--dim)">📦 Остальное: ${(it.other_skus || []).length} арт. (лежат / покрытие в норме)</summary>
+        <table class="table table-sm mb-0 mt-1" style="font-size:.74rem">
+          <thead><tr><th>Артикул</th><th class="text-end">Спрос/д</th><th class="text-end">Здесь, шт</th><th class="text-end">Покр., дн</th></tr></thead>
+          <tbody>${it.other_skus.map(s => `<tr>
+            <td><code style="color:var(--val-soft)">${esc(s.sku)}</code> <span class="text-secondary">${esc((s.name || '').slice(0, 22))}</span></td>
+            <td class="text-end">${s.demand_spd}</td>
+            <td class="text-end">${fmt(s.stock)}</td>
+            <td class="text-end" style="color:var(--ink-2)">${s.coverage}</td>
           </tr>`).join('')}</tbody>
         </table>
       </details>` : ''}

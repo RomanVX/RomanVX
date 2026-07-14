@@ -476,11 +476,28 @@ async def get_clusters(refresh: bool = Query(default=False)):
                              "demand_spd": round(d_spd, 2), "stock": st_here,
                              "coverage": cov, "need": sku_need})
         skus.sort(key=lambda x: -x["need"])
+        # «Остальное»: прочие артикулы округа (в остатках или спросе), которых
+        # нет в «что везти» — лежат без спроса, либо покрытие в норме
+        in_need = {s["sku"] for s in skus}
+        other = []
+        all_sku = set(sku_stock[c].keys()) | set(sku_demand[c].keys())
+        for sku in all_sku:
+            canon = _cat.canon(sku)
+            if canon in in_need:
+                continue
+            dem = sku_demand[c].get(sku, 0)
+            d_spd = round(dem / DAYS, 2)
+            st_here = sku_stock[c].get(sku, 0)
+            cov = round(st_here / d_spd, 1) if d_spd > 0 else None
+            other.append({"sku": canon, "name": _cat.lookup(sku).get("name", sku),
+                          "demand_spd": d_spd, "stock": st_here,
+                          "coverage": cov if cov is not None else "∞", "need": 0})
+        other.sort(key=lambda x: -x["stock"])
         items.append({"cluster": c, "stock": a["stock"], "spd": spd,
                       "coverage": coverage, "need": need, "status": status,
                       "localization": loc, "demand": a["loc_total"],
                       "need_by_demand": sum(s["need"] for s in skus),
-                      "skus": skus[:15]})
+                      "skus": skus[:15], "other_skus": other})
 
     total_hit = sum(a["loc_hit"] for a in agg.values())
     total_dem = sum(a["loc_total"] for a in agg.values())
@@ -495,6 +512,70 @@ async def get_clusters(refresh: bool = Query(default=False)):
     _clusters_cache = result
     _clusters_ts = _time.monotonic()
     return result
+
+
+@router.get("/clusters/export")
+async def export_clusters():
+    """Выгрузка остатков по кластерам в Excel: сводка по округам + листы
+    «Что везти» и «Остальное» с артикулами."""
+    import io
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+    from fastapi.responses import StreamingResponse
+
+    data = await get_clusters(refresh=False)
+    items = data.get("items", [])
+    wb = openpyxl.Workbook()
+    hfill = PatternFill("solid", fgColor="38bdf8")
+
+    def _hdr(ws):
+        for c in ws[1]:
+            c.font = Font(bold=True, color="0b2a3a")
+            c.fill = hfill
+            c.alignment = Alignment(vertical="center", wrap_text=True)
+
+    # Лист 1: сводка по округам
+    ws1 = wb.active
+    ws1.title = "Кластеры"
+    ws1.append(["Округ", "Продаж/день", "Остаток, шт", "Покрытие, дн",
+                "К заказу, шт", "Локализация, %", "Спрос (заказов)", "Статус"])
+    _hdr(ws1)
+    ST = {"urgent": "СРОЧНО", "warn": "мало", "ok": "ок", "over": "избыток",
+          "no_sales": "нет продаж"}
+    for it in items:
+        ws1.append([it.get("cluster"), it.get("spd"), it.get("stock"),
+                    it.get("coverage"), it.get("need"), it.get("localization"),
+                    it.get("demand"), ST.get(it.get("status"), it.get("status"))])
+    for i, w in enumerate([20, 13, 13, 13, 12, 15, 16, 12], 1):
+        ws1.column_dimensions[get_column_letter(i)].width = w
+    ws1.freeze_panes = "A2"
+
+    # Листы 2 и 3: что везти / остальное
+    def _sku_sheet(title, key):
+        ws = wb.create_sheet(title)
+        ws.append(["Округ", "Артикул", "Название", "Спрос/день", "Здесь, шт",
+                   "Покрытие, дн", "Везти, шт"])
+        _hdr(ws)
+        for it in items:
+            for s in it.get(key, []):
+                ws.append([it.get("cluster"), s.get("sku"), s.get("name"),
+                           s.get("demand_spd"), s.get("stock"), s.get("coverage"),
+                           s.get("need")])
+        for i, w in enumerate([18, 14, 34, 12, 11, 13, 11], 1):
+            ws.column_dimensions[get_column_letter(i)].width = w
+        ws.freeze_panes = "A2"
+
+    _sku_sheet("Что везти", "skus")
+    _sku_sheet("Остальное", "other_skus")
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="clusters.xlsx"'})
 
 
 # ══ Контроль рекламы WB ═══════════════════════════════════════════════════════
