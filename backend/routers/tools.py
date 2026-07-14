@@ -1957,6 +1957,36 @@ def _funnel_bottleneck(m: dict) -> tuple[str, str]:
     return "ok", "воронка здоровая"
 
 
+@router.get("/ozon/stocks_probe", include_in_schema=False)
+async def ozon_stocks_probe():
+    """Диагностика: реальная структура ответа Ozon по остаткам с кластерами.
+    Пробуем /v1/analytics/stocks и /v2/analytics/stock_on_warehouses."""
+    import ozon_client
+    out = {}
+    # v1/analytics/stocks — берём первые SKU
+    try:
+        skus = await ozon_client._get_all_skus()
+        batch = [s["sku"] for s in skus if s["sku"]][:20]
+        data = await ozon_client._post("/v1/analytics/stocks", {"skus": batch})
+        items = data.get("items") or []
+        out["v1_stocks"] = {"count": len(items),
+                            "keys": sorted(items[0].keys()) if items else [],
+                            "sample": items[0] if items else None}
+    except Exception as e:
+        out["v1_stocks_error"] = str(e)[:300]
+    # v2/stock_on_warehouses — есть ли warehouse/cluster
+    try:
+        data = await ozon_client._post("/v2/analytics/stock_on_warehouses",
+                                       {"limit": 20, "offset": 0, "warehouse_type": "ALL"})
+        rows = (data.get("result") or {}).get("rows") or []
+        out["v2_warehouses"] = {"count": len(rows),
+                                "keys": sorted(rows[0].keys()) if rows else [],
+                                "sample": rows[0] if rows else None}
+    except Exception as e:
+        out["v2_warehouses_error"] = str(e)[:300]
+    return out
+
+
 @router.get("/funnel")
 async def get_funnel(refresh: bool = Query(default=False)):
     """Воронка Ozon по SKU: показы → карточка → корзина → заказ (Premium)."""
