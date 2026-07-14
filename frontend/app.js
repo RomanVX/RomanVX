@@ -2841,6 +2841,7 @@ function renderFunnel() {
   let html = `<div class="card border-0 bg-card"><div class="card-body p-0"><div class="table-responsive" style="max-height:75vh">
     <table class="table table-sm align-middle mb-0 text-nowrap"><thead><tr>
       <th style="min-width:200px;position:sticky;left:0;background:var(--t-sticky);z-index:2">Товар</th>
+      <th class="text-end" title="Средняя позиция в категории (ниже — выше в выдаче)">Ср. поз.</th>
       <th class="text-end" title="Показы в поиске и каталоге">Показы</th>
       <th class="text-end" title="Открытия карточки">Карточка</th>
       <th class="text-end" title="CTR: карточка/показы">CTR</th>
@@ -2852,7 +2853,7 @@ function renderFunnel() {
       <th style="min-width:260px">Узкое место</th>
     </tr></thead><tbody>`;
   orderedGroups.forEach(([gname, list]) => {
-    html += `<tr class="table-secondary"><td colspan="10" style="padding:6px 12px"><strong>${gname}</strong> <span class="text-secondary small">(${list.length} арт.)</span></td></tr>`;
+    html += `<tr class="table-secondary"><td colspan="11" style="padding:6px 12px"><strong>${gname}</strong> <span class="text-secondary small">(${list.length} арт.)</span></td></tr>`;
     list.forEach(it => {
       const [lbl, clr] = _FUNNEL_BN[it.bottleneck] || _FUNNEL_BN.ok;
       // мини-воронка: 4 сегмента с шириной по log
@@ -2862,6 +2863,7 @@ function renderFunnel() {
         <td style="position:sticky;left:0;background:var(--t-sticky);padding:6px 12px">
           <code style="color:var(--val-soft)">${esc(it.sku)}</code>
           <div class="small text-secondary" style="max-width:190px;overflow:hidden;text-overflow:ellipsis">${esc(it.name)}</div></td>
+        <td class="text-end" style="color:${it.position ? (it.position <= 50 ? 'var(--pos)' : it.position <= 120 ? 'var(--warn-c)' : 'var(--neg)') : 'var(--muted)'}">${it.position || '—'}</td>
         <td class="text-end">${fmt(it.search)}</td>
         <td class="text-end">${fmt(it.pdp)}</td>
         <td class="text-end" style="color:${it.ctr != null && it.ctr < 2 ? 'var(--neg)' : 'var(--ink)'}">${it.ctr != null ? it.ctr + '%' : '—'}</td>

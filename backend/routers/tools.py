@@ -1938,23 +1938,33 @@ _FUNNEL_METRICS = ["hits_view_search", "hits_view_pdp", "hits_tocart_pdp",
 
 
 def _funnel_bottleneck(m: dict) -> tuple[str, str]:
-    """Где товар теряет продажи: (код, пояснение)."""
+    """Где товар теряет продажи: (код, пояснение с цифрами)."""
     search = m.get("hits_view_search") or 0
     pdp = m.get("hits_view_pdp") or 0
     tocart = m.get("hits_tocart_pdp") or 0
     orders = m.get("ordered_units") or 0
-    if search < 300:
-        return "visibility", "мало показов — усилить SEO карточки/рекламу"
+    pos = m.get("position_category") or 0
     ctr = pdp / search * 100 if search else 0
-    if ctr < 2:
-        return "ctr", f"показы есть, в карточку идут {ctr:.1f}% — главное фото/цена в выдаче"
     cart = tocart / pdp * 100 if pdp else 0
-    if cart < 5:
-        return "cart", f"карточку смотрят, в корзину кладут {cart:.1f}% — контент/отзывы/цена"
     buy = orders / tocart * 100 if tocart else 0
-    if buy < 25:
-        return "checkout", f"из корзины выкупают {buy:.0f}% — сроки доставки/конкуренты в корзине"
-    return "ok", "воронка здоровая"
+
+    if search < 300:
+        return "visibility", f"мало показов ({int(search)} за месяц) — товар почти не видят в поиске. Нужны реклама/трафик и SEO-заголовок."
+    # средняя позиция глубокая → показы есть, но далеко в выдаче
+    if pos and pos > 80 and ctr < 12:
+        return "ctr", (f"позиция в категории ~{int(pos)}, из показов в карточку заходят {ctr:.0f}% "
+                       f"— товар глубоко в выдаче. Поднимать ставками/органикой, усилить главное фото и цену в выдаче.")
+    if ctr < 8:
+        return "ctr", (f"из {int(search)} показов в карточку заходят {ctr:.0f}% "
+                       f"— слабый отклик в выдаче. Главное фото, заголовок, цена/скидка, рейтинг.")
+    # основное горлышко ниши — карточка → корзина
+    if cart < 6:
+        return "cart", (f"карточку открыли {int(pdp)} раз, в корзину положили {cart:.1f}% "
+                        f"— карточка не убеждает. Контент (фото/видео/инфографика), отзывы, состав, цена.")
+    if buy < 30:
+        return "checkout", (f"из корзины выкупают {buy:.0f}% — теряете на финише. "
+                            f"Сроки доставки, наличие на ближних складах, цена против корзины конкурентов.")
+    return "ok", f"воронка здоровая: {ctr:.0f}% в карточку, {cart:.1f}% в корзину, {buy:.0f}% выкуп."
 
 
 _ozc_cache: dict = {}
@@ -2188,7 +2198,7 @@ async def get_funnel(refresh: bool = Query(default=False)):
             "orders": int(orders),
             "revenue": round(m.get("revenue") or 0),
             "sessions": int(m.get("session_view") or 0),
-            "position": round(m.get("position_category") or 0),
+            "position": int(round(m.get("position_category") or 0)) or None,
             "ctr": round(pdp / search * 100, 1) if search else None,
             "cart_pct": round(tocart / pdp * 100, 1) if pdp else None,
             "buy_pct": round(orders / tocart * 100, 1) if tocart else None,
