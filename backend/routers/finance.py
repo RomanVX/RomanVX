@@ -277,8 +277,8 @@ async def _fetch_detail_bg(date_from: str, date_to: str) -> None:
             try:
                 import snapshot as _snapmod
                 await asyncio.to_thread(
-                    _snapmod.save, "wb_detail",
-                    {"key": cache_key, "ts": _time.time(), "rows": rows})
+                    _snapmod.save_rows, "wb_detail",
+                    {"key": cache_key, "ts": _time.time()}, rows)
             except Exception as e:
                 _log.warning("Detail snapshot save failed: %s", e)
         # детали готовы → сбрасываем P&L-кэш, чтобы следующий запрос пересобрал

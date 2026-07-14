@@ -29,6 +29,33 @@ def save(key: str, obj) -> None:
         _log.warning("snapshot save %s failed: %s", key, exc)
 
 
+def save_rows(key: str, meta: dict, rows: list) -> None:
+    """Как save(), но для больших списков строк: JSON пишется в zlib-компрессор
+    кусками, без гигантской строки в памяти (важно на 512 МБ Render).
+    Формат на выходе тот же — читается обычным load()."""
+    try:
+        import db
+        comp = zlib.compressobj(1)
+        chunks: list[bytes] = []
+        head = json.dumps({**meta, "rows": []}, ensure_ascii=False, default=str)
+        chunks.append(comp.compress(head[:-2].encode()))  # без закрывающих "]}"
+        for i in range(0, len(rows), 2000):
+            part = json.dumps(rows[i:i + 2000], ensure_ascii=False,
+                              default=str)[1:-1]  # содержимое без [ ]
+            if part:
+                chunks.append(comp.compress(
+                    ((',' if i else '') + part).encode()))
+        chunks.append(comp.compress(b']}'))
+        chunks.append(comp.flush())
+        payload = _GZ_PREFIX + base64.b64encode(b''.join(chunks)).decode()
+        db.execute("CREATE TABLE IF NOT EXISTS kv_cache (k TEXT PRIMARY KEY, v TEXT)")
+        db.execute("DELETE FROM kv_cache WHERE k = ?", (key,))
+        db.execute("INSERT INTO kv_cache (k, v) VALUES (?, ?)", (key, payload))
+        _log.info("snapshot %s: %d rows, %d KB сжато", key, len(rows), len(payload) // 1024)
+    except Exception as exc:
+        _log.warning("snapshot save_rows %s failed: %s", key, exc)
+
+
 def load(key: str, default=None):
     """Читает объект из kv_cache; при любой ошибке возвращает default."""
     try:
