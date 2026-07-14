@@ -2306,6 +2306,109 @@ async def ozads_phrases_probe():
     return out
 
 
+_ozphr_cache: dict = {}
+_ozphr_ts: float = 0.0
+
+
+@router.get("/ozphrases")
+async def get_ozphrases(refresh: bool = Query(default=False), days: int = Query(default=14)):
+    """Поисковые запросы Ozon (Performance): по каким фразам показываются и
+    кликают товары в рекламе. Агрегат по фразе с показами/кликами/CTR."""
+    import time as _t
+    global _ozphr_cache, _ozphr_ts
+    if not refresh and _ozphr_cache and _t.monotonic() - _ozphr_ts < 6 * 3600:
+        return _ozphr_cache
+
+    import ozon_perf_client as pc
+    if not pc.configured():
+        return {"items": [], "error": "Performance API не настроен"}
+
+    if not refresh and not _ozphr_cache:
+        import snapshot as _snap
+        snap = await asyncio.to_thread(_snap.load, "ozphrases", None)
+        if snap:
+            _ozphr_cache = snap
+            _ozphr_ts = _t.monotonic() - 6 * 3600 + 300
+            return snap
+
+    from datetime import date
+    d_to = (date.today() - timedelta(days=1)).isoformat()
+    d_from = (date.today() - timedelta(days=days)).isoformat()
+    try:
+        camps = await pc.get_campaigns()
+        sku_ids = [str(c.get("id")) for c in camps
+                   if "SKU" in str(c.get("advObjectType", "")).upper()
+                   and c.get("state") == "CAMPAIGN_STATE_RUNNING"]
+        titles = {str(c.get("id")): c.get("title", "") for c in camps}
+        rows = await pc.get_phrases(sku_ids, d_from, d_to) if sku_ids else []
+    except Exception as e:
+        return {"items": [], "error": f"Ozon Performance: {str(e)[:200]}"}
+
+    # агрегируем по фразе (суммируем показы/клики по всем товарам/кампаниям)
+    agg: dict[str, dict] = {}
+    for r in rows:
+        ph = r["phrase"].strip()
+        if not ph:
+            continue
+        a = agg.setdefault(ph.lower(), {"phrase": ph, "views": 0, "clicks": 0,
+                                        "camps": set(), "products": set()})
+        a["views"] += r["views"]
+        a["clicks"] += r["clicks"]
+        if r.get("campaign_id"):
+            a["camps"].add(titles.get(r["campaign_id"]) or r["campaign_id"])
+        if r.get("product"):
+            a["products"].add(r["product"][:40])
+
+    items = []
+    for a in agg.values():
+        ctr = round(a["clicks"] / a["views"] * 100, 1) if a["views"] else 0
+        items.append({"phrase": a["phrase"], "views": a["views"], "clicks": a["clicks"],
+                      "ctr": ctr, "campaigns": sorted(a["camps"])[:3],
+                      "products": sorted(a["products"])[:3]})
+    items.sort(key=lambda x: -x["views"])
+
+    result = {"items": items,
+              "total_views": sum(i["views"] for i in items),
+              "total_clicks": sum(i["clicks"] for i in items),
+              "period": f"{'.'.join(reversed(d_from.split('-')))} — {'.'.join(reversed(d_to.split('-')))}",
+              "days": days, "fetched_at": datetime.utcnow().strftime("%d.%m.%Y %H:%M UTC")}
+    _ozphr_cache = result
+    _ozphr_ts = _t.monotonic()
+    import snapshot as _snap
+    await asyncio.to_thread(_snap.save, "ozphrases", result)
+    return result
+
+
+@router.get("/ozphrases/export")
+async def ozphrases_export():
+    """Выгрузка поисковых запросов Ozon в Excel."""
+    import io
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+    from fastapi.responses import StreamingResponse
+    d = await get_ozphrases(refresh=False)
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Запросы Ozon"
+    ws.append(["Поисковый запрос", "Показы", "Клики", "CTR %", "Товары", "Кампании"])
+    for c in ws[1]:
+        c.font = Font(bold=True, color="FFFFFF")
+        c.fill = PatternFill("solid", fgColor="4F46E5")
+    for it in d.get("items", []):
+        ws.append([it["phrase"], it["views"], it["clicks"], it["ctr"],
+                   ", ".join(it.get("products") or []), ", ".join(it.get("campaigns") or [])])
+    for i, w in enumerate([46, 10, 9, 8, 40, 30], 1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+    ws.freeze_panes = "A2"
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="ozon_phrases.xlsx"'})
+
+
 @router.get("/ozads/export")
 async def ozads_export():
     """Выгрузка рекламы Ozon в Excel: кампании + метрики + дни."""

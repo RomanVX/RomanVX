@@ -2714,22 +2714,23 @@ const _OZ_HINTS = {
   funnel: 'Premium-аналитика Ozon: показы → карточка → корзина → заказ по каждому SKU, где теряем продажи',
   clusters: 'Остатки по кластерам Ozon: покрытие, скорость, что везти / остальное (Ozon сам считает продажи/день и покрытие)',
   ads: 'Реклама Ozon (Performance): расход, ДРР, ROAS, заказы и куда утекают деньги по каждой кампании',
+  phrases: 'По каким поисковым запросам показываются и кликают ваши товары в рекламе Ozon',
 };
 function setOzTool(t) {
   if (_ozTool === t) return;
   _ozTool = t;
-  [['ozFunnel', 'funnel'], ['ozClusters', 'clusters'], ['ozAds', 'ads']].forEach(([id, k]) =>
+  [['ozFunnel', 'funnel'], ['ozClusters', 'clusters'], ['ozAds', 'ads'], ['ozPhrases', 'phrases']].forEach(([id, k]) =>
     document.getElementById(id)?.classList.toggle('active', k === t));
   const hint = document.getElementById('ozToolHint');
   if (hint) hint.textContent = _OZ_HINTS[t] || '';
   loadOzTool();
 }
 function loadOzTool() {
-  ({ funnel: loadFunnel, clusters: loadOzClusters, ads: loadOzAds })[_ozTool]();
+  ({ funnel: loadFunnel, clusters: loadOzClusters, ads: loadOzAds, phrases: loadOzPhrases })[_ozTool]();
 }
 function reloadOzTool() {
   ({ funnel: () => loadFunnel(true), clusters: () => loadOzClusters(true),
-     ads: () => loadOzAds(true) })[_ozTool]();
+     ads: () => loadOzAds(true), phrases: () => loadOzPhrases(true) })[_ozTool]();
 }
 
 let _ozClustersData = null;
@@ -2968,6 +2969,58 @@ function renderOzAds() {
   });
   html += `</tbody></table></div></div></div>
   <div class="text-secondary small mt-2">Реклама Ozon (Performance API) за период <b>${d.period || d.days + ' дней'}</b> (полные дни). ДРР = расход / выручка с рекламы; красным — кампании без заказов (деньги в никуда) и ДРР >20%. Обновлено: ${d.fetched_at}</div>`;
+  wrap.innerHTML = html;
+}
+
+// ── Запросы Ozon (Performance): по чему находят ───────────────────────────────
+let _ozPhrData = null;
+async function loadOzPhrases(refresh) {
+  const wrap = document.getElementById('toolsOzWrap');
+  if (!wrap || _ozTool !== 'phrases') return;
+  if (_ozPhrData && !refresh) { renderOzPhrases(); return; }
+  if (!_ozPhrData) wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>Собираем поисковые запросы Ozon (отчёт генерируется ~минуту)…</div>';
+  try {
+    _ozPhrData = await fetchJSON('/api/tools/ozphrases' + (refresh ? '?refresh=true' : ''), 180000);
+    renderOzPhrases();
+  } catch (e) {
+    wrap.innerHTML = `<div class="alert alert-danger mt-2">Ошибка: ${esc(e.message)}</div>`;
+  }
+}
+
+function renderOzPhrases() {
+  if (_ozTool !== 'phrases') return;
+  const wrap = document.getElementById('toolsOzWrap');
+  if (!wrap || !_ozPhrData) return;
+  const d = _ozPhrData;
+  if (d.error) { wrap.innerHTML = `<div class="alert alert-warning">⚠ ${esc(d.error)}</div>`; return; }
+  const items = d.items || [];
+  if (!items.length) { wrap.innerHTML = '<div class="alert alert-info">Нет данных по поисковым запросам (нужны активные SKU-кампании)</div>'; return; }
+
+  let html = `<div class="d-flex gap-3 flex-wrap mb-3 align-items-center">
+    <div class="metric-card"><div class="mc-head">Запросов</div><div class="mc-val">${fmt(items.length)}</div></div>
+    <div class="metric-card"><div class="mc-head">Показы</div><div class="mc-val">${fmt(d.total_views)}</div></div>
+    <div class="metric-card"><div class="mc-head">Клики</div><div class="mc-val">${fmt(d.total_clicks)}</div></div>
+    <div class="metric-card"><div class="mc-head">CTR</div><div class="mc-val">${d.total_views ? (d.total_clicks / d.total_views * 100).toFixed(1) : 0}%</div></div>
+    <a href="/api/tools/ozphrases/export" class="btn btn-sm btn-outline-success ms-auto" download>⬇ Экспорт в Excel</a>
+  </div>`;
+  html += `<div class="card border-0 bg-card"><div class="card-body p-0"><div class="table-responsive" style="max-height:72vh">
+    <table class="table table-sm align-middle mb-0"><thead><tr>
+      <th style="min-width:260px;position:sticky;left:0;background:var(--t-sticky);z-index:2">Поисковый запрос</th>
+      <th class="text-end">Показы</th><th class="text-end">Клики</th>
+      <th class="text-end" title="Клики/показы">CTR</th>
+      <th style="min-width:220px">Товары</th>
+    </tr></thead><tbody>`;
+  items.forEach(it => {
+    html += `<tr style="background:var(--t-row)">
+      <td style="position:sticky;left:0;background:var(--t-sticky);padding:6px 12px;color:var(--ink)">${esc(it.phrase)}</td>
+      <td class="text-end">${fmt(it.views)}</td>
+      <td class="text-end" style="color:var(--val);font-weight:600">${fmt(it.clicks)}</td>
+      <td class="text-end" style="color:${it.ctr >= 5 ? 'var(--pos)' : it.ctr < 1 ? 'var(--neg)' : 'var(--ink)'}">${it.ctr}%</td>
+      <td class="small text-secondary" style="max-width:260px;overflow:hidden;text-overflow:ellipsis">${esc((it.products || []).join(', '))}</td>
+    </tr>`;
+  });
+  html += `</tbody></table></div></div></div>
+  <div class="text-secondary small mt-2">Поисковые запросы из рекламных SKU-кампаний Ozon за период <b>${d.period || d.days + ' дней'}</b>. По каким фразам показываются и кликают ваши товары. Высокий CTR (зелёный) — целевой запрос, стоит усилить; низкий при больших показах (красный) — фраза нецелевая, кандидат в минус-слова. Обновлено: ${d.fetched_at}</div>`;
   wrap.innerHTML = html;
 }
 

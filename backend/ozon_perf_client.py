@@ -131,19 +131,19 @@ async def get_phrases(campaign_ids: list[str], date_from: str, date_to: str) -> 
     except zipfile.BadZipFile:
         _log.warning("Ozon phrases: не ZIP (%s)", r.content[:80])
         return []
+    # CSV Ozon: 1-я строка — заголовок кампании; 2-я — колонки
+    # «SKU; Название товара; Поисковый запрос; Показы; Клики; CTR (%)»
     for name in zf.namelist():
         cid = name.split("_")[0]
         raw = zf.read(name).decode("utf-8-sig", errors="replace")
-        # CSV Ozon с разделителем ; и заголовком-строкой
         reader = _csv.reader(io.StringIO(raw), delimiter=";")
         header = None
         for row in reader:
-            if not row or len(row) < 2:
+            if not row or len(row) < 4:
                 continue
             low = [c.strip().lower() for c in row]
             if header is None:
-                # ищем строку заголовка (содержит «запрос»/«фраз»)
-                if any("запрос" in c or "фраз" in c or "поиск" in c for c in low):
+                if any("поисков" in c or "запрос" in c for c in low):
                     header = low
                 continue
             rec = dict(zip(header, row))
@@ -153,18 +153,19 @@ async def get_phrases(campaign_ids: list[str], date_from: str, date_to: str) -> 
                         if k in h:
                             return v
                 return ""
-            phrase = g("запрос", "фраз", "поисков")
+            phrase = g("поисков", "запрос")
             if not phrase or phrase.lower().startswith("итого"):
                 continue
             out.append({
-                "campaign_id": cid, "phrase": phrase,
+                "campaign_id": cid,
+                "sku": g("sku", "артикул"),
+                "product": g("название"),
+                "phrase": phrase,
                 "views": int(_num(g("показ"))),
                 "clicks": int(_num(g("клик"))),
-                "spent": _num(g("расход", "затрат", "потрач")),
-                "orders": int(_num(g("заказ"))),
-                "orders_money": _num(g("выручк", "сумма заказов", "продаж")),
+                "ctr": _num(g("ctr")),
             })
-    _log.info("Ozon phrases: %d строк из %d файлов", len(out), len(zf.namelist()))
+    _log.info("Ozon phrases: %d фраз из %d файлов", len(out), len(zf.namelist()))
     return out
 
 
