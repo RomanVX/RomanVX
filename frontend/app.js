@@ -2081,13 +2081,9 @@ function setUnitTax(v) {
 }
 
 function toggleUnitMode() {
-  // цикл: помесячная → динамика → на единицу → …
-  _unitMode = _unitMode === 'month' ? 'dyn' : _unitMode === 'dyn' ? 'perunit' : 'month';
+  _unitMode = _unitMode === 'month' ? 'dyn' : 'month';
   const btn = document.getElementById('unitModeBtn');
-  // на кнопке — следующий режим
-  if (btn) btn.textContent = _unitMode === 'month' ? '📈 Динамика по месяцам'
-                          : _unitMode === 'dyn' ? '🧮 На единицу'
-                          : '📋 Помесячная таблица';
+  if (btn) btn.textContent = _unitMode === 'month' ? '📈 Динамика по месяцам' : '📋 Помесячная таблица';
   renderUnitTable();
 }
 
@@ -2114,7 +2110,6 @@ const UNIT_PNL_ROWS = [
   ['penalty',    '− Штрафы',                'var(--warn-c)'],
   ['deductions', '− Удержания (распр.)',    'var(--warn-c)'],
   ['advert',     '− Продвижение (распр.)',  '#c084fc'],
-  ['advert_bonus', '↳ компенсировано баллами', 'var(--pos)'],
   ['payout',     'К перечислению',          'var(--pos)'],
   ['cogs',       '− Себестоимость',         'var(--neg)'],
   ['gross',      'Валовая прибыль',         'var(--pos)'],
@@ -2215,7 +2210,6 @@ function renderUnitTable() {
   }
 
   if (_unitMode === 'month') { renderUnitMonth(); return; }
-  if (_unitMode === 'perunit') { renderUnitPerUnit(); return; }
   renderUnitDynamics();
 }
 
@@ -2357,7 +2351,6 @@ function renderUnitMonth() {
     ['commission', isOz ? 'Комиссия Ozon' : isYm ? 'Комиссия ЯМ' : 'Комиссия WB'],
     ['acquiring',  'Эквайринг'],
     ['advert',     'Продвижение'],
-    ...(isOz || isYm ? [] : [['advert_bonus', 'Комп. баллами']]),
     ['other',      'Удерж./проч.'],
     ['tax',        _unitTax > 0 ? `Налог ${_unitTax}% с приб.` : 'Налог (—)'],
     ['profit',     'Прибыль/убыток'],
@@ -2682,12 +2675,13 @@ const _TOOL_HINTS = {
   niche: 'Спрос по вашим товарам из Джем: поисковые запросы, частотность, ваша позиция, заказы и точки роста',
   nichecalc: 'Выходить ли с товаром: конкуренты из выдачи WB, цены, спрос и вердикт (сбор через агент)',
   visuals: 'Заглавные фото топ-20 карточек конкурентов + разбор визуала через Claude',
+  margin: 'Затраты на единицу из фактической юнитки: вводите цену/себестоимость — видите прибыль, маржу и точку безубыточности',
 };
 
 function setTool(t) {
   if (_toolActive === t) return;
   _toolActive = t;
-  ['Prod', 'Clusters', 'Adv', 'Niche', 'Nichecalc', 'Visuals'].forEach(k => {
+  ['Prod', 'Clusters', 'Adv', 'Niche', 'Nichecalc', 'Visuals', 'Margin'].forEach(k => {
     document.getElementById('tool' + k)?.classList.toggle('active', k.toLowerCase() === t);
   });
   const hint = document.getElementById('toolHint');
@@ -2698,12 +2692,13 @@ function setTool(t) {
 function reloadTool() {
   ({ prod: () => loadProductolog(true), clusters: () => loadClusters(true),
      adv: () => loadAdv(true), niche: () => loadDemand(true),
-     nichecalc: () => renderNicheForm(), visuals: () => renderVisualsForm() })[_toolActive]();
+     nichecalc: () => renderNicheForm(), visuals: () => renderVisualsForm(),
+     margin: () => loadMargin(true) })[_toolActive]();
 }
 function loadTools() {
   ({ prod: loadProductolog, clusters: loadClusters, adv: loadAdv,
      niche: loadDemand, nichecalc: renderNicheForm,
-     visuals: renderVisualsForm })[_toolActive]();
+     visuals: renderVisualsForm, margin: loadMargin })[_toolActive]();
 }
 
 // ── Воронка Ozon (Premium) ────────────────────────────────────────────────────
@@ -3376,6 +3371,164 @@ async function genVisualsPrompt(query) {
     out.innerHTML = `<div class="alert alert-danger py-2 small">Ошибка: ${esc(e.message)}</div>`;
   }
   btn.disabled = false;
+}
+
+// ── Калькулятор маржи ─────────────────────────────────────────────────────────
+let _marginData = null;
+let _marginMp = 'WB';
+let _marginPrice = {};      // sku → изменённая цена
+let _marginCost = {};       // sku → изменённая себестоимость
+let _marginTax = parseFloat(localStorage.getItem('unit_tax_profit_pct') || '0');
+let _marginTarget = 25;     // целевая маржа %
+let _marginAdvOn = true;    // учитывать продвижение
+
+async function loadMargin(refresh) {
+  const wrap = document.getElementById('toolsWrap');
+  if (!wrap || _toolActive !== 'margin') return;
+  if (_marginData && !refresh) { renderMargin(); return; }
+  wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>Считаем затраты на единицу из юнитки…</div>';
+  try {
+    _marginData = await fetchJSON('/api/tools/margin?mp=' + _marginMp, 60000);
+    renderMargin();
+  } catch (e) {
+    wrap.innerHTML = `<div class="alert alert-danger mt-2">Ошибка: ${esc(e.message)}</div>`;
+  }
+}
+function setMarginMp(mp) { if (mp === _marginMp) return; _marginMp = mp; _marginData = null; loadMargin(true); }
+function setMarginTax(v) { _marginTax = Math.max(0, parseFloat(v) || 0); localStorage.setItem('unit_tax_profit_pct', String(_marginTax)); recalcAllMargin(); }
+function setMarginTarget(v) { _marginTarget = Math.max(0, parseFloat(v) || 0); recalcAllMargin(); }
+function toggleMarginAdv(on) { _marginAdvOn = on; recalcAllMargin(); }
+function resetMargin() { _marginPrice = {}; _marginCost = {}; renderMargin(); }
+
+// ядро расчёта одной строки
+function _marginCalc(b) {
+  const price = _marginPrice[b.sku] != null ? _marginPrice[b.sku] : b.price0;
+  const cogs = _marginCost[b.sku] != null ? _marginCost[b.sku] : b.cogs;
+  const advert = _marginAdvOn ? b.advert : 0;
+  const pctPart = (b.comm_pct + b.acq_pct) / 100;           // масштабируется с ценой
+  const fixed = b.logist + b.storage + b.other + advert + cogs;  // не зависит от цены
+  const comm = price * b.comm_pct / 100;
+  const acq = price * b.acq_pct / 100;
+  const grossBeforeTax = price - comm - acq - fixed;
+  const tax = _marginTax > 0 ? Math.max(grossBeforeTax, 0) * _marginTax / 100 : 0;
+  const profit = grossBeforeTax - tax;
+  const margin = price > 0 ? profit / price * 100 : 0;
+  const roi = cogs > 0 ? profit / cogs * 100 : null;
+  // точка безубыточности: price*(1-pctPart) - fixed = 0  (при profit=0 налог=0)
+  const denomBE = 1 - pctPart;
+  const breakEven = denomBE > 0 ? fixed / denomBE : null;
+  // цена для целевой маржи: price*(1-pctPart) - fixed = profit; profit=target%*price; с налогом
+  const t = _marginTarget / 100, taxF = 1 - _marginTax / 100;
+  const denomTgt = denomBE - (taxF > 0 ? t / taxF : Infinity);
+  const targetPrice = denomTgt > 0.001 ? fixed / denomTgt : null;
+  return { price, cogs, comm, acq, advert, fixed, profit, margin, roi, breakEven, targetPrice };
+}
+
+function recalcMarginRow(sku) {
+  const b = (_marginData.items || []).find(x => x.sku === sku);
+  if (!b) return;
+  const row = document.querySelector(`tr[data-msku="${CSS.escape(sku)}"]`);
+  if (!row) return;
+  const c = _marginCalc(b);
+  const set = (cls, html) => { const el = row.querySelector('.' + cls); if (el) el.innerHTML = html; };
+  set('mg-comm', `<span style="color:var(--neg)">−</span>${fmtRub(Math.round(c.comm + c.acq))}`);
+  set('mg-costs', fmtRub(Math.round(c.comm + c.acq + c.fixed)));
+  const pclr = c.profit >= 0 ? 'var(--pos)' : 'var(--neg)';
+  set('mg-profit', `<span style="color:${pclr};font-weight:700">${c.profit < 0 ? '−' : ''}${fmtRub(Math.abs(Math.round(c.profit)))}</span>`);
+  const mclr = c.margin >= 20 ? 'var(--pos)' : c.margin >= 0 ? 'var(--warn-c)' : 'var(--neg)';
+  set('mg-margin', `<span style="color:${mclr};font-weight:700">${Math.round(c.margin)}%</span>`);
+  set('mg-roi', c.roi != null ? Math.round(c.roi) + '%' : '—');
+  set('mg-be', c.breakEven != null ? fmtRub(Math.round(c.breakEven)) : '—');
+  set('mg-tgt', c.targetPrice != null ? fmtRub(Math.round(c.targetPrice)) : '<span class="text-secondary small">—</span>');
+  row.style.background = c.profit < 0 ? 'rgba(248,113,113,.07)' : 'var(--t-row)';
+}
+function recalcAllMargin() {
+  if (_toolActive !== 'margin' || !_marginData) return;
+  (_marginData.items || []).forEach(b => recalcMarginRow(b.sku));
+  // подпись целевой маржи в шапке
+  const th = document.getElementById('mgTgtHead');
+  if (th) th.textContent = `Цена для ${_marginTarget}% маржи`;
+}
+
+function renderMargin() {
+  if (_toolActive !== 'margin') return;
+  const wrap = document.getElementById('toolsWrap');
+  if (!wrap || !_marginData) return;
+  const d = _marginData;
+  if (d.error) { wrap.innerHTML = `<div class="alert alert-warning">⚠ ${esc(d.error)}</div>`; return; }
+  const items = d.items || [];
+  if (!items.length) { wrap.innerHTML = `<div class="alert alert-info">${esc(d.message || 'Нет данных юнитки для расчёта')}</div>`; return; }
+
+  // группировка по категориям
+  const groupMap = {};
+  items.forEach(b => {
+    const g = articleGroup({ supplierArticle: b.sku, brand: b.group });
+    (groupMap[g] = groupMap[g] || []).push(b);
+  });
+  const orderedGroups = GROUP_ORDER.filter(g => groupMap[g]).map(g => [g, groupMap[g]]);
+
+  const mpBtn = (mp, lbl) => `<button class="btn btn-sm ${_marginMp === mp ? 'btn-info' : 'btn-outline-info'}" onclick="setMarginMp('${mp}')">${lbl}</button>`;
+  let html = `<div class="card bg-card p-3 mb-3">
+    <div class="d-flex gap-3 flex-wrap align-items-end">
+      <div><div class="text-secondary small mb-1">Площадка</div><div class="btn-group">${mpBtn('WB', 'WB')}${mpBtn('OZON', 'Ozon')}${mpBtn('YM', 'ЯМ')}</div></div>
+      <div><div class="text-secondary small mb-1">Налог с прибыли, %</div>
+        <input type="number" value="${_marginTax || ''}" onchange="setMarginTax(this.value)" placeholder="0"
+          style="width:90px" class="form-control form-control-sm"></div>
+      <div><div class="text-secondary small mb-1">Целевая маржа, %</div>
+        <input type="number" value="${_marginTarget}" onchange="setMarginTarget(this.value)"
+          style="width:90px" class="form-control form-control-sm"></div>
+      <div><div class="text-secondary small mb-1">Продвижение</div>
+        <div class="form-check form-switch"><input class="form-check-input" type="checkbox" ${_marginAdvOn ? 'checked' : ''} onchange="toggleMarginAdv(this.checked)"></div></div>
+      <button class="btn btn-sm btn-outline-secondary" onclick="resetMargin()">↺ Сбросить правки</button>
+    </div>
+    <div class="text-secondary small mt-2">Затраты на штуку — из фактической юнитки за 6 мес. <b>Правьте цену и себестоимость</b> (голубые поля) — прибыль, маржа и точка безубыточности пересчитываются вживую. Комиссия и эквайринг зависят от цены (%), остальное фиксировано на штуку.</div>
+  </div>`;
+
+  html += `<div class="card border-0 bg-card"><div class="card-body p-0"><div class="table-responsive" style="max-height:70vh">
+    <table class="table table-sm align-middle mb-0 text-nowrap" style="font-size:.83rem"><thead><tr>
+      <th style="min-width:230px;position:sticky;left:0;background:var(--t-sticky);z-index:2">Товар</th>
+      <th class="text-end" title="Себестоимость — редактируется">Себес ₽</th>
+      <th class="text-end" title="Комиссия WB + эквайринг (% от цены)">Комиссия</th>
+      <th class="text-end">Логист.</th><th class="text-end">Хранен.</th>
+      <th class="text-end" title="Продвижение на штуку">Продв.</th>
+      <th class="text-end" title="Цена — редактируется" style="background:rgba(16,185,129,.10)">Цена ₽</th>
+      <th class="text-end">Затраты</th>
+      <th class="text-end">Прибыль/ед</th><th class="text-end">Маржа</th><th class="text-end">ROI</th>
+      <th class="text-end" title="Цена, при которой прибыль = 0">Безубыт.</th>
+      <th class="text-end" id="mgTgtHead">Цена для ${_marginTarget}% маржи</th>
+    </tr></thead><tbody>`;
+  orderedGroups.forEach(([gname, list]) => {
+    list.sort((a, b) => b.qty - a.qty);
+    html += `<tr class="table-secondary"><td colspan="13" style="padding:6px 12px"><strong>${gname}</strong> <span class="text-secondary small">(${list.length} арт.)</span></td></tr>`;
+    list.forEach(b => {
+      const price = _marginPrice[b.sku] != null ? _marginPrice[b.sku] : b.price0;
+      const cogs = _marginCost[b.sku] != null ? _marginCost[b.sku] : b.cogs;
+      const advDim = _marginAdvOn ? '' : 'opacity:.35';
+      html += `<tr data-msku="${esc(b.sku)}" style="background:var(--t-row)">
+        <td style="position:sticky;left:0;background:var(--t-sticky);padding:5px 12px">
+          <code style="color:var(--val-soft)">${esc(b.sku)}</code>
+          <div class="small text-secondary" style="max-width:210px;overflow:hidden;text-overflow:ellipsis">${esc(b.name || '')}</div></td>
+        <td class="text-end" style="padding:3px 6px"><input type="number" value="${cogs}" oninput="_marginCost['${esc(b.sku)}']=parseFloat(this.value)||0;recalcMarginRow('${esc(b.sku)}')"
+          style="width:76px;text-align:right;background:rgba(56,189,248,.10);border:1px solid var(--border);border-radius:6px;color:var(--ink);padding:2px 6px"></td>
+        <td class="text-end mg-comm"></td>
+        <td class="text-end"><span style="color:var(--neg)">−</span>${fmtRub(b.logist)}</td>
+        <td class="text-end"><span style="color:var(--neg)">−</span>${fmtRub(b.storage)}</td>
+        <td class="text-end" style="${advDim}"><span style="color:var(--neg)">−</span>${fmtRub(b.advert)}</td>
+        <td class="text-end" style="padding:3px 6px;background:rgba(16,185,129,.06)"><input type="number" value="${price}" oninput="_marginPrice['${esc(b.sku)}']=parseFloat(this.value)||0;recalcMarginRow('${esc(b.sku)}')"
+          style="width:84px;text-align:right;background:rgba(16,185,129,.12);border:1px solid var(--pos);border-radius:6px;color:var(--ink);font-weight:600;padding:2px 6px"></td>
+        <td class="text-end mg-costs" style="color:var(--ink-2)"></td>
+        <td class="text-end mg-profit" style="border-left:1px solid var(--sep)"></td>
+        <td class="text-end mg-margin"></td>
+        <td class="text-end mg-roi text-secondary"></td>
+        <td class="text-end mg-be text-secondary"></td>
+        <td class="text-end mg-tgt"></td>
+      </tr>`;
+    });
+  });
+  html += `</tbody></table></div></div></div>
+  <div class="text-secondary small mt-2">💡 <b>Безубыточность</b> — минимальная цена, ниже которой уходите в минус (при текущей себестоимости). <b>Цена для X% маржи</b> — по какой цене продавать, чтобы получить нужную маржу. Убыточные при текущей цене строки подсвечены красным. ${d.fetched_at}</div>`;
+  wrap.innerHTML = html;
+  recalcAllMargin();
 }
 
 // ── Контроль рекламы ──────────────────────────────────────────────────────────

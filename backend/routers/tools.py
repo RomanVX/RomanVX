@@ -1037,6 +1037,61 @@ async def _wb_public_search(query: str, limit: int = 60) -> tuple[list[dict], in
 _niche_last_err = ""
 
 
+# ══ Калькулятор маржи: затраты на единицу + ценообразование ═══════════════════
+@router.get("/margin")
+async def get_margin(mp: str = Query(default="WB")):
+    """Затраты на единицу товара из фактической юнитки — для калькулятора
+    цены/маржи. По каждому SKU: цена (средняя), % комиссии/эквайринга,
+    логистика/хранение/продвижение/себес на штуку."""
+    from routers import finance as _fin
+    try:
+        if mp == "OZON":
+            data = await _fin.get_ozon_unit(months=6)
+        elif mp == "YM":
+            data = await _fin.get_ym_unit(months=6)
+        else:
+            data = await _fin.get_wb_unit(months=6)
+    except Exception as e:
+        return {"items": [], "error": str(e)[:200]}
+
+    skus = data.get("skus", [])
+    if not skus:
+        return {"items": [], "message": data.get("message") or "Нет данных юнитки"}
+
+    items = []
+    for r in skus:
+        # суммируем все месяцы → усреднённые затраты на единицу
+        tot = {}
+        for cell in (r.get("months") or {}).values():
+            for k, v in cell.items():
+                if isinstance(v, (int, float)):
+                    tot[k] = tot.get(k, 0) + v
+        qty = tot.get("qty", 0)
+        rev = tot.get("revenue", 0)
+        if qty <= 0 or rev <= 0:
+            continue
+        per = lambda k: tot.get(k, 0) / qty
+        price0 = round(rev / qty)
+        comm_pct = round(tot.get("commission", 0) / rev * 100, 2)
+        acq_pct = round(tot.get("acquiring", 0) / rev * 100, 2)
+        items.append({
+            "sku": r.get("sku"), "nmId": r.get("nmId"),
+            "name": r.get("name", ""), "group": r.get("brand", ""),
+            "qty": round(qty),
+            "price0": price0,                              # средняя цена (до СПП)
+            "comm_pct": comm_pct,                          # комиссия % (масштаб. с ценой)
+            "acq_pct": acq_pct,                            # эквайринг %
+            "logist": round(per("delivery")),              # логистика на штуку (фикс)
+            "storage": round(per("storage") + per("acceptance")),  # хранение+приёмка
+            "other": round(max(per("penalty") + per("deductions"), 0)),  # штрафы/удерж.
+            "advert": round(max(per("advert"), 0)),        # продвижение на штуку
+            "cogs": round(r.get("unitCost") or per("cogs")),  # себестоимость
+        })
+    items.sort(key=lambda x: -x["qty"])
+    return {"items": items, "mp": mp,
+            "fetched_at": datetime.utcnow().strftime("%d.%m.%Y %H:%M UTC")}
+
+
 # ══ Спрос WB (Джем): поисковые запросы по своим товарам ═══════════════════════
 _demand_cache: dict = {}
 _demand_ts: float = 0.0
