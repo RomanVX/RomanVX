@@ -3901,14 +3901,11 @@ function renderReviewsFeed() {
   if (!el) return;
   const platform = document.getElementById('reviewsPlatform')?.value || 'all';
   const onlyText = document.getElementById('reviewsOnlyText')?.checked ?? true;
-  const artQ = (document.getElementById('reviewsArt')?.value || '').trim().toLowerCase();
+  buildArtDD();   // держим список артикулов в актуальном состоянии
 
   let filtered = platform === 'all' ? _allReviews : _allReviews.filter(r => r.platform === platform);
   if (onlyText) filtered = filtered.filter(r => r.text);
-  if (artQ) filtered = filtered.filter(r =>
-    (r.sku || '').toLowerCase().includes(artQ) ||
-    (r.name || '').toLowerCase().includes(artQ) ||
-    String(r.nm || '').includes(artQ));
+  if (_reviewsArtSel.size) filtered = filtered.filter(r => _reviewsArtSel.has(r.sku || ''));
   window._reviewsFiltered = filtered;
 
   if (!filtered.length) { el.innerHTML = '<p class="text-secondary mt-3">Нет отзывов</p>'; return; }
@@ -3942,11 +3939,90 @@ function renderReviewsFeed() {
 }
 
 
+// ── Мультиселект артикулов в отзывах (по группам) ─────────────────────────────
+let _reviewsArtSel = new Set();   // выбранные sku (пусто = все)
+let _artDDBuilt = '';             // подпись списка, чтобы не перерисовывать зря
+
+function buildArtDD() {
+  const menu = document.getElementById('reviewsArtMenu');
+  if (!menu) return;
+  // уникальные артикулы из отзывов, сгруппированные
+  const byGroup = {};
+  const seen = new Set();
+  (_allReviews || []).forEach(r => {
+    const sku = r.sku || '';
+    if (!sku || seen.has(sku)) return;
+    seen.add(sku);
+    const g = articleGroup({ supplierArticle: sku, brand: r.brand });
+    (byGroup[g] = byGroup[g] || []).push({ sku, name: r.name || '' });
+  });
+  const sig = Object.keys(byGroup).sort().join('|') + ':' + seen.size;
+  if (sig === _artDDBuilt) { updateArtBtn(); return; }   // список не изменился
+  _artDDBuilt = sig;
+
+  const ordered = GROUP_ORDER.filter(g => byGroup[g]).map(g => [g, byGroup[g]]);
+  let html = `<div class="d-flex gap-2 mb-2">
+      <button class="btn btn-sm btn-outline-light py-0 flex-fill" onclick="artDDAll(true)">Все</button>
+      <button class="btn btn-sm btn-outline-secondary py-0 flex-fill" onclick="artDDAll(false)">Снять</button>
+    </div>`;
+  ordered.forEach(([g, list]) => {
+    list.sort((a, b) => a.sku.localeCompare(b.sku));
+    html += `<div class="fw-semibold small mt-2 mb-1" style="color:var(--val)">
+      <a href="#" onclick="artDDGroup('${esc(g)}');return false" style="color:var(--val);text-decoration:none">${esc(g)}</a>
+      <span class="text-secondary">(${list.length})</span></div>`;
+    list.forEach(it => {
+      const ck = _reviewsArtSel.has(it.sku) ? 'checked' : '';
+      html += `<label class="d-block small" style="cursor:pointer;color:var(--ink)">
+        <input type="checkbox" class="form-check-input me-1 art-ck" data-group="${esc(g)}" value="${esc(it.sku)}" ${ck}
+               onchange="artDDToggle(this)">
+        <code style="color:var(--val-soft)">${esc(it.sku)}</code>
+        <span class="text-secondary">${esc((it.name || '').slice(0, 34))}</span></label>`;
+    });
+  });
+  menu.innerHTML = html;
+  updateArtBtn();
+}
+
+function updateArtBtn() {
+  const btn = document.getElementById('reviewsArtBtn');
+  if (btn) btn.textContent = _reviewsArtSel.size ? `Артикулы: ${_reviewsArtSel.size}` : 'Все артикулы';
+}
+
+function toggleArtDD(e) {
+  e.stopPropagation();
+  document.getElementById('reviewsArtMenu')?.classList.toggle('show');
+}
+document.addEventListener('click', e => {
+  const dd = document.getElementById('reviewsArtDD');
+  if (dd && !dd.contains(e.target)) document.getElementById('reviewsArtMenu')?.classList.remove('show');
+});
+
+function artDDToggle(cb) {
+  if (cb.checked) _reviewsArtSel.add(cb.value); else _reviewsArtSel.delete(cb.value);
+  updateArtBtn();
+  renderReviewsFeed();
+}
+function artDDGroup(g) {
+  // выбрать/снять всю группу
+  const cks = [...document.querySelectorAll(`.art-ck[data-group="${CSS.escape(g)}"]`)];
+  const allOn = cks.every(c => c.checked);
+  cks.forEach(c => { c.checked = !allOn; if (!allOn) _reviewsArtSel.add(c.value); else _reviewsArtSel.delete(c.value); });
+  updateArtBtn();
+  renderReviewsFeed();
+}
+function artDDAll(on) {
+  _reviewsArtSel.clear();
+  if (on) document.querySelectorAll('.art-ck').forEach(c => { c.checked = true; _reviewsArtSel.add(c.value); });
+  else document.querySelectorAll('.art-ck').forEach(c => { c.checked = false; });
+  updateArtBtn();
+  renderReviewsFeed();
+}
+
 function exportReviews() {
   const platform = document.getElementById('reviewsPlatform')?.value || 'all';
   const onlyText = document.getElementById('reviewsOnlyText')?.checked ? '1' : '0';
-  const art = encodeURIComponent((document.getElementById('reviewsArt')?.value || '').trim());
-  window.open(`${API}/api/reviews/export?platform=${platform}&only_text=${onlyText}&art=${art}&${getParams()}`, '_blank');
+  const skus = encodeURIComponent([..._reviewsArtSel].join(','));
+  window.open(`${API}/api/reviews/export?platform=${platform}&only_text=${onlyText}&skus=${skus}&${getParams()}`, '_blank');
 }
 
 // главное фото товара WB по nmId (раскладка по basket-хостам)

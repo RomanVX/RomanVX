@@ -34,9 +34,13 @@ async def get_reviews_data(
 async def export_reviews(
     platform: str = Query("all"),
     only_text: bool = Query(False),
+    skus: str = Query(""),
     art: str = Query(""),
 ):
-    """Выгрузка отзывов в Excel с теми же фильтрами, что на дашборде."""
+    """Выгрузка отзывов в Excel с теми же фильтрами, что на дашборде.
+
+    skus — список выбранных артикулов через запятую (мультиселект);
+    art — текстовый поиск (совместимость)."""
     import io
     import openpyxl
     from openpyxl.styles import Font, PatternFill, Alignment
@@ -46,7 +50,10 @@ async def export_reviews(
     rows = rc.get_all_reviews(platform=platform, limit=100000)
     if only_text:
         rows = [r for r in rows if r.get("text")]
-    if art:
+    sku_set = {s.strip() for s in skus.split(",") if s.strip()}
+    if sku_set:
+        rows = [r for r in rows if (r.get("sku") or "") in sku_set]
+    elif art:
         q = art.strip().lower()
         rows = [r for r in rows
                 if q in (r.get("sku") or "").lower()
