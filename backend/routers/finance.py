@@ -583,6 +583,14 @@ async def get_wb_pnl(
     # поэтому выделяем её отдельной строкой и вычитаем из прочих удержаний —
     # без двойного счёта. Если реклама платилась со счёта (не из баланса),
     # прочие удержания просто останутся 0, а расход всё равно виден в P&L.
+    # Самый ранний месяц неполный: окно стартует с СЕРЕДИНЫ месяца (сегодня
+    # − 180 дней), поэтому его сумма занижена и путает. Прячем его из
+    # отображения — в кэше/снапшотах данные остаются, просто не показываем.
+    if dt_from.day != 1:
+        partial_mk = dt_from.strftime("%Y-%m")
+        month_totals.pop(partial_mk, None)
+        cogs_by_month.pop(partial_mk, None)
+
     advert_bonus_by_month: dict[str, float] = {}
     advert_balance_by_month: dict[str, float] = {}
     for mk, m in month_totals.items():
