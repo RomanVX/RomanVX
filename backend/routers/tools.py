@@ -2277,31 +2277,32 @@ async def ozads_phrases_probe():
     d_to = (date.today() - timedelta(days=1)).isoformat()
     d_from = (date.today() - timedelta(days=14)).isoformat()
 
-    # пробуем варианты тела/эндпоинта отчёта по фразам
-    for path, body in [
-        ("/api/client/statistics/phrases", {"campaigns": ids, "dateFrom": d_from, "dateTo": d_to}),
-        ("/api/client/statistics", {"campaigns": ids, "dateFrom": d_from, "dateTo": d_to,
-                                    "groupBy": "SEARCH_PHRASE"}),
-        ("/api/client/statistics", {"campaigns": ids, "from": d_from + "T00:00:00.000Z",
-                                    "to": d_to + "T23:59:59.000Z", "groupBy": "NO_GROUP_BY"}),
-    ]:
-        st, data = await pc.api_post(path, body)
-        entry = {"status": st, "resp_keys": list(data.keys()) if isinstance(data, dict) else str(data)[:200]}
-        uuid = data.get("UUID") if isinstance(data, dict) else None
-        if uuid:
-            # ждём готовности и качаем отчёт
-            for _ in range(20):
-                await _a.sleep(3)
-                s2, meta = await pc.api_get(f"/api/client/statistics/{uuid}")
-                state = (meta or {}).get("state") if isinstance(meta, dict) else None
-                if state in ("OK", "ERROR", None) and s2 == 200 and state == "OK":
-                    break
-                entry["last_state"] = state
-            s3, report = await pc.api_get("/api/client/statistics/report", {"UUID": uuid})
-            entry["report_status"] = s3
-            entry["report_head"] = (str(report)[:1500] if not isinstance(report, dict)
-                                    else {k: (str(v)[:600]) for k, v in list(report.items())[:5]})
-        out[path + " " + str(list(body.keys()))] = entry
+    st, data = await pc.api_post("/api/client/statistics/phrases",
+                                 {"campaigns": ids, "dateFrom": d_from, "dateTo": d_to})
+    uuid = data.get("UUID") if isinstance(data, dict) else None
+    out["request"] = {"status": st, "uuid": uuid}
+    if not uuid:
+        return out
+    for _ in range(40):
+        await _a.sleep(3)
+        s2, meta = await pc.api_get(f"/api/client/statistics/{uuid}")
+        state = meta.get("state") if isinstance(meta, dict) else None
+        out["state"] = state
+        if state in ("OK", "ERROR"):
+            break
+    # скачиваем ZIP напрямую и показываем шапку CSV
+    import httpx as _hx, io as _io, zipfile as _zip
+    async with _hx.AsyncClient(timeout=120) as c:
+        r = await c.get(f"{pc.BASE}/api/client/statistics/report",
+                        headers=await pc._headers(), params={"UUID": uuid})
+    out["download_status"] = r.status_code
+    try:
+        zf = _zip.ZipFile(_io.BytesIO(r.content))
+        out["files"] = zf.namelist()[:5]
+        first = zf.read(zf.namelist()[0]).decode("utf-8-sig", errors="replace")
+        out["csv_head"] = first.splitlines()[:8]      # шапка + первые строки
+    except Exception as e:
+        out["unzip_error"] = str(e)[:200]
     return out
 
 

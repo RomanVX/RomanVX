@@ -88,6 +88,86 @@ def _num(v) -> float:
         return 0.0
 
 
+async def get_phrases(campaign_ids: list[str], date_from: str, date_to: str) -> list[dict]:
+    """Отчёт по поисковым фразам (async): заказать → дождаться → скачать ZIP
+    из CSV по каждой кампании → распарсить. Только SKU/search-promo кампании.
+
+    Возвращает [{campaign_id, phrase, views, clicks, spent, orders, orders_money}]."""
+    import asyncio
+    import io
+    import zipfile
+    import csv as _csv
+
+    st, data = await api_post("/api/client/statistics/phrases", {
+        "campaigns": [str(c) for c in campaign_ids],
+        "dateFrom": date_from, "dateTo": date_to})
+    if st != 200 or not isinstance(data, dict) or not data.get("UUID"):
+        _log.warning("Ozon phrases request: HTTP %s %s", st, str(data)[:200])
+        return []
+    uuid = data["UUID"]
+
+    # ждём готовности отчёта
+    for _ in range(40):
+        await asyncio.sleep(3)
+        s2, meta = await api_get(f"/api/client/statistics/{uuid}")
+        state = meta.get("state") if isinstance(meta, dict) else None
+        if state == "OK":
+            break
+        if state == "ERROR":
+            _log.warning("Ozon phrases report ERROR: %s", str(meta)[:200])
+            return []
+
+    # скачиваем архив
+    async with httpx.AsyncClient(timeout=120) as c:
+        r = await c.get(f"{BASE}/api/client/statistics/report",
+                        headers=await _headers(), params={"UUID": uuid})
+    if r.status_code != 200 or not r.content:
+        _log.warning("Ozon phrases report download: HTTP %s", r.status_code)
+        return []
+
+    out = []
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(r.content))
+    except zipfile.BadZipFile:
+        _log.warning("Ozon phrases: не ZIP (%s)", r.content[:80])
+        return []
+    for name in zf.namelist():
+        cid = name.split("_")[0]
+        raw = zf.read(name).decode("utf-8-sig", errors="replace")
+        # CSV Ozon с разделителем ; и заголовком-строкой
+        reader = _csv.reader(io.StringIO(raw), delimiter=";")
+        header = None
+        for row in reader:
+            if not row or len(row) < 2:
+                continue
+            low = [c.strip().lower() for c in row]
+            if header is None:
+                # ищем строку заголовка (содержит «запрос»/«фраз»)
+                if any("запрос" in c or "фраз" in c or "поиск" in c for c in low):
+                    header = low
+                continue
+            rec = dict(zip(header, row))
+            def g(*keys):
+                for k in keys:
+                    for h, v in rec.items():
+                        if k in h:
+                            return v
+                return ""
+            phrase = g("запрос", "фраз", "поисков")
+            if not phrase or phrase.lower().startswith("итого"):
+                continue
+            out.append({
+                "campaign_id": cid, "phrase": phrase,
+                "views": int(_num(g("показ"))),
+                "clicks": int(_num(g("клик"))),
+                "spent": _num(g("расход", "затрат", "потрач")),
+                "orders": int(_num(g("заказ"))),
+                "orders_money": _num(g("выручк", "сумма заказов", "продаж")),
+            })
+    _log.info("Ozon phrases: %d строк из %d файлов", len(out), len(zf.namelist()))
+    return out
+
+
 async def get_daily(date_from: str, date_to: str) -> list[dict]:
     """Ежедневная статистика по кампаниям: показы, клики, расход, заказы,
     выручка. Один вызов даёт все кампании за период."""
