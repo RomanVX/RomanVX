@@ -2254,6 +2254,57 @@ async def get_ozads(refresh: bool = Query(default=False), days: int = Query(defa
     return result
 
 
+@router.get("/ozads/phrases_probe", include_in_schema=False)
+async def ozads_phrases_probe():
+    """Диагностика: отчёт по поисковым фразам Ozon Performance (async-цикл).
+    Ищем search-promo кампании, заказываем отчёт, ждём, скачиваем."""
+    import ozon_perf_client as pc
+    import asyncio as _a
+    from datetime import date
+    if not pc.configured():
+        return {"error": "not configured"}
+    out = {}
+    camps = await pc.get_campaigns()
+    # кампании продвижения в поиске / трафаретов
+    search = [c for c in camps if any(t in str(c.get("advObjectType", "")).upper()
+              for t in ("SEARCH", "SKU")) and c.get("state") == "CAMPAIGN_STATE_RUNNING"]
+    out["search_campaigns"] = [{"id": c.get("id"), "type": c.get("advObjectType"),
+                                "title": c.get("title")} for c in search[:10]]
+    if not search:
+        out["note"] = "нет активных search-promo кампаний"
+        return out
+    ids = [str(c.get("id")) for c in search[:5]]
+    d_to = (date.today() - timedelta(days=1)).isoformat()
+    d_from = (date.today() - timedelta(days=14)).isoformat()
+
+    # пробуем варианты тела/эндпоинта отчёта по фразам
+    for path, body in [
+        ("/api/client/statistics/phrases", {"campaigns": ids, "dateFrom": d_from, "dateTo": d_to}),
+        ("/api/client/statistics", {"campaigns": ids, "dateFrom": d_from, "dateTo": d_to,
+                                    "groupBy": "SEARCH_PHRASE"}),
+        ("/api/client/statistics", {"campaigns": ids, "from": d_from + "T00:00:00.000Z",
+                                    "to": d_to + "T23:59:59.000Z", "groupBy": "NO_GROUP_BY"}),
+    ]:
+        st, data = await pc.api_post(path, body)
+        entry = {"status": st, "resp_keys": list(data.keys()) if isinstance(data, dict) else str(data)[:200]}
+        uuid = data.get("UUID") if isinstance(data, dict) else None
+        if uuid:
+            # ждём готовности и качаем отчёт
+            for _ in range(20):
+                await _a.sleep(3)
+                s2, meta = await pc.api_get(f"/api/client/statistics/{uuid}")
+                state = (meta or {}).get("state") if isinstance(meta, dict) else None
+                if state in ("OK", "ERROR", None) and s2 == 200 and state == "OK":
+                    break
+                entry["last_state"] = state
+            s3, report = await pc.api_get("/api/client/statistics/report", {"UUID": uuid})
+            entry["report_status"] = s3
+            entry["report_head"] = (str(report)[:1500] if not isinstance(report, dict)
+                                    else {k: (str(v)[:600]) for k, v in list(report.items())[:5]})
+        out[path + " " + str(list(body.keys()))] = entry
+    return out
+
+
 @router.get("/ozads/export")
 async def ozads_export():
     """Выгрузка рекламы Ozon в Excel: кампании + метрики + дни."""
