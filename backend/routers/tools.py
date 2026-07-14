@@ -2325,7 +2325,7 @@ async def get_ozphrases(refresh: bool = Query(default=False), days: int = Query(
 
     if not refresh and not _ozphr_cache:
         import snapshot as _snap
-        snap = await asyncio.to_thread(_snap.load, "ozphrases", None)
+        snap = await asyncio.to_thread(_snap.load, "ozphrases_v2", None)
         if snap:
             _ozphr_cache = snap
             _ozphr_ts = _t.monotonic() - 6 * 3600 + 300
@@ -2386,7 +2386,7 @@ async def get_ozphrases(refresh: bool = Query(default=False), days: int = Query(
     _ozphr_cache = result
     _ozphr_ts = _t.monotonic()
     import snapshot as _snap
-    await asyncio.to_thread(_snap.save, "ozphrases", result)
+    await asyncio.to_thread(_snap.save, "ozphrases_v2", result)
     return result
 
 

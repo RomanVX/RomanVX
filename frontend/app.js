@@ -3005,7 +3005,7 @@ function renderOzPhrases() {
 
   // группировка товаров по категориям (Спреи, Aloe, Фисты...)
   const groupMap = {};
-  items.forEach(it => {
+  items.filter(it => it && it.sku).forEach(it => {
     const g = articleGroup({ supplierArticle: it.art || it.sku, brand: it.group });
     (groupMap[g] = groupMap[g] || []).push(it);
   });
@@ -3032,7 +3032,7 @@ function renderOzPhrases() {
         <td style="position:sticky;left:0;background:var(--surface-3);padding:6px 12px">
           <span id="ozphrcar-${esc(it.sku)}" style="color:var(--gold)">▸</span>
           ${it.art ? `<code style="color:var(--val-soft)">${esc(it.art)}</code> ` : ''}
-          <span style="color:var(--ink)">${esc((it.name || it.sku).slice(0, 50))}</span>
+          <span style="color:var(--ink)">${esc(String(it.name || it.sku || '').slice(0, 50))}</span>
           <span class="text-secondary small">· ${it.phrase_count} фраз</span></td>
         <td class="text-end" style="color:var(--ink)">${fmt(it.views)}</td>
         <td class="text-end" style="color:var(--val);font-weight:600">${fmt(it.clicks)}</td>
