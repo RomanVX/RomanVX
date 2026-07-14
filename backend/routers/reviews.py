@@ -30,6 +30,60 @@ async def get_reviews_data(
     }
 
 
+@router.get("/export")
+async def export_reviews(
+    platform: str = Query("all"),
+    only_text: bool = Query(False),
+    art: str = Query(""),
+):
+    """Выгрузка отзывов в Excel с теми же фильтрами, что на дашборде."""
+    import io
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+    from fastapi.responses import StreamingResponse
+
+    rows = rc.get_all_reviews(platform=platform, limit=100000)
+    if only_text:
+        rows = [r for r in rows if r.get("text")]
+    if art:
+        q = art.strip().lower()
+        rows = [r for r in rows
+                if q in (r.get("sku") or "").lower()
+                or q in (r.get("name") or "").lower()
+                or q in str(r.get("nm") or "")]
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Отзывы"
+    ws.append(["Площадка", "Артикул", "Название", "Группа", "Дата",
+               "Рейтинг", "Текст отзыва", "Ответ"])
+    for c in ws[1]:
+        c.font = Font(bold=True, color="FFFFFF")
+        c.fill = PatternFill("solid", fgColor="4F46E5")
+        c.alignment = Alignment(vertical="center", wrap_text=True)
+    for r in rows:
+        ws.append([
+            r.get("platform", ""), r.get("sku", ""), r.get("name", ""),
+            r.get("group", ""), r.get("date", ""), r.get("rating", ""),
+            r.get("text", ""), r.get("answer", ""),
+        ])
+    for i, w in enumerate([10, 14, 34, 16, 12, 9, 70, 60], 1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+    for row in ws.iter_rows(min_row=2):
+        row[6].alignment = Alignment(wrap_text=True, vertical="top")
+        row[7].alignment = Alignment(wrap_text=True, vertical="top")
+    ws.freeze_panes = "A2"
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="reviews.xlsx"'})
+
+
 @router.post("/refresh")
 async def force_refresh(force: bool = Query(True)):
     """Запускает обновление с площадок в фоне и сразу отвечает.

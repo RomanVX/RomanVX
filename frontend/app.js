@@ -3901,9 +3901,15 @@ function renderReviewsFeed() {
   if (!el) return;
   const platform = document.getElementById('reviewsPlatform')?.value || 'all';
   const onlyText = document.getElementById('reviewsOnlyText')?.checked ?? true;
+  const artQ = (document.getElementById('reviewsArt')?.value || '').trim().toLowerCase();
 
   let filtered = platform === 'all' ? _allReviews : _allReviews.filter(r => r.platform === platform);
   if (onlyText) filtered = filtered.filter(r => r.text);
+  if (artQ) filtered = filtered.filter(r =>
+    (r.sku || '').toLowerCase().includes(artQ) ||
+    (r.name || '').toLowerCase().includes(artQ) ||
+    String(r.nm || '').includes(artQ));
+  window._reviewsFiltered = filtered;
 
   if (!filtered.length) { el.innerHTML = '<p class="text-secondary mt-3">Нет отзывов</p>'; return; }
 
@@ -3935,6 +3941,13 @@ function renderReviewsFeed() {
   `).join('');
 }
 
+
+function exportReviews() {
+  const platform = document.getElementById('reviewsPlatform')?.value || 'all';
+  const onlyText = document.getElementById('reviewsOnlyText')?.checked ? '1' : '0';
+  const art = encodeURIComponent((document.getElementById('reviewsArt')?.value || '').trim());
+  window.open(`${API}/api/reviews/export?platform=${platform}&only_text=${onlyText}&art=${art}&${getParams()}`, '_blank');
+}
 
 // главное фото товара WB по nmId (раскладка по basket-хостам)
 function wbPhotoUrl(nm) {
