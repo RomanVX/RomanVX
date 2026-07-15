@@ -3393,10 +3393,17 @@ async function loadMargin(refresh) {
   if (_marginData && !refresh) { renderMargin(); return; }
   wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>Считаем затраты на единицу из юнитки…</div>';
   try {
-    _marginData = await fetchJSON('/api/tools/margin?mp=' + _marginMp, 60000);
+    _marginData = await fetchJSON('/api/tools/margin?mp=' + _marginMp, 150000);
     renderMargin();
   } catch (e) {
-    wrap.innerHTML = `<div class="alert alert-danger mt-2">Ошибка: ${esc(e.message)}</div>`;
+    // холодный старт: сервер ещё собирает отчёты WB — повторяем сами
+    wrap.innerHTML = `<div class="alert alert-info mt-2">⏳ Сервер собирает данные (после перезапуска это занимает несколько минут)…<div class="text-secondary small mt-1">Обновится автоматически</div></div>`;
+    if (!window._marginTimer) {
+      window._marginTimer = setTimeout(() => {
+        window._marginTimer = null;
+        if (_toolActive === 'margin') loadMargin(true);
+      }, 20000);
+    }
   }
 }
 function setMarginMp(mp) { if (mp === _marginMp) return; _marginMp = mp; _marginData = null; loadMargin(true); }
