@@ -822,6 +822,10 @@ async def _build_adv_nm_bg(months: int) -> None:
         result: dict = {}
         today = (datetime.utcnow() + timedelta(hours=3)).date()
         for (y, m) in _last_months(months):
+            # не парсим жирные fullstats-JSON, пока в памяти висит скачивание
+            # детального отчёта (45 тыс. строк) — вместе они добивают 512 МБ
+            while _detail_fetching:
+                await asyncio.sleep(15)
             mk = f"{y}-{m:02d}"
             # уже собран этим или прошлым запуском (свежие месяцы — приоритет)
             if mk in _adv_nm_cache and _time.monotonic() - _adv_nm_ts < _ADV_NM_TTL:
