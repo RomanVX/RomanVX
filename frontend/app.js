@@ -3382,6 +3382,7 @@ let _marginMp = 'WB';
 let _marginPrice = {};      // sku → изменённая цена
 let _marginCost = {};       // sku → изменённая себестоимость
 let _marginDrr = {};        // sku → изменённый ДРР, %
+let _marginTgts = JSON.parse(localStorage.getItem('margin_targets') || '[15,25,35]'); // 3 целевые маржи, %
 let _marginTax = parseFloat(localStorage.getItem('unit_tax_profit_pct') || '0');
 let _marginTarget = 25;     // целевая маржа %
 let _marginAdvOn = true;    // учитывать продвижение
@@ -3401,6 +3402,36 @@ async function loadMargin(refresh) {
 function setMarginMp(mp) { if (mp === _marginMp) return; _marginMp = mp; _marginData = null; loadMargin(true); }
 function setMarginTax(v) { _marginTax = Math.max(0, parseFloat(v) || 0); localStorage.setItem('unit_tax_profit_pct', String(_marginTax)); recalcAllMargin(); }
 function setMarginTarget(v) { _marginTarget = Math.max(0, parseFloat(v) || 0); recalcAllMargin(); }
+function setMarginTgtN(i, v) {
+  _marginTgts[i] = Math.max(0, parseFloat(v) || 0);
+  localStorage.setItem('margin_targets', JSON.stringify(_marginTgts));
+  recalcAllMargin();
+}
+async function marginExport(btn) {
+  const overrides = {};
+  const keys = new Set([...Object.keys(_marginPrice), ...Object.keys(_marginCost), ...Object.keys(_marginDrr)]);
+  keys.forEach(s => {
+    overrides[s] = {};
+    if (_marginPrice[s] != null) overrides[s].price = _marginPrice[s];
+    if (_marginCost[s] != null) overrides[s].cogs = _marginCost[s];
+    if (_marginDrr[s] != null) overrides[s].drr = _marginDrr[s];
+  });
+  const old = btn.textContent; btn.textContent = '⏳ Готовим…'; btn.disabled = true;
+  try {
+    const r = await fetch('/api/tools/margin/export', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mp: _marginMp, tax: _marginTax, adv_on: _marginAdvOn, targets: _marginTgts, overrides })
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const blob = await r.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'margin_' + _marginMp.toLowerCase() + '.xlsx';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  } catch (e) { alert('Ошибка экспорта: ' + e.message); }
+  btn.textContent = old; btn.disabled = false;
+}
 function toggleMarginAdv(on) { _marginAdvOn = on; renderMargin(); }
 function resetMargin() { _marginPrice = {}; _marginCost = {}; _marginDrr = {}; renderMargin(); }
 function _marginDrr0(b) { return b.price0 > 0 ? Math.round(b.advert / b.price0 * 1000) / 10 : 0; }
@@ -3426,10 +3457,14 @@ function _marginCalc(b) {
   const denomBE = 1 - pctPart;
   const breakEven = denomBE > 0 ? fixed / denomBE : null;
   // цена для целевой маржи: price*(1-pctPart) - fixed = profit; profit=target%*price; с налогом
-  const t = _marginTarget / 100, taxF = 1 - _marginTax / 100;
-  const denomTgt = denomBE - (taxF > 0 ? t / taxF : Infinity);
-  const targetPrice = denomTgt > 0.001 ? fixed / denomTgt : null;
-  return { price, cogs, comm, acq, advert, drr, buyer, fixed, profit, margin, roi, breakEven, targetPrice };
+  const taxF = 1 - _marginTax / 100;
+  const priceFor = (tPct) => {
+    const denomTgt = denomBE - (taxF > 0 ? (tPct / 100) / taxF : Infinity);
+    return denomTgt > 0.001 ? fixed / denomTgt : null;
+  };
+  const targetPrice = priceFor(_marginTarget);
+  const tgtPrices = _marginTgts.map(priceFor);
+  return { price, cogs, comm, acq, advert, drr, buyer, fixed, profit, margin, roi, breakEven, targetPrice, tgtPrices };
 }
 
 function recalcMarginRow(sku) {
@@ -3450,7 +3485,12 @@ function recalcMarginRow(sku) {
   set('mg-margin', `<span style="color:${mclr};font-weight:700">${Math.round(c.margin)}%</span>`);
   set('mg-roi', c.roi != null ? Math.round(c.roi) + '%' : '—');
   set('mg-be', c.breakEven != null ? fmtRub(Math.round(c.breakEven)) : '—');
-  set('mg-tgt', c.targetPrice != null ? fmtRub(Math.round(c.targetPrice)) : '<span class="text-secondary small">—</span>');
+  const bk = (b.buyer0 && b.price0 > 0) ? b.buyer0 / b.price0 : null;
+  c.tgtPrices.forEach((tp, i) => {
+    set('mg-tgt' + i, tp != null
+      ? `${fmtRub(Math.round(tp))}${bk ? `<div class="small" style="color:var(--gold)">клиент ${fmtRub(Math.round(tp * bk))}</div>` : ''}`
+      : '<span class="text-secondary small">—</span>');
+  });
   row.style.background = c.profit < 0 ? 'rgba(248,113,113,.07)' : 'var(--t-row)';
 }
 function recalcAllMargin() {
@@ -3496,12 +3536,10 @@ function renderMargin() {
       <div><div class="text-secondary small mb-1">Налог с прибыли, %</div>
         <input type="number" value="${_marginTax || ''}" onchange="setMarginTax(this.value)" placeholder="0"
           style="width:90px" class="form-control form-control-sm"></div>
-      <div><div class="text-secondary small mb-1">Целевая маржа, %</div>
-        <input type="number" value="${_marginTarget}" onchange="setMarginTarget(this.value)"
-          style="width:90px" class="form-control form-control-sm"></div>
       <div><div class="text-secondary small mb-1">Продвижение</div>
         <div class="form-check form-switch"><input class="form-check-input" type="checkbox" ${_marginAdvOn ? 'checked' : ''} onchange="toggleMarginAdv(this.checked)"></div></div>
       <button class="btn btn-sm btn-outline-secondary" onclick="resetMargin()">↺ Сбросить правки</button>
+      <button class="btn btn-sm btn-outline-success" onclick="marginExport(this)">⬇ Экспорт в Excel</button>
     </div>
     <div class="text-secondary small mt-2">Актуальные статьи (цена, комиссия, логистика, ДРР) — за <b>${esc(d.window_recent || 'посл. 2 мес')}</b>; редкие (хранение, штрафы) сглажены за <b>${esc(d.window_smooth || '4 мес')}</b>; если продаж мало (&lt;10 шт) — окно у артикула расширяется автоматически (подписано рядом с артикулом). <b>Правьте цену, себестоимость и ДРР</b> (голубые поля) — прибыль, маржа и безубыточность пересчитываются вживую. <b>Цена покупателя</b> — с учётом скидки WB (СПП).</div>
   </div>`;
@@ -3519,11 +3557,13 @@ function renderMargin() {
       <th class="text-end">Затраты</th>
       <th class="text-end">Прибыль/ед</th><th class="text-end">Маржа</th><th class="text-end">ROI</th>
       <th class="text-end" title="Цена, при которой прибыль = 0">Безубыт.</th>
-      <th class="text-end" id="mgTgtHead">Цена для ${_marginTarget}% маржи</th>
+      ${_marginTgts.map((t, i) => `<th class="text-end" style="background:rgba(251,191,36,.08);min-width:96px" title="Цена (до СПП), дающая заданную маржу; ниже — что увидит клиент после СПП">Цена для
+        <input type="number" step="1" value="${t}" onchange="setMarginTgtN(${i}, this.value)"
+          style="width:52px;text-align:right;background:rgba(251,191,36,.14);border:1px solid var(--border);border-radius:6px;color:var(--ink);padding:1px 4px">%</th>`).join('')}
     </tr></thead><tbody>`;
   orderedGroups.forEach(([gname, list]) => {
     list.sort((a, b) => b.qty - a.qty);
-    html += `<tr class="table-secondary"><td colspan="15" style="padding:6px 12px"><strong>${gname}</strong> <span class="text-secondary small">(${list.length} арт.)</span></td></tr>`;
+    html += `<tr class="table-secondary"><td colspan="17" style="padding:6px 12px"><strong>${gname}</strong> <span class="text-secondary small">(${list.length} арт.)</span></td></tr>`;
     list.forEach(b => {
       const price = _marginPrice[b.sku] != null ? _marginPrice[b.sku] : b.price0;
       const cogs = _marginCost[b.sku] != null ? _marginCost[b.sku] : b.cogs;
@@ -3550,7 +3590,9 @@ function renderMargin() {
         <td class="text-end mg-margin"></td>
         <td class="text-end mg-roi text-secondary"></td>
         <td class="text-end mg-be text-secondary"></td>
-        <td class="text-end mg-tgt"></td>
+        <td class="text-end mg-tgt0" style="background:rgba(251,191,36,.04)"></td>
+        <td class="text-end mg-tgt1" style="background:rgba(251,191,36,.04)"></td>
+        <td class="text-end mg-tgt2" style="background:rgba(251,191,36,.04)"></td>
       </tr>`;
     });
   });

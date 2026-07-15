@@ -1165,6 +1165,85 @@ async def get_margin(mp: str = Query(default="WB")):
             "fetched_at": datetime.utcnow().strftime("%d.%m.%Y %H:%M UTC")}
 
 
+@router.post("/margin/export")
+async def margin_export(body: dict):
+    """Экспорт калькулятора маржи в Excel — с учётом правок пользователя
+    (цена/себес/ДРР), налога и целевых марж из шапки."""
+    import io
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+    from fastapi.responses import StreamingResponse
+
+    mp = body.get("mp") or "WB"
+    tax = float(body.get("tax") or 0)
+    adv_on = bool(body.get("adv_on", True))
+    targets = [float(t) for t in (body.get("targets") or [15, 25, 35])][:3]
+    ov = body.get("overrides") or {}
+
+    data = await get_margin(mp=mp)
+    items = data.get("items") or []
+    if not items:
+        raise HTTPException(400, data.get("message") or "Нет данных")
+
+    taxf = 1 - tax / 100
+
+    def calc(b):
+        o = ov.get(b["sku"]) or {}
+        price = float(o.get("price", b["price0"]) or 0)
+        cogs = float(o.get("cogs", b["cogs"]) or 0)
+        drr0 = round(b["advert"] / b["price0"] * 100, 1) if b["price0"] else 0
+        drr = float(o.get("drr", drr0) or 0) if adv_on else 0.0
+        pct = (b["comm_pct"] + b["acq_pct"] + drr) / 100
+        fixed = b["logist"] + b["storage"] + b["other"] + cogs
+        gross = price * (1 - pct) - fixed
+        profit = gross - (max(gross, 0) * tax / 100)
+        margin = profit / price * 100 if price > 0 else 0
+        be = fixed / (1 - pct) if pct < 1 else None
+        tgt_prices = []
+        for t in targets:
+            denom = (1 - pct) - (t / 100) / taxf if taxf > 0 else 0
+            tgt_prices.append(fixed / denom if denom > 0.001 else None)
+        buyer_k = (b["buyer0"] / b["price0"]) if b.get("buyer0") and b["price0"] else None
+        return price, cogs, drr, profit, margin, be, tgt_prices, buyer_k
+
+    wb_x = openpyxl.Workbook()
+    ws = wb_x.active
+    ws.title = "Калькулятор маржи"
+    head = ["Артикул", "Название", "Категория WB", "Комиссия %", "Эквайринг %",
+            "Логистика ₽", "Хранение ₽", "Прочее ₽", "ДРР %", "Себес ₽",
+            "Цена ₽ (до СПП)", "Цена покупателя ₽", "Прибыль/ед ₽", "Маржа %",
+            "Безубыток ₽"]
+    for t in targets:
+        head += [f"Цена для {t:g}% ₽", f"Цена клиента при {t:g}% ₽"]
+    ws.append(head)
+    hf = Font(bold=True, color="FFFFFF")
+    fill = PatternFill("solid", fgColor="4A5568")
+    for c in ws[1]:
+        c.font, c.fill = hf, fill
+        c.alignment = Alignment(horizontal="center", wrap_text=True)
+    for b in items:
+        price, cogs, drr, profit, margin, be, tgts, bk = calc(b)
+        row = [b["sku"], b["name"], b.get("subject") or "", b["comm_pct"], b["acq_pct"],
+               b["logist"], b["storage"], b["other"], drr, round(cogs),
+               round(price), round(price * bk) if bk else None,
+               round(profit), round(margin, 1), round(be) if be else None]
+        for tp in tgts:
+            row += [round(tp) if tp else None,
+                    round(tp * bk) if (tp and bk) else None]
+        ws.append(row)
+    for i in range(1, len(head) + 1):
+        ws.column_dimensions[get_column_letter(i)].width = 14 if i > 2 else (26 if i == 2 else 12)
+    ws.freeze_panes = "C2"
+
+    buf = io.BytesIO()
+    wb_x.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="margin.xlsx"'})
+
+
 # ══ Спрос WB (Джем): поисковые запросы по своим товарам ═══════════════════════
 _demand_cache: dict = {}
 _demand_ts: float = 0.0
