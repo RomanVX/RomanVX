@@ -1107,6 +1107,66 @@ async def tariff_alert():
     return alert if age <= 14 else {}
 
 
+def _sales_forecast(platform: str) -> dict:
+    """Прогноз продаж на месяц по каждому SKU — модель Холта с затуханием.
+
+    По 12 неделям истории sales_daily: экспоненциальное сглаживание уровня
+    и тренда (α=0.5, β=0.3, затухание φ=0.85). Недельные корзины гасят
+    сезонность дней недели; затухание не даёт тренду улетать при экстраполяции.
+    Возвращает {SKU_UPPER: {"qty_f": шт/мес, "trend": %/мес}}."""
+    from datetime import date, timedelta
+    yesterday = date.today() - timedelta(days=1)
+    since = (yesterday - timedelta(days=12 * 7 - 1)).isoformat()
+    try:
+        rows = db.fetchall(
+            "SELECT sale_date, sku, qty FROM sales_daily "
+            "WHERE platform=? AND sale_date>=? AND sale_date<=?",
+            (platform, since, yesterday.isoformat()))
+    except Exception as e:
+        _log.warning("forecast: sales_daily недоступна: %s", e)
+        return {}
+
+    daily: dict[str, dict[str, int]] = {}
+    for d, sku, q in rows:
+        k = str(sku or "").strip().upper()
+        if k:
+            daily.setdefault(k, {})[str(d)[:10]] = int(q or 0)
+
+    out = {}
+    for sku, dd in daily.items():
+        # недельные корзины, от старых к свежим (неделя 0 заканчивается вчера)
+        weeks = []
+        for i in range(11, -1, -1):
+            end = yesterday - timedelta(days=7 * i)
+            s = sum(dd.get((end - timedelta(days=j)).isoformat(), 0) for j in range(7))
+            weeks.append(s)
+        # обрезаем пустой префикс (товар ещё не продавался)
+        first = next((i for i, w in enumerate(weeks) if w > 0), None)
+        if first is None:
+            continue
+        weeks = weeks[first:]
+        if len(weeks) < 3:
+            continue  # мало истории — калькулятор возьмёт среднее по окну
+
+        # Холт с затуханием
+        a, b_, phi = 0.5, 0.3, 0.85
+        level, trend = float(weeks[0]), 0.0
+        for w in weeks[1:]:
+            prev = level
+            level = a * w + (1 - a) * (level + phi * trend)
+            trend = b_ * (level - prev) + (1 - b_) * phi * trend
+        fc_weeks = [max(level + trend * sum(phi ** k for k in range(1, h + 1)), 0.0)
+                    for h in range(1, 5)]
+        month = sum(fc_weeks) * (30.44 / 28)
+        # здравый смысл: не дальше ×[0.3..2.5] от факта последних 4 недель
+        recent = sum(weeks[-4:]) * (30.44 / 28) if len(weeks) >= 4 else month
+        if recent > 0:
+            month = max(min(month, recent * 2.5), recent * 0.3)
+        out[sku] = {"qty_f": round(month, 1),
+                    "trend": round((month / recent - 1) * 100) if recent > 0 else 0}
+    return out
+
+
 @router.get("/margin")
 async def get_margin(mp: str = Query(default="WB")):
     """Затраты на единицу товара из фактической юнитки — для калькулятора
@@ -1129,6 +1189,9 @@ async def get_margin(mp: str = Query(default="WB")):
 
     # официальные тарифы комиссии WB по категориям (nmId → pct/subject)
     comm_tariff = await _wb_commission_by_nm() if mp == "WB" else {}
+    # прогнозная модель продаж (Холт по 12 нед истории)
+    forecast = await asyncio.to_thread(
+        _sales_forecast, {"WB": "WB", "OZON": "Ozon", "YM": "YM"}.get(mp, "WB"))
 
     # Окна усреднения — у статей разная «скорость устаревания»:
     #   свежие (цена, комиссия %, логистика, ДРР) — текущий + прошлый месяц;
@@ -1181,6 +1244,8 @@ async def get_margin(mp: str = Query(default="WB")):
             "name": r.get("name", ""), "group": r.get("brand", ""),
             "qty": round(total_qty),
             "qty_m": round(qty / max(len(recent_keys), 1), 1),  # продажи в месяц (среднее по свежему окну)
+            "qty_f": (forecast.get(str(r.get("sku") or "").strip().upper()) or {}).get("qty_f"),
+            "trend": (forecast.get(str(r.get("sku") or "").strip().upper()) or {}).get("trend"),
             "window": _mk_label(recent_keys),               # окно свежих статей
             "price0": price0,                              # средняя цена (до СПП)
             "buyer0": round(paid / qty) if paid > 0 else None,  # цена для покупателя (после СПП)

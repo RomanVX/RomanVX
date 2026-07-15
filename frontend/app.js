@@ -3509,21 +3509,29 @@ function recalcAllMargin() {
 // прогноз на месяц: объёмы последнего месяца × текущая экономика из таблицы
 function updateMarginSummary() {
   const items = (_marginData && _marginData.items) || [];
-  let rev = 0, profit = 0, loss = 0;
+  let rev = 0, profit = 0, loss = 0, revBase = 0, nModel = 0;
   items.forEach(b => {
     const c = _marginCalc(b);
-    const q = b.qty_m || 0;
+    const q = b.qty_f != null ? b.qty_f : (b.qty_m || 0);   // модель, фолбэк — среднее
+    if (b.qty_f != null) nModel++;
     rev += c.price * q;
     profit += c.profit * q;
+    revBase += c.price * (b.qty_m || 0);
     if (c.profit < 0) loss++;
   });
   const set = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html; };
-  set('mgSumRev', fmtRub(Math.round(rev)));
+  const dRev = revBase > 0 ? Math.round((rev / revBase - 1) * 100) : 0;
+  const trendTag = dRev ? ` <span class="small" style="color:${dRev > 0 ? 'var(--pos)' : 'var(--neg)'}">${dRev > 0 ? '↑' : '↓'}${Math.abs(dRev)}%</span>` : '';
+  set('mgSumRev', fmtRub(Math.round(rev)) + trendTag);
   const pclr = profit >= 0 ? 'var(--pos)' : 'var(--neg)';
   set('mgSumProfit', `<span style="color:${pclr}">${profit < 0 ? '−' : ''}${fmtRub(Math.abs(Math.round(profit)))}</span>`);
   const m = rev > 0 ? profit / rev * 100 : 0;
   set('mgSumMargin', `<span style="color:${m >= 20 ? 'var(--pos)' : m >= 0 ? 'var(--warn-c)' : 'var(--neg)'}">${Math.round(m)}%</span>`);
   set('mgSumLoss', loss ? `<span style="color:var(--neg)">${loss}</span>` : '<span style="color:var(--pos)">0</span>');
+  const note = document.getElementById('mgSumNote');
+  if (note) note.textContent = nModel
+    ? `модель Холта по 12 нед. истории (${nModel} арт.), стрелка — к темпу последних 4 недель`
+    : 'по средним продажам за месяц (история ещё копится)';
 }
 
 function renderMargin() {
@@ -3560,6 +3568,7 @@ function renderMargin() {
     <div class="metric-card"><div class="mc-head">Прогноз прибыли / мес</div><div class="mc-val" id="mgSumProfit">—</div></div>
     <div class="metric-card"><div class="mc-head">Маржа портфеля</div><div class="mc-val" id="mgSumMargin">—</div></div>
     <div class="metric-card"><div class="mc-head">Убыточных артикулов</div><div class="mc-val" id="mgSumLoss">—</div></div>
+    <div class="align-self-end text-secondary small pb-1" id="mgSumNote"></div>
   </div>`;
   html += `<div class="card bg-card p-3 mb-3">
     <div class="d-flex gap-3 flex-wrap align-items-end">
