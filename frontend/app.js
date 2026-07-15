@@ -3502,7 +3502,7 @@ function renderMargin() {
         <div class="form-check form-switch"><input class="form-check-input" type="checkbox" ${_marginAdvOn ? 'checked' : ''} onchange="toggleMarginAdv(this.checked)"></div></div>
       <button class="btn btn-sm btn-outline-secondary" onclick="resetMargin()">↺ Сбросить правки</button>
     </div>
-    <div class="text-secondary small mt-2">Затраты на штуку — из фактической юнитки за 6 мес. <b>Правьте цену, себестоимость и ДРР</b> (голубые поля) — прибыль, маржа и безубыточность пересчитываются вживую. Комиссия, эквайринг и продвижение (ДРР) зависят от цены (%), остальное фиксировано на штуку. <b>Цена покупателя</b> — с учётом скидки WB (СПП) по фактическому соотношению.</div>
+    <div class="text-secondary small mt-2">Актуальные статьи (цена, комиссия, логистика, ДРР) — за <b>${esc(d.window_recent || 'посл. 2 мес')}</b>; редкие (хранение, штрафы) сглажены за <b>${esc(d.window_smooth || '4 мес')}</b>; если продаж мало (&lt;10 шт) — окно у артикула расширяется автоматически (подписано рядом с артикулом). <b>Правьте цену, себестоимость и ДРР</b> (голубые поля) — прибыль, маржа и безубыточность пересчитываются вживую. <b>Цена покупателя</b> — с учётом скидки WB (СПП).</div>
   </div>`;
 
   html += `<div class="card border-0 bg-card"><div class="card-body p-0"><div class="table-responsive" style="max-height:70vh">
@@ -3531,6 +3531,7 @@ function renderMargin() {
       html += `<tr data-msku="${esc(b.sku)}" style="background:var(--t-row)">
         <td style="position:sticky;left:0;background:var(--t-sticky);padding:5px 12px">
           <code style="color:var(--val-soft)">${esc(b.sku)}</code>
+          ${b.window ? `<span class="text-secondary small" title="Окно данных для цены/комиссии/логистики/ДРР (расширено, если продаж мало)"> · ${esc(b.window)}</span>` : ''}
           <div class="small text-secondary" style="max-width:210px;overflow:hidden;text-overflow:ellipsis">${esc(b.name || '')}</div></td>
         <td class="text-end" style="padding:3px 6px"><input type="number" value="${cogs}" oninput="_marginCost['${esc(b.sku)}']=parseFloat(this.value)||0;recalcMarginRow('${esc(b.sku)}')"
           style="width:76px;text-align:right;background:rgba(56,189,248,.10);border:1px solid var(--border);border-radius:6px;color:var(--ink);padding:2px 6px"></td>

@@ -1058,39 +1058,68 @@ async def get_margin(mp: str = Query(default="WB")):
     if not skus:
         return {"items": [], "message": data.get("message") or "Нет данных юнитки"}
 
+    # Окна усреднения — у статей разная «скорость устаревания»:
+    #   свежие (цена, комиссия %, логистика, ДРР) — текущий + прошлый месяц;
+    #   сглаженные (хранение, штрафы/удержания) — последние 4 месяца, чтобы
+    #   разовая поставка или штраф не искажали штуку;
+    #   мало продаж в свежем окне (<10 шт) — окно расширяется автоматически.
+    all_mks = sorted({mk for r in skus for mk in (r.get("months") or {})})
+    W_RECENT, W_SMOOTH = all_mks[-2:], all_mks[-4:]
+
+    def _mk_label(keys):
+        if not keys:
+            return ""
+        f = lambda mk: f"{mk[5:7]}.{mk[2:4]}"
+        return f(keys[0]) if len(keys) == 1 else f"{f(keys[0])}–{f(keys[-1])}"
+
     items = []
     for r in skus:
-        # суммируем все месяцы → усреднённые затраты на единицу
-        tot = {}
-        for cell in (r.get("months") or {}).values():
-            for k, v in cell.items():
-                if isinstance(v, (int, float)):
-                    tot[k] = tot.get(k, 0) + v
-        qty = tot.get("qty", 0)
-        rev = tot.get("revenue", 0)
+        months = r.get("months") or {}
+
+        def agg(keys):
+            tot = {}
+            for mk in keys:
+                for k, v in (months.get(mk) or {}).items():
+                    if isinstance(v, (int, float)):
+                        tot[k] = tot.get(k, 0) + v
+            return tot
+
+        # свежее окно с автоматическим расширением при малых продажах
+        for keys in (W_RECENT, W_SMOOTH, all_mks):
+            recent, recent_keys = agg(keys), keys
+            if recent.get("qty", 0) >= 10:
+                break
+        smooth, smooth_keys = agg(W_SMOOTH), W_SMOOTH
+        if smooth.get("qty", 0) < 10 or len(recent_keys) > len(W_SMOOTH):
+            smooth, smooth_keys = agg(all_mks), all_mks
+
+        qty, rev = recent.get("qty", 0), recent.get("revenue", 0)
         if qty <= 0 or rev <= 0:
             continue
-        per = lambda k: tot.get(k, 0) / qty
+        per = lambda k: recent.get(k, 0) / qty
+        sqty = smooth.get("qty", 0) or 1
+        sper = lambda k: smooth.get(k, 0) / sqty
         price0 = round(rev / qty)
-        paid = tot.get("paid", 0)
-        comm_pct = round(tot.get("commission", 0) / rev * 100, 2)
-        acq_pct = round(tot.get("acquiring", 0) / rev * 100, 2)
+        paid = recent.get("paid", 0)
+        total_qty = sum((c or {}).get("qty", 0) for c in months.values())
         items.append({
             "sku": r.get("sku"), "nmId": r.get("nmId"),
             "name": r.get("name", ""), "group": r.get("brand", ""),
-            "qty": round(qty),
+            "qty": round(total_qty),
+            "window": _mk_label(recent_keys),               # окно свежих статей
             "price0": price0,                              # средняя цена (до СПП)
             "buyer0": round(paid / qty) if paid > 0 else None,  # цена для покупателя (после СПП)
-            "comm_pct": comm_pct,                          # комиссия % (масштаб. с ценой)
-            "acq_pct": acq_pct,                            # эквайринг %
+            "comm_pct": round(recent.get("commission", 0) / rev * 100, 2),
+            "acq_pct": round(recent.get("acquiring", 0) / rev * 100, 2),
             "logist": round(per("delivery")),              # логистика на штуку (фикс)
-            "storage": round(per("storage") + per("acceptance")),  # хранение+приёмка
-            "other": round(max(per("penalty") + per("deductions"), 0)),  # штрафы/удерж.
+            "storage": round(sper("storage") + sper("acceptance")),  # сглажено
+            "other": round(max(sper("penalty") + sper("deductions"), 0)),  # сглажено
             "advert": round(max(per("advert"), 0)),        # продвижение на штуку
-            "cogs": round(r.get("unitCost") or per("cogs")),  # себестоимость
+            "cogs": round(r.get("unitCost") or sper("cogs")),  # себестоимость
         })
     items.sort(key=lambda x: -x["qty"])
     return {"items": items, "mp": mp,
+            "window_recent": _mk_label(W_RECENT), "window_smooth": _mk_label(W_SMOOTH),
             "fetched_at": datetime.utcnow().strftime("%d.%m.%Y %H:%M UTC")}
 
 
