@@ -3535,7 +3535,7 @@ function renderMargin() {
           <div class="small text-secondary" style="max-width:210px;overflow:hidden;text-overflow:ellipsis">${esc(b.name || '')}</div></td>
         <td class="text-end" style="padding:3px 6px"><input type="number" value="${cogs}" oninput="_marginCost['${esc(b.sku)}']=parseFloat(this.value)||0;recalcMarginRow('${esc(b.sku)}')"
           style="width:76px;text-align:right;background:rgba(56,189,248,.10);border:1px solid var(--border);border-radius:6px;color:var(--ink);padding:2px 6px"></td>
-        <td class="text-end mg-comm"></td>
+        <td class="text-end mg-comm" title="${b.comm_exact ? `Точная комиссия WB ${b.comm_pct}% (из последней продажи) + эквайринг ${b.acq_pct}%` : `Средняя комиссия ${b.comm_pct}% + эквайринг ${b.acq_pct}%`}"></td>
         <td class="text-end"><span style="color:var(--neg)">−</span>${fmtRub(b.logist)}</td>
         <td class="text-end"><span style="color:var(--neg)">−</span>${fmtRub(b.storage)}</td>
         <td class="text-end" style="padding:3px 6px;${advDim}"><input type="number" step="0.1" value="${drr}" oninput="_marginDrr['${esc(b.sku)}']=parseFloat(this.value)||0;recalcMarginRow('${esc(b.sku)}')"

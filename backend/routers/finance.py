@@ -231,6 +231,7 @@ def _normalize_stat_rows(stat_rows: list[dict]) -> list[dict]:
             "deduction":       r.get("deduction") or 0,
             "cashbackAmount":  0,
             "acquiringFee":    r.get("acquiring_fee") or 0,
+            "commissionPct":   r.get("commission_percent") or 0,
             "vendorCode":      _i((r.get("sa_name") or "").strip()),
             "nmId":            r.get("nm_id"),
             "quantity":        qty,
@@ -440,6 +441,7 @@ async def get_wb_pnl(
 
     _SKU_KEYS = ("revenue", "forPay", "qty", "cogs", "delivery", "storage",
                  "acceptance", "penalty", "acquiring", "paid")
+    comm_now: dict[str, tuple] = {}   # sku → (дата продажи, точный % комиссии WB)
 
     def s_ensure(sku, mk):
         m = sku_data.setdefault(sku, {})
@@ -520,7 +522,13 @@ async def get_wb_pnl(
                     if uc > 0 and qty > 0:
                         cogs_by_month[mk_sale] = cogs_by_month.get(mk_sale, 0.0) + sign * uc * qty
                     # SKU-разрез (юнитка)
-                    sd = s_ensure(_canon_sku(row), mk_sale)
+                    sku_key = _canon_sku(row)
+                    cp = _f(row.get("commissionPct"))
+                    if cp > 0 and not is_return:
+                        prev = comm_now.get(sku_key)
+                        if not prev or sale_date >= prev[0]:
+                            comm_now[sku_key] = (sale_date, cp)
+                    sd = s_ensure(sku_key, mk_sale)
                     sd["revenue"]   += sign * base
                     sd["forPay"]    += sign * abs(_f(row.get("forPay")))
                     sd["qty"]       += sign * qty
@@ -703,6 +711,7 @@ async def get_wb_pnl(
                        for mk in month_totals},
             "advert_bonus": {mk: advert_bonus_by_month.get(mk, 0.0) for mk in month_totals},
             "deductions": {mk: month_totals[mk].get("deductions", 0.0) for mk in month_totals},
+            "comm_now": {k: v[1] for k, v in comm_now.items()},
             "detail_upto": last_detail_sale,
             "fetched_at": result["fetched_at"],
         }
@@ -954,6 +963,7 @@ async def get_wb_unit(
                "brand": cat_info.get("brand", ""),
                "nmId": nmids.get(sku),
                "unitCost": unit_costs.get(sku, 0),
+               "commNow": _wb_unit_data.get("comm_now", {}).get(sku),
                "months": {}}
         for mk in month_keys:
             d = mdata.get(mk)

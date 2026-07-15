@@ -1109,7 +1109,11 @@ async def get_margin(mp: str = Query(default="WB")):
             "window": _mk_label(recent_keys),               # окно свежих статей
             "price0": price0,                              # средняя цена (до СПП)
             "buyer0": round(paid / qty) if paid > 0 else None,  # цена для покупателя (после СПП)
-            "comm_pct": round(recent.get("commission", 0) / rev * 100, 2),
+            # точная комиссия WB из последней продажи (commission_percent),
+            # фолбэк — средняя по свежему окну
+            "comm_pct": (round(float(r["commNow"]), 2) if r.get("commNow")
+                         else round(recent.get("commission", 0) / rev * 100, 2)),
+            "comm_exact": bool(r.get("commNow")),
             "acq_pct": round(recent.get("acquiring", 0) / rev * 100, 2),
             "logist": round(per("delivery")),              # логистика на штуку (фикс)
             "storage": round(sper("storage") + sper("acceptance")),  # сглажено
