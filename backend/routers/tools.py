@@ -1066,7 +1066,45 @@ async def _wb_commission_by_nm() -> dict:
             out[nm] = {"pct": float(t["fbo"]), "subject": t.get("subjectName") or s.get("subjectName", "")}
     if out:
         _wb_comm_cache, _wb_comm_ts = out, _time.monotonic()
+        try:
+            await asyncio.to_thread(_tariff_watch, out)
+        except Exception as e:
+            _log.warning("tariff watch failed: %s", e)
     return out
+
+
+def _tariff_watch(comm_by_nm: dict) -> None:
+    """Следит за изменением комиссии WB по НАШИМ категориям: сравнивает с
+    последним виденным тарифом и при изменении пишет алерт (виден в шапке)."""
+    import snapshot as _snap
+    cur = {}
+    for v in comm_by_nm.values():
+        if v.get("subject"):
+            cur[v["subject"]] = v["pct"]
+    seen = _snap.load("wb_tariffs_seen", None)
+    if seen:
+        changes = [{"subject": s, "old": seen[s], "new": p}
+                   for s, p in cur.items() if s in seen and abs(seen[s] - p) >= 0.01]
+        if changes:
+            _snap.save("wb_tariff_alert", {
+                "date": datetime.utcnow().strftime("%Y-%m-%d"),
+                "changes": changes})
+            _log.info("WB тарифы изменились: %s", changes)
+    _snap.save("wb_tariffs_seen", cur)
+
+
+@router.get("/tariff_alert")
+async def tariff_alert():
+    """Алерт об изменении комиссии WB по категориям кабинета (14 дней)."""
+    import snapshot as _snap
+    alert = await asyncio.to_thread(_snap.load, "wb_tariff_alert", None)
+    if not alert:
+        return {}
+    try:
+        age = (datetime.utcnow() - datetime.strptime(alert["date"], "%Y-%m-%d")).days
+    except (KeyError, ValueError):
+        return {}
+    return alert if age <= 14 else {}
 
 
 @router.get("/margin")

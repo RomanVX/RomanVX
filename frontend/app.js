@@ -3995,6 +3995,26 @@ function initDashboard() {
   });
 }
 
+// ── Алерт об изменении комиссии WB ────────────────────────────────────────────
+async function checkTariffAlert() {
+  try {
+    const a = await fetchJSON('/api/tools/tariff_alert', 15000);
+    if (!a || !a.changes || !a.changes.length) return;
+    if (localStorage.getItem('tariff_alert_seen') === a.date) return;
+    const list = a.changes.map(c => {
+      const up = c.new > c.old;
+      return `${esc(c.subject)}: ${c.old}% → <b style="color:${up ? 'var(--neg)' : 'var(--pos)'}">${c.new}%</b>`;
+    }).join(' · ');
+    const div = document.createElement('div');
+    div.className = 'alert alert-warning d-flex align-items-center gap-2 m-2 mb-0';
+    div.style.cssText = 'position:sticky;top:0;z-index:1050';
+    div.innerHTML = `<span>⚠️</span><div class="flex-grow-1"><b>WB изменил комиссию по вашим категориям</b> (${esc(a.date)}): ${list}.
+      Проверьте цены в <a href="#" onclick="const l=[...document.querySelectorAll('#mainTabs .nav-link')].find(a=>a.textContent.includes('Инструменты WB'));switchTab('tools',l);setTool('margin');this.closest('.alert').remove();return false">Калькуляторе маржи</a>.</div>
+      <button class="btn-close" onclick="localStorage.setItem('tariff_alert_seen','${esc(a.date)}');this.closest('.alert').remove()"></button>`;
+    document.body.prepend(div);
+  } catch (e) { /* не мешаем работе */ }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   ['loginUser', 'loginPass'].forEach(id =>
     document.getElementById(id).addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); })
@@ -4005,6 +4025,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!r.ok) { showOverlay('login'); return; }
     _me = await r.json();
     applyRole();
+    checkTariffAlert();
     // переход по карточке с другого кабинета (?enter=1) — сразу внутрь
     if (new URLSearchParams(location.search).has('enter')) {
       localStorage.setItem('mp_cabinet', 'auto');
