@@ -19,10 +19,8 @@ from config import WB_ADVERT_KEY
 
 _log = logging.getLogger(__name__)
 
-# WB has been migrating between these two domains — try both
 _BASES = [
     "https://advert-api.wildberries.ru",
-    "https://advert-api.wb.ru",
 ]
 
 TYPE_NAMES   = {4: "Каталог", 5: "Поиск+Каталог", 6: "Поиск", 7: "Поиск", 8: "Автокампания", 9: "Поиск"}
@@ -143,12 +141,31 @@ def _is_bonus_payment(rec: dict) -> bool:
     return False
 
 
+_spend_lock = asyncio.Lock()
+_spend_cache: dict = {}   # key → (monotonic, result)
+
+
 async def get_spend_by_month(date_from: datetime, date_to: datetime) -> dict[str, dict]:
     """GET /adv/v1/upd — история списаний за рекламу.
 
     Возвращает {YYYY-MM: {"total": всего, "bonus": из них промо-бонусами}}.
     API отдаёт максимум 31 день за запрос — ходим чанками.
-    """
+    Одновременные вызовы с одним диапазоном дедуплицируются (lock + кеш 10 мин),
+    иначе параллельные сборки P&L ловят 429 от лимитера WB."""
+    import time as _t
+    key = f"{date_from:%Y-%m-%d}_{date_to:%Y-%m-%d}"
+    async with _spend_lock:
+        hit = _spend_cache.get(key)
+        if hit and _t.monotonic() - hit[0] < 600:
+            return hit[1]
+        result = await _spend_by_month_impl(date_from, date_to)
+        if result:
+            _spend_cache.clear()
+            _spend_cache[key] = (_t.monotonic(), result)
+        return result
+
+
+async def _spend_by_month_impl(date_from: datetime, date_to: datetime) -> dict[str, dict]:
     spend: dict[str, dict] = {}
     cur = date_from
     while cur <= date_to:
