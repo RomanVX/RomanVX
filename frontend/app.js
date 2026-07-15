@@ -3439,7 +3439,8 @@ function recalcMarginRow(sku) {
   if (!row) return;
   const c = _marginCalc(b);
   const set = (cls, html) => { const el = row.querySelector('.' + cls); if (el) el.innerHTML = html; };
-  set('mg-comm', `<span style="color:var(--neg)">−</span>${fmtRub(Math.round(c.comm + c.acq))}`);
+  set('mg-comm', `<span style="color:var(--neg)">−</span>${fmtRub(Math.round(c.comm + c.acq))}
+    <div class="small" style="color:var(--ink-3)">${b.comm_pct}%${b.comm_exact ? '' : '≈'}</div>`);
   set('mg-adv', c.advert > 0 ? `<span style="color:var(--neg)">−</span>${fmtRub(Math.round(c.advert))}` : '<span class="text-secondary">0 ₽</span>');
   set('mg-buyer', c.buyer != null ? fmtRub(Math.round(c.buyer)) : '<span class="text-secondary">—</span>');
   set('mg-costs', fmtRub(Math.round(c.comm + c.acq + c.advert + c.fixed)));
@@ -3553,8 +3554,18 @@ function renderMargin() {
       </tr>`;
     });
   });
-  html += `</tbody></table></div></div></div>
-  <div class="text-secondary small mt-2">💡 <b>Безубыточность</b> — минимальная цена, ниже которой уходите в минус (при текущей себестоимости). <b>Цена для X% маржи</b> — по какой цене продавать, чтобы получить нужную маржу. Убыточные при текущей цене строки подсвечены красным. ${d.fetched_at}</div>`;
+  html += `</tbody></table></div></div></div>`;
+  // сноска: текущая комиссия WB по категориям (точная, из последних продаж)
+  const commByGroup = orderedGroups.map(([g, list]) => {
+    const pcts = [...new Set(list.filter(b => b.comm_exact).map(b => b.comm_pct))].sort((a, b) => a - b);
+    if (!pcts.length) return null;
+    const val = pcts.length === 1 ? `${pcts[0]}%` : `${pcts[0]}–${pcts[pcts.length - 1]}%`;
+    return `${esc(g)} <b style="color:var(--ink)">${val}</b>`;
+  }).filter(Boolean);
+  if (commByGroup.length) {
+    html += `<div class="text-secondary small mt-2">📌 Комиссия WB сейчас (точная, из последних продаж): ${commByGroup.join(' · ')} — сверх неё эквайринг ~${(items.reduce((s, b) => s + b.acq_pct, 0) / items.length).toFixed(1)}%.</div>`;
+  }
+  html += `<div class="text-secondary small mt-2">💡 <b>Безубыточность</b> — минимальная цена, ниже которой уходите в минус (при текущей себестоимости). <b>Цена для X% маржи</b> — по какой цене продавать, чтобы получить нужную маржу. Убыточные при текущей цене строки подсвечены красным. ${d.fetched_at}</div>`;
   wrap.innerHTML = html;
   recalcAllMargin();
 }
