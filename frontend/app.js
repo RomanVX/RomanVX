@@ -3510,6 +3510,7 @@ function recalcAllMargin() {
 function updateMarginSummary() {
   const items = (_marginData && _marginData.items) || [];
   let rev = 0, profit = 0, loss = 0, revBase = 0, nModel = 0;
+  const drags = [];
   items.forEach(b => {
     const c = _marginCalc(b);
     const q = b.qty_f != null ? b.qty_f : (b.qty_m || 0);   // модель, фолбэк — среднее
@@ -3517,8 +3518,9 @@ function updateMarginSummary() {
     rev += c.price * q;
     profit += c.profit * q;
     revBase += c.price * (b.qty_m || 0);
-    if (c.profit < 0) loss++;
+    if (c.profit < 0) { loss++; drags.push({ sku: b.sku, sum: c.profit * q }); }
   });
+  drags.sort((a, b) => a.sum - b.sum);
   const set = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html; };
   const dRev = revBase > 0 ? Math.round((rev / revBase - 1) * 100) : 0;
   const trendTag = dRev ? ` <span class="small" style="color:${dRev > 0 ? 'var(--pos)' : 'var(--neg)'}">${dRev > 0 ? '↑' : '↓'}${Math.abs(dRev)}%</span>` : '';
@@ -3529,9 +3531,16 @@ function updateMarginSummary() {
   set('mgSumMargin', `<span style="color:${m >= 20 ? 'var(--pos)' : m >= 0 ? 'var(--warn-c)' : 'var(--neg)'}">${Math.round(m)}%</span>`);
   set('mgSumLoss', loss ? `<span style="color:var(--neg)">${loss}</span>` : '<span style="color:var(--pos)">0</span>');
   const note = document.getElementById('mgSumNote');
-  if (note) note.textContent = nModel
-    ? `модель Холта по 12 нед. истории (${nModel} арт.), стрелка — к темпу последних 4 недель`
-    : 'по средним продажам за месяц (история ещё копится)';
+  if (note) {
+    let txt = nModel
+      ? `модель Холта по 12 нед. истории (${nModel} арт.), стрелка — к текущему темпу`
+      : 'по средним продажам за месяц (история ещё копится)';
+    if (drags.length) {
+      const top = drags.slice(0, 3).map(d => `${d.sku} −${fmt(Math.abs(Math.round(d.sum)))} ₽`).join(', ');
+      txt += ` · тянут вниз: ${top}`;
+    }
+    note.textContent = txt;
+  }
 }
 
 function renderMargin() {
@@ -3613,6 +3622,7 @@ function renderMargin() {
         <td style="position:sticky;left:0;background:var(--t-sticky);padding:5px 12px">
           <code style="color:var(--val-soft)">${esc(b.sku)}</code>
           ${b.window ? `<span class="text-secondary small" title="Окно данных для цены/комиссии/логистики/ДРР (расширено, если продаж мало)"> · ${esc(b.window)}</span>` : ''}
+          <span class="text-secondary small" title="Прогноз продаж на месяц (модель по истории)"> · ≈${Math.round(b.qty_f != null ? b.qty_f : (b.qty_m || 0))} шт/мес</span>
           <div class="small text-secondary" style="max-width:210px;overflow:hidden;text-overflow:ellipsis">${esc(b.name || '')}</div></td>
         <td class="text-end" style="padding:3px 6px"><input type="number" value="${cogs}" oninput="_marginCost['${esc(b.sku)}']=parseFloat(this.value)||0;recalcMarginRow('${esc(b.sku)}')"
           style="width:76px;text-align:right;background:rgba(56,189,248,.10);border:1px solid var(--border);border-radius:6px;color:var(--ink);padding:2px 6px"></td>

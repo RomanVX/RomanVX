@@ -1237,13 +1237,24 @@ async def get_margin(mp: str = Query(default="WB")):
         price0 = round(rev / qty)
         paid = recent.get("paid", 0)
         total_qty = sum((c or {}).get("qty", 0) for c in months.values())
+        # дней в свежем окне: текущий месяц учитываем по фактическим дням,
+        # иначе среднее «шт/мес» занижается в полтора раза в середине месяца
+        _now = datetime.utcnow() + timedelta(hours=3)
+        days_cov = 0
+        for mk in recent_keys:
+            y_, m_ = int(mk[:4]), int(mk[5:7])
+            if (y_, m_) == (_now.year, _now.month):
+                days_cov += max(_now.day - 1, 1)
+            else:
+                import calendar as _cal
+                days_cov += _cal.monthrange(y_, m_)[1]
         nm = r.get("nmId")
         tariff = comm_tariff.get(int(nm)) if nm and str(nm).isdigit() else None
         items.append({
             "sku": r.get("sku"), "nmId": r.get("nmId"),
             "name": r.get("name", ""), "group": r.get("brand", ""),
             "qty": round(total_qty),
-            "qty_m": round(qty / max(len(recent_keys), 1), 1),  # продажи в месяц (среднее по свежему окну)
+            "qty_m": round(qty / max(days_cov, 1) * 30.44, 1),  # продажи в месяц (по фактическим дням окна)
             "qty_f": (forecast.get(str(r.get("sku") or "").strip().upper()) or {}).get("qty_f"),
             "trend": (forecast.get(str(r.get("sku") or "").strip().upper()) or {}).get("trend"),
             "window": _mk_label(recent_keys),               # окно свежих статей
