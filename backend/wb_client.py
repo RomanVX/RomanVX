@@ -79,8 +79,10 @@ async def get_commission_tariffs() -> dict[int, dict]:
             out[int(sid)] = {
                 "subjectName": r.get("subjectName") or "",
                 "parentName": r.get("parentName") or "",
-                "fbo": r.get("kgvpSupplier"),        # продажа со склада WB
-                "fbs": r.get("kgvpMarketplace"),     # продажа со склада продавца
+                # имена полей WB обманчивы: paidStorageKgvp = «Склад WB (FBW)»,
+                # kgvpMarketplace = FBS, kgvpSupplier = «Витрина DBS/Курьер»
+                "fbo": r.get("paidStorageKgvp"),
+                "fbs": r.get("kgvpMarketplace"),
             }
     _log.info("WB tariffs/commission: %d категорий", len(out))
     return out
