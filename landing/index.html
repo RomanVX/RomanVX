@@ -91,7 +91,7 @@
     </div>
   </header>
 
-  <div class="menu-overlay" id="menu-overlay">
+  <div class="menu-overlay" id="menu-overlay" role="dialog" aria-modal="true" aria-label="Меню">
     <nav class="menu-overlay__nav" aria-label="Мобильная навигация">
       <a class="menu-overlay__link" href="#services">Услуги</a>
       <a class="menu-overlay__link" href="#process">Как работаем</a>
@@ -115,7 +115,7 @@
           <a class="btn btn--primary btn--lg" href="#audit">Получить бесплатный аудит<span class="btn__arrow" aria-hidden="true">→</span></a>
           <a class="btn btn--ghost btn--lg" href="#services">Наши услуги</a>
         </div>
-        <p class="hero__trust reveal" style="--d:.32s">100&nbsp;млн&nbsp;₽ оборота под управлением<span class="hero__trust-sep" aria-hidden="true">·</span>рост выручки клиентов до&nbsp;320% год к&nbsp;году<span class="hero__trust-sep" aria-hidden="true">·</span>ведение под ключ</p>
+        <p class="hero__trust reveal" style="--d:.32s">100&nbsp;млн&nbsp;₽ оборота под управлением <span class="hero__trust-sep" aria-hidden="true">·</span> рост выручки клиентов до&nbsp;320% год к&nbsp;году <span class="hero__trust-sep" aria-hidden="true">·</span> ведение под ключ</p>
       </div>
     </section>
 
@@ -403,6 +403,7 @@
   </footer>
 
   <script src="js/lenis.min.js" defer></script>
-  <script src="js/main.js" defer></script>
+  <!-- если main.js не загрузился, снимаем класс js — иначе reveal-контент останется скрытым -->
+  <script src="js/main.js" defer onerror="document.documentElement.classList.remove('js')"></script>
 </body>
 </html>

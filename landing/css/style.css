@@ -10,7 +10,9 @@
   --bg-dark: #111111;
   --ink: #111111;
   --text: #444444;
-  --muted: #999999;
+  /* подписи: #757570 вместо задуманного #999 — иначе на светлых фонах
+     контраст ~2.8:1 и требование AA из ТЗ не выполняется */
+  --muted: #757570;
   --accent: #1A2B4A;
   --accent-hover: #142238;
   --line: #E8E8E4;
@@ -48,7 +50,10 @@ body {
   font-size: 17px;
   line-height: 1.65;
   -webkit-font-smoothing: antialiased;
+  /* clip, а не hidden: hidden делает body scroll-контейнером
+     и ломает position: sticky у результата калькулятора */
   overflow-x: hidden;
+  overflow-x: clip;
 }
 
 h1, h2, h3, p { margin: 0; }
@@ -297,7 +302,17 @@ h1, h2, h3 {
   background: var(--bg);
   opacity: 0;
   visibility: hidden;
+  overflow-y: auto;
   transition: opacity 0.35s ease, visibility 0.35s ease;
+}
+
+/* ландшафтные телефоны: пунктам не хватает высоты — прижимаем к верху и даём прокрутку */
+@media (max-height: 540px) {
+  .menu-overlay {
+    justify-content: flex-start;
+    gap: 24px;
+  }
+  .menu-overlay__link { font-size: 24px; padding: 6px 0; }
 }
 
 .menu-open .menu-overlay {
@@ -408,7 +423,7 @@ body.menu-open { overflow: hidden; }
   color: var(--muted);
 }
 
-.hero__trust-sep { margin: 0 12px; }
+.hero__trust-sep { margin: 0 6px; }
 
 /* ---------- Карточки ---------- */
 
@@ -753,7 +768,7 @@ body.menu-open { overflow: hidden; }
   color: #FFFFFF;
 }
 
-.field--dark .field__input::placeholder { color: #666666; }
+.field--dark .field__input::placeholder { color: #8A8A85; }
 
 .field--dark .field__input:focus {
   border-color: #FAFAF8;
@@ -840,14 +855,15 @@ body.menu-open { overflow: hidden; }
 .footer__nav, .footer__contacts {
   display: flex;
   flex-direction: column;
-  gap: 4px;
   align-items: flex-start;
 }
 
 .footer__link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px; /* тап-таргет по ТЗ */
   color: #999999;
   font-size: 14.5px;
-  padding: 6px 0;
   transition: color 0.2s ease;
 }
 
@@ -868,7 +884,7 @@ body.menu-open { overflow: hidden; }
 
 .footer__copy { margin-left: auto; }
 
-.footer__link--small { font-size: 13px; padding: 4px 0; }
+.footer__link--small { font-size: 13px; }
 
 /* ---------- Анимации появления ---------- */
 
@@ -917,9 +933,36 @@ html.js .process__steps .reveal {
     transform: none;
   }
 
-  .process__line-fill { transform: scaleX(1); }
+  .process__line-fill { transform: none !important; }
 
   .card:hover { transform: none; }
+}
+
+/* Без JS линия этапов сразу «прорисована» */
+html:not(.js) .process__line-fill { transform: none; }
+
+/* ---------- Печать ---------- */
+
+@media print {
+  .scroll-progress, .hero__canvas, .burger, .menu-overlay, .header__cta { display: none; }
+
+  .header { position: static; background: none; }
+
+  html.js .reveal { opacity: 1 !important; transform: none !important; transition: none !important; }
+
+  .section--dark, .footer {
+    background: none;
+    color: #444444;
+  }
+
+  .section__title--light { color: #111111; }
+
+  .audit__text, .checkbox, .audit__footnote, .footer__tagline,
+  .footer__link, .footer__legal, .footer__copy { color: #444444; }
+
+  .logo--footer { color: #111111; }
+
+  .field--dark .field__input { background: none; color: #111111; border-color: #999999; }
 }
 
 /* ============================================================
@@ -940,15 +983,35 @@ html.js .process__steps .reveal {
 
   .why__col + .why__col { border-top: 1px solid var(--line); }
 
+  /* Планшет и уже: этапы вертикальной колонкой, линия соединяет их слева */
   .process__steps {
-    grid-template-columns: repeat(2, 1fr);
-    gap: 40px 32px;
+    grid-template-columns: 1fr;
+    gap: 40px;
+    padding-left: 32px;
   }
 
-  /* На двух рядах горизонтальная линия теряет смысл — скрываем маркеры линии */
-  .process__line { display: none; }
+  .process__line {
+    top: 6px;
+    bottom: 6px;
+    left: 5px;
+    right: auto;
+    width: 2px;
+    height: auto;
+  }
 
-  .process__marker { display: none; }
+  .process__line-fill {
+    transform: scaleY(0);
+    transform-origin: top;
+    transition: transform 1.4s var(--ease-out) 0.2s;
+  }
+
+  .process__steps.is-visible .process__line-fill { transform: scaleY(1); }
+
+  .process__marker {
+    left: -32px;
+    top: 4px;
+    background: var(--bg-white);
+  }
 
   .process__num { margin-top: 0; }
 
@@ -986,40 +1049,7 @@ html.js .process__steps .reveal {
 
   .cases { grid-template-columns: 1fr; }
 
-  /* Процесс: вертикальная линия слева */
-  .process__steps {
-    grid-template-columns: 1fr;
-    gap: 40px;
-    margin-top: 48px;
-    padding-left: 32px;
-  }
-
-  .process__line {
-    display: block;
-    top: 6px;
-    bottom: 6px;
-    left: 5px;
-    right: auto;
-    width: 2px;
-    height: auto;
-  }
-
-  .process__line-fill {
-    transform: scaleY(0);
-    transform-origin: top;
-    transition: transform 1.4s var(--ease-out) 0.2s;
-  }
-
-  .process__steps.is-visible .process__line-fill { transform: scaleY(1); }
-
-  .process__marker {
-    display: block;
-    left: -32px;
-    top: 4px;
-    background: var(--bg-white);
-  }
-
-  .process__num { margin-top: 0; }
+  .process__steps { margin-top: 48px; }
 
   .calc__fields {
     grid-template-columns: 1fr;
@@ -1027,7 +1057,13 @@ html.js .process__steps .reveal {
     gap: 18px;
   }
 
-  /* Результат прилипает снизу карточкой */
+  /* Результат прилипает снизу карточкой. Два условия для sticky:
+     не grid (grid-область не даёт элементу двигаться) и не overflow:hidden */
+  .calc {
+    display: block;
+    overflow: visible;
+  }
+
   .calc__result {
     position: sticky;
     bottom: 0;
@@ -1036,6 +1072,7 @@ html.js .process__steps .reveal {
     padding: 20px;
     background: var(--bg);
     border-top: 1px solid var(--line);
+    border-radius: 0 0 5px 5px;
   }
 
   .calc__value { font-size: 26px; }
@@ -1050,6 +1087,9 @@ html.js .process__steps .reveal {
 @media (max-width: 480px) {
 
   .container { padding: 0 16px; }
+
+  /* на 320px длинные надписи кнопок должны переноситься, а не вылезать */
+  .btn { white-space: normal; text-align: center; }
 
   .menu-overlay { padding-left: 16px; padding-right: 16px; }
 

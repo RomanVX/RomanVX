@@ -4,7 +4,9 @@
 
   var reducedMotionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
   function reducedMotion() { return reducedMotionQuery.matches; }
-  function isMobile() { return window.innerWidth < 768; }
+  // граница совпадает с CSS-брейкпоинтом max-width: 768px (включительно)
+  var mobileQuery = window.matchMedia('(max-width: 768px)');
+  function isMobile() { return mobileQuery.matches; }
 
   /* ---------- Плавный скролл (Lenis) ---------- */
 
@@ -12,16 +14,42 @@
   if (typeof window.Lenis === 'function' && !reducedMotion()) {
     lenis = new window.Lenis({ lerp: 0.1 });
     var lenisRaf = function (time) {
+      if (!lenis) return; // остановлен из-за смены prefers-reduced-motion
       lenis.raf(time);
       window.requestAnimationFrame(lenisRaf);
     };
     window.requestAnimationFrame(lenisRaf);
   }
 
+  if (reducedMotionQuery.addEventListener) {
+    reducedMotionQuery.addEventListener('change', function () {
+      if (reducedMotion() && lenis) {
+        lenis.destroy();
+        lenis = null;
+      }
+    });
+  }
+
   /* ---------- Шапка, бургер-меню ---------- */
 
   var header = document.querySelector('.header');
   var burger = document.querySelector('.burger');
+  var overlay = document.getElementById('menu-overlay');
+  // пока меню открыто, фон выводится из tab-порядка и из дерева доступности
+  var inertTargets = [document.querySelector('main'), document.querySelector('.footer')]
+    .filter(Boolean);
+
+  function setBackgroundInert(on) {
+    inertTargets.forEach(function (el) {
+      if (on) {
+        el.setAttribute('aria-hidden', 'true');
+        el.inert = true;
+      } else {
+        el.removeAttribute('aria-hidden');
+        el.inert = false;
+      }
+    });
+  }
 
   function menuIsOpen() { return document.body.classList.contains('menu-open'); }
 
@@ -29,14 +57,22 @@
     document.body.classList.add('menu-open');
     burger.setAttribute('aria-expanded', 'true');
     burger.setAttribute('aria-label', 'Закрыть меню');
+    setBackgroundInert(true);
     if (lenis) lenis.stop();
+    // ждём, пока оверлей станет visible (транзишен), иначе focus() не сработает
+    var firstLink = overlay && overlay.querySelector('a');
+    if (firstLink) setTimeout(function () { if (menuIsOpen()) firstLink.focus(); }, 80);
   }
 
   function closeMenu() {
+    if (!menuIsOpen()) return;
     document.body.classList.remove('menu-open');
     burger.setAttribute('aria-expanded', 'false');
     burger.setAttribute('aria-label', 'Открыть меню');
+    setBackgroundInert(false);
     if (lenis) lenis.start();
+    // не оставляем фокус на скрывшемся оверлее
+    if (burger.offsetParent !== null) burger.focus();
   }
 
   if (burger) {
@@ -77,6 +113,9 @@
       } else {
         target.scrollIntoView({ behavior: reducedMotion() || wasMenu ? 'auto' : 'smooth' });
       }
+      // переносим клавиатурный фокус вслед за визуальным переходом
+      if (!target.hasAttribute('tabindex')) target.setAttribute('tabindex', '-1');
+      target.focus({ preventScroll: true });
       if (history.pushState) history.pushState(null, '', hash);
     });
   });
@@ -188,12 +227,14 @@
     var heroVisible = true;
     var scrollFactor = 0;
     var lastBuildWidth = 0;
+    var lastBuildHeight = 0;
 
     function build() {
       var dpr = Math.min(2, window.devicePixelRatio || 1);
       width = hero.offsetWidth;
       height = hero.offsetHeight;
       lastBuildWidth = window.innerWidth;
+      lastBuildHeight = height;
       canvas.width = Math.round(width * dpr);
       canvas.height = Math.round(height * dpr);
       canvas.style.width = width + 'px';
@@ -301,8 +342,11 @@
 
     var resizeTimer = null;
     window.addEventListener('resize', function () {
-      // на мобильных высота меняется из-за адресной строки — реагируем только на ширину
-      if (window.innerWidth === lastBuildWidth) return;
+      // мелкие скачки высоты (адресная строка на мобильных) игнорируем,
+      // но на существенное изменение (поворот, развернули окно) пересобираемся
+      var widthChanged = window.innerWidth !== lastBuildWidth;
+      var heightChanged = Math.abs(hero.offsetHeight - lastBuildHeight) > 150;
+      if (!widthChanged && !heightChanged) return;
       if (resizeTimer) clearTimeout(resizeTimer);
       resizeTimer = setTimeout(function () {
         build();
