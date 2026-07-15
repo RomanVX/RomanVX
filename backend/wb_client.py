@@ -57,6 +57,66 @@ async def analytics_post(path: str, body: dict) -> tuple[int, dict | str]:
         return resp.status_code, resp.text[:600]
 
 
+COMMON_BASE = "https://common-api.wildberries.ru"
+
+
+async def get_commission_tariffs() -> dict[int, dict]:
+    """Официальные тарифы комиссии WB по категориям (subjectID → проценты).
+
+    GET /api/v1/tariffs/commission: kgvpSupplier — FBO (склад WB),
+    kgvpMarketplace — FBS, kgvpSupplierExpress и др."""
+    if USE_MOCK:
+        return {}
+    resp = await _http().get(f"{COMMON_BASE}/api/v1/tariffs/commission",
+                             headers=_headers(), params={"locale": "ru"})
+    if not resp.is_success:
+        _log.warning("WB tariffs/commission → %s %s", resp.status_code, resp.text[:200])
+        return {}
+    out = {}
+    for r in (resp.json() or {}).get("report") or []:
+        sid = r.get("subjectID")
+        if sid is not None:
+            out[int(sid)] = {
+                "subjectName": r.get("subjectName") or "",
+                "parentName": r.get("parentName") or "",
+                "fbo": r.get("kgvpSupplier"),        # продажа со склада WB
+                "fbs": r.get("kgvpMarketplace"),     # продажа со склада продавца
+            }
+    _log.info("WB tariffs/commission: %d категорий", len(out))
+    return out
+
+
+async def get_card_subjects() -> dict[int, dict]:
+    """Категория каждой карточки кабинета: nmID → {subjectID, subjectName}.
+
+    POST /content/v2/get/cards/list с курсорной пагинацией."""
+    if USE_MOCK:
+        return {}
+    out: dict[int, dict] = {}
+    cursor = {"limit": 100}
+    for _ in range(50):  # защита от бесконечного цикла
+        body = {"settings": {"cursor": cursor, "filter": {"withPhoto": -1}}}
+        resp = await _http().post(f"{CONTENT_BASE}/content/v2/get/cards/list",
+                                  headers=_headers(), json=body)
+        if not resp.is_success:
+            _log.warning("WB cards/list → %s %s", resp.status_code, resp.text[:200])
+            break
+        data = resp.json() or {}
+        cards = data.get("cards") or []
+        for c in cards:
+            nm = c.get("nmID")
+            if nm:
+                out[int(nm)] = {"subjectID": c.get("subjectID"),
+                                "subjectName": c.get("subjectName") or ""}
+        cur = data.get("cursor") or {}
+        total = cur.get("total") or 0
+        if total < cursor.get("limit", 100) or not cards:
+            break
+        cursor = {"limit": 100, "updatedAt": cur.get("updatedAt"), "nmID": cur.get("nmID")}
+    _log.info("WB cards/list: %d карточек", len(out))
+    return out
+
+
 def _learn_sku_map(rows: list[dict]) -> list[dict]:
     """Выучиваем связки nmId→артикул (нужны для остатков, где артикула нет)."""
     try:

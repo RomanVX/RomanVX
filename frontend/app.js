@@ -3536,7 +3536,7 @@ function renderMargin() {
           <div class="small text-secondary" style="max-width:210px;overflow:hidden;text-overflow:ellipsis">${esc(b.name || '')}</div></td>
         <td class="text-end" style="padding:3px 6px"><input type="number" value="${cogs}" oninput="_marginCost['${esc(b.sku)}']=parseFloat(this.value)||0;recalcMarginRow('${esc(b.sku)}')"
           style="width:76px;text-align:right;background:rgba(56,189,248,.10);border:1px solid var(--border);border-radius:6px;color:var(--ink);padding:2px 6px"></td>
-        <td class="text-end mg-comm" title="${b.comm_exact ? `Точная комиссия WB ${b.comm_pct}% (из последней продажи) + эквайринг ${b.acq_pct}%` : `Средняя комиссия ${b.comm_pct}% + эквайринг ${b.acq_pct}%`}"></td>
+        <td class="text-end mg-comm" title="${b.subject ? `Тариф WB для «${esc(b.subject)}»: ${b.comm_pct}% + эквайринг ${b.acq_pct}%` : b.comm_exact ? `Комиссия WB ${b.comm_pct}% (из последней продажи) + эквайринг ${b.acq_pct}%` : `Средняя комиссия ${b.comm_pct}% + эквайринг ${b.acq_pct}%`}"></td>
         <td class="text-end"><span style="color:var(--neg)">−</span>${fmtRub(b.logist)}</td>
         <td class="text-end"><span style="color:var(--neg)">−</span>${fmtRub(b.storage)}</td>
         <td class="text-end" style="padding:3px 6px;${advDim}"><input type="number" step="0.1" value="${drr}" oninput="_marginDrr['${esc(b.sku)}']=parseFloat(this.value)||0;recalcMarginRow('${esc(b.sku)}')"
@@ -3555,15 +3555,20 @@ function renderMargin() {
     });
   });
   html += `</tbody></table></div></div></div>`;
-  // сноска: текущая комиссия WB по категориям (точная, из последних продаж)
-  const commByGroup = orderedGroups.map(([g, list]) => {
-    const pcts = [...new Set(list.filter(b => b.comm_exact).map(b => b.comm_pct))].sort((a, b) => a - b);
-    if (!pcts.length) return null;
+  // сноска: действующая комиссия WB по категориям (официальный тариф)
+  const bySubject = {};
+  items.filter(b => b.comm_exact).forEach(b => {
+    const key = b.subject || articleGroup({ supplierArticle: b.sku, brand: b.group });
+    (bySubject[key] = bySubject[key] || new Set()).add(b.comm_pct);
+  });
+  const commBySubj = Object.entries(bySubject).map(([s, set]) => {
+    const pcts = [...set].sort((a, b) => a - b);
     const val = pcts.length === 1 ? `${pcts[0]}%` : `${pcts[0]}–${pcts[pcts.length - 1]}%`;
-    return `${esc(g)} <b style="color:var(--ink)">${val}</b>`;
-  }).filter(Boolean);
-  if (commByGroup.length) {
-    html += `<div class="text-secondary small mt-2">📌 Комиссия WB сейчас (точная, из последних продаж): ${commByGroup.join(' · ')} — сверх неё эквайринг ~${(items.reduce((s, b) => s + b.acq_pct, 0) / items.length).toFixed(1)}%.</div>`;
+    return `${esc(s)} <b style="color:var(--ink)">${val}</b>`;
+  });
+  if (commBySubj.length) {
+    const hasTariff = items.some(b => b.subject);
+    html += `<div class="text-secondary small mt-2">📌 Комиссия WB сейчас${hasTariff ? ' (официальный тариф по категориям, FBO)' : ' (из последних продаж)'}: ${commBySubj.join(' · ')} — сверх неё эквайринг ~${(items.reduce((s, b) => s + b.acq_pct, 0) / items.length).toFixed(1)}%.</div>`;
   }
   html += `<div class="text-secondary small mt-2">💡 <b>Безубыточность</b> — минимальная цена, ниже которой уходите в минус (при текущей себестоимости). <b>Цена для X% маржи</b> — по какой цене продавать, чтобы получить нужную маржу. Убыточные при текущей цене строки подсвечены красным. ${d.fetched_at}</div>`;
   wrap.innerHTML = html;

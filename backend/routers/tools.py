@@ -10,6 +10,7 @@ import base64
 import os
 import json
 import logging
+import time as _time
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, HTTPException, Query
@@ -1038,6 +1039,36 @@ _niche_last_err = ""
 
 
 # ══ Калькулятор маржи: затраты на единицу + ценообразование ═══════════════════
+_wb_comm_cache: dict = {}     # nmId → {pct, subject}
+_wb_comm_ts: float = 0.0
+_WB_COMM_TTL = 12 * 3600
+
+
+async def _wb_commission_by_nm() -> dict:
+    """Официальная комиссия WB по каждому nmId кабинета: тарифы по категориям
+    (tariffs/commission) × категория карточки (cards/list). Кеш 12ч."""
+    global _wb_comm_cache, _wb_comm_ts
+    if _wb_comm_cache and _time.monotonic() - _wb_comm_ts < _WB_COMM_TTL:
+        return _wb_comm_cache
+    import wb_client
+    try:
+        tariffs, subjects = await asyncio.gather(
+            wb_client.get_commission_tariffs(), wb_client.get_card_subjects())
+    except Exception as e:
+        _log.warning("WB commission tariffs failed: %s", e)
+        return _wb_comm_cache
+    if not tariffs or not subjects:
+        return _wb_comm_cache
+    out = {}
+    for nm, s in subjects.items():
+        t = tariffs.get(int(s.get("subjectID") or 0))
+        if t and t.get("fbo") is not None:
+            out[nm] = {"pct": float(t["fbo"]), "subject": t.get("subjectName") or s.get("subjectName", "")}
+    if out:
+        _wb_comm_cache, _wb_comm_ts = out, _time.monotonic()
+    return out
+
+
 @router.get("/margin")
 async def get_margin(mp: str = Query(default="WB")):
     """Затраты на единицу товара из фактической юнитки — для калькулятора
@@ -1057,6 +1088,9 @@ async def get_margin(mp: str = Query(default="WB")):
     skus = data.get("skus", [])
     if not skus:
         return {"items": [], "message": data.get("message") or "Нет данных юнитки"}
+
+    # официальные тарифы комиссии WB по категориям (nmId → pct/subject)
+    comm_tariff = await _wb_commission_by_nm() if mp == "WB" else {}
 
     # Окна усреднения — у статей разная «скорость устаревания»:
     #   свежие (цена, комиссия %, логистика, ДРР) — текущий + прошлый месяц;
@@ -1102,6 +1136,8 @@ async def get_margin(mp: str = Query(default="WB")):
         price0 = round(rev / qty)
         paid = recent.get("paid", 0)
         total_qty = sum((c or {}).get("qty", 0) for c in months.values())
+        nm = r.get("nmId")
+        tariff = comm_tariff.get(int(nm)) if nm and str(nm).isdigit() else None
         items.append({
             "sku": r.get("sku"), "nmId": r.get("nmId"),
             "name": r.get("name", ""), "group": r.get("brand", ""),
@@ -1109,11 +1145,13 @@ async def get_margin(mp: str = Query(default="WB")):
             "window": _mk_label(recent_keys),               # окно свежих статей
             "price0": price0,                              # средняя цена (до СПП)
             "buyer0": round(paid / qty) if paid > 0 else None,  # цена для покупателя (после СПП)
-            # точная комиссия WB из последней продажи (commission_percent),
-            # фолбэк — средняя по свежему окну
-            "comm_pct": (round(float(r["commNow"]), 2) if r.get("commNow")
+            # комиссия WB: официальный тариф категории (tariffs/commission),
+            # фолбэки — commission_percent из последней продажи, затем средняя
+            "comm_pct": (round(tariff["pct"], 2) if tariff
+                         else round(float(r["commNow"]), 2) if r.get("commNow")
                          else round(recent.get("commission", 0) / rev * 100, 2)),
-            "comm_exact": bool(r.get("commNow")),
+            "comm_exact": bool(tariff or r.get("commNow")),
+            "subject": (tariff or {}).get("subject", ""),
             "acq_pct": round(recent.get("acquiring", 0) / rev * 100, 2),
             "logist": round(per("delivery")),              # логистика на штуку (фикс)
             "storage": round(sper("storage") + sper("acceptance")),  # сглажено
