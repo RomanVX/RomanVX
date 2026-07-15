@@ -14,6 +14,10 @@ _log = logging.getLogger(__name__)
 
 DATABASE_URL = (os.environ.get("DATABASE_URL") or "").strip()
 IS_PG = DATABASE_URL.startswith("postgres")
+# Несколько кабинетов в одном Postgres-инстансе: каждый живёт в своей схеме
+# (DB_SCHEMA=biomed / fk). Пусто — обычный public (совместимо с Neon/локалкой).
+DB_SCHEMA = (os.environ.get("DB_SCHEMA") or "").strip()
+_PG_OPTIONS = f"-c search_path={DB_SCHEMA},public" if DB_SCHEMA else None
 
 if IS_PG:
     SQLITE_PATH = None
@@ -34,11 +38,12 @@ def _get_pool():
         with _pool_lock:
             if _pool is None:
                 from psycopg2 import pool
-                _pool = pool.ThreadedConnectionPool(
-                    1, 8, DATABASE_URL, connect_timeout=10,
-                    keepalives=1, keepalives_idle=30,
-                    keepalives_interval=10, keepalives_count=3,
-                )
+                kw = dict(connect_timeout=10,
+                          keepalives=1, keepalives_idle=30,
+                          keepalives_interval=10, keepalives_count=3)
+                if _PG_OPTIONS:
+                    kw["options"] = _PG_OPTIONS
+                _pool = pool.ThreadedConnectionPool(1, 8, DATABASE_URL, **kw)
     return _pool
 
 
@@ -46,7 +51,8 @@ def get_conn():
     """Совместимость: разовое соединение (для прямого доступа). Лучше — _conn()."""
     if IS_PG:
         import psycopg2
-        return psycopg2.connect(DATABASE_URL, connect_timeout=10)
+        kw = {"options": _PG_OPTIONS} if _PG_OPTIONS else {}
+        return psycopg2.connect(DATABASE_URL, connect_timeout=10, **kw)
     return sqlite3.connect(SQLITE_PATH)
 
 
