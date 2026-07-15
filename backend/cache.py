@@ -101,7 +101,9 @@ async def _refresh() -> None:
         _store.orders     = orders
         _store.stocks     = stocks
         _store.fetched_at = time.monotonic()
-        _log.info("Cache refreshed: %d sales, %d orders, %d stocks", len(sales), len(orders), len(stocks))
+        import heavy
+        _log.info("Cache refreshed: %d sales, %d orders, %d stocks (rss %.0f МБ)",
+                  len(sales), len(orders), len(stocks), heavy.rss_mb())
         try:
             import sales_history
             sales_history.persist_wb_bg(sales)
@@ -109,8 +111,9 @@ async def _refresh() -> None:
             _log.warning("sales_history persist (WB) failed: %s", exc)
         try:
             import snapshot
-            await asyncio.to_thread(snapshot.save, "wb_raw",
-                                    {"sales": sales, "orders": orders, "stocks": stocks})
+            await asyncio.to_thread(
+                snapshot.save_parts, "wb_raw", {},
+                {"sales": sales, "orders": orders, "stocks": stocks})
         except Exception as exc:
             _log.warning("wb_raw snapshot save failed: %s", exc)
     except Exception as exc:
@@ -214,10 +217,10 @@ async def _refresh_report(date_from: datetime, date_to: datetime) -> None:
     _log.info("Report cache: %d records", len(records))
     try:
         import snapshot
-        await asyncio.to_thread(snapshot.save, "wb_report",
-                                {"records": records,
-                                 "date_from": date_from.isoformat(),
-                                 "date_to": date_to.isoformat()})
+        await asyncio.to_thread(
+            snapshot.save_parts, "wb_report",
+            {"date_from": date_from.isoformat(), "date_to": date_to.isoformat()},
+            {"records": records})
     except Exception as exc:
         _log.warning("wb_report snapshot save failed: %s", exc)
 
