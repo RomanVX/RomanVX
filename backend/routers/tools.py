@@ -1142,6 +1142,7 @@ async def get_margin(mp: str = Query(default="WB")):
             "sku": r.get("sku"), "nmId": r.get("nmId"),
             "name": r.get("name", ""), "group": r.get("brand", ""),
             "qty": round(total_qty),
+            "qty_m": round(qty / max(len(recent_keys), 1), 1),  # продажи в месяц (среднее по свежему окну)
             "window": _mk_label(recent_keys),               # окно свежих статей
             "price0": price0,                              # средняя цена (до СПП)
             "buyer0": round(paid / qty) if paid > 0 else None,  # цена для покупателя (после СПП)

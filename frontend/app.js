@@ -3503,9 +3503,27 @@ function recalcMarginRow(sku) {
 function recalcAllMargin() {
   if (_toolActive !== 'margin' || !_marginData) return;
   (_marginData.items || []).forEach(b => recalcMarginRow(b.sku));
-  // подпись целевой маржи в шапке
-  const th = document.getElementById('mgTgtHead');
-  if (th) th.textContent = `Цена для ${_marginTarget}% маржи`;
+  updateMarginSummary();
+}
+
+// прогноз на месяц: объёмы последнего месяца × текущая экономика из таблицы
+function updateMarginSummary() {
+  const items = (_marginData && _marginData.items) || [];
+  let rev = 0, profit = 0, loss = 0;
+  items.forEach(b => {
+    const c = _marginCalc(b);
+    const q = b.qty_m || 0;
+    rev += c.price * q;
+    profit += c.profit * q;
+    if (c.profit < 0) loss++;
+  });
+  const set = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html; };
+  set('mgSumRev', fmtRub(Math.round(rev)));
+  const pclr = profit >= 0 ? 'var(--pos)' : 'var(--neg)';
+  set('mgSumProfit', `<span style="color:${pclr}">${profit < 0 ? '−' : ''}${fmtRub(Math.abs(Math.round(profit)))}</span>`);
+  const m = rev > 0 ? profit / rev * 100 : 0;
+  set('mgSumMargin', `<span style="color:${m >= 20 ? 'var(--pos)' : m >= 0 ? 'var(--warn-c)' : 'var(--neg)'}">${Math.round(m)}%</span>`);
+  set('mgSumLoss', loss ? `<span style="color:var(--neg)">${loss}</span>` : '<span style="color:var(--pos)">0</span>');
 }
 
 function renderMargin() {
@@ -3537,7 +3555,13 @@ function renderMargin() {
   const orderedGroups = GROUP_ORDER.filter(g => groupMap[g]).map(g => [g, groupMap[g]]);
 
   const mpBtn = (mp, lbl) => `<button class="btn btn-sm ${_marginMp === mp ? 'btn-info' : 'btn-outline-info'}" onclick="setMarginMp('${mp}')">${lbl}</button>`;
-  let html = `<div class="card bg-card p-3 mb-3">
+  let html = `<div class="d-flex gap-3 flex-wrap mb-3" title="Объёмы продаж за последний месяц × текущие цены и затраты из таблицы. Пересчитывается вживую при правке цен, себестоимости и ДРР">
+    <div class="metric-card"><div class="mc-head">Прогноз выручки / мес</div><div class="mc-val" id="mgSumRev">—</div></div>
+    <div class="metric-card"><div class="mc-head">Прогноз прибыли / мес</div><div class="mc-val" id="mgSumProfit">—</div></div>
+    <div class="metric-card"><div class="mc-head">Маржа портфеля</div><div class="mc-val" id="mgSumMargin">—</div></div>
+    <div class="metric-card"><div class="mc-head">Убыточных артикулов</div><div class="mc-val" id="mgSumLoss">—</div></div>
+  </div>`;
+  html += `<div class="card bg-card p-3 mb-3">
     <div class="d-flex gap-3 flex-wrap align-items-end">
       <div><div class="text-secondary small mb-1">Площадка</div><div class="btn-group">${mpBtn('WB', 'WB')}${mpBtn('OZON', 'Ozon')}${mpBtn('YM', 'ЯМ')}</div></div>
       <div><div class="text-secondary small mb-1">Налог с прибыли, %</div>
