@@ -439,7 +439,7 @@ async def get_wb_pnl(
     sku_data: dict[str, dict] = {}   # sku → mk → {revenue, forPay, qty, cogs, delivery, storage, acceptance, penalty}
 
     _SKU_KEYS = ("revenue", "forPay", "qty", "cogs", "delivery", "storage",
-                 "acceptance", "penalty", "acquiring")
+                 "acceptance", "penalty", "acquiring", "paid")
 
     def s_ensure(sku, mk):
         m = sku_data.setdefault(sku, {})
@@ -525,6 +525,8 @@ async def get_wb_pnl(
                     sd["forPay"]    += sign * abs(_f(row.get("forPay")))
                     sd["qty"]       += sign * qty
                     sd["acquiring"] += sign * abs(_f(row.get("acquiringFee")))
+                    # что реально заплатил покупатель (после СПП)
+                    sd["paid"]      += sign * abs(_f(row.get("retailAmount")))
                     if uc > 0 and qty > 0:
                         sd["cogs"] += sign * uc * qty
             # операционные затраты — по дате операции, на любых строках
@@ -577,6 +579,7 @@ async def get_wb_pnl(
                     sd["revenue"] += neg * pre
                     sd["forPay"]  += neg * fp
                     sd["qty"]     += neg
+                    sd["paid"]    += neg * (_f(s.get("finishedPrice")) or pre)
                     if uc > 0:
                         sd["cogs"] += neg * uc
                     tail_dates.add(d)
@@ -977,6 +980,7 @@ async def get_wb_unit(
             row["months"][mk] = {
                 "qty":        round(d["qty"]),
                 "revenue":    round(rev),
+                "paid":       round(d.get("paid", 0.0)),
                 "commission": round(commission_full - acq),
                 "acquiring":  round(acq),
                 "delivery":   round(d["delivery"]),

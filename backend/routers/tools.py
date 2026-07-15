@@ -1072,6 +1072,7 @@ async def get_margin(mp: str = Query(default="WB")):
             continue
         per = lambda k: tot.get(k, 0) / qty
         price0 = round(rev / qty)
+        paid = tot.get("paid", 0)
         comm_pct = round(tot.get("commission", 0) / rev * 100, 2)
         acq_pct = round(tot.get("acquiring", 0) / rev * 100, 2)
         items.append({
@@ -1079,6 +1080,7 @@ async def get_margin(mp: str = Query(default="WB")):
             "name": r.get("name", ""), "group": r.get("brand", ""),
             "qty": round(qty),
             "price0": price0,                              # средняя цена (до СПП)
+            "buyer0": round(paid / qty) if paid > 0 else None,  # цена для покупателя (после СПП)
             "comm_pct": comm_pct,                          # комиссия % (масштаб. с ценой)
             "acq_pct": acq_pct,                            # эквайринг %
             "logist": round(per("delivery")),              # логистика на штуку (фикс)

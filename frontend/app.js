@@ -3381,6 +3381,7 @@ let _marginData = null;
 let _marginMp = 'WB';
 let _marginPrice = {};      // sku → изменённая цена
 let _marginCost = {};       // sku → изменённая себестоимость
+let _marginDrr = {};        // sku → изменённый ДРР, %
 let _marginTax = parseFloat(localStorage.getItem('unit_tax_profit_pct') || '0');
 let _marginTarget = 25;     // целевая маржа %
 let _marginAdvOn = true;    // учитывать продвижение
@@ -3400,19 +3401,23 @@ async function loadMargin(refresh) {
 function setMarginMp(mp) { if (mp === _marginMp) return; _marginMp = mp; _marginData = null; loadMargin(true); }
 function setMarginTax(v) { _marginTax = Math.max(0, parseFloat(v) || 0); localStorage.setItem('unit_tax_profit_pct', String(_marginTax)); recalcAllMargin(); }
 function setMarginTarget(v) { _marginTarget = Math.max(0, parseFloat(v) || 0); recalcAllMargin(); }
-function toggleMarginAdv(on) { _marginAdvOn = on; recalcAllMargin(); }
-function resetMargin() { _marginPrice = {}; _marginCost = {}; renderMargin(); }
+function toggleMarginAdv(on) { _marginAdvOn = on; renderMargin(); }
+function resetMargin() { _marginPrice = {}; _marginCost = {}; _marginDrr = {}; renderMargin(); }
+function _marginDrr0(b) { return b.price0 > 0 ? Math.round(b.advert / b.price0 * 1000) / 10 : 0; }
 
 // ядро расчёта одной строки
 function _marginCalc(b) {
   const price = _marginPrice[b.sku] != null ? _marginPrice[b.sku] : b.price0;
   const cogs = _marginCost[b.sku] != null ? _marginCost[b.sku] : b.cogs;
-  const advert = _marginAdvOn ? b.advert : 0;
-  const pctPart = (b.comm_pct + b.acq_pct) / 100;           // масштабируется с ценой
-  const fixed = b.logist + b.storage + b.other + advert + cogs;  // не зависит от цены
+  const drr = _marginAdvOn ? (_marginDrr[b.sku] != null ? _marginDrr[b.sku] : _marginDrr0(b)) : 0;
+  const advert = price * drr / 100;
+  const pctPart = (b.comm_pct + b.acq_pct + drr) / 100;     // масштабируется с ценой
+  const fixed = b.logist + b.storage + b.other + cogs;      // не зависит от цены
   const comm = price * b.comm_pct / 100;
   const acq = price * b.acq_pct / 100;
-  const grossBeforeTax = price - comm - acq - fixed;
+  const grossBeforeTax = price - comm - acq - advert - fixed;
+  // цена покупателя: фактическое соотношение после СПП, масштабируем с ценой
+  const buyer = (b.buyer0 && b.price0 > 0) ? price * b.buyer0 / b.price0 : null;
   const tax = _marginTax > 0 ? Math.max(grossBeforeTax, 0) * _marginTax / 100 : 0;
   const profit = grossBeforeTax - tax;
   const margin = price > 0 ? profit / price * 100 : 0;
@@ -3424,7 +3429,7 @@ function _marginCalc(b) {
   const t = _marginTarget / 100, taxF = 1 - _marginTax / 100;
   const denomTgt = denomBE - (taxF > 0 ? t / taxF : Infinity);
   const targetPrice = denomTgt > 0.001 ? fixed / denomTgt : null;
-  return { price, cogs, comm, acq, advert, fixed, profit, margin, roi, breakEven, targetPrice };
+  return { price, cogs, comm, acq, advert, drr, buyer, fixed, profit, margin, roi, breakEven, targetPrice };
 }
 
 function recalcMarginRow(sku) {
@@ -3435,7 +3440,9 @@ function recalcMarginRow(sku) {
   const c = _marginCalc(b);
   const set = (cls, html) => { const el = row.querySelector('.' + cls); if (el) el.innerHTML = html; };
   set('mg-comm', `<span style="color:var(--neg)">−</span>${fmtRub(Math.round(c.comm + c.acq))}`);
-  set('mg-costs', fmtRub(Math.round(c.comm + c.acq + c.fixed)));
+  set('mg-adv', c.advert > 0 ? `<span style="color:var(--neg)">−</span>${fmtRub(Math.round(c.advert))}` : '<span class="text-secondary">0 ₽</span>');
+  set('mg-buyer', c.buyer != null ? fmtRub(Math.round(c.buyer)) : '<span class="text-secondary">—</span>');
+  set('mg-costs', fmtRub(Math.round(c.comm + c.acq + c.advert + c.fixed)));
   const pclr = c.profit >= 0 ? 'var(--pos)' : 'var(--neg)';
   set('mg-profit', `<span style="color:${pclr};font-weight:700">${c.profit < 0 ? '−' : ''}${fmtRub(Math.abs(Math.round(c.profit)))}</span>`);
   const mclr = c.margin >= 20 ? 'var(--pos)' : c.margin >= 0 ? 'var(--warn-c)' : 'var(--neg)';
@@ -3495,7 +3502,7 @@ function renderMargin() {
         <div class="form-check form-switch"><input class="form-check-input" type="checkbox" ${_marginAdvOn ? 'checked' : ''} onchange="toggleMarginAdv(this.checked)"></div></div>
       <button class="btn btn-sm btn-outline-secondary" onclick="resetMargin()">↺ Сбросить правки</button>
     </div>
-    <div class="text-secondary small mt-2">Затраты на штуку — из фактической юнитки за 6 мес. <b>Правьте цену и себестоимость</b> (голубые поля) — прибыль, маржа и точка безубыточности пересчитываются вживую. Комиссия и эквайринг зависят от цены (%), остальное фиксировано на штуку.</div>
+    <div class="text-secondary small mt-2">Затраты на штуку — из фактической юнитки за 6 мес. <b>Правьте цену, себестоимость и ДРР</b> (голубые поля) — прибыль, маржа и безубыточность пересчитываются вживую. Комиссия, эквайринг и продвижение (ДРР) зависят от цены (%), остальное фиксировано на штуку. <b>Цена покупателя</b> — с учётом скидки WB (СПП) по фактическому соотношению.</div>
   </div>`;
 
   html += `<div class="card border-0 bg-card"><div class="card-body p-0"><div class="table-responsive" style="max-height:70vh">
@@ -3504,8 +3511,10 @@ function renderMargin() {
       <th class="text-end" title="Себестоимость — редактируется">Себес ₽</th>
       <th class="text-end" title="Комиссия WB + эквайринг (% от цены)">Комиссия</th>
       <th class="text-end">Логист.</th><th class="text-end">Хранен.</th>
-      <th class="text-end" title="Продвижение на штуку">Продв.</th>
+      <th class="text-end" title="Доля рекламных расходов от цены — редактируется">ДРР %</th>
+      <th class="text-end" title="Продвижение на штуку = цена × ДРР">Продв.</th>
       <th class="text-end" title="Цена — редактируется" style="background:rgba(16,185,129,.10)">Цена ₽</th>
+      <th class="text-end" title="Сколько платит покупатель после скидки WB (СПП) — по фактическому соотношению за 6 мес">Цена покупателя</th>
       <th class="text-end">Затраты</th>
       <th class="text-end">Прибыль/ед</th><th class="text-end">Маржа</th><th class="text-end">ROI</th>
       <th class="text-end" title="Цена, при которой прибыль = 0">Безубыт.</th>
@@ -3513,10 +3522,11 @@ function renderMargin() {
     </tr></thead><tbody>`;
   orderedGroups.forEach(([gname, list]) => {
     list.sort((a, b) => b.qty - a.qty);
-    html += `<tr class="table-secondary"><td colspan="13" style="padding:6px 12px"><strong>${gname}</strong> <span class="text-secondary small">(${list.length} арт.)</span></td></tr>`;
+    html += `<tr class="table-secondary"><td colspan="15" style="padding:6px 12px"><strong>${gname}</strong> <span class="text-secondary small">(${list.length} арт.)</span></td></tr>`;
     list.forEach(b => {
       const price = _marginPrice[b.sku] != null ? _marginPrice[b.sku] : b.price0;
       const cogs = _marginCost[b.sku] != null ? _marginCost[b.sku] : b.cogs;
+      const drr = _marginDrr[b.sku] != null ? _marginDrr[b.sku] : _marginDrr0(b);
       const advDim = _marginAdvOn ? '' : 'opacity:.35';
       html += `<tr data-msku="${esc(b.sku)}" style="background:var(--t-row)">
         <td style="position:sticky;left:0;background:var(--t-sticky);padding:5px 12px">
@@ -3527,9 +3537,12 @@ function renderMargin() {
         <td class="text-end mg-comm"></td>
         <td class="text-end"><span style="color:var(--neg)">−</span>${fmtRub(b.logist)}</td>
         <td class="text-end"><span style="color:var(--neg)">−</span>${fmtRub(b.storage)}</td>
-        <td class="text-end" style="${advDim}"><span style="color:var(--neg)">−</span>${fmtRub(b.advert)}</td>
+        <td class="text-end" style="padding:3px 6px;${advDim}"><input type="number" step="0.1" value="${drr}" oninput="_marginDrr['${esc(b.sku)}']=parseFloat(this.value)||0;recalcMarginRow('${esc(b.sku)}')"
+          style="width:62px;text-align:right;background:rgba(56,189,248,.10);border:1px solid var(--border);border-radius:6px;color:var(--ink);padding:2px 6px"></td>
+        <td class="text-end mg-adv" style="${advDim}"></td>
         <td class="text-end" style="padding:3px 6px;background:rgba(16,185,129,.06)"><input type="number" value="${price}" oninput="_marginPrice['${esc(b.sku)}']=parseFloat(this.value)||0;recalcMarginRow('${esc(b.sku)}')"
           style="width:84px;text-align:right;background:rgba(16,185,129,.12);border:1px solid var(--pos);border-radius:6px;color:var(--ink);font-weight:600;padding:2px 6px"></td>
+        <td class="text-end mg-buyer" style="color:var(--gold);font-weight:600"></td>
         <td class="text-end mg-costs" style="color:var(--ink-2)"></td>
         <td class="text-end mg-profit" style="border-left:1px solid var(--sep)"></td>
         <td class="text-end mg-margin"></td>
