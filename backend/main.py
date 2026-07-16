@@ -136,6 +136,30 @@ async def _keep_awake():
         await asyncio.sleep(600)   # пинг каждые 10 мин (< 15 мин до сна)
 
 
+async def _agent_weekly():
+    """Агент-аналитик: разбор кабинета в Telegram по понедельникам в 9 МСК.
+
+    Дедуп через kv_cache (agent_review_last) — рестарты/два инстанса не
+    задваивают отправку."""
+    import agent_review
+    if not agent_review.configured():
+        logging.getLogger("agent_review").info(
+            "агент выключен (нет TG_BOT_TOKEN/TG_CHAT_ID)")
+        return
+    import snapshot as _snap
+    while True:
+        now = datetime.utcnow() + timedelta(hours=3)
+        if now.weekday() == 0 and now.hour == 9:
+            wk = now.strftime("%G-W%V")
+            last = await asyncio.to_thread(_snap.load, "agent_review_last", "")
+            if last != wk:
+                res = await agent_review.send_review("WB")
+                logging.getLogger("agent_review").info("weekly review: %s", res)
+                if res.get("ok"):
+                    await asyncio.to_thread(_snap.save, "agent_review_last", wk)
+        await asyncio.sleep(1200)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     cost_store.init()
@@ -143,10 +167,12 @@ async def lifespan(app: FastAPI):
     task = asyncio.create_task(_prefetch_weekly())
     task2 = asyncio.create_task(_warm_finance())
     task3 = asyncio.create_task(_keep_awake())
+    task4 = asyncio.create_task(_agent_weekly())
     yield
     task.cancel()
     task2.cancel()
     task3.cancel()
+    task4.cancel()
 
 
 app = FastAPI(title="WB Analytics Dashboard", version="1.0.0", lifespan=lifespan)

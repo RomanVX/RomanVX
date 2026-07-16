@@ -1093,6 +1093,13 @@ def _tariff_watch(comm_by_nm: dict) -> None:
     _snap.save("wb_tariffs_seen", cur)
 
 
+@router.post("/agent_review")
+async def agent_review_now(mp: str = Query(default="WB")):
+    """Ручной запуск разбора агента (кнопка/тест): собрать и отправить в TG."""
+    import agent_review
+    return await agent_review.send_review(mp)
+
+
 @router.get("/tariff_alert")
 async def tariff_alert():
     """Алерт об изменении комиссии WB по категориям кабинета (14 дней)."""
