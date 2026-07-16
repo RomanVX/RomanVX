@@ -169,6 +169,64 @@ async def build_stocks_summary() -> str:
     return "\n".join(out)
 
 
+async def _gather_context() -> str:
+    """Всё, что агент знает о кабинете, одним текстом — контекст для вопросов."""
+    from routers import tools as _tools
+    from routers import finance as _fin
+    import snapshot as _snap
+    import asyncio
+
+    parts = []
+    try:
+        data = await _tools.get_margin(mp="WB")
+        items = data.get("items") or []
+        if items:
+            rows = [_margin_math(b) for b in items]
+            parts.append("ЮНИТ-ЭКОНОМИКА ПО SKU (прогноз на месяц, ₽): "
+                         + json.dumps(rows, ensure_ascii=False))
+    except Exception as e:
+        _log.warning("qa margin: %s", e)
+    try:
+        parts.append("ОСТАТКИ:\n" + (await build_stocks_summary())
+                     .replace("<b>", "").replace("</b>", ""))
+    except Exception as e:
+        _log.warning("qa stocks: %s", e)
+    try:
+        pnl = await _fin.get_wb_pnl(months=3)
+        vals = {r["key"]: r.get("values") or {} for r in pnl.get("rows") or []}
+        parts.append("P&L ПО МЕСЯЦАМ: " + json.dumps(vals, ensure_ascii=False))
+    except Exception as e:
+        _log.warning("qa pnl: %s", e)
+    tariff = await asyncio.to_thread(_snap.load, "wb_tariff_alert", None)
+    if tariff:
+        parts.append("ИЗМЕНЕНИЕ ТАРИФОВ WB: " + json.dumps(tariff, ensure_ascii=False))
+    return "\n\n".join(parts)
+
+
+async def _answer_question(question: str, thread: int | None) -> None:
+    """Свободный вопрос к агенту: собрать данные кабинета → Claude → ответ."""
+    try:
+        ctx = await _gather_context()
+        import anthropic
+        client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
+        msg = await client.messages.create(
+            model=_MODEL, max_tokens=1500,
+            messages=[{"role": "user", "content": f"""Ты — агент-аналитик селлера
+маркетплейсов (кабинет Biomed, WB/Ozon/ЯМ). Владелец задал вопрос в Telegram.
+Ответь по-русски, кратко и с цифрами из данных. Формат — Telegram HTML (только
+<b> и <i>, без markdown). Если в данных нет ответа — скажи прямо, что этих
+данных у тебя нет, и подскажи, где в дашборде смотреть. Не выдумывай числа.
+
+ДАННЫЕ КАБИНЕТА:
+{ctx}
+
+ВОПРОС: {question}"""}])
+        await tg_send(msg.content[0].text.strip(), thread_id=thread)
+    except Exception as e:
+        _log.error("qa failed: %s", e)
+        await tg_send(f"Не смог ответить: {str(e)[:200]}", thread_id=thread)
+
+
 async def _review_with_retry(thread: int | None) -> None:
     """Разбор по команде: до 12 попыток с паузой 30с, пока юнитка собирается."""
     import asyncio
@@ -198,6 +256,13 @@ async def bot_loop() -> None:
     if not TG_BOT_TOKEN:
         return
     _log.info("agent bot: слушаю команды в чате %s", TG_CHAT_ID)
+    me = ""
+    try:
+        async with httpx.AsyncClient(timeout=30) as c:
+            r = await c.get(f"https://api.telegram.org/bot{TG_BOT_TOKEN}/getMe")
+            me = ((r.json().get("result") or {}).get("username") or "").lower()
+    except Exception as e:
+        _log.warning("getMe failed: %s", e)
     offset = 0
     while True:
         try:
@@ -210,9 +275,24 @@ async def bot_loop() -> None:
                 offset = upd["update_id"] + 1
                 msg = upd.get("message") or {}
                 chat = str((msg.get("chat") or {}).get("id") or "")
-                text = (msg.get("text") or "").strip().lower()
+                raw = (msg.get("text") or "").strip()
+                text = raw.lower()
                 thread = msg.get("message_thread_id")
-                if chat != TG_CHAT_ID or not text.startswith("/"):
+                if chat != TG_CHAT_ID or not raw:
+                    continue
+                # свободный вопрос: упоминание @бота или reply на его сообщение
+                reply_from = ((msg.get("reply_to_message") or {}).get("from") or {})
+                is_mention = me and f"@{me}" in text
+                is_reply = reply_from.get("is_bot") and \
+                    (reply_from.get("username") or "").lower() == me
+                if not text.startswith("/") and (is_mention or is_reply):
+                    import re as _re
+                    q = _re.sub(f"@{me}", "", raw, flags=_re.IGNORECASE).strip()
+                    if q:
+                        await tg_send("🔎 Смотрю данные…", thread_id=thread)
+                        asyncio.get_event_loop().create_task(_answer_question(q, thread))
+                    continue
+                if not text.startswith("/"):
                     continue
                 cmd = text.split()[0].split("@")[0]
                 if cmd == "/stocks":
@@ -225,7 +305,9 @@ async def bot_loop() -> None:
                 elif cmd in ("/start", "/help"):
                     await tg_send(
                         "Команды:\n/stocks — короткий расклад по остаткам (горящие позиции)\n"
-                        "/review — полный разбор кабинета от агента\n"
+                        "/review — полный разбор кабинета от агента\n\n"
+                        f"Или просто спроси меня через упоминание: <i>@{me} что с маржой геля?</i> "
+                        "— отвечу по данным кабинета.\n"
                         "Плюс сам присылаю разбор каждый понедельник в 9:00 МСК.",
                         thread_id=thread)
         except Exception as e:
