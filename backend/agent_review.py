@@ -251,6 +251,23 @@ async def _gather_context() -> str:
         parts.append("P&L ПО МЕСЯЦАМ: " + json.dumps(vals, ensure_ascii=False))
     except Exception as e:
         _log.warning("qa pnl: %s", e)
+    try:
+        adv = await _tools.get_adv()
+        camps = [{"name": c.get("name"), "type": c.get("type"),
+                  "active": c.get("active"), "spend": c.get("spend"),
+                  "revenue": c.get("revenue"), "drr": c.get("drr"),
+                  "orders": c.get("orders"), "verdict": c.get("verdict"),
+                  "skus": c.get("skus") or c.get("arts")}
+                 for c in (adv.get("campaigns") or [])]
+        if camps:
+            parts.append(
+                f"РЕКЛАМА WB ПО КАМПАНИЯМ (за {adv.get('days')} дн; verdict "
+                f"waste=сливает бюджет): итого расход {adv.get('total_spend')} ₽, "
+                f"выручка с рекламы {adv.get('total_revenue')} ₽, общий ДРР "
+                f"{adv.get('total_drr')}%, слив {adv.get('waste')} ₽. Кампании: "
+                + json.dumps(camps, ensure_ascii=False))
+    except Exception as e:
+        _log.warning("qa adv: %s", e)
     tariff = await asyncio.to_thread(_snap.load, "wb_tariff_alert", None)
     if tariff:
         parts.append("ИЗМЕНЕНИЕ ТАРИФОВ WB: " + json.dumps(tariff, ensure_ascii=False))
