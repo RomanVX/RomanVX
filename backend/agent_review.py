@@ -130,41 +130,65 @@ P&L последних месяцев: {pnl_note or "нет"}
 
 
 async def build_stocks_summary() -> str:
-    """Короткий расклад по остаткам: горячие (🔴 ≤20 дней) и жёлтые (≤45)."""
+    """Расклад по остаткам — по каждой площадке отдельно:
+    🔴 горящие (≤20 дней запаса), 🟡 на исходе (21–45)."""
     from routers import dashboard as _dash
     rows = await _dash.get_stocks_table()
     if not rows:
         return "Остатки ещё собираются — попробуй через минуту."
-    active = [r for r in rows
-              if (r.get("wb_qty", 0) + r.get("oz_qty", 0) + r.get("ym_qty", 0)) > 0
-              or (r.get("wb_per_day", 0) + r.get("oz_per_day", 0) + r.get("ym_per_day", 0)) > 0]
-    red = [r for r in active if r.get("status") == "red"]
-    yellow = [r for r in active if r.get("status") == "yellow"]
 
-    def line(r):
-        parts = []
-        for tag, q, d in (("WB", r.get("wb_qty", 0), r.get("wb_days", 999)),
-                          ("Oz", r.get("oz_qty", 0), r.get("oz_days", 999)),
-                          ("ЯМ", r.get("ym_qty", 0), r.get("ym_days", 999))):
-            if q > 0 or d < 999:
-                parts.append(f"{tag} {q} шт/{d if d < 999 else '∞'} дн")
-        return f"• <b>{r.get('supplierArticle')}</b> {(r.get('name') or '')[:28]} — " + ", ".join(parts)
-
-    out = [f"📦 <b>Остатки</b>: {len(active)} активных позиций, "
-           f"🔴 горящих: {len(red)}, 🟡 на исходе: {len(yellow)}"]
-    if red:
-        out.append("\n🔴 <b>Горят (≤20 дней запаса)</b> — в ближайшую поставку:")
-        out += [line(r) for r in red[:15]]
-        if len(red) > 15:
-            out.append(f"…и ещё {len(red) - 15}")
-    else:
-        out.append("\n🔴 Горящих нет — до 20 дней ничего не кончается.")
-    if yellow:
-        out.append("\n🟡 <b>На исходе (21–45 дней)</b>:")
-        out += [line(r) for r in yellow[:10]]
-        if len(yellow) > 10:
-            out.append(f"…и ещё {len(yellow) - 10}")
+    out = ["📦 <b>Остатки по площадкам</b>"]
+    for icon, title, pq, pd_, pdays in (
+            ("🟣", "Wildberries", "wb_qty", "wb_per_day", "wb_days"),
+            ("🔵", "Ozon", "oz_qty", "oz_per_day", "oz_days"),
+            ("🟡", "Яндекс.Маркет", "ym_qty", "ym_per_day", "ym_days")):
+        active = [r for r in rows if r.get(pq, 0) > 0 or r.get(pd_, 0) > 0]
+        if not active:
+            continue
+        red = sorted((r for r in active if r.get(pdays, 999) <= 20),
+                     key=lambda r: r.get(pdays, 999))
+        yellow = sorted((r for r in active if 20 < r.get(pdays, 999) <= 45),
+                        key=lambda r: r.get(pdays, 999))
+        line = lambda r: (f"  • <b>{r.get('supplierArticle')}</b> "
+                          f"{(r.get('name') or '')[:26]} — {r.get(pq, 0)} шт, "
+                          f"{'∞' if r.get(pdays, 999) >= 999 else r.get(pdays)} дн")
+        out.append(f"\n{icon} <b>{title}</b> — {len(active)} позиций, "
+                   f"🔴 {len(red)} · 🟡 {len(yellow)}")
+        if red:
+            out.append("🔴 Горят (≤20 дн) — в ближайшую поставку:")
+            out += [line(r) for r in red[:12]]
+            if len(red) > 12:
+                out.append(f"  …и ещё {len(red) - 12}")
+        else:
+            out.append("🔴 Горящих нет.")
+        if yellow:
+            out.append("🟡 На исходе (21–45 дн):")
+            out += [line(r) for r in yellow[:8]]
+            if len(yellow) > 8:
+                out.append(f"  …и ещё {len(yellow) - 8}")
     return "\n".join(out)
+
+
+async def _review_with_retry(thread: int | None) -> None:
+    """Разбор по команде: до 12 попыток с паузой 30с, пока юнитка собирается."""
+    import asyncio
+    notified = False
+    for attempt in range(12):
+        res = await send_review("WB", thread_id=thread)
+        if res.get("ok"):
+            return
+        err = res.get("error") or ""
+        if "собира" not in err:
+            await tg_send(f"Не вышло: {err}", thread_id=thread)
+            return
+        if not notified:
+            await tg_send("Сервер ещё собирает точные данные WB после перезапуска — "
+                          "подожду и пришлю разбор, как будет готово (обычно 3-7 минут).",
+                          thread_id=thread)
+            notified = True
+        await asyncio.sleep(30)
+    await tg_send("Данные так и не собрались за 6 минут — попробуй /review позже.",
+                  thread_id=thread)
 
 
 async def bot_loop() -> None:
@@ -195,9 +219,9 @@ async def bot_loop() -> None:
                     await tg_send(await build_stocks_summary(), thread_id=thread)
                 elif cmd == "/review":
                     await tg_send("⏳ Готовлю разбор кабинета — минута…", thread_id=thread)
-                    res = await send_review("WB", thread_id=thread)
-                    if not res.get("ok"):
-                        await tg_send(f"Не вышло: {res.get('error')}", thread_id=thread)
+                    # фоном: если юнитка ещё собирается (после рестарта это
+                    # несколько минут) — ждём и повторяем, а не отказываем
+                    asyncio.get_event_loop().create_task(_review_with_retry(thread))
                 elif cmd in ("/start", "/help"):
                     await tg_send(
                         "Команды:\n/stocks — короткий расклад по остаткам (горящие позиции)\n"
