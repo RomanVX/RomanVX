@@ -168,11 +168,14 @@ async def lifespan(app: FastAPI):
     task2 = asyncio.create_task(_warm_finance())
     task3 = asyncio.create_task(_keep_awake())
     task4 = asyncio.create_task(_agent_weekly())
+    import agent_review as _agent
+    task5 = asyncio.create_task(_agent.bot_loop())
     yield
     task.cancel()
     task2.cancel()
     task3.cancel()
     task4.cancel()
+    task5.cancel()
 
 
 app = FastAPI(title="WB Analytics Dashboard", version="1.0.0", lifespan=lifespan)

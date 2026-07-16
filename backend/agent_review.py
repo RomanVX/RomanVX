@@ -28,18 +28,21 @@ def configured() -> bool:
     return bool(TG_BOT_TOKEN and TG_CHAT_ID and ANTHROPIC_API_KEY)
 
 
-async def tg_send(text: str, chat_id: str = "") -> bool:
-    """Отправка в Telegram; длинные тексты режутся по 3900 символов."""
+async def tg_send(text: str, chat_id: str = "", thread_id: int | None = None) -> bool:
+    """Отправка в Telegram; длинные тексты режутся по 3900 символов.
+    thread_id — тема в группе-форуме (отвечаем туда, откуда спросили)."""
     if not TG_BOT_TOKEN:
         return False
     cid = chat_id or TG_CHAT_ID
     ok = True
     async with httpx.AsyncClient(timeout=30) as c:
         for i in range(0, len(text), 3900):
+            body = {"chat_id": cid, "text": text[i:i + 3900],
+                    "parse_mode": "HTML", "disable_web_page_preview": True}
+            if thread_id:
+                body["message_thread_id"] = thread_id
             r = await c.post(
-                f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendMessage",
-                json={"chat_id": cid, "text": text[i:i + 3900],
-                      "parse_mode": "HTML", "disable_web_page_preview": True})
+                f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendMessage", json=body)
             if r.status_code != 200:
                 _log.warning("tg_send: %s %s", r.status_code, r.text[:200])
                 ok = False
@@ -126,7 +129,87 @@ P&L последних месяцев: {pnl_note or "нет"}
     return head + text
 
 
-async def send_review(mp: str = "WB") -> dict:
+async def build_stocks_summary() -> str:
+    """Короткий расклад по остаткам: горячие (🔴 ≤20 дней) и жёлтые (≤45)."""
+    from routers import dashboard as _dash
+    rows = await _dash.get_stocks_table()
+    if not rows:
+        return "Остатки ещё собираются — попробуй через минуту."
+    active = [r for r in rows
+              if (r.get("wb_qty", 0) + r.get("oz_qty", 0) + r.get("ym_qty", 0)) > 0
+              or (r.get("wb_per_day", 0) + r.get("oz_per_day", 0) + r.get("ym_per_day", 0)) > 0]
+    red = [r for r in active if r.get("status") == "red"]
+    yellow = [r for r in active if r.get("status") == "yellow"]
+
+    def line(r):
+        parts = []
+        for tag, q, d in (("WB", r.get("wb_qty", 0), r.get("wb_days", 999)),
+                          ("Oz", r.get("oz_qty", 0), r.get("oz_days", 999)),
+                          ("ЯМ", r.get("ym_qty", 0), r.get("ym_days", 999))):
+            if q > 0 or d < 999:
+                parts.append(f"{tag} {q} шт/{d if d < 999 else '∞'} дн")
+        return f"• <b>{r.get('supplierArticle')}</b> {(r.get('name') or '')[:28]} — " + ", ".join(parts)
+
+    out = [f"📦 <b>Остатки</b>: {len(active)} активных позиций, "
+           f"🔴 горящих: {len(red)}, 🟡 на исходе: {len(yellow)}"]
+    if red:
+        out.append("\n🔴 <b>Горят (≤20 дней запаса)</b> — в ближайшую поставку:")
+        out += [line(r) for r in red[:15]]
+        if len(red) > 15:
+            out.append(f"…и ещё {len(red) - 15}")
+    else:
+        out.append("\n🔴 Горящих нет — до 20 дней ничего не кончается.")
+    if yellow:
+        out.append("\n🟡 <b>На исходе (21–45 дней)</b>:")
+        out += [line(r) for r in yellow[:10]]
+        if len(yellow) > 10:
+            out.append(f"…и ещё {len(yellow) - 10}")
+    return "\n".join(out)
+
+
+async def bot_loop() -> None:
+    """Long-polling: команды в группе — /stocks (остатки) и /review (разбор).
+    Отвечает только в чате TG_CHAT_ID (чужим — молчит)."""
+    import asyncio
+    if not TG_BOT_TOKEN:
+        return
+    _log.info("agent bot: слушаю команды в чате %s", TG_CHAT_ID)
+    offset = 0
+    while True:
+        try:
+            async with httpx.AsyncClient(timeout=70) as c:
+                r = await c.get(
+                    f"https://api.telegram.org/bot{TG_BOT_TOKEN}/getUpdates",
+                    params={"timeout": 50, "offset": offset,
+                            "allowed_updates": '["message"]'})
+            for upd in (r.json().get("result") or []):
+                offset = upd["update_id"] + 1
+                msg = upd.get("message") or {}
+                chat = str((msg.get("chat") or {}).get("id") or "")
+                text = (msg.get("text") or "").strip().lower()
+                thread = msg.get("message_thread_id")
+                if chat != TG_CHAT_ID or not text.startswith("/"):
+                    continue
+                cmd = text.split()[0].split("@")[0]
+                if cmd == "/stocks":
+                    await tg_send(await build_stocks_summary(), thread_id=thread)
+                elif cmd == "/review":
+                    await tg_send("⏳ Готовлю разбор кабинета — минута…", thread_id=thread)
+                    res = await send_review("WB", thread_id=thread)
+                    if not res.get("ok"):
+                        await tg_send(f"Не вышло: {res.get('error')}", thread_id=thread)
+                elif cmd in ("/start", "/help"):
+                    await tg_send(
+                        "Команды:\n/stocks — короткий расклад по остаткам (горящие позиции)\n"
+                        "/review — полный разбор кабинета от агента\n"
+                        "Плюс сам присылаю разбор каждый понедельник в 9:00 МСК.",
+                        thread_id=thread)
+        except Exception as e:
+            _log.warning("agent bot loop: %s", e)
+            await asyncio.sleep(10)
+
+
+async def send_review(mp: str = "WB", thread_id: int | None = None) -> dict:
     """Собрать разбор и отправить в Telegram."""
     if not configured():
         return {"ok": False, "error": "TG_BOT_TOKEN / TG_CHAT_ID / ANTHROPIC_API_KEY не заданы"}
@@ -137,5 +220,5 @@ async def send_review(mp: str = "WB") -> dict:
         return {"ok": False, "error": str(e)[:300]}
     if not text:
         return {"ok": False, "error": "данные юнитки ещё собираются — попробуйте позже"}
-    sent = await tg_send(text)
+    sent = await tg_send(text, thread_id=thread_id)
     return {"ok": sent, "chars": len(text)}
