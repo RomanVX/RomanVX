@@ -59,7 +59,9 @@ def _margin_math(b: dict) -> dict:
     qty = b.get("qty_f") if b.get("qty_f") is not None else b.get("qty_m", 0)
     be_drr = (price * (1 - (b.get("comm_pct", 0) + b.get("acq_pct", 0)) / 100) - fixed) / price * 100 if price else 0
     return {"sku": b.get("sku"), "name": (b.get("name") or "")[:40],
-            "price": price, "profit_unit": round(profit),
+            "price_seller": price,               # цена продавца, до СПП
+            "price_buyer": b.get("buyer0"),      # цена для клиента, после СПП
+            "profit_unit": round(profit),
             "margin_pct": round(profit / price * 100) if price else 0,
             "drr_pct": drr, "be_drr_pct": round(max(be_drr, 0), 1),
             "qty_month": round(qty or 0),
@@ -81,7 +83,7 @@ async def build_review(mp: str = "WB") -> str | None:
     rows = sorted((_margin_math(b) for b in items),
                   key=lambda x: x["profit_month"])
     total_profit = sum(r["profit_month"] for r in rows)
-    total_rev = sum(r["price"] * r["qty_month"] for r in rows)
+    total_rev = sum(r["price_seller"] * r["qty_month"] for r in rows)
 
     pnl_note = ""
     try:
@@ -103,6 +105,10 @@ async def build_review(mp: str = "WB") -> str | None:
 
     prompt = f"""Ты — финансовый директор селлера маркетплейсов. Сделай еженедельный
 разбор кабинета {mp} для владельца. Пиши по-русски, кратко и по делу, без воды.
+
+ПРО ЦЕНЫ: price_seller — цена продавца до скидки WB (СПП), база выручки и
+комиссии; price_buyer — что платит покупатель после СПП (владелец называет её
+«ценой для клиента»). Указывая цены в советах, давай обе.
 
 ДАННЫЕ (прогноз на месяц по текущим ценам; profit_month — прогноз прибыли
 артикула в месяц, be_drr_pct — безубыточный ДРР):
@@ -216,6 +222,15 @@ async def _answer_question(question: str, thread: int | None) -> None:
 Ответь по-русски, кратко и с цифрами из данных. Формат — Telegram HTML (только
 <b> и <i>, без markdown). Если в данных нет ответа — скажи прямо, что этих
 данных у тебя нет, и подскажи, где в дашборде смотреть. Не выдумывай числа.
+
+ПРО ЦЕНЫ (не путать!): price_seller — цена продавца ДО скидки WB (СПП), от неё
+считаются выручка и комиссия; price_buyer — что реально платит покупатель ПОСЛЕ
+СПП, её владелец видит в карточке и называет «ценой для клиента». Когда владелец
+говорит про смену цены — по умолчанию он про price_buyer. Соотношение
+price_buyer/price_seller у SKU примерно сохраняется: новую цену продавца можно
+оценить как new_buyer / (price_buyer/price_seller). Все цифры юнитки в данных —
+средние за окно (обычно 2 месяца), поэтому только что сделанные изменения цены
+в них ещё НЕ видны — прямо оговаривай это и считай прогноз от новой цены.
 
 ДАННЫЕ КАБИНЕТА:
 {ctx}
