@@ -8,6 +8,7 @@ ENV: TG_BOT_TOKEN (от @BotFather), TG_CHAT_ID (id чата/группы; у г
 он отрицательный — можно узнать, написав боту и открыв
 https://api.telegram.org/bot<TOKEN>/getUpdates).
 """
+import asyncio
 import json
 import logging
 import os
@@ -26,6 +27,53 @@ _MODEL = "claude-opus-4-8"
 
 def configured() -> bool:
     return bool(TG_BOT_TOKEN and TG_CHAT_ID and ANTHROPIC_API_KEY)
+
+
+# ── База знаний агента: экспертиза по маркетплейсам ───────────────────────────
+KNOWLEDGE = """ЭКСПЕРТИЗА (применяй в ответах, не пересказывай без надобности):
+
+ЦЕНЫ И СПП (WB): продавец назначает цену ДО СПП (price_seller) — от неё
+считаются выручка и комиссия. СПП — скидка за счёт WB, покупатель платит
+price_buyer. Соотношение buyer/seller у SKU стабильно: новая цена продавца
+≈ новая клиентская ÷ (buyer/seller). Повышение цены при том же рекламном
+бюджете в ₽ механически снижает ДРР и повышает безубыточный ДРР.
+
+КОМИССИЯ WB: своя у каждой категории, канал FBW (склад WB) ≠ FBS. 07.07.2026
+WB поднял комиссии на +6-9 пп почти по всем категориям — сравнения маржи
+«до/после июля» должны это учитывать. Эквайринг ~1.5-2% сверху.
+
+РЕКЛАМА WB: типы — АРК/автокампании и поиск (аукцион ставок). Ключевая
+метрика — ДРР (расход/выручка с рекламы). Правило: ДРР выше безубыточного
+(be_drr) = торговля в минус. Лечение по порядку: 1) минус-фразы на запросы
+с показами но без конверсий; 2) снижение ставок ступенями 20-30% с контролем
+позиций (резкое отключение роняет и органику — карточка теряет буст);
+3) перераспределение бюджета на SKU с запасом ДРР (be_drr − факт > 15 пп —
+можно масштабировать). Реклама влияет на органическую выдачу: выкупы и
+конверсия с рекламы поднимают позиции карточки.
+
+ЛОГИСТИКА/ХРАНЕНИЕ WB: логистика списывается за каждую доставку (включая
+невыкупы — процент выкупа критичен для маржи), хранение — от объёма и
+коэффициента склада. Штрафы и удержания — разовые, в юнитке сглаживаются.
+
+ОТЧЁТНОСТЬ WB: отчёт реализации формируется РАЗ В НЕДЕЛЮ (пн за прошлую
+неделю) — свежие дни в точных данных отсутствуют, хвост добирается
+оперативными продажами. История продаж в API — только 90 дней.
+
+ОСТАТКИ: дни запаса = остаток / темп продаж. ≤20 дней — срочно в поставку
+(поставка на склад WB едет 3-10 дней); нулевой остаток у маржинального SKU —
+потерянная прибыль и падение позиций карточки (алгоритм понижает out-of-stock).
+
+OZON: Performance-реклама отдельным кабинетом, числа приходят строками с
+запятой; воронка «показы→корзина→заказ» не строгая (доли могут быть >100%).
+Премиум-аналитика даёт позиции и конверсии по кластерам.
+
+ОТЗЫВЫ: рейтинг ниже 4.7 заметно режет конверсию; на негатив отвечать быстро
+и по существу; частые темы минусов = задачи на доработку продукта/упаковки.
+
+ПРИНЦИПЫ РЕКОМЕНДАЦИЙ: приоритет по деньгам в месяц; сначала заткнуть
+убытки, потом масштабировать лидеров; факт прошлого месяца и прогноз
+называть отдельно; свежие изменения цен/ставок в средних данных ещё не
+видны — оговаривать; не советовать резких движений без проверки на 3-5 днях."""
 
 
 async def tg_send(text: str, chat_id: str = "", thread_id: int | None = None) -> bool:
@@ -128,7 +176,7 @@ P&L последних месяцев: {pnl_note or "нет"}
     import anthropic
     client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
     msg = await client.messages.create(
-        model=_MODEL, max_tokens=1800,
+        model=_MODEL, max_tokens=1800, system=KNOWLEDGE,
         messages=[{"role": "user", "content": prompt}])
     text = msg.content[0].text.strip()
     head = f"🤖 <b>Разбор кабинета {mp}</b> · {datetime.utcnow().strftime('%d.%m.%Y')}\n\n"
@@ -209,34 +257,59 @@ async def _gather_context() -> str:
     return "\n\n".join(parts)
 
 
-async def _answer_question(question: str, thread: int | None) -> None:
-    """Свободный вопрос к агенту: собрать данные кабинета → Claude → ответ."""
+# диалоговая память: тема группы → последние реплики (переживает рестарт)
+_dialogs: dict[str, list] = {}
+_DIALOG_KEEP = 16   # реплик (8 пар вопрос-ответ)
+
+
+def _dialog_key(thread: int | None) -> str:
+    return f"tg_{thread or 'main'}"
+
+
+def _dialog_load() -> None:
+    global _dialogs
+    if not _dialogs:
+        import snapshot as _snap
+        _dialogs = _snap.load("agent_dialogs", None) or {}
+
+
+def _dialog_add(thread: int | None, role: str, content: str) -> None:
+    import snapshot as _snap
+    key = _dialog_key(thread)
+    d = _dialogs.setdefault(key, [])
+    d.append({"role": role, "content": content[:2500]})
+    del d[:-_DIALOG_KEEP]
     try:
+        _snap.save("agent_dialogs", _dialogs)
+    except Exception:
+        pass
+
+
+async def _answer_question(question: str, thread: int | None) -> None:
+    """Свободный вопрос к агенту: данные кабинета + история диалога → Claude."""
+    try:
+        await asyncio.to_thread(_dialog_load)
         ctx = await _gather_context()
+        system = f"""Ты — агент-аналитик селлера маркетплейсов (кабинет Biomed,
+WB/Ozon/ЯМ), общаешься с владельцем в Telegram. Отвечай по-русски, кратко и с
+цифрами из данных. Формат — Telegram HTML (только <b> и <i>, без markdown).
+Если в данных нет ответа — скажи прямо и подскажи, где смотреть в дашборде.
+Не выдумывай числа. Помни контекст предыдущих реплик диалога.
+
+{KNOWLEDGE}"""
+        history = list(_dialogs.get(_dialog_key(thread), []))
+        messages = history + [{"role": "user", "content":
+                               f"АКТУАЛЬНЫЕ ДАННЫЕ КАБИНЕТА:\n{ctx}\n\nВОПРОС: {question}"}]
         import anthropic
         client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
         msg = await client.messages.create(
-            model=_MODEL, max_tokens=1500,
-            messages=[{"role": "user", "content": f"""Ты — агент-аналитик селлера
-маркетплейсов (кабинет Biomed, WB/Ozon/ЯМ). Владелец задал вопрос в Telegram.
-Ответь по-русски, кратко и с цифрами из данных. Формат — Telegram HTML (только
-<b> и <i>, без markdown). Если в данных нет ответа — скажи прямо, что этих
-данных у тебя нет, и подскажи, где в дашборде смотреть. Не выдумывай числа.
-
-ПРО ЦЕНЫ (не путать!): price_seller — цена продавца ДО скидки WB (СПП), от неё
-считаются выручка и комиссия; price_buyer — что реально платит покупатель ПОСЛЕ
-СПП, её владелец видит в карточке и называет «ценой для клиента». Когда владелец
-говорит про смену цены — по умолчанию он про price_buyer. Соотношение
-price_buyer/price_seller у SKU примерно сохраняется: новую цену продавца можно
-оценить как new_buyer / (price_buyer/price_seller). Все цифры юнитки в данных —
-средние за окно (обычно 2 месяца), поэтому только что сделанные изменения цены
-в них ещё НЕ видны — прямо оговаривай это и считай прогноз от новой цены.
-
-ДАННЫЕ КАБИНЕТА:
-{ctx}
-
-ВОПРОС: {question}"""}])
-        await tg_send(msg.content[0].text.strip(), thread_id=thread)
+            model=_MODEL, max_tokens=1500, system=system, messages=messages)
+        answer = msg.content[0].text.strip()
+        await tg_send(answer, thread_id=thread)
+        # в память кладём вопрос и ответ БЕЗ простыни данных — данные каждый
+        # раз свежие, а старые копии только путали бы модель
+        await asyncio.to_thread(_dialog_add, thread, "user", question)
+        await asyncio.to_thread(_dialog_add, thread, "assistant", answer)
     except Exception as e:
         _log.error("qa failed: %s", e)
         await tg_send(f"Не смог ответить: {str(e)[:200]}", thread_id=thread)
@@ -317,10 +390,14 @@ async def bot_loop() -> None:
                     # фоном: если юнитка ещё собирается (после рестарта это
                     # несколько минут) — ждём и повторяем, а не отказываем
                     asyncio.get_event_loop().create_task(_review_with_retry(thread))
+                elif cmd == "/reset":
+                    _dialogs.pop(_dialog_key(thread), None)
+                    await tg_send("🧹 Память диалога очищена.", thread_id=thread)
                 elif cmd in ("/start", "/help"):
                     await tg_send(
                         "Команды:\n/stocks — короткий расклад по остаткам (горящие позиции)\n"
-                        "/review — полный разбор кабинета от агента\n\n"
+                        "/review — полный разбор кабинета от агента\n"
+                        "/reset — очистить память диалога\n\n"
                         f"Или просто спроси меня через упоминание: <i>@{me} что с маржой геля?</i> "
                         "— отвечу по данным кабинета.\n"
                         "Плюс сам присылаю разбор каждый понедельник в 9:00 МСК.",
