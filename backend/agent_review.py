@@ -12,7 +12,7 @@ import asyncio
 import json
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import httpx
 
@@ -37,6 +37,9 @@ KNOWLEDGE = """ЭКСПЕРТИЗА (применяй в ответах, не п
 price_buyer. Соотношение buyer/seller у SKU стабильно: новая цена продавца
 ≈ новая клиентская ÷ (buyer/seller). Повышение цены при том же рекламном
 бюджете в ₽ механически снижает ДРР и повышает безубыточный ДРР.
+На вопрос «какая цена сейчас/сегодня» отвечай из блока «ЦЕНЫ ПРОДАВЦА
+СЕЙЧАС» (живой API) и «ИЗМЕНЕНИЯ ЦЕН» — цены в юнитке средние за окно и
+отстают, для текущей цены их НЕ использовать.
 
 КОМИССИЯ WB: своя у каждой категории, канал FBW (склад WB) ≠ FBS. 07.07.2026
 WB поднял комиссии на +6-9 пп почти по всем категориям — сравнения маржи
@@ -223,6 +226,67 @@ async def build_stocks_summary() -> str:
     return "\n".join(out)
 
 
+async def accumulate_prices() -> None:
+    """Ежедневный слепок цен WB в price_history (вызывается прогревом).
+    Пишет строку раз в день на SKU — история для вопросов «а вчера?»."""
+    import db
+    import wb_client
+    try:
+        prices = await wb_client.get_current_prices()
+        if not prices:
+            return
+        await asyncio.to_thread(db.execute, """CREATE TABLE IF NOT EXISTS price_history (
+            day TEXT, sku TEXT, price REAL, discounted REAL,
+            PRIMARY KEY (day, sku))""")
+        today = datetime.utcnow().strftime("%Y-%m-%d")
+        rows = [(today, sku, p.get("price") or 0, p.get("discounted") or 0)
+                for sku, p in prices.items()]
+        if db.IS_PG:
+            await asyncio.to_thread(db.executemany,
+                "INSERT INTO price_history (day, sku, price, discounted) VALUES (?,?,?,?) "
+                "ON CONFLICT(day, sku) DO UPDATE SET price=excluded.price, "
+                "discounted=excluded.discounted", rows)
+        else:
+            await asyncio.to_thread(db.executemany,
+                "INSERT OR REPLACE INTO price_history VALUES (?,?,?,?)", rows)
+        _log.info("price_history: %d цен за %s", len(rows), today)
+    except Exception as e:
+        _log.warning("accumulate_prices: %s", e)
+
+
+async def _prices_context() -> str:
+    """Текущие цены (живой API) + история изменений за 14 дней."""
+    import db
+    import wb_client
+    parts = []
+    try:
+        prices = await wb_client.get_current_prices()
+        if prices:
+            parts.append("ЦЕНЫ ПРОДАВЦА СЕЙЧАС (живой API, до СПП, после скидки продавца): "
+                         + json.dumps({s: p["discounted"] for s, p in prices.items()},
+                                      ensure_ascii=False))
+    except Exception as e:
+        _log.warning("prices ctx: %s", e)
+    try:
+        since = (datetime.utcnow() - timedelta(days=14)).strftime("%Y-%m-%d")
+        rows = await asyncio.to_thread(
+            db.fetchall,
+            "SELECT day, sku, discounted FROM price_history WHERE day>=? ORDER BY day",
+            (since,))
+        hist: dict[str, list] = {}
+        for day, sku, disc in rows:
+            h = hist.setdefault(sku, [])
+            if not h or h[-1][1] != disc:      # пишем только изменения
+                h.append((str(day)[:10], disc))
+        changes = {s: h for s, h in hist.items() if len(h) > 1}
+        if changes:
+            parts.append("ИЗМЕНЕНИЯ ЦЕН ЗА 14 ДНЕЙ (день, цена до СПП): "
+                         + json.dumps(changes, ensure_ascii=False))
+    except Exception as e:
+        _log.warning("price history ctx: %s", e)
+    return "\n".join(parts)
+
+
 async def _gather_context() -> str:
     """Всё, что агент знает о кабинете, одним текстом — контекст для вопросов."""
     from routers import tools as _tools
@@ -271,6 +335,9 @@ async def _gather_context() -> str:
     tariff = await asyncio.to_thread(_snap.load, "wb_tariff_alert", None)
     if tariff:
         parts.append("ИЗМЕНЕНИЕ ТАРИФОВ WB: " + json.dumps(tariff, ensure_ascii=False))
+    pc = await _prices_context()
+    if pc:
+        parts.append(pc)
     return "\n\n".join(parts)
 
 

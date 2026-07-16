@@ -76,6 +76,11 @@ async def _prefetch_weekly():
             _log.info("sales history accumulated")
         except Exception as exc:
             _log.warning("sales accumulation failed: %s", exc)
+        try:
+            import agent_review as _agent
+            await _agent.accumulate_prices()
+        except Exception as exc:
+            _log.warning("price accumulation failed: %s", exc)
         await asyncio.sleep(_PREFETCH_INTERVAL)
 
 

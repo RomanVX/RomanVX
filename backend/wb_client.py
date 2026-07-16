@@ -58,6 +58,37 @@ async def analytics_post(path: str, body: dict) -> tuple[int, dict | str]:
 
 
 COMMON_BASE = "https://common-api.wildberries.ru"
+PRICES_BASE = "https://discounts-prices-api.wildberries.ru"
+
+
+async def get_current_prices() -> dict[str, dict]:
+    """Текущие цены кабинета (официальный API цен и скидок):
+    {vendorCode: {nmID, price, discounted, discount}} — discounted это цена
+    продавца ПОСЛЕ его скидки (до СПП), именно её видно в кабинете."""
+    if USE_MOCK:
+        return {}
+    out: dict[str, dict] = {}
+    offset = 0
+    for _ in range(20):
+        resp = await _http().get(
+            f"{PRICES_BASE}/api/v2/list/goods/filter",
+            headers=_headers(), params={"limit": 1000, "offset": offset})
+        if not resp.is_success:
+            _log.warning("WB prices → %s %s", resp.status_code, resp.text[:200])
+            break
+        goods = ((resp.json() or {}).get("data") or {}).get("listGoods") or []
+        for g in goods:
+            sizes = g.get("sizes") or []
+            price = (sizes[0].get("price") if sizes else None) or 0
+            disc = (sizes[0].get("discountedPrice") if sizes else None) or 0
+            out[str(g.get("vendorCode") or "").strip()] = {
+                "nmID": g.get("nmID"), "price": price,
+                "discounted": round(disc), "discount": g.get("discount")}
+        if len(goods) < 1000:
+            break
+        offset += 1000
+    _log.info("WB prices: %d карточек", len(out))
+    return out
 
 
 async def get_commission_tariffs() -> dict[int, dict]:
