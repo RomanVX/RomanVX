@@ -498,9 +498,23 @@ async def bot_loop() -> None:
                     f"https://api.telegram.org/bot{TG_BOT_TOKEN}/getUpdates",
                     params={"timeout": 50, "offset": offset,
                             "allowed_updates": '["message"]'})
-            for upd in (r.json().get("result") or []):
+            if r.status_code == 409:
+                # два инстанса тянут getUpdates (окно деплоя) — уступаем,
+                # новый инстанс заберёт очередь после смерти старого
+                _log.warning("bot: 409 conflict (деплой-окно?) — пауза 15с")
+                await asyncio.sleep(15)
+                continue
+            body = r.json()
+            if not body.get("ok"):
+                _log.warning("bot getUpdates не ok: %s", str(body)[:200])
+            for upd in (body.get("result") or []):
                 offset = upd["update_id"] + 1
                 await asyncio.to_thread(_snap.save, "tg_offset", offset)
+                m0 = upd.get("message") or {}
+                _log.info("bot msg: chat=%s from=%s text=%r",
+                          (m0.get("chat") or {}).get("id"),
+                          (m0.get("from") or {}).get("username"),
+                          (m0.get("text") or "")[:80])
                 msg = upd.get("message") or {}
                 chat = str((msg.get("chat") or {}).get("id") or "")
                 raw = (msg.get("text") or "").strip()
