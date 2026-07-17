@@ -379,6 +379,21 @@ async def _gather_context() -> str:
     dc = await _daily_context()
     if dc:
         parts.append(dc)
+    try:
+        comp = await _tools.competitors_get()
+        if comp.get("queries"):
+            slim = []
+            for qb in comp["queries"]:
+                items = [{"pos": i["position"], "brand": i["brand"],
+                          "price": i["price"], "price_prev": i.get("price_prev"),
+                          "rating": i["rating"], "fb": i["feedbacks"],
+                          "ours": i["is_ours"]} for i in qb["items"][:12]]
+                slim.append({"query": qb["query"], "top": items})
+            parts.append(f"КОНКУРЕНТЫ В ВЫДАЧЕ WB (срез {comp.get('day')}, "
+                         f"prev={comp.get('prev_day')}; ours=наши карточки): "
+                         + json.dumps(slim, ensure_ascii=False))
+    except Exception as e:
+        _log.warning("qa competitors: %s", e)
     return "\n\n".join(parts)
 
 

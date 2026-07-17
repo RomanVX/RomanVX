@@ -1820,6 +1820,121 @@ async def analyze_niche(payload: dict):
     return {"building": True, "query": query, "stage": "старт"}
 
 
+# ══ Дашборд конкурентов: ежедневный срез выдачи WB по нашим запросам ══════════
+def _comp_init():
+    db.execute("""CREATE TABLE IF NOT EXISTS competitor_daily (
+        day TEXT, query TEXT, position INTEGER, nm TEXT, brand TEXT,
+        name TEXT, price REAL, rating REAL, feedbacks INTEGER, is_ours INTEGER,
+        PRIMARY KEY (day, query, nm))""")
+
+
+def competitor_queries() -> list[str]:
+    """Поисковые запросы из названий наших SKU: убираем объёмы/фасовку.
+    «Смазка на водной основе с кокосовым маслом и ментолом 100 мл» →
+    «смазка на водной основе с кокосовым маслом и ментолом»."""
+    import re
+    import catalog as _cat
+    import cost_store
+    names = cost_store.get_names()
+    seen, out = set(), []
+    for art in getattr(_cat, "WB_ID_TO_ART", {}).values():
+        nm_name = names.get(art) or _cat.lookup(art).get("name", "")
+        if not nm_name:
+            continue
+        q = nm_name.lower()
+        q = re.sub(r"\b\d+[.,]?\d*\s*(мл|ml|г|гр|мг|л|шт)\b\.?", " ", q)
+        q = re.sub(r"[,()«»\"]| - ", " ", q)
+        q = re.sub(r"\s+", " ", q).strip()
+        q = " ".join(q.split()[:7])          # длинные хвосты режем
+        if len(q) >= 8 and q not in seen:
+            seen.add(q)
+            out.append(q)
+    return out[:15]
+
+
+async def competitors_collect_daily() -> dict:
+    """Суточный сбор: каждый запрос → домашний агент → топ-30 в competitor_daily."""
+    import catalog as _cat
+    _comp_init()
+    ours = {str(nm) for nm in getattr(_cat, "WB_ID_TO_ART", {})}
+    day = datetime.utcnow().strftime("%Y-%m-%d")
+    queries = competitor_queries()
+    ok, fail = 0, 0
+    for q in queries:
+        try:
+            products, _total = await _wb_agent_search(q)
+            if not products or not _niche_relevant(products, q):
+                fail += 1
+                continue
+            rows = []
+            for pos, p in enumerate(products[:30], 1):
+                nm = str(p.get("nm") or "")
+                if not nm:
+                    continue
+                rows.append((day, q, pos, nm, (p.get("brand") or "")[:60],
+                             (p.get("name") or "")[:120], p.get("price"),
+                             p.get("rating"), int(p.get("feedbacks") or 0),
+                             1 if nm in ours else 0))
+            if rows:
+                await asyncio.to_thread(
+                    db.executemany,
+                    "INSERT INTO competitor_daily VALUES (?,?,?,?,?,?,?,?,?,?) "
+                    "ON CONFLICT(day, query, nm) DO UPDATE SET position=excluded.position, "
+                    "price=excluded.price, rating=excluded.rating, feedbacks=excluded.feedbacks"
+                    if db.IS_PG else
+                    "INSERT OR REPLACE INTO competitor_daily VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    rows)
+                ok += 1
+        except Exception as e:
+            _log.warning("competitors %s: %s", q, e)
+            fail += 1
+        await asyncio.sleep(8)   # щадим домашний агент и WB
+    _log.info("competitors: собрано %d/%d запросов за %s", ok, len(queries), day)
+    return {"day": day, "ok": ok, "fail": fail, "queries": len(queries)}
+
+
+@router.post("/competitors/collect")
+async def competitors_collect_now():
+    """Ручной запуск сбора (кнопка/тест). Требует работающего домашнего агента."""
+    return await competitors_collect_daily()
+
+
+@router.get("/competitors")
+async def competitors_get():
+    """Последний срез по конкурентам + изменения цен к прошлому срезу."""
+    _comp_init()
+    days = await asyncio.to_thread(
+        db.fetchall, "SELECT DISTINCT day FROM competitor_daily ORDER BY day DESC")
+    days = [str(d[0])[:10] for d in days[:2]]
+    if not days:
+        return {"queries": [], "message": "Данных ещё нет — запустите сбор "
+                "(нужен работающий домашний агент)"}
+    cur_day = days[0]
+    prev_day = days[1] if len(days) > 1 else None
+    rows = await asyncio.to_thread(
+        db.fetchall,
+        "SELECT day, query, position, nm, brand, name, price, rating, feedbacks, is_ours "
+        "FROM competitor_daily WHERE day IN (?, ?) ORDER BY query, position",
+        (cur_day, prev_day or cur_day))
+    prev_price = {}
+    prev_pos = {}
+    by_q: dict = {}
+    for d, q, pos, nm, brand, name, price, rating, fb, is_ours in rows:
+        if str(d)[:10] != cur_day:
+            prev_price[(q, nm)] = price
+            prev_pos[(q, nm)] = pos
+            continue
+        by_q.setdefault(q, []).append({
+            "position": pos, "nm": nm, "brand": brand, "name": name,
+            "price": price, "rating": rating, "feedbacks": fb,
+            "is_ours": bool(is_ours),
+            "price_prev": prev_price.get((q, nm)),
+            "position_prev": prev_pos.get((q, nm)),
+        })
+    return {"day": cur_day, "prev_day": prev_day,
+            "queries": [{"query": q, "items": items} for q, items in by_q.items()]}
+
+
 @router.get("/niche/status")
 async def niche_status():
     """Состояние фонового анализа ниши."""

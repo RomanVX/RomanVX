@@ -141,6 +141,27 @@ async def _keep_awake():
         await asyncio.sleep(600)   # пинг каждые 10 мин (< 15 мин до сна)
 
 
+async def _competitors_daily():
+    """Дашборд конкурентов: суточный срез выдачи WB через домашний агент.
+    Окно 11-21 МСК (ПК включён), дедуп по дню через kv_cache."""
+    import snapshot as _snap
+    from routers import tools as _tools
+    await asyncio.sleep(600)   # даём прогреться основным сборкам
+    while True:
+        now = datetime.utcnow() + timedelta(hours=3)
+        today = now.strftime("%Y-%m-%d")
+        if 11 <= now.hour < 21:
+            last = await asyncio.to_thread(_snap.load, "competitors_last_day", "")
+            if last != today:
+                try:
+                    res = await _tools.competitors_collect_daily()
+                    if res.get("ok"):
+                        await asyncio.to_thread(_snap.save, "competitors_last_day", today)
+                except Exception as e:
+                    logging.getLogger("competitors").warning("daily failed: %s", e)
+        await asyncio.sleep(1800)
+
+
 async def _agent_weekly():
     """Агент-аналитик: разбор кабинета в Telegram по понедельникам в 9 МСК.
 
@@ -175,12 +196,10 @@ async def lifespan(app: FastAPI):
     task4 = asyncio.create_task(_agent_weekly())
     import agent_review as _agent
     task5 = asyncio.create_task(_agent.bot_loop())
+    task6 = asyncio.create_task(_competitors_daily())
     yield
-    task.cancel()
-    task2.cancel()
-    task3.cancel()
-    task4.cancel()
-    task5.cancel()
+    for t in (task, task2, task3, task4, task5, task6):
+        t.cancel()
 
 
 app = FastAPI(title="WB Analytics Dashboard", version="1.0.0", lifespan=lifespan)
