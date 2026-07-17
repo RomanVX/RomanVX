@@ -2676,12 +2676,13 @@ const _TOOL_HINTS = {
   nichecalc: 'Выходить ли с товаром: конкуренты из выдачи WB, цены, спрос и вердикт (сбор через агент)',
   visuals: 'Заглавные фото топ-20 карточек конкурентов + разбор визуала через Claude',
   margin: 'Затраты на единицу из фактической юнитки: вводите цену/себестоимость — видите прибыль, маржу и точку безубыточности',
+  competitors: 'Суточные срезы выдачи WB по вашим запросам: позиции, цены и демпинг конкурентов (сбор через домашний агент)',
 };
 
 function setTool(t) {
   if (_toolActive === t) return;
   _toolActive = t;
-  ['Prod', 'Clusters', 'Adv', 'Niche', 'Nichecalc', 'Visuals', 'Margin'].forEach(k => {
+  ['Prod', 'Clusters', 'Adv', 'Niche', 'Nichecalc', 'Visuals', 'Margin', 'Competitors'].forEach(k => {
     document.getElementById('tool' + k)?.classList.toggle('active', k.toLowerCase() === t);
   });
   const hint = document.getElementById('toolHint');
@@ -2693,12 +2694,87 @@ function reloadTool() {
   ({ prod: () => loadProductolog(true), clusters: () => loadClusters(true),
      adv: () => loadAdv(true), niche: () => loadDemand(true),
      nichecalc: () => renderNicheForm(), visuals: () => renderVisualsForm(),
-     margin: () => loadMargin(true) })[_toolActive]();
+     margin: () => loadMargin(true), competitors: () => loadCompetitors(true) })[_toolActive]();
 }
 function loadTools() {
   ({ prod: loadProductolog, clusters: loadClusters, adv: loadAdv,
      niche: loadDemand, nichecalc: renderNicheForm,
-     visuals: renderVisualsForm, margin: loadMargin })[_toolActive]();
+     visuals: renderVisualsForm, margin: loadMargin,
+     competitors: loadCompetitors })[_toolActive]();
+}
+
+// ── Конкуренты: суточные срезы выдачи WB ─────────────────────────────────────
+let _compData = null;
+async function loadCompetitors(refresh) {
+  const wrap = document.getElementById('toolsWrap');
+  if (!wrap || _toolActive !== 'competitors') return;
+  if (_compData && !refresh) { renderCompetitors(); return; }
+  wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>Загружаем срез по конкурентам…</div>';
+  try {
+    _compData = await fetchJSON('/api/tools/competitors', 30000);
+    renderCompetitors();
+  } catch (e) {
+    wrap.innerHTML = `<div class="alert alert-danger mt-2">Ошибка: ${esc(e.message)}</div>`;
+  }
+}
+
+async function compCollectNow(btn) {
+  btn.disabled = true; btn.textContent = '⏳ Собираем через домашний агент (2-5 мин)…';
+  try {
+    const r = await fetch('/api/tools/competitors/collect', { method: 'POST' });
+    const d = await r.json();
+    btn.textContent = `Готово: ${d.ok || 0}/${d.queries || 0} запросов`;
+    loadCompetitors(true);
+  } catch (e) { btn.textContent = 'Ошибка — агент запущен?'; }
+  setTimeout(() => { btn.disabled = false; btn.textContent = '🔄 Собрать сейчас'; }, 4000);
+}
+
+function _priceDelta(cur, prev) {
+  if (cur == null || prev == null || prev === 0) return '';
+  const d = Math.round((cur - prev) / prev * 100);
+  if (!d) return '';
+  const clr = d < 0 ? 'var(--neg)' : 'var(--pos)';
+  return ` <span class="small" style="color:${clr}">${d > 0 ? '+' : ''}${d}%</span>`;
+}
+
+function renderCompetitors() {
+  if (_toolActive !== 'competitors') return;
+  const wrap = document.getElementById('toolsWrap');
+  if (!wrap || !_compData) return;
+  const d = _compData;
+  let html = `<div class="d-flex gap-2 align-items-center mb-3 flex-wrap">
+    <button class="btn btn-sm btn-outline-info" onclick="compCollectNow(this)">🔄 Собрать сейчас</button>
+    <span class="text-secondary small">Срез: <b>${esc(d.day || '—')}</b>${d.prev_day ? `, сравнение с ${esc(d.prev_day)}` : ''} · сбор ежедневно через домашний агент · запросы — из названий ваших SKU</span>
+  </div>`;
+  const qs = d.queries || [];
+  if (!qs.length) {
+    wrap.innerHTML = html + `<div class="alert alert-info">${esc(d.message || 'Данных ещё нет — нажмите «Собрать сейчас» (домашний агент должен работать)')}</div>`;
+    return;
+  }
+  qs.forEach(qb => {
+    const ourBest = qb.items.find(i => i.is_ours);
+    html += `<div class="card bg-card mb-3"><div class="card-body p-0">
+      <div class="d-flex align-items-center px-3 pt-3 pb-2 flex-wrap gap-2">
+        <b>«${esc(qb.query)}»</b>
+        ${ourBest ? `<span class="badge" style="background:var(--pos)">мы: №${ourBest.position}</span>` : '<span class="badge bg-secondary">нас нет в топ-30</span>'}
+      </div>
+      <div class="table-responsive" style="max-height:44vh"><table class="table table-sm align-middle mb-0" style="font-size:.85rem">
+      <thead><tr><th>№</th><th>Бренд / товар</th><th class="text-end">Цена</th><th class="text-end">★</th><th class="text-end">Отзывы</th></tr></thead><tbody>`;
+    qb.items.forEach(i => {
+      const ours = i.is_ours;
+      const posMove = (i.position_prev && i.position_prev !== i.position)
+        ? ` <span class="small" style="color:${i.position < i.position_prev ? 'var(--pos)' : 'var(--neg)'}">${i.position < i.position_prev ? '↑' : '↓'}${Math.abs(i.position - i.position_prev)}</span>` : '';
+      html += `<tr style="${ours ? 'background:rgba(16,185,129,.10)' : ''}">
+        <td>${i.position}${posMove}</td>
+        <td>${ours ? '🟢 ' : ''}<b>${esc(i.brand || '')}</b> <span class="text-secondary">${esc((i.name || '').slice(0, 60))}</span></td>
+        <td class="text-end">${i.price != null ? fmtRub(i.price) : '—'}${_priceDelta(i.price, i.price_prev)}</td>
+        <td class="text-end">${i.rating || '—'}</td>
+        <td class="text-end text-secondary">${fmt(i.feedbacks || 0)}</td></tr>`;
+    });
+    html += `</tbody></table></div></div></div>`;
+  });
+  html += `<div class="text-secondary small">🟢 — наши карточки. Красный % у цены — конкурент снизил цену со вчера (демпинг), стрелки у позиции — движение в выдаче. Спрашивайте агента в Telegram: «что по конкурентам у геля?»</div>`;
+  wrap.innerHTML = html;
 }
 
 // ── Воронка Ozon (Premium) ────────────────────────────────────────────────────
