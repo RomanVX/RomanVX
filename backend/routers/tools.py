@@ -1829,9 +1829,13 @@ def _comp_init():
 
 
 def competitor_queries() -> list[str]:
-    """Поисковые запросы из названий наших SKU: убираем объёмы/фасовку.
-    «Смазка на водной основе с кокосовым маслом и ментолом 100 мл» →
-    «смазка на водной основе с кокосовым маслом и ментолом»."""
+    """Список запросов: свой (задан пользователем, kv_cache) или автогенерация
+    из названий SKU — убираем объёмы/фасовку: «Крем для лица ночной 50 мл» →
+    «крем для лица ночной»."""
+    import snapshot as _snap
+    custom = _snap.load("competitor_queries_custom", None)
+    if custom:
+        return [str(q).strip().lower() for q in custom if str(q).strip()][:20]
     import re
     import catalog as _cat
     import cost_store
@@ -1891,6 +1895,27 @@ async def competitors_collect_daily() -> dict:
         await asyncio.sleep(8)   # щадим домашний агент и WB
     _log.info("competitors: собрано %d/%d запросов за %s", ok, len(queries), day)
     return {"day": day, "ok": ok, "fail": fail, "queries": len(queries)}
+
+
+@router.get("/competitors/queries")
+async def competitors_queries_get():
+    """Текущий список запросов + признак «свой/автогенерация»."""
+    import snapshot as _snap
+    custom = await asyncio.to_thread(_snap.load, "competitor_queries_custom", None)
+    return {"queries": competitor_queries(), "custom": bool(custom)}
+
+
+@router.post("/competitors/queries")
+async def competitors_queries_set(body: dict):
+    """Сохранить свой список запросов (queries: [...]); пустой = вернуть автогенерацию."""
+    import snapshot as _snap
+    queries = [str(q).strip().lower() for q in (body.get("queries") or []) if str(q).strip()]
+    queries = list(dict.fromkeys(queries))[:20]   # дедуп, максимум 20
+    if queries:
+        await asyncio.to_thread(_snap.save, "competitor_queries_custom", queries)
+    else:
+        await asyncio.to_thread(_snap.save, "competitor_queries_custom", [])
+    return {"queries": competitor_queries(), "custom": bool(queries)}
 
 
 @router.post("/competitors/collect")

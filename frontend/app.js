@@ -2705,17 +2705,34 @@ function loadTools() {
 
 // ── Конкуренты: суточные срезы выдачи WB ─────────────────────────────────────
 let _compData = null;
+let _compQueries = null;
 async function loadCompetitors(refresh) {
   const wrap = document.getElementById('toolsWrap');
   if (!wrap || _toolActive !== 'competitors') return;
   if (_compData && !refresh) { renderCompetitors(); return; }
   wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>Загружаем срез по конкурентам…</div>';
   try {
-    _compData = await fetchJSON('/api/tools/competitors', 30000);
+    [_compData, _compQueries] = await Promise.all([
+      fetchJSON('/api/tools/competitors', 30000),
+      fetchJSON('/api/tools/competitors/queries', 15000).catch(() => null),
+    ]);
     renderCompetitors();
   } catch (e) {
     wrap.innerHTML = `<div class="alert alert-danger mt-2">Ошибка: ${esc(e.message)}</div>`;
   }
+}
+
+async function compSaveQueries(reset) {
+  const ta = document.getElementById('compQueriesTa');
+  const queries = reset ? [] : (ta ? ta.value.split('\n').map(s => s.trim()).filter(Boolean) : []);
+  try {
+    const r = await fetch('/api/tools/competitors/queries', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ queries })
+    });
+    _compQueries = await r.json();
+    renderCompetitors();
+  } catch (e) { alert('Не сохранилось: ' + e.message); }
 }
 
 async function compCollectNow(btn) {
@@ -2742,9 +2759,22 @@ function renderCompetitors() {
   const wrap = document.getElementById('toolsWrap');
   if (!wrap || !_compData) return;
   const d = _compData;
-  let html = `<div class="d-flex gap-2 align-items-center mb-3 flex-wrap">
-    <button class="btn btn-sm btn-outline-info" onclick="compCollectNow(this)">🔄 Собрать сейчас</button>
-    <span class="text-secondary small">Срез: <b>${esc(d.day || '—')}</b>${d.prev_day ? `, сравнение с ${esc(d.prev_day)}` : ''} · сбор ежедневно через домашний агент · запросы — из названий ваших SKU</span>
+  const qList = (_compQueries && _compQueries.queries) || [];
+  const isCustom = _compQueries && _compQueries.custom;
+  let html = `<div class="card bg-card p-3 mb-3">
+    <div class="d-flex gap-2 align-items-center flex-wrap mb-2">
+      <b>Поисковые фразы для мониторинга</b>
+      <span class="badge ${isCustom ? 'bg-info' : 'bg-secondary'}">${isCustom ? 'свой список' : 'автоматически из названий SKU'}</span>
+      <span class="text-secondary small">по одной на строку, до 20</span>
+    </div>
+    <textarea id="compQueriesTa" class="form-control form-control-sm" rows="5"
+      style="font-family:monospace;font-size:.85rem">${esc(qList.join('\n'))}</textarea>
+    <div class="d-flex gap-2 mt-2 flex-wrap">
+      <button class="btn btn-sm btn-outline-info" onclick="compSaveQueries(false)">💾 Сохранить список</button>
+      <button class="btn btn-sm btn-outline-secondary" onclick="compSaveQueries(true)">↺ Вернуть автосписок</button>
+      <button class="btn btn-sm btn-outline-success" onclick="compCollectNow(this)">🔄 Собрать сейчас</button>
+      <span class="text-secondary small align-self-center">Срез: <b>${esc(d.day || '—')}</b>${d.prev_day ? `, сравнение с ${esc(d.prev_day)}` : ''} · авто-сбор ежедневно через домашний агент</span>
+    </div>
   </div>`;
   const qs = d.queries || [];
   if (!qs.length) {
