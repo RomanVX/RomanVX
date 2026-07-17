@@ -499,9 +499,19 @@ async def bot_loop() -> None:
                     params={"timeout": 50, "offset": offset,
                             "allowed_updates": '["message"]'})
             if r.status_code == 409:
-                # два инстанса тянут getUpdates (окно деплоя) — уступаем,
-                # новый инстанс заберёт очередь после смерти старого
-                _log.warning("bot: 409 conflict (деплой-окно?) — пауза 15с")
+                # 409 = либо второй потребитель getUpdates этим токеном,
+                # либо на боте включён webhook. Webhook снимаем сами; чужой
+                # поллер лечится только ротацией токена у BotFather.
+                _log.warning("bot: 409 conflict: %s", r.text[:200])
+                try:
+                    async with httpx.AsyncClient(timeout=15) as c2:
+                        wh = await c2.get(f"https://api.telegram.org/bot{TG_BOT_TOKEN}/getWebhookInfo")
+                        info = (wh.json().get("result") or {})
+                        if info.get("url"):
+                            _log.warning("bot: обнаружен webhook %s — снимаю", info["url"])
+                            await c2.get(f"https://api.telegram.org/bot{TG_BOT_TOKEN}/deleteWebhook")
+                except Exception as e2:
+                    _log.warning("bot: webhook check failed: %s", e2)
                 await asyncio.sleep(15)
                 continue
             body = r.json()
