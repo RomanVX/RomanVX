@@ -382,6 +382,8 @@ async def _gather_context() -> str:
     return "\n\n".join(parts)
 
 
+_qa_inflight: set = set()   # (thread, вопрос) — защита от дублей из очереди
+
 # диалоговая память: тема группы → последние реплики (переживает рестарт)
 _dialogs: dict[str, list] = {}
 _DIALOG_KEEP = 16   # реплик (8 пар вопрос-ответ)
@@ -547,11 +549,25 @@ async def bot_loop() -> None:
                     rfrom = ((rm.get("from") or {}).get("first_name")
                              or (rm.get("from") or {}).get("username") or "")
                     if rtext and not is_reply:
-                        q = (f"[Владелец отвечает на сообщение от «{rfrom}»:\n"
-                             f"«{rtext[:1500]}»]\n\nЗапрос владельца: {q}")
+                        q = (f"Владелец переслал тебе сообщение от «{rfrom}» с просьбой: {q}\n\n"
+                             f"СООБЩЕНИЕ ОТ {rfrom}:\n«{rtext[:1500]}»\n\n"
+                             f"ВАЖНО: отвечай ИМЕННО на содержание этого сообщения — на его "
+                             f"вопросы, пункты и требования, используя данные кабинета где они "
+                             f"нужны. НЕ подменяй ответ общим разбором экономики кабинета.")
                     if q:
+                        # дедуп: после простоя очередь может принести один и
+                        # тот же вопрос несколько раз — отвечаем один раз
+                        key = (thread, q[:200])
+                        if key in _qa_inflight:
+                            continue
+                        _qa_inflight.add(key)
                         await tg_send("🔎 Смотрю данные…", thread_id=thread)
-                        asyncio.get_event_loop().create_task(_answer_question(q, thread))
+                        async def _run(qq=q, th=thread, k=key):
+                            try:
+                                await _answer_question(qq, th)
+                            finally:
+                                _qa_inflight.discard(k)
+                        asyncio.get_event_loop().create_task(_run())
                     continue
                 if not text.startswith("/"):
                     continue
