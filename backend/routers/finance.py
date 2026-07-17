@@ -253,6 +253,17 @@ async def _fetch_detail_bg(date_from: str, date_to: str) -> None:
     _detail_fetching = True
     try:
         cache_key = f"{date_from}_{date_to}"
+        # при ежедневной перекачке в памяти живут ДВА комплекта строк (старый
+        # detail + новый). Если память уже поджата — жертвуем стейлом: старые
+        # строки есть в снапшоте БД, а OOM убил бы всё (17.07: rss 516 → 502)
+        import gc
+        import heavy as _heavy
+        if _detail_cache.get("rows") and _heavy.rss_mb() > 340:
+            _log.info("detail refetch: rss %.0f МБ — освобождаю старый кеш "
+                      "(%d строк) перед перекачкой", _heavy.rss_mb(),
+                      len(_detail_cache.get("rows", [])))
+            _detail_cache = {}
+            gc.collect()
         async with _detail_lock:
             rows: list[dict] = []
             try:

@@ -366,7 +366,7 @@ _REPORT_KEEP = frozenset({
     "storage_fee", "acceptance", "penalty", "deduction", "additional_payment",
 })
 
-_REPORT_PAGE = 10_000  # меньше страница → меньше пиковая память при парсинге
+_REPORT_PAGE = 5_000  # меньше страница → меньше пиковая память при парсинге
 
 
 async def get_report_detail(date_from: datetime, date_to: datetime) -> list[dict]:
@@ -429,6 +429,8 @@ async def get_report_detail(date_from: datetime, date_to: datetime) -> list[dict
 
         all_records.extend(await asyncio.to_thread(_slim, data))
         del data  # сырые записи с полным набором полей больше не нужны
+        import gc
+        gc.collect()  # сразу вернуть память сырой страницы (на 512 МБ критично)
         try:
             import heavy
             _log.info("reportDetailByPeriod: got %d records (total %d, rss %.0f MB)",
