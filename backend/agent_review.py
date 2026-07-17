@@ -442,7 +442,13 @@ WB/Ozon/ЯМ), общаешься с владельцем в Telegram. Отве�
         await asyncio.to_thread(_dialog_add, thread, "assistant", answer)
     except Exception as e:
         _log.error("qa failed: %s", e)
-        await tg_send(f"Не смог ответить: {str(e)[:200]}", thread_id=thread)
+        err = str(e)
+        if "credit balance" in err:
+            await tg_send("💳 Закончился баланс Anthropic API — владельцу нужно "
+                          "пополнить его в console.anthropic.com → Billing. "
+                          "После пополнения отвечу сразу.", thread_id=thread)
+        else:
+            await tg_send(f"Не смог ответить: {err[:200]}", thread_id=thread)
 
 
 async def _review_with_retry(thread: int | None) -> None:
@@ -506,6 +512,15 @@ async def bot_loop() -> None:
                 if not text.startswith("/") and (is_mention or is_reply):
                     import re as _re
                     q = _re.sub(f"@{me}", "", raw, flags=_re.IGNORECASE).strip()
+                    # реплай на чужое сообщение = контекст вопроса (боты друг
+                    # друга в TG не видят — но текст приходит внутри реплая)
+                    rm = msg.get("reply_to_message") or {}
+                    rtext = (rm.get("text") or rm.get("caption") or "").strip()
+                    rfrom = ((rm.get("from") or {}).get("first_name")
+                             or (rm.get("from") or {}).get("username") or "")
+                    if rtext and not is_reply:
+                        q = (f"[Владелец отвечает на сообщение от «{rfrom}»:\n"
+                             f"«{rtext[:1500]}»]\n\nЗапрос владельца: {q}")
                     if q:
                         await tg_send("🔎 Смотрю данные…", thread_id=thread)
                         asyncio.get_event_loop().create_task(_answer_question(q, thread))
