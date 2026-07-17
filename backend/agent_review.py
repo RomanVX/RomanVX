@@ -412,8 +412,11 @@ def _dialog_add(thread: int | None, role: str, content: str) -> None:
         pass
 
 
-async def _answer_question(question: str, thread: int | None) -> None:
-    """Свободный вопрос к агенту: данные кабинета + история диалога → Claude."""
+async def _answer_question(question: str, thread: int | None,
+                           use_history: bool = True) -> None:
+    """Свободный вопрос к агенту: данные кабинета + история диалога → Claude.
+    use_history=False — для ответов на цитаты: история не должна перетягивать
+    разговор на прошлую тему."""
     try:
         await asyncio.to_thread(_dialog_load)
         ctx = await _gather_context()
@@ -424,7 +427,7 @@ WB/Ozon/ЯМ), общаешься с владельцем в Telegram. Отве�
 Не выдумывай числа. Помни контекст предыдущих реплик диалога.
 
 {KNOWLEDGE}"""
-        history = list(_dialogs.get(_dialog_key(thread), []))
+        history = list(_dialogs.get(_dialog_key(thread), [])) if use_history else []
         messages = history + [{"role": "user", "content":
                                f"АКТУАЛЬНЫЕ ДАННЫЕ КАБИНЕТА:\n{ctx}\n\nВОПРОС: {question}"}]
         import anthropic
@@ -548,7 +551,8 @@ async def bot_loop() -> None:
                     rtext = (rm.get("text") or rm.get("caption") or "").strip()
                     rfrom = ((rm.get("from") or {}).get("first_name")
                              or (rm.get("from") or {}).get("username") or "")
-                    if rtext and not is_reply:
+                    has_quote = bool(rtext and not is_reply)
+                    if has_quote:
                         q = (f"Владелец переслал тебе сообщение от «{rfrom}» с просьбой: {q}\n\n"
                              f"СООБЩЕНИЕ ОТ {rfrom}:\n«{rtext[:1500]}»\n\n"
                              f"ВАЖНО: отвечай ИМЕННО на содержание этого сообщения — на его "
@@ -562,9 +566,9 @@ async def bot_loop() -> None:
                             continue
                         _qa_inflight.add(key)
                         await tg_send("🔎 Смотрю данные…", thread_id=thread)
-                        async def _run(qq=q, th=thread, k=key):
+                        async def _run(qq=q, th=thread, k=key, hq=has_quote):
                             try:
-                                await _answer_question(qq, th)
+                                await _answer_question(qq, th, use_history=not hq)
                             finally:
                                 _qa_inflight.discard(k)
                         asyncio.get_event_loop().create_task(_run())
