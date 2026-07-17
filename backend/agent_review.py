@@ -487,7 +487,10 @@ async def bot_loop() -> None:
             me = ((r.json().get("result") or {}).get("username") or "").lower()
     except Exception as e:
         _log.warning("getMe failed: %s", e)
-    offset = 0
+    import snapshot as _snap
+    # офсет переживает рестарты: сообщения из деплой-окна не теряются
+    # и старые команды не выполняются повторно
+    offset = int(await asyncio.to_thread(_snap.load, "tg_offset", 0) or 0)
     while True:
         try:
             async with httpx.AsyncClient(timeout=70) as c:
@@ -497,6 +500,7 @@ async def bot_loop() -> None:
                             "allowed_updates": '["message"]'})
             for upd in (r.json().get("result") or []):
                 offset = upd["update_id"] + 1
+                await asyncio.to_thread(_snap.save, "tg_offset", offset)
                 msg = upd.get("message") or {}
                 chat = str((msg.get("chat") or {}).get("id") or "")
                 raw = (msg.get("text") or "").strip()
