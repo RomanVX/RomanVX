@@ -1943,18 +1943,24 @@ async def competitors_get():
         (cur_day, prev_day or cur_day))
     prev_price = {}
     prev_pos = {}
+    prev_fb = {}
     by_q: dict = {}
     for d, q, pos, nm, brand, name, price, rating, fb, is_ours in rows:
         if str(d)[:10] != cur_day:
             prev_price[(q, nm)] = price
             prev_pos[(q, nm)] = pos
+            prev_fb[(q, nm)] = fb
             continue
+        fb_delta = (fb - prev_fb[(q, nm)]) if (q, nm) in prev_fb else None
         by_q.setdefault(q, []).append({
             "position": pos, "nm": nm, "brand": brand, "name": name,
             "price": price, "rating": rating, "feedbacks": fb,
             "is_ours": bool(is_ours),
             "price_prev": prev_price.get((q, nm)),
             "position_prev": prev_pos.get((q, nm)),
+            # прирост отзывов со вчера и оценка продаж (~1 отзыв на 40 покупок)
+            "fb_delta": fb_delta,
+            "sales_est": round(fb_delta * 40) if fb_delta and fb_delta > 0 else None,
         })
     return {"day": cur_day, "prev_day": prev_day,
             "queries": [{"query": q, "items": items} for q, items in by_q.items()]}

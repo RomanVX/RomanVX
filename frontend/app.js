@@ -2789,7 +2789,9 @@ function renderCompetitors() {
         ${ourBest ? `<span class="badge" style="background:var(--pos)">мы: №${ourBest.position}</span>` : '<span class="badge bg-secondary">нас нет в топ-30</span>'}
       </div>
       <div class="table-responsive" style="max-height:44vh"><table class="table table-sm align-middle mb-0" style="font-size:.85rem">
-      <thead><tr><th>№</th><th>Бренд / товар</th><th class="text-end">Цена</th><th class="text-end">★</th><th class="text-end">Отзывы</th></tr></thead><tbody>`;
+      <thead><tr><th>№</th><th>Бренд / товар</th><th class="text-end">Цена</th><th class="text-end">★</th><th class="text-end">Отзывы</th>
+      <th class="text-end" title="Прирост отзывов со вчера">+отз/дн</th>
+      <th class="text-end" title="Оценка: ~1 отзыв на 40 покупок. Точность ±50%, годится для сравнения конкурентов между собой">≈прод/дн</th></tr></thead><tbody>`;
     qb.items.forEach(i => {
       const ours = i.is_ours;
       const posMove = (i.position_prev && i.position_prev !== i.position)
@@ -2799,7 +2801,9 @@ function renderCompetitors() {
         <td>${ours ? '🟢 ' : ''}<b>${esc(i.brand || '')}</b> <span class="text-secondary">${esc((i.name || '').slice(0, 60))}</span></td>
         <td class="text-end">${i.price != null ? fmtRub(i.price) : '—'}${_priceDelta(i.price, i.price_prev)}</td>
         <td class="text-end">${i.rating || '—'}</td>
-        <td class="text-end text-secondary">${fmt(i.feedbacks || 0)}</td></tr>`;
+        <td class="text-end text-secondary">${fmt(i.feedbacks || 0)}</td>
+        <td class="text-end">${i.fb_delta != null ? (i.fb_delta > 0 ? '+' + i.fb_delta : i.fb_delta) : '—'}</td>
+        <td class="text-end" style="color:var(--val)">${i.sales_est != null ? '~' + fmt(i.sales_est) : '—'}</td></tr>`;
     });
     html += `</tbody></table></div></div></div>`;
   });
