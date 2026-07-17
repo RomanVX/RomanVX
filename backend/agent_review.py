@@ -430,6 +430,11 @@ WB/Ozon/ЯМ), общаешься с владельцем в Telegram. Отве�
         msg = await client.messages.create(
             model=_MODEL, max_tokens=1500, system=system, messages=messages)
         answer = msg.content[0].text.strip()
+        u = getattr(msg, "usage", None)
+        if u:
+            cost = (u.input_tokens * 5 + u.output_tokens * 25) / 1_000_000
+            _log.info("qa usage: in=%d out=%d ≈ $%.3f (%.1f ₽)",
+                      u.input_tokens, u.output_tokens, cost, cost * 95)
         await tg_send(answer, thread_id=thread)
         # в память кладём вопрос и ответ БЕЗ простыни данных — данные каждый
         # раз свежие, а старые копии только путали бы модель
