@@ -61,6 +61,10 @@ WB поднял комиссии на +6-9 пп почти по всем кат�
 ОТЧЁТНОСТЬ WB: отчёт реализации формируется РАЗ В НЕДЕЛЮ (пн за прошлую
 неделю) — свежие дни в точных данных отсутствуют, хвост добирается
 оперативными продажами. История продаж в API — только 90 дней.
+Для вопросов «сегодня/вчера/темп по дням» используй блоки «ПРОДАЖИ ПО
+ДНЯМ» и «WB ПО SKU ПО ДНЯМ» — это оперативные данные с обновлением раз
+в 30 минут. Сегодняшний день всегда неполный: сравнивай завершённые дни,
+а про сегодня говори «на текущий момент столько-то».
 
 ОСТАТКИ: дни запаса = остаток / темп продаж. ≤20 дней — срочно в поставку
 (поставка на склад WB едет 3-10 дней); нулевой остаток у маржинального SKU —
@@ -287,6 +291,40 @@ async def _prices_context() -> str:
     return "\n".join(parts)
 
 
+async def _daily_context() -> str:
+    """Посуточная динамика продаж (sales_daily, обновляется каждые 30 мин):
+    итоги по дням/платформам за 14 дней + WB по SKU за 7 дней."""
+    import db
+    parts = []
+    try:
+        since = (datetime.utcnow() - timedelta(days=14)).strftime("%Y-%m-%d")
+        rows = await asyncio.to_thread(
+            db.fetchall,
+            "SELECT sale_date, platform, SUM(qty), SUM(revenue) FROM sales_daily "
+            "WHERE sale_date>=? GROUP BY sale_date, platform ORDER BY sale_date", (since,))
+        days: dict = {}
+        for d, pf, q, rev in rows:
+            days.setdefault(str(d)[:10], {})[pf] = {"qty": int(q or 0), "rev": round(rev or 0)}
+        if days:
+            parts.append("ПРОДАЖИ ПО ДНЯМ за 14 дней (сегодняшний день НЕПОЛНЫЙ, "
+                         "обновление раз в 30 мин): " + json.dumps(days, ensure_ascii=False))
+        since7 = (datetime.utcnow() - timedelta(days=7)).strftime("%Y-%m-%d")
+        rows2 = await asyncio.to_thread(
+            db.fetchall,
+            "SELECT sku, sale_date, SUM(qty) FROM sales_daily "
+            "WHERE platform='WB' AND sale_date>=? GROUP BY sku, sale_date "
+            "ORDER BY sale_date", (since7,))
+        by_sku: dict = {}
+        for sku, d, q in rows2:
+            by_sku.setdefault(str(sku), {})[str(d)[:10]] = int(q or 0)
+        if by_sku:
+            parts.append("WB ПО SKU ПО ДНЯМ за 7 дней (шт): "
+                         + json.dumps(by_sku, ensure_ascii=False))
+    except Exception as e:
+        _log.warning("daily ctx: %s", e)
+    return "\n".join(parts)
+
+
 async def _gather_context() -> str:
     """Всё, что агент знает о кабинете, одним текстом — контекст для вопросов."""
     from routers import tools as _tools
@@ -338,6 +376,9 @@ async def _gather_context() -> str:
     pc = await _prices_context()
     if pc:
         parts.append(pc)
+    dc = await _daily_context()
+    if dc:
+        parts.append(dc)
     return "\n\n".join(parts)
 
 
