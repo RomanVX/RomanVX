@@ -1651,7 +1651,15 @@ async def niche_ingest(payload: dict, token: str = ""):
     if payload.get("error"):
         _agent_inbox[query] = {"error": str(payload["error"])[:300]}
     else:
-        _agent_inbox[query] = {"products": payload.get("products") or [],
+        products = payload.get("products") or []
+        # починка парсинга рейтинга: у карточек с целым рейтингом DOM-регулярка
+        # склеивает его со счётчиком оценок («5» + «448» → 5448) — дробные
+        # (4.73) приходят корректно. Всё, что больше 5 — берём первую цифру.
+        for p in products:
+            r = p.get("rating")
+            if isinstance(r, (int, float)) and r > 5:
+                p["rating"] = float(str(int(r))[0])
+        _agent_inbox[query] = {"products": products,
                                "total": int(payload.get("total") or 0)}
     return {"ok": True}
 
