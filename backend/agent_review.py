@@ -427,24 +427,56 @@ def _dialog_add(thread: int | None, role: str, content: str) -> None:
         pass
 
 
+async def _tg_get_photo(file_id: str) -> str | None:
+    """Скачивает фото из Telegram → base64 (jpeg)."""
+    import base64
+    try:
+        async with httpx.AsyncClient(timeout=30) as c:
+            r = await c.get(f"https://api.telegram.org/bot{TG_BOT_TOKEN}/getFile",
+                            params={"file_id": file_id})
+            path = ((r.json().get("result") or {}).get("file_path"))
+            if not path:
+                return None
+            f = await c.get(f"https://api.telegram.org/file/bot{TG_BOT_TOKEN}/{path}")
+            if f.status_code != 200 or len(f.content) > 4_500_000:
+                return None
+            return base64.b64encode(f.content).decode()
+    except Exception as e:
+        _log.warning("tg photo: %s", e)
+        return None
+
+
 async def _answer_question(question: str, thread: int | None,
-                           use_history: bool = True) -> None:
+                           use_history: bool = True,
+                           image_b64: str | None = None) -> None:
     """Свободный вопрос к агенту: данные кабинета + история диалога → Claude.
     use_history=False — для ответов на цитаты: история не должна перетягивать
-    разговор на прошлую тему."""
+    разговор на прошлую тему. image_b64 — картинка из сообщения (vision)."""
     try:
         await asyncio.to_thread(_dialog_load)
         ctx = await _gather_context()
         system = f"""Ты — агент-аналитик селлера маркетплейсов (кабинет Biomed,
-WB/Ozon/ЯМ), общаешься с владельцем в Telegram. Отвечай по-русски, кратко и с
-цифрами из данных. Формат — Telegram HTML (только <b> и <i>, без markdown).
-Если в данных нет ответа — скажи прямо и подскажи, где смотреть в дашборде.
-Не выдумывай числа. Помни контекст предыдущих реплик диалога.
+WB/Ozon/ЯМ), общаешься с владельцем и его командой в Telegram. Отвечай
+по-русски, кратко и с цифрами из данных. Формат — Telegram HTML (только <b> и
+<i>, без markdown). Если в данных нет ответа — скажи прямо и подскажи, где
+смотреть в дашборде. Не выдумывай числа. Помни контекст предыдущих реплик.
+Тон: живой, свой в команде. Если с тобой шутят, прислали мем или просят
+ответить с сарказмом — поддержи шутку остроумно и по-доброму, можешь поддеть
+в ответ; юмор юмором, а числа не выдумывай и грубым не будь.
 
 {KNOWLEDGE}"""
         history = list(_dialogs.get(_dialog_key(thread), [])) if use_history else []
-        messages = history + [{"role": "user", "content":
-                               f"АКТУАЛЬНЫЕ ДАННЫЕ КАБИНЕТА:\n{ctx}\n\nВОПРОС: {question}"}]
+        user_text = f"АКТУАЛЬНЫЕ ДАННЫЕ КАБИНЕТА:\n{ctx}\n\nВОПРОС: {question}"
+        if image_b64:
+            content = [
+                {"type": "image", "source": {"type": "base64",
+                                             "media_type": "image/jpeg",
+                                             "data": image_b64}},
+                {"type": "text", "text": user_text},
+            ]
+        else:
+            content = user_text
+        messages = history + [{"role": "user", "content": content}]
         import anthropic
         client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
         msg = await client.messages.create(
@@ -547,7 +579,7 @@ async def bot_loop() -> None:
                           (m0.get("text") or "")[:80])
                 msg = upd.get("message") or {}
                 chat = str((msg.get("chat") or {}).get("id") or "")
-                raw = (msg.get("text") or "").strip()
+                raw = (msg.get("text") or msg.get("caption") or "").strip()
                 text = raw.lower()
                 thread = msg.get("message_thread_id")
                 if chat != TG_CHAT_ID or not raw:
@@ -566,6 +598,9 @@ async def bot_loop() -> None:
                     rtext = (rm.get("text") or rm.get("caption") or "").strip()
                     rfrom = ((rm.get("from") or {}).get("first_name")
                              or (rm.get("from") or {}).get("username") or "")
+                    # картинка: в самом сообщении или в цитируемом (мем и т.п.)
+                    photos = msg.get("photo") or rm.get("photo") or []
+                    photo_id = photos[-1].get("file_id") if photos else None
                     has_quote = bool(rtext and not is_reply)
                     if has_quote:
                         q = (f"Владелец переслал тебе сообщение от «{rfrom}» с просьбой: {q}\n\n"
@@ -573,6 +608,8 @@ async def bot_loop() -> None:
                              f"ВАЖНО: отвечай ИМЕННО на содержание этого сообщения — на его "
                              f"вопросы, пункты и требования, используя данные кабинета где они "
                              f"нужны. НЕ подменяй ответ общим разбором экономики кабинета.")
+                    if not q and photo_id:
+                        q = "Прокомментируй картинку."
                     if q:
                         # дедуп: после простоя очередь может принести один и
                         # тот же вопрос несколько раз — отвечаем один раз
@@ -581,9 +618,11 @@ async def bot_loop() -> None:
                             continue
                         _qa_inflight.add(key)
                         await tg_send("🔎 Смотрю данные…", thread_id=thread)
-                        async def _run(qq=q, th=thread, k=key, hq=has_quote):
+                        async def _run(qq=q, th=thread, k=key, hq=has_quote, ph=photo_id):
                             try:
-                                await _answer_question(qq, th, use_history=not hq)
+                                img = await _tg_get_photo(ph) if ph else None
+                                await _answer_question(qq, th, use_history=not hq,
+                                                       image_b64=img)
                             finally:
                                 _qa_inflight.discard(k)
                         asyncio.get_event_loop().create_task(_run())
