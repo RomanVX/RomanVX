@@ -1820,6 +1820,120 @@ async def analyze_niche(payload: dict):
     return {"building": True, "query": query, "stage": "старт"}
 
 
+# ══ Остатки по складам WB + стоимость по себестоимости ════════════════════════
+async def _wh_stocks_data() -> dict:
+    import cache as _c
+    import cost_store
+    import catalog as _cat
+    _, _, stocks = await _c.get_raw_data(
+        datetime.utcnow() - timedelta(days=1), datetime.utcnow())
+    costs = cost_store.get_costs()
+    names = cost_store.get_names()
+
+    by_sku: dict = {}
+    wh_totals: dict = {}
+    for r in stocks:
+        art = str(r.get("supplierArticle") or "").strip()
+        if not art:
+            continue
+        wh = (r.get("warehouseName") or "?").strip()
+        qty = int(r.get("quantity") or 0)
+        s = by_sku.setdefault(art, {"sku": art, "qty": 0, "to_client": 0,
+                                    "from_client": 0, "warehouses": {}})
+        s["qty"] += qty
+        s["to_client"] += int(r.get("inWayToClient") or 0)
+        s["from_client"] += int(r.get("inWayFromClient") or 0)
+        if qty > 0:
+            s["warehouses"][wh] = s["warehouses"].get(wh, 0) + qty
+            wh_totals[wh] = wh_totals.get(wh, 0) + qty
+
+    items = []
+    for art, s in by_sku.items():
+        if s["qty"] <= 0 and s["to_client"] <= 0:
+            continue
+        cost = costs.get(art) or 0
+        s["name"] = names.get(art) or _cat.lookup(art).get("name", "")
+        s["group"] = _cat.lookup(art).get("brand", "")
+        s["cost"] = cost
+        s["value"] = round(s["qty"] * cost)
+        s["value_with_way"] = round((s["qty"] + s["to_client"]) * cost)
+        items.append(s)
+    items.sort(key=lambda x: -x["value"])
+    warehouses = sorted(wh_totals.items(), key=lambda kv: -kv[1])
+    return {"items": items,
+            "warehouses": [{"name": w, "qty": q} for w, q in warehouses],
+            "totals": {"qty": sum(i["qty"] for i in items),
+                       "to_client": sum(i["to_client"] for i in items),
+                       "value": sum(i["value"] for i in items),
+                       "value_with_way": sum(i["value_with_way"] for i in items),
+                       "no_cost": sum(1 for i in items if not i["cost"])},
+            "fetched_at": datetime.utcnow().strftime("%d.%m.%Y %H:%M UTC")}
+
+
+@router.get("/whstocks")
+async def get_wh_stocks():
+    """Остатки WB по складам + стоимость остатков по себестоимости."""
+    try:
+        return await _wh_stocks_data()
+    except Exception as e:
+        _log.error("whstocks: %s", e)
+        return {"items": [], "error": str(e)[:200]}
+
+
+@router.get("/whstocks/export")
+async def wh_stocks_export():
+    """Excel: лист «По товарам» (сток×склады×стоимость) + «По складам»."""
+    import io
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+    from fastapi.responses import StreamingResponse
+
+    d = await _wh_stocks_data()
+    items = d["items"]
+    whs = [w["name"] for w in d["warehouses"]]
+
+    wb_x = openpyxl.Workbook()
+    ws = wb_x.active
+    ws.title = "По товарам"
+    head = ["Артикул", "Название", "Группа", "Остаток, шт", "К клиенту, шт",
+            "От клиента, шт", "Себес, ₽", "Стоимость остатка, ₽",
+            "Стоимость с учётом в пути, ₽"] + whs
+    ws.append(head)
+    hf = Font(bold=True, color="FFFFFF")
+    fill = PatternFill("solid", fgColor="4A5568")
+    for c in ws[1]:
+        c.font, c.fill = hf, fill
+        c.alignment = Alignment(horizontal="center", wrap_text=True)
+    for i in items:
+        ws.append([i["sku"], i["name"], i["group"], i["qty"], i["to_client"],
+                   i["from_client"], i["cost"] or None, i["value"],
+                   i["value_with_way"]] + [i["warehouses"].get(w) for w in whs])
+    t = d["totals"]
+    ws.append(["ИТОГО", "", "", t["qty"], t["to_client"], "", "", t["value"],
+               t["value_with_way"]] + [w2["qty"] for w2 in d["warehouses"]])
+    for c in ws[ws.max_row]:
+        c.font = Font(bold=True)
+    ws.freeze_panes = "D2"
+    for idx in range(1, len(head) + 1):
+        ws.column_dimensions[get_column_letter(idx)].width = 26 if idx == 2 else 13
+
+    ws2 = wb_x.create_sheet("По складам")
+    ws2.append(["Склад", "Остаток, шт"])
+    for c in ws2[1]:
+        c.font, c.fill = hf, fill
+    for w in d["warehouses"]:
+        ws2.append([w["name"], w["qty"]])
+    ws2.column_dimensions["A"].width = 32
+
+    buf = io.BytesIO()
+    wb_x.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="wh_stocks.xlsx"'})
+
+
 # ══ Дашборд конкурентов: ежедневный срез выдачи WB по нашим запросам ══════════
 def _comp_init():
     db.execute("""CREATE TABLE IF NOT EXISTS competitor_daily (

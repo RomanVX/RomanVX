@@ -2677,12 +2677,13 @@ const _TOOL_HINTS = {
   visuals: 'Заглавные фото топ-20 карточек конкурентов + разбор визуала через Claude',
   margin: 'Затраты на единицу из фактической юнитки: вводите цену/себестоимость — видите прибыль, маржу и точку безубыточности',
   competitors: 'Суточные срезы выдачи WB по вашим запросам: позиции, цены и демпинг конкурентов (сбор через домашний агент)',
+  whstocks: 'Остатки WB по складам и сколько денег заморожено в стоке (по себестоимости)',
 };
 
 function setTool(t) {
   if (_toolActive === t) return;
   _toolActive = t;
-  ['Prod', 'Clusters', 'Adv', 'Niche', 'Nichecalc', 'Visuals', 'Margin', 'Competitors'].forEach(k => {
+  ['Prod', 'Clusters', 'Adv', 'Niche', 'Nichecalc', 'Visuals', 'Margin', 'Competitors', 'Whstocks'].forEach(k => {
     document.getElementById('tool' + k)?.classList.toggle('active', k.toLowerCase() === t);
   });
   const hint = document.getElementById('toolHint');
@@ -2694,13 +2695,94 @@ function reloadTool() {
   ({ prod: () => loadProductolog(true), clusters: () => loadClusters(true),
      adv: () => loadAdv(true), niche: () => loadDemand(true),
      nichecalc: () => renderNicheForm(), visuals: () => renderVisualsForm(),
-     margin: () => loadMargin(true), competitors: () => loadCompetitors(true) })[_toolActive]();
+     margin: () => loadMargin(true), competitors: () => loadCompetitors(true),
+     whstocks: () => loadWhStocks(true) })[_toolActive]();
 }
 function loadTools() {
   ({ prod: loadProductolog, clusters: loadClusters, adv: loadAdv,
      niche: loadDemand, nichecalc: renderNicheForm,
      visuals: renderVisualsForm, margin: loadMargin,
-     competitors: loadCompetitors })[_toolActive]();
+     competitors: loadCompetitors, whstocks: loadWhStocks })[_toolActive]();
+}
+
+// ── Остатки по складам + стоимость стока ──────────────────────────────────────
+let _whData = null;
+async function loadWhStocks(refresh) {
+  const wrap = document.getElementById('toolsWrap');
+  if (!wrap || _toolActive !== 'whstocks') return;
+  if (_whData && !refresh) { renderWhStocks(); return; }
+  wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>Считаем остатки по складам…</div>';
+  try {
+    _whData = await fetchJSON('/api/tools/whstocks', 60000);
+    renderWhStocks();
+  } catch (e) {
+    wrap.innerHTML = `<div class="alert alert-danger mt-2">Ошибка: ${esc(e.message)}</div>`;
+  }
+}
+
+function renderWhStocks() {
+  if (_toolActive !== 'whstocks') return;
+  const wrap = document.getElementById('toolsWrap');
+  if (!wrap || !_whData) return;
+  const d = _whData;
+  if (d.error) { wrap.innerHTML = `<div class="alert alert-warning">⚠ ${esc(d.error)}</div>`; return; }
+  const items = d.items || [];
+  if (!items.length) { wrap.innerHTML = '<div class="alert alert-info">Остатков нет или данные ещё грузятся</div>'; return; }
+  const t = d.totals || {};
+  const whAll = d.warehouses || [];
+  const whTop = whAll.slice(0, 8);
+  const otherQty = whAll.slice(8).reduce((s, w) => s + w.qty, 0);
+
+  let html = `<div class="d-flex gap-3 flex-wrap mb-3 align-items-center">
+    <div class="metric-card"><div class="mc-head">Остаток всего</div><div class="mc-val">${fmt(t.qty)} шт</div></div>
+    <div class="metric-card"><div class="mc-head">💰 Заморожено в стоке (себес)</div><div class="mc-val" style="color:var(--gold)">${fmtRub(t.value)}</div></div>
+    <div class="metric-card"><div class="mc-head">В пути к клиенту</div><div class="mc-val">${fmt(t.to_client)} шт</div></div>
+    <div class="metric-card"><div class="mc-head">Стоимость с учётом в пути</div><div class="mc-val">${fmtRub(t.value_with_way)}</div></div>
+    <div class="metric-card"><div class="mc-head">Складов</div><div class="mc-val">${whAll.length}</div></div>
+    <a href="/api/tools/whstocks/export" class="btn btn-sm btn-outline-success ms-auto" download>⬇ Экспорт в Excel</a>
+  </div>`;
+  if (t.no_cost) html += `<div class="alert alert-warning py-2 small">⚠ У ${t.no_cost} артикулов не задана себестоимость — их сток посчитан как 0 ₽. Заполните себес в Документах.</div>`;
+
+  html += `<div class="card border-0 bg-card"><div class="card-body p-0"><div class="table-responsive" style="max-height:72vh">
+    <table class="table table-sm align-middle mb-0 text-nowrap" style="font-size:.84rem"><thead><tr>
+    <th style="position:sticky;left:0;background:var(--t-sticky);z-index:2">Артикул</th>
+    <th class="text-end">Себес ₽</th><th class="text-end">Остаток</th>
+    <th class="text-end" title="Остаток × себестоимость">💰 Стоимость</th>
+    <th class="text-end" title="Едет к клиентам (уже продано)">→клиенту</th>
+    <th class="text-end" title="Возвраты в пути">←от клиента</th>` +
+    whTop.map(w => `<th class="text-end" title="${esc(w.name)}">${esc(w.name.length > 12 ? w.name.slice(0, 11) + '…' : w.name)}</th>`).join('') +
+    (otherQty ? '<th class="text-end">Прочие</th>' : '') + `</tr></thead><tbody>`;
+
+  // группировка по категориям
+  const groupMap = {};
+  items.forEach(i => {
+    const g = articleGroup({ supplierArticle: i.sku, brand: i.group });
+    (groupMap[g] = groupMap[g] || []).push(i);
+  });
+  const cols = 6 + whTop.length + (otherQty ? 1 : 0);
+  GROUP_ORDER.filter(g => groupMap[g]).forEach(g => {
+    const list = groupMap[g];
+    const gQty = list.reduce((s, i) => s + i.qty, 0);
+    const gVal = list.reduce((s, i) => s + i.value, 0);
+    html += `<tr class="table-secondary"><td colspan="${cols}" style="padding:5px 12px"><strong>${esc(g)}</strong>
+      <span class="text-secondary small">· ${fmt(gQty)} шт · ${fmtRub(gVal)}</span></td></tr>`;
+    list.forEach(i => {
+      const others = i.qty - whTop.reduce((s, w) => s + (i.warehouses[w.name] || 0), 0);
+      html += `<tr>
+        <td style="position:sticky;left:0;background:var(--t-sticky);padding:4px 12px"><code style="color:var(--val-soft)">${esc(i.sku)}</code>
+          <div class="small text-secondary" style="max-width:180px;overflow:hidden;text-overflow:ellipsis">${esc((i.name || '').slice(0, 40))}</div></td>
+        <td class="text-end ${i.cost ? '' : 'text-danger'}">${i.cost ? fmtRub(i.cost) : 'нет'}</td>
+        <td class="text-end fw-bold">${fmt(i.qty)}</td>
+        <td class="text-end" style="color:var(--gold);font-weight:600">${fmtRub(i.value)}</td>
+        <td class="text-end text-secondary">${i.to_client || '—'}</td>
+        <td class="text-end text-secondary">${i.from_client || '—'}</td>` +
+        whTop.map(w => `<td class="text-end">${i.warehouses[w.name] ? fmt(i.warehouses[w.name]) : '<span style="opacity:.25">·</span>'}</td>`).join('') +
+        (otherQty ? `<td class="text-end text-secondary">${others > 0 ? fmt(others) : '<span style="opacity:.25">·</span>'}</td>` : '') + `</tr>`;
+    });
+  });
+  html += `</tbody></table></div></div></div>
+  <div class="text-secondary small mt-2">Склады отсортированы по объёму, показан топ-8${otherQty ? ' (+«Прочие»)' : ''}. «💰 Заморожено» — деньги в товаре на складах WB по себестоимости. Обновлено: ${d.fetched_at}</div>`;
+  wrap.innerHTML = html;
 }
 
 // ── Конкуренты: суточные срезы выдачи WB ─────────────────────────────────────
