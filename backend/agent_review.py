@@ -447,16 +447,15 @@ async def _tg_get_photo(file_id: str) -> str | None:
 
 
 def _is_banter(q: str, has_photo: bool) -> bool:
-    """Шутка/мем или деловой вопрос? Дело — если есть предметные слова."""
+    """Разговор/шутка или деловой вопрос? Дело — только если есть предметные
+    слова; всё остальное короткое — трёп, и отвечать надо как в чате."""
     ql = q.lower()
     business = ("цен", "марж", "остат", "дрр", "прибыл", "продаж", "выручк",
                 "реклам", "кампан", "конкурент", "постав", "отзыв", "юнитк",
-                "склад", "темп", "тренд", "экономик")
+                "склад", "темп", "тренд", "экономик", "разбор", "отчет", "отчёт")
     if any(w in ql for w in business):
         return False
-    fun = ("саркас", "шутк", "мем", "прикол", "потролл", "подколи", "смешн",
-           "прокомментируй картинку", "ответь ему", "ответь ей смешно")
-    return any(w in ql for w in fun) or (has_photo and len(ql) < 60)
+    return has_photo or len(ql) < 120
 
 
 async def _answer_question(question: str, thread: int | None,
@@ -469,12 +468,21 @@ async def _answer_question(question: str, thread: int | None,
         await asyncio.to_thread(_dialog_load)
         banter = _is_banter(question, bool(image_b64))
         if banter:
-            # шутка/мем: без простыни данных и без отчётного тона
-            system = """Ты — Biomed Агент, ИИ-аналитик в командном чате селлера.
-Сейчас с тобой ШУТЯТ (мем/подкол) — ответь как остроумный коллега: коротко,
-1-3 предложения, смешно и по-доброму, можно подколоть в ответ. НИКАКИХ сводок,
-списков, разборов и статистики — максимум одна цифра, если она делает шутку
-смешнее. Формат Telegram HTML (только <b> и <i>)."""
+            # шутка/трёп: без простыни данных и без отчётного тона
+            system = """Ты — Biomed Агент, ИИ в командном чате селлеров. Сейчас
+не деловой вопрос, а трёп/мем/подкол. Отвечай как остроумный коллега с чувством
+собственного достоинства.
+
+ЖЁСТКИЕ ПРАВИЛА СТИЛЯ:
+- 1-2 предложения. Чем короче, тем смешнее.
+- НЕ начинай с «Ха», «О», «Ну что ж», «Принял вызов». Сразу панч.
+- НЕ объясняй шутку и НЕ пересказывай мем — люди его видели.
+- НЕ переходи в отчёт: никаких списков, сводок, «но если серьёзно».
+- Максимум один эмодзи, можно ноль.
+- Оружие: ирония, самоирония, культурные отсылки, дерзость без грубости.
+- Одна цифра допустима, только если она сама по себе панчлайн.
+- В чате есть бот-конкурент Mira — если речь о ней, можно элегантно съязвить.
+Формат Telegram HTML (только <b> и <i>)."""
             history = list(_dialogs.get(_dialog_key(thread), []))[-4:]
             content = ([{"type": "image", "source": {"type": "base64",
                                                      "media_type": "image/jpeg",
@@ -654,7 +662,19 @@ async def bot_loop() -> None:
                         if key in _qa_inflight:
                             continue
                         _qa_inflight.add(key)
-                        await tg_send("🔎 Смотрю данные…", thread_id=thread)
+                        if _is_banter(q, bool(photo_id)):
+                            # для трёпа не позорить панч «Смотрю данные…» —
+                            # просто «печатает…» как живой собеседник
+                            try:
+                                async with httpx.AsyncClient(timeout=10) as c3:
+                                    await c3.post(
+                                        f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendChatAction",
+                                        json={"chat_id": TG_CHAT_ID, "action": "typing",
+                                              **({"message_thread_id": thread} if thread else {})})
+                            except Exception:
+                                pass
+                        else:
+                            await tg_send("🔎 Смотрю данные…", thread_id=thread)
                         async def _run(qq=q, th=thread, k=key, hq=has_quote, ph=photo_id):
                             try:
                                 img = await _tg_get_photo(ph) if ph else None
