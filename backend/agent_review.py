@@ -446,6 +446,19 @@ async def _tg_get_photo(file_id: str) -> str | None:
         return None
 
 
+def _is_banter(q: str, has_photo: bool) -> bool:
+    """Шутка/мем или деловой вопрос? Дело — если есть предметные слова."""
+    ql = q.lower()
+    business = ("цен", "марж", "остат", "дрр", "прибыл", "продаж", "выручк",
+                "реклам", "кампан", "конкурент", "постав", "отзыв", "юнитк",
+                "склад", "темп", "тренд", "экономик")
+    if any(w in ql for w in business):
+        return False
+    fun = ("саркас", "шутк", "мем", "прикол", "потролл", "подколи", "смешн",
+           "прокомментируй картинку", "ответь ему", "ответь ей смешно")
+    return any(w in ql for w in fun) or (has_photo and len(ql) < 60)
+
+
 async def _answer_question(question: str, thread: int | None,
                            use_history: bool = True,
                            image_b64: str | None = None) -> None:
@@ -454,6 +467,30 @@ async def _answer_question(question: str, thread: int | None,
     разговор на прошлую тему. image_b64 — картинка из сообщения (vision)."""
     try:
         await asyncio.to_thread(_dialog_load)
+        banter = _is_banter(question, bool(image_b64))
+        if banter:
+            # шутка/мем: без простыни данных и без отчётного тона
+            system = """Ты — Biomed Агент, ИИ-аналитик в командном чате селлера.
+Сейчас с тобой ШУТЯТ (мем/подкол) — ответь как остроумный коллега: коротко,
+1-3 предложения, смешно и по-доброму, можно подколоть в ответ. НИКАКИХ сводок,
+списков, разборов и статистики — максимум одна цифра, если она делает шутку
+смешнее. Формат Telegram HTML (только <b> и <i>)."""
+            history = list(_dialogs.get(_dialog_key(thread), []))[-4:]
+            content = ([{"type": "image", "source": {"type": "base64",
+                                                     "media_type": "image/jpeg",
+                                                     "data": image_b64}},
+                        {"type": "text", "text": question}]
+                       if image_b64 else question)
+            import anthropic
+            client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
+            msg = await client.messages.create(
+                model=_MODEL, max_tokens=350, system=system,
+                messages=history + [{"role": "user", "content": content}])
+            answer = msg.content[0].text.strip()
+            await tg_send(answer, thread_id=thread)
+            await asyncio.to_thread(_dialog_add, thread, "user", question)
+            await asyncio.to_thread(_dialog_add, thread, "assistant", answer)
+            return
         ctx = await _gather_context()
         system = f"""Ты — агент-аналитик селлера маркетплейсов (кабинет Biomed,
 WB/Ozon/ЯМ), общаешься с владельцем и его командой в Telegram. Отвечай
