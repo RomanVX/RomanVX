@@ -66,7 +66,7 @@ async def get_current_prices() -> dict[str, dict]:
     {vendorCode: {nmID, price, discounted, discount}} — discounted это цена
     продавца ПОСЛЕ его скидки (до СПП), именно её видно в кабинете."""
     if USE_MOCK:
-        return {f"BM-{nm}": {"nmID": nm, "price": p,
+        return {f"PL-{nm}": {"nmID": nm, "price": p,
                              "discounted": round(p * 0.78), "discount": 22}
                 for nm, p in mock_data.PRICES.items()}
     out: dict[str, dict] = {}
