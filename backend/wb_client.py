@@ -152,6 +152,41 @@ async def get_card_subjects() -> dict[int, dict]:
     return out
 
 
+async def get_paid_storage(date_from: str, date_to: str) -> list[dict]:
+    """Отчёт платного хранения (ретроспектива остатков по складам и дням).
+
+    Async-задача: создать → дождаться done → скачать. Поля строк: date,
+    warehouse, nmId, vendorCode, barcodesCount (шт на хранении), warehousePrice.
+    Лимит 1 req/мин на создание."""
+    if USE_MOCK:
+        return []
+    r = await _http().get(
+        f"{ANALYTICS_BASE}/api/v1/paid_storage",
+        headers=_headers(), params={"dateFrom": date_from, "dateTo": date_to})
+    if not r.is_success:
+        _log.warning("paid_storage create → %s %s", r.status_code, r.text[:200])
+        return []
+    task_id = ((r.json() or {}).get("data") or {}).get("taskId")
+    if not task_id:
+        return []
+    for _ in range(30):
+        await asyncio.sleep(5)
+        st = await _http().get(
+            f"{ANALYTICS_BASE}/api/v1/paid_storage/tasks/{task_id}/status",
+            headers=_headers())
+        if st.is_success and ((st.json() or {}).get("data") or {}).get("status") == "done":
+            break
+    dl = await _http().get(
+        f"{ANALYTICS_BASE}/api/v1/paid_storage/tasks/{task_id}/download",
+        headers=_headers())
+    if not dl.is_success:
+        _log.warning("paid_storage download → %s %s", dl.status_code, dl.text[:200])
+        return []
+    rows = dl.json() or []
+    _log.info("paid_storage: %d строк за %s..%s", len(rows), date_from, date_to)
+    return rows
+
+
 def _learn_sku_map(rows: list[dict]) -> list[dict]:
     """Выучиваем связки nmId→артикул (нужны для остатков, где артикула нет)."""
     try:
