@@ -44,6 +44,18 @@ def _get_pool():
                 if _PG_OPTIONS:
                     kw["options"] = _PG_OPTIONS
                 _pool = pool.ThreadedConnectionPool(1, 8, DATABASE_URL, **kw)
+                # схема кабинета должна существовать до первого CREATE TABLE —
+                # иначе (schema в search_path отсутствует) таблицы утекают в
+                # public или запросы падают. Новые кабинеты (demo и т.п.)
+                # получают свою схему автоматически.
+                if DB_SCHEMA:
+                    con = _pool.getconn()
+                    try:
+                        cur = con.cursor()
+                        cur.execute(f'CREATE SCHEMA IF NOT EXISTS "{DB_SCHEMA}"')
+                        con.commit()
+                    finally:
+                        _pool.putconn(con)
     return _pool
 
 
