@@ -37,6 +37,14 @@ OTHER_CABINET_NAME: str = os.getenv("OTHER_CABINET_NAME", "").strip() \
 USE_MOCK: bool = not WB_API_KEY or WB_API_KEY == "your_wildberries_api_key_here"
 USE_ADVERT_MOCK: bool = not WB_ADVERT_KEY or WB_ADVERT_KEY == "your_wildberries_api_key_here"
 
+# Демо-кабинет (мок-режим) НЕ имеет права тратить деньги: ИИ-ключ принудительно
+# обнуляется, даже если его по ошибке добавили в env — все ИИ-функции вернут
+# «настройте ANTHROPIC_API_KEY» вместо реальных платных вызовов.
+if USE_MOCK and ANTHROPIC_API_KEY:
+    ANTHROPIC_API_KEY = ""
+    logging.getLogger(__name__).warning(
+        "Демо-режим: ANTHROPIC_API_KEY проигнорирован — траты ИИ отключены")
+
 logging.basicConfig(level=logging.INFO)
 _log = logging.getLogger(__name__)
 _log.info("WB Analytics mode: %s", "MOCK" if USE_MOCK else f"LIVE (key …{WB_API_KEY[-6:]})")

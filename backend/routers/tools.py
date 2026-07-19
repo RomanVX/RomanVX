@@ -189,6 +189,10 @@ def _spawn(coro):
 @router.get("/productolog")
 async def get_productolog(refresh: bool = Query(default=False)):
     """Продуктолог: анализ отзывов WB по артикулам."""
+    from config import USE_MOCK
+    if USE_MOCK:
+        import mock_data
+        return mock_data.generate_productolog()
     import catalog as _cat
     _init_table()
     if refresh and not _building:

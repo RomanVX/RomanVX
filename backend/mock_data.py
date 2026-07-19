@@ -250,6 +250,47 @@ def generate_reviews(platform=None, limit=500) -> list[dict]:
     return out[:limit]
 
 
+_PRODUCTOLOG = [
+    (["Работает, эффект заметен · 46%", "Качество стабильное · 31%", "Быстрая доставка · 18%"],
+     ["Мятая упаковка при доставке · 12%", "Хотят больший объём · 8%"],
+     "Усилить упаковку (жалобы на мятые коробки) и добавить фасовку увеличенного объёма — покупатели готовы брать больше."),
+    (["Приятный вкус · 38%", "Удобно принимать · 29%", "Помогает со сном · 24%"],
+     ["Эффект не сразу · 14%", "Цена высоковата · 9%"],
+     "В карточке указать срок накопительного эффекта (2-3 недели) — снимет часть негатива «не работает»."),
+    (["Чистый состав · 41%", "Есть сертификаты · 22%", "Заказывают повторно · 19%"],
+     ["Крышка открывается туго · 11%"],
+     "Проверить партию крышек с поставщиком; в остальном карточка здорова — масштабировать рекламу."),
+]
+
+
+def generate_productolog() -> dict:
+    """Готовый ответ «Продуктолога» для демо — без вызовов LLM."""
+    rnd = random.Random(5)
+    items = []
+    for idx, (nm_id, name, brand, category) in enumerate(PRODUCTS[:14]):
+        n = rnd.randint(25, 240)
+        neg = rnd.randint(2, 12)
+        neu = rnd.randint(1, 6)
+        pluses, minuses, rec = _PRODUCTOLOG[idx % len(_PRODUCTOLOG)]
+        items.append({
+            "sku": f"PL-{nm_id}", "name": name, "group": category,
+            "count": n, "avg": round(4.5 + rnd.random() * 0.45, 2),
+            "pos": 100 - neg - neu, "neu": neu, "neg": neg,
+            "pluses": [{"tag": p.split(" · ")[0], "pct": int(p.split(" · ")[1].rstrip("%"))}
+                       for p in pluses],
+            "minuses": [{"tag": m.split(" · ")[0], "pct": int(m.split(" · ")[1].rstrip("%"))}
+                        for m in minuses],
+            "recommendation": rec,
+            "analyzed": True, "analyzable": True,
+            "text_reviews": n - rnd.randint(0, 10),
+            "built_at": datetime.utcnow().strftime("%Y-%m-%d"),
+            "wb_link": "",
+        })
+    items.sort(key=lambda x: (-x["neg"], -x["count"]))
+    return {"items": items, "building": False, "progress": "", "error": "",
+            "pending": 0}
+
+
 def generate_stocks() -> list[dict]:
     """Distribute each SKU's stock across 1-3 warehouses."""
     records = []
