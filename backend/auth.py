@@ -58,6 +58,11 @@ def ensure_bootstrap():
 
 
 def _session_of(request: Request) -> dict | None:
+    # демо-кабинет (мок-режим) открыт без пароля: все — владелец «demo».
+    # Реальных данных и трат там нет, а экран логина мешает показам.
+    from config import USE_MOCK
+    if USE_MOCK:
+        return {"login": "demo", "role": "owner"}
     token = request.cookies.get(COOKIE)
     if not token:
         return None
