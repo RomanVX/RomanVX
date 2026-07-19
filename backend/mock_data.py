@@ -139,6 +139,117 @@ def generate_orders(date_from: datetime, date_to: datetime) -> list[dict]:
     return records
 
 
+# ── Демо-данные для остальных вкладок (финансы/юнитка/маржа/отзывы/цены) ──────
+COSTS = {f"BM-{nm}": round(PRICES[nm] * 0.32) for nm, *_ in PRODUCTS}
+NAMES = {f"BM-{nm}": name for nm, name, *_ in PRODUCTS}
+
+# комиссия WB по «категориям» демо-кабинета
+_COMM = {"Спортпит": 21.5, "Витамины": 24.5, "Омега": 23.0, "Минералы": 23.0,
+         "Красота": 24.5, "Здоровье": 23.5, "Пробиотики": 23.0}
+
+
+def generate_report_detail(date_from: datetime, date_to: datetime) -> list[dict]:
+    """Детальный отчёт реализации (сырой формат statistics-api) — понедельно,
+    согласован с generate_sales по порядку величин. Кормит P&L/юнитку/маржу."""
+    rnd = random.Random(7)
+    rows: list[dict] = []
+    rrd = 1_000_000
+    # выравниваем на понедельник
+    cur = date_from - timedelta(days=date_from.weekday())
+    while cur <= date_to:
+        week_end = cur + timedelta(days=6)
+        sale_dt = min(week_end, date_to).strftime("%Y-%m-%dT00:00:00")
+        rr_dt = sale_dt
+        for nm_id, name, brand, category in PRODUCTS:
+            demand = max(0.4, 22 * (0.86 ** next(
+                i for i, p in enumerate(PRODUCTS) if p[0] == nm_id)))
+            qty = max(0, int(rnd.gauss(demand * 7, demand * 1.5)))
+            if qty == 0:
+                continue
+            price_pre = round(PRICES[nm_id] * 0.78)          # до СПП, после скидки
+            cp = _COMM.get(category, 23.0)
+            retail_amount = round(price_pre * qty * 0.82)    # что заплатил покупатель
+            rrd += 1
+            rows.append({
+                "rrd_id": rrd, "nm_id": nm_id, "sa_name": f"BM-{nm_id}",
+                "brand_name": brand, "subject_name": category,
+                "doc_type_name": "Продажа", "supplier_oper_name": "Продажа",
+                "sale_dt": sale_dt, "rr_dt": rr_dt, "order_dt": sale_dt,
+                "quantity": qty,
+                "retail_price_withdisc_rub": price_pre,
+                "retail_amount": retail_amount,
+                "commission_percent": cp,
+                "ppvz_for_pay": round(price_pre * qty * (1 - cp / 100)),
+                "acquiring_fee": round(retail_amount * 0.018),
+                "delivery_rub": qty * rnd.randint(58, 82),
+                "storage_fee": 0, "acceptance": 0, "penalty": 0, "deduction": 0,
+            })
+            # хранение — отдельной операционной строкой
+            rrd += 1
+            rows.append({
+                "rrd_id": rrd, "nm_id": nm_id, "sa_name": f"BM-{nm_id}",
+                "doc_type_name": "", "supplier_oper_name": "Хранение",
+                "sale_dt": None, "rr_dt": rr_dt, "quantity": 0,
+                "storage_fee": round(qty * 6.5), "delivery_rub": 0,
+                "acceptance": 0, "penalty": 0, "deduction": 0,
+                "retail_amount": 0, "retail_price_withdisc_rub": 0,
+                "ppvz_for_pay": 0, "acquiring_fee": 0,
+            })
+            if rnd.random() < 0.03:   # редкий штраф
+                rrd += 1
+                rows.append({
+                    "rrd_id": rrd, "nm_id": nm_id, "sa_name": f"BM-{nm_id}",
+                    "doc_type_name": "", "supplier_oper_name": "Штраф",
+                    "sale_dt": None, "rr_dt": rr_dt, "quantity": 0,
+                    "penalty": rnd.randint(300, 1800), "storage_fee": 0,
+                    "delivery_rub": 0, "acceptance": 0, "deduction": 0,
+                    "retail_amount": 0, "retail_price_withdisc_rub": 0,
+                    "ppvz_for_pay": 0, "acquiring_fee": 0,
+                })
+        cur += timedelta(days=7)
+    return rows
+
+
+_REVIEW_TEXTS = [
+    (5, "Отличное качество, заказываю уже третий раз. Упаковка целая, сроки свежие."),
+    (5, "Работает! Пью месяц — сон наладился, энергии больше. Рекомендую."),
+    (5, "Быстрая доставка, всё как в описании. Спасибо продавцу!"),
+    (4, "Хороший состав за свои деньги. Минус звезда за мятую коробку."),
+    (5, "Беру для всей семьи, качество стабильное."),
+    (3, "Эффекта пока не заметила, пью две недели. Посмотрим дальше."),
+    (5, "Лучшее соотношение цена/качество из того, что пробовал."),
+    (2, "Пришла банка с повреждённой крышкой. Продавец, решите вопрос!"),
+    (5, "Вкус приятный, растворяется хорошо, побочек нет."),
+    (4, "Нормально, но хотелось бы объём побольше за эту цену."),
+    (1, "Заказала одно — привезли другое. Оформляю возврат."),
+    (5, "Проверенный производитель, состав чистый, сертификаты есть."),
+]
+
+
+def generate_reviews(platform=None, limit=500) -> list[dict]:
+    """Отзывы для демо-кабинета в формате get_all_reviews()."""
+    rnd = random.Random(11)
+    out = []
+    today = datetime.utcnow()
+    for i in range(120):
+        nm_id, name, brand, category = PRODUCTS[rnd.randrange(len(PRODUCTS))]
+        rating, text = _REVIEW_TEXTS[rnd.randrange(len(_REVIEW_TEXTS))]
+        pf = rnd.choices(["WB", "Ozon", "YM"], weights=[70, 22, 8])[0]
+        if platform and platform != "all" and pf != platform:
+            continue
+        answered = rating >= 4 and rnd.random() < 0.8
+        out.append({
+            "id": f"demo-{i}", "platform": pf, "sku": f"BM-{nm_id}",
+            "name": name, "brand": brand, "group": category,
+            "rating": rating, "text": text,
+            "date": (today - timedelta(days=rnd.randint(0, 60))).strftime("%Y-%m-%d"),
+            "answer": "Спасибо за отзыв! Рады, что вам подошло 💚" if answered else "",
+            "nm": str(nm_id),
+        })
+    out.sort(key=lambda r: r["date"], reverse=True)
+    return out[:limit]
+
+
 def generate_stocks() -> list[dict]:
     """Distribute each SKU's stock across 1-3 warehouses."""
     records = []

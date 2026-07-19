@@ -121,10 +121,20 @@ def set_costs(
 
 
 def get_costs() -> dict[str, float]:
+    if not _costs:
+        from config import USE_MOCK
+        if USE_MOCK:
+            import mock_data
+            return dict(mock_data.COSTS)
     return dict(_costs)
 
 
 def get_names() -> dict[str, str]:
+    if not _names:
+        from config import USE_MOCK
+        if USE_MOCK:
+            import mock_data
+            return dict(mock_data.NAMES)
     return dict(_names)
 
 

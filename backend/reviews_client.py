@@ -107,6 +107,10 @@ def _save_snapshot():
 
 
 def get_all_reviews(platform=None, limit=500) -> list[dict]:
+    from config import USE_MOCK
+    if USE_MOCK:
+        import mock_data
+        return mock_data.generate_reviews(platform, limit)
     sel = ("SELECT id,platform,sku,name,brand,grp,rating,text,created_at,answer "
            "FROM reviews ")
     if platform and platform != "all":

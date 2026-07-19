@@ -66,7 +66,9 @@ async def get_current_prices() -> dict[str, dict]:
     {vendorCode: {nmID, price, discounted, discount}} — discounted это цена
     продавца ПОСЛЕ его скидки (до СПП), именно её видно в кабинете."""
     if USE_MOCK:
-        return {}
+        return {f"BM-{nm}": {"nmID": nm, "price": p,
+                             "discounted": round(p * 0.78), "discount": 22}
+                for nm, p in mock_data.PRICES.items()}
     out: dict[str, dict] = {}
     offset = 0
     for _ in range(20):
@@ -378,7 +380,7 @@ async def get_report_detail(date_from: datetime, date_to: datetime) -> list[dict
     в память инстанса.
     """
     if USE_MOCK:
-        return []
+        return mock_data.generate_report_detail(date_from, date_to)
 
     all_records: list[dict] = []
     rrdid = 0
