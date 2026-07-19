@@ -150,6 +150,68 @@ async def get_docs_summary(refresh: bool = Query(default=False)):
     }
 
 
+@router.get("/matrix")
+async def get_docs_matrix():
+    """Матрица покрытия: каждый SKU × (реестр документов, привязка Ozon).
+
+    Статусы: ok / soon (истекает ≤60 дн) / expired / none."""
+    _init_tables()
+    import catalog as _cat
+    import cost_store as _cs
+
+    # ручной реестр: SKU → лучший документ
+    rows = await asyncio.to_thread(
+        db.fetchall,
+        "SELECT doc_type, number, valid_to, skus FROM docs_manual")
+    best: dict = {}
+    _rank = {"ok": 3, "soon": 2, "expired": 1}
+    for doc_type, number, valid_to, skus in rows:
+        st = _expiry_status(valid_to or "")
+        for s in (skus or "").replace("\n", ",").split(","):
+            s = _cat.canon(s.strip())
+            if not s:
+                continue
+            cur = best.get(s)
+            if not cur or _rank.get(st, 0) > _rank.get(cur["status"], 0):
+                best[s] = {"status": st, "doc_type": doc_type,
+                           "number": number, "valid_to": valid_to}
+
+    # Ozon: SKU → статус привязки из API-кеша
+    oz: dict = {}
+    for c in (_oz_cache.get("certs") or []):
+        for a in c.get("products", []):
+            cur = oz.get(a)
+            st = c.get("expiry", "unknown")
+            if not cur or _rank.get(st, 0) > _rank.get(cur, 0):
+                oz[a] = st
+
+    names = _cs.get_names()
+    items = []
+    for art in sorted(_cat.CATALOG.keys()):
+        info = _cat.lookup(art)
+        reg = best.get(art)
+        items.append({
+            "sku": art,
+            "name": names.get(art) or info.get("name", ""),
+            "group": info.get("brand", ""),
+            "registry": reg or {"status": "none"},
+            "ozon": oz.get(art, "none"),
+            "on_ozon": art in set(_cat.OZON_ID_TO_ART.values()),
+        })
+    # проблемные сверху: нет документа / истёк / истекает
+    order = {"none": 0, "expired": 1, "soon": 2, "unknown": 3, "ok": 4}
+    items.sort(key=lambda x: order.get(x["registry"]["status"], 5))
+    summary = {
+        "total": len(items),
+        "no_doc": sum(1 for i in items if i["registry"]["status"] == "none"),
+        "expired": sum(1 for i in items if i["registry"]["status"] == "expired"),
+        "soon": sum(1 for i in items if i["registry"]["status"] == "soon"),
+        "ozon_unbound": sum(1 for i in items if i["on_ozon"]
+                            and i["ozon"] in ("none", "expired")),
+    }
+    return {"items": items, "summary": summary}
+
+
 @router.post("/manual")
 async def add_manual_doc(payload: dict):
     """Добавить документ: {doc_type, number, title, valid_to, skus, note}."""

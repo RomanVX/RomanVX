@@ -2547,11 +2547,73 @@ async function loadDocs(refresh) {
   if (_docsData && !refresh) { renderDocs(); return; }
   wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>Загружаем документы…</div>';
   try {
-    _docsData = await fetchJSON('/api/docs/summary' + (refresh === true ? '?refresh=true' : ''), 120000);
+    [_docsData, _docsMatrix] = await Promise.all([
+      fetchJSON('/api/docs/summary' + (refresh === true ? '?refresh=true' : ''), 120000),
+      fetchJSON('/api/docs/matrix', 30000).catch(() => null),
+    ]);
     renderDocs();
   } catch (e) {
     wrap.innerHTML = `<div class="alert alert-danger mt-3">Ошибка: ${e.message}</div>`;
   }
+}
+let _docsMatrix = null;
+
+function _docsMatrixHtml() {
+  const m = _docsMatrix;
+  if (!m || !m.items || !m.items.length) return '';
+  const s = m.summary || {};
+  const ST = {
+    ok:      ['🟢', 'действует'],
+    soon:    ['🟡', 'истекает'],
+    expired: ['🔴', 'истёк'],
+    unknown: ['⚪', 'без срока'],
+    none:    ['❌', 'нет документа'],
+  };
+  let html = `<div class="card bg-card p-3 mb-3">
+    <div class="fw-semibold mb-2" style="color:var(--ink)">📋 Матрица покрытия по артикулам</div>
+    <div class="d-flex gap-3 flex-wrap mb-2">
+      <div class="metric-card"><div class="mc-head">Артикулов</div><div class="mc-val">${s.total}</div></div>
+      <div class="metric-card"><div class="mc-head">❌ Без документа</div><div class="mc-val" style="color:${s.no_doc ? 'var(--neg)' : 'var(--pos)'}">${s.no_doc}</div></div>
+      <div class="metric-card"><div class="mc-head">🔴 Истёкшие</div><div class="mc-val" style="color:${s.expired ? 'var(--neg)' : 'var(--pos)'}">${s.expired}</div></div>
+      <div class="metric-card"><div class="mc-head">🟡 Истекают ≤60 дн</div><div class="mc-val" style="color:${s.soon ? 'var(--warn-c)' : 'var(--pos)'}">${s.soon}</div></div>
+      <div class="metric-card"><div class="mc-head">🔵 Ozon не привязан</div><div class="mc-val" style="color:${s.ozon_unbound ? 'var(--warn-c)' : 'var(--pos)'}">${s.ozon_unbound}</div></div>
+    </div>
+    <div class="table-responsive" style="max-height:56vh"><table class="table table-sm align-middle mb-0 text-nowrap" style="font-size:.83rem">
+    <thead><tr>
+      <th style="position:sticky;left:0;background:var(--t-sticky);z-index:2">Артикул</th>
+      <th title="Наш реестр (декларации/СГР) — общий для всех площадок">📄 Документ (реестр)</th>
+      <th>Действует до</th>
+      <th title="Привязка сертификата в личном кабинете Ozon (из API)">🔵 Ozon</th>
+    </tr></thead><tbody>`;
+  const groupMap = {};
+  m.items.forEach(i => {
+    const g = articleGroup({ supplierArticle: i.sku, brand: i.group });
+    (groupMap[g] = groupMap[g] || []).push(i);
+  });
+  const groups = GROUP_ORDER.filter(g => groupMap[g]).concat(
+    Object.keys(groupMap).filter(g => !GROUP_ORDER.includes(g)));
+  [...new Set(groups)].forEach(g => {
+    const list = groupMap[g];
+    const bad = list.filter(i => ['none', 'expired'].includes(i.registry.status)).length;
+    html += `<tr class="table-secondary"><td colspan="4" style="padding:5px 12px"><strong>${esc(g)}</strong>
+      ${bad ? `<span class="small" style="color:var(--neg)"> · проблем: ${bad}</span>` : ' <span class="small" style="color:var(--pos)">· ок</span>'}</td></tr>`;
+    list.forEach(i => {
+      const r = i.registry;
+      const [ic, lbl] = ST[r.status] || ST.none;
+      const ozSt = i.on_ozon ? (ST[i.ozon] || ST.none) : null;
+      html += `<tr ${['none', 'expired'].includes(r.status) ? 'style="background:rgba(248,113,113,.06)"' : ''}>
+        <td style="position:sticky;left:0;background:var(--t-sticky);padding:4px 12px"><code style="color:var(--val-soft)">${esc(i.sku)}</code>
+          <div class="small text-secondary" style="max-width:220px;overflow:hidden;text-overflow:ellipsis">${esc((i.name || '').slice(0, 45))}</div></td>
+        <td>${ic} ${r.doc_type ? `${esc(r.doc_type)} <code class="small" style="color:var(--val-soft)">${esc(r.number || '')}</code>` : `<span style="color:var(--neg)">${lbl}</span>`}</td>
+        <td class="small ${r.status === 'expired' ? 'text-danger' : r.status === 'soon' ? 'text-warning' : 'text-secondary'}">${esc(r.valid_to || '—')}</td>
+        <td>${ozSt ? `${ozSt[0]} <span class="small text-secondary">${ozSt[1]}</span>` : '<span class="small" style="opacity:.35">не на Ozon</span>'}</td>
+      </tr>`;
+    });
+  });
+  html += `</tbody></table></div>
+    <div class="text-secondary small mt-2">Документ в реестре — общий (декларация ТР ТС 009/2011 покрывает все площадки). Колонка Ozon — факт привязки в ЛК Ozon из API. Для WB и ЯМ отдельной привязки не требуется — документ предъявляется по запросу.</div>
+  </div>`;
+  return html;
 }
 
 const _DOC_EXP = {
@@ -2566,6 +2628,9 @@ function renderDocs() {
   if (!wrap || !_docsData) return;
   const d = _docsData;
   let html = '';
+
+  // ── Матрица покрытия по артикулам ──
+  html += _docsMatrixHtml();
 
   // ── Ozon из API ──
   const oz = d.ozon || {};
