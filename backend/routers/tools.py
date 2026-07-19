@@ -1834,26 +1834,30 @@ async def analyze_niche(payload: dict):
 
 # ══ Расчёт ущерба по складу (пожар/утрата): срез из платного хранения ═════════
 async def _fire_report_data(warehouse: str, on_date: str) -> dict:
+    """warehouse — один или несколько складов через запятую."""
     import wb_client
     import cost_store
     import catalog as _cat
-    from datetime import date as _d
 
     end = on_date
     start = (datetime.fromisoformat(on_date) - timedelta(days=3)).strftime("%Y-%m-%d")
     rows = await wb_client.get_paid_storage(start, end)
-    wl = warehouse.strip().lower()
-    # последний доступный день ≤ даты события по каждому nmId на этом складе
-    per_nm: dict = {}
+    wanted = [w.strip().lower() for w in warehouse.split(",") if w.strip()]
+
+    # последний доступный день ≤ даты события по каждому (склад, nmId)
+    per_key: dict = {}
     for r in rows:
-        if wl not in str(r.get("warehouse") or "").lower():
+        wh_raw = str(r.get("warehouse") or "")
+        wl = wh_raw.lower()
+        match = next((w for w in wanted if w in wl), None)
+        if not match:
             continue
         d = str(r.get("date") or "")[:10]
         nm = r.get("nmId")
         if not nm:
             continue
-        cur = per_nm.setdefault(nm, {"date": "", "qty": 0,
-                                     "vendorCode": r.get("vendorCode") or ""})
+        cur = per_key.setdefault((wh_raw, nm), {"date": "", "qty": 0,
+                                                "vendorCode": r.get("vendorCode") or ""})
         if d > cur["date"]:
             cur["date"] = d
             cur["qty"] = 0
@@ -1867,31 +1871,37 @@ async def _fire_report_data(warehouse: str, on_date: str) -> dict:
     except Exception:
         prices = {}
 
-    items = []
-    for nm, v in per_nm.items():
+    by_wh: dict = {}
+    for (wh_raw, nm), v in per_key.items():
         if v["qty"] <= 0:
             continue
         art = _cat.canon(v["vendorCode"]) or str(nm)
         cost = costs.get(art) or 0
         retail = (prices.get(art) or {}).get("discounted") or 0
-        items.append({
+        by_wh.setdefault(wh_raw, []).append({
             "sku": art, "nmId": nm, "name": names.get(art) or _cat.lookup(art).get("name", ""),
             "qty": v["qty"], "snapshot_date": v["date"],
             "cost": cost, "cost_sum": round(v["qty"] * cost),
             "retail": retail, "retail_sum": round(v["qty"] * retail),
         })
-    items.sort(key=lambda x: -x["retail_sum"])
+
+    warehouses = []
+    for wh_raw, items in sorted(by_wh.items()):
+        items.sort(key=lambda x: -x["retail_sum"])
+        warehouses.append({"warehouse": wh_raw, "items": items,
+                           "totals": {"qty": sum(i["qty"] for i in items),
+                                      "cost_sum": sum(i["cost_sum"] for i in items),
+                                      "retail_sum": sum(i["retail_sum"] for i in items)}})
+    grand = {"qty": sum(w["totals"]["qty"] for w in warehouses),
+             "cost_sum": sum(w["totals"]["cost_sum"] for w in warehouses),
+             "retail_sum": sum(w["totals"]["retail_sum"] for w in warehouses)}
     return {"warehouse": warehouse, "on_date": on_date,
-            "items": items,
-            "totals": {"qty": sum(i["qty"] for i in items),
-                       "cost_sum": sum(i["cost_sum"] for i in items),
-                       "retail_sum": sum(i["retail_sum"] for i in items),
-                       "no_cost": sum(1 for i in items if not i["cost"])},
+            "warehouses": warehouses, "totals": grand,
             "rows_fetched": len(rows)}
 
 
 @router.get("/fire_report")
-async def fire_report(warehouse: str = Query(default="Электросталь"),
+async def fire_report(warehouse: str = Query(default="Электросталь,Котовск"),
                       date: str = Query(default="")):
     """Ущерб по складу на дату (по умолчанию — последние доступные данные):
     остатки из отчёта платного хранения × себес и × розница."""
@@ -1904,7 +1914,7 @@ async def fire_report(warehouse: str = Query(default="Электросталь")
 
 
 @router.get("/fire_report/export")
-async def fire_report_export(warehouse: str = Query(default="Электросталь"),
+async def fire_report_export(warehouse: str = Query(default="Электросталь,Котовск"),
                              date: str = Query(default="")):
     """Excel-расчёт ущерба для претензии WB."""
     import io
@@ -1916,32 +1926,57 @@ async def fire_report_export(warehouse: str = Query(default="Электрост�
     on_date = date or (datetime.utcnow() - timedelta(days=1)).strftime("%Y-%m-%d")
     d = await _fire_report_data(warehouse, on_date)
     wb_x = openpyxl.Workbook()
-    ws = wb_x.active
-    ws.title = "Расчёт ущерба"
-    ws.append([f"Расчёт ущерба: склад {warehouse}, остатки на {on_date} "
-               f"(по отчёту платного хранения WB)"])
-    ws["A1"].font = Font(bold=True, size=12)
-    ws.append([])
+    hf = Font(bold=True, color="FFFFFF")
+    fill = PatternFill("solid", fgColor="B45309")
     head = ["Артикул", "nmId", "Название", "Остаток, шт", "Дата среза",
             "Себестоимость, ₽", "Ущерб по себестоимости, ₽",
             "Розничная цена, ₽", "Стоимость по рознице, ₽"]
-    ws.append(head)
-    hf = Font(bold=True, color="FFFFFF")
-    fill = PatternFill("solid", fgColor="B45309")
+
+    def _sheet(ws, title, items, totals):
+        ws.append([title])
+        ws["A1"].font = Font(bold=True, size=12)
+        ws.append([])
+        ws.append(head)
+        for c in ws[3]:
+            c.font, c.fill = hf, fill
+            c.alignment = Alignment(horizontal="center", wrap_text=True)
+        for i in items:
+            ws.append([i["sku"], i["nmId"], i["name"], i["qty"], i["snapshot_date"],
+                       i["cost"] or None, i["cost_sum"], i["retail"] or None,
+                       i["retail_sum"]])
+        ws.append(["ИТОГО", "", "", totals["qty"], "", "", totals["cost_sum"],
+                   "", totals["retail_sum"]])
+        for c in ws[ws.max_row]:
+            c.font = Font(bold=True)
+        for idx in range(1, len(head) + 1):
+            ws.column_dimensions[get_column_letter(idx)].width = 30 if idx == 3 else 15
+        ws.freeze_panes = "A4"
+
+    first = True
+    for w in d["warehouses"]:
+        ws = wb_x.active if first else wb_x.create_sheet()
+        ws.title = w["warehouse"][:28]
+        _sheet(ws, f"Склад {w['warehouse']}: остатки на {on_date} "
+                   f"(отчёт платного хранения WB)", w["items"], w["totals"])
+        first = False
+    # сводный лист
+    ws = wb_x.active if first else wb_x.create_sheet()
+    ws.title = "Итого"
+    ws.append([f"Сводный расчёт ущерба на {on_date}"])
+    ws["A1"].font = Font(bold=True, size=12)
+    ws.append([])
+    ws.append(["Склад", "Остаток, шт", "Ущерб по себестоимости, ₽", "Стоимость по рознице, ₽"])
     for c in ws[3]:
         c.font, c.fill = hf, fill
-        c.alignment = Alignment(horizontal="center", wrap_text=True)
-    for i in d["items"]:
-        ws.append([i["sku"], i["nmId"], i["name"], i["qty"], i["snapshot_date"],
-                   i["cost"] or None, i["cost_sum"], i["retail"] or None,
-                   i["retail_sum"]])
+    for w in d["warehouses"]:
+        ws.append([w["warehouse"], w["totals"]["qty"], w["totals"]["cost_sum"],
+                   w["totals"]["retail_sum"]])
     t = d["totals"]
-    ws.append(["ИТОГО", "", "", t["qty"], "", "", t["cost_sum"], "", t["retail_sum"]])
+    ws.append(["ИТОГО", t["qty"], t["cost_sum"], t["retail_sum"]])
     for c in ws[ws.max_row]:
         c.font = Font(bold=True)
-    for idx in range(1, len(head) + 1):
-        ws.column_dimensions[get_column_letter(idx)].width = 30 if idx == 3 else 15
-    ws.freeze_panes = "A4"
+    for idx in range(1, 5):
+        ws.column_dimensions[get_column_letter(idx)].width = 26
 
     buf = io.BytesIO()
     wb_x.save(buf)
