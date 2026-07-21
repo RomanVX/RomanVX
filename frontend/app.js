@@ -2743,13 +2743,12 @@ const _TOOL_HINTS = {
   margin: 'Затраты на единицу из фактической юнитки: вводите цену/себестоимость — видите прибыль, маржу и точку безубыточности',
   competitors: 'Суточные срезы выдачи WB по вашим запросам: позиции, цены и демпинг конкурентов (сбор через домашний агент)',
   whstocks: 'Остатки WB по складам и сколько денег заморожено в стоке (по себестоимости)',
-  trends: 'Нарастающие поисковые запросы: свои из Ozon API + рыночные из выгрузки ЛК. Скоринг силы тренда — что производить следующим',
 };
 
 function setTool(t) {
   if (_toolActive === t) return;
   _toolActive = t;
-  ['Prod', 'Clusters', 'Adv', 'Niche', 'Nichecalc', 'Visuals', 'Margin', 'Competitors', 'Whstocks', 'Trends'].forEach(k => {
+  ['Prod', 'Clusters', 'Adv', 'Niche', 'Nichecalc', 'Visuals', 'Margin', 'Competitors', 'Whstocks'].forEach(k => {
     document.getElementById('tool' + k)?.classList.toggle('active', k.toLowerCase() === t);
   });
   const hint = document.getElementById('toolHint');
@@ -2762,14 +2761,13 @@ function reloadTool() {
      adv: () => loadAdv(true), niche: () => loadDemand(true),
      nichecalc: () => renderNicheForm(), visuals: () => renderVisualsForm(),
      margin: () => loadMargin(true), competitors: () => loadCompetitors(true),
-     whstocks: () => loadWhStocks(true), trends: () => loadTrends(true) })[_toolActive]();
+     whstocks: () => loadWhStocks(true) })[_toolActive]();
 }
 function loadTools() {
   ({ prod: loadProductolog, clusters: loadClusters, adv: loadAdv,
      niche: loadDemand, nichecalc: renderNicheForm,
      visuals: renderVisualsForm, margin: loadMargin,
-     competitors: loadCompetitors, whstocks: loadWhStocks,
-     trends: loadTrends })[_toolActive]();
+     competitors: loadCompetitors, whstocks: loadWhStocks })[_toolActive]();
 }
 
 // ── Остатки по складам + стоимость стока ──────────────────────────────────────
@@ -2855,9 +2853,16 @@ function renderWhStocks() {
 // ── Радар трендов: нарастающие поисковые запросы ─────────────────────────────
 let _trendsData = null;
 let _trendsQ = '';
+let _trendsSrc = 'market';   // market | my
+
+function trendsSetSrc(s) {
+  if (_trendsSrc === s) return;
+  _trendsSrc = s;
+  renderTrends();
+}
 async function loadTrends(refresh) {
-  const wrap = document.getElementById('toolsWrap');
-  if (!wrap || _toolActive !== 'trends') return;
+  const wrap = document.getElementById('toolsOzWrap');
+  if (!wrap || _ozTool !== 'trends') return;
   if (_trendsData && !refresh) { renderTrends(); return; }
   wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>Собираем серии запросов…</div>';
   try {
@@ -2918,11 +2923,12 @@ const _TREND_STAGE = {
 };
 
 function renderTrends() {
-  if (_toolActive !== 'trends') return;
-  const wrap = document.getElementById('toolsWrap');
+  if (_ozTool !== 'trends') return;
+  const wrap = document.getElementById('toolsOzWrap');
   if (!wrap || !_trendsData) return;
   const d = _trendsData;
-  const items = d.items || [];
+  const all = d.items || [];
+  const items = all.filter(i => (_trendsSrc === 'my') === (i.source === 'ozon_my'));
   const src = d.sources || {};
   let html = `<div class="card bg-card p-3 mb-3">
     <div class="d-flex gap-2 flex-wrap align-items-center">
@@ -2933,18 +2939,26 @@ function renderTrends() {
       <span id="trendsUploadLbl" class="small text-secondary"></span>
       <input type="text" id="trendsQ" class="form-control form-control-sm" style="width:220px" placeholder="фильтр: крем сыворотка гель…" value="${esc(_trendsQ)}" onkeydown="if(event.key==='Enter')trendsFilter()">
       <button class="btn btn-sm btn-outline-secondary" onclick="trendsFilter()">🔍</button>
-      <span class="ms-auto small text-secondary">своих: ${src.ozon_my || 0} · рыночных: ${src.ozon_market || 0}</span>
+      <div class="btn-group ms-auto">
+        <button class="btn btn-sm ${_trendsSrc === 'market' ? 'btn-info' : 'btn-outline-info'}" onclick="trendsSetSrc('market')">🌍 Рынок (${src.ozon_market || 0})</button>
+        <button class="btn btn-sm ${_trendsSrc === 'my' ? 'btn-info' : 'btn-outline-info'}" onclick="trendsSetSrc('my')">🏠 Свои (${src.ozon_my || 0})</button>
+      </div>
     </div>
     <div class="small text-secondary mt-2">Свои запросы приходят из Ozon Seller API автоматически (вт, 12:00).
     Рыночные: ЛК Ozon → Аналитика → Расширение ассортимента → <b>Поисковые запросы</b> → выгрузка XLSX → кнопка выше (укажи понедельник недели, за которую выгрузка).</div>
   </div>`;
   if (d.message) { wrap.innerHTML = html + `<div class="alert alert-info">${esc(d.message)}</div>`; return; }
-  if (!items.length) { wrap.innerHTML = html + '<div class="alert alert-info">Запросов пока нет</div>'; return; }
+  if (!items.length) {
+    wrap.innerHTML = html + `<div class="alert alert-info">${_trendsSrc === 'my'
+      ? 'Своих запросов пока нет — нажми «Собрать из Ozon» (или дождись вторника, соберётся само)'
+      : 'Рыночных запросов пока нет — загрузи выгрузку «Поисковые запросы» из ЛК Ozon'}</div>`;
+    return;
+  }
 
   html += `<div class="card border-0 bg-card"><div class="card-body p-0"><div class="table-responsive" style="max-height:70vh">
     <table class="table table-sm align-middle mb-0 text-nowrap" style="font-size:.85rem"><thead><tr>
     <th style="position:sticky;left:0;background:var(--t-sticky);z-index:2">Запрос</th>
-    <th>Источник</th><th class="text-center">Динамика</th>
+    <th class="text-center">Динамика</th>
     <th class="text-end" title="Частота за последнюю неделю">Посл. нед</th>
     <th class="text-end" title="Средний рост, % в неделю">Рост %/нед</th>
     <th class="text-end" title="Динамика за 28 / 7 дней из выгрузки ЛК">Δ28д / Δ7д</th>
@@ -2957,7 +2971,6 @@ function renderTrends() {
     const scoreClr = i.score >= 70 ? 'var(--pos)' : i.score >= 55 ? 'var(--gold)' : 'var(--text-soft)';
     html += `<tr>
       <td style="position:sticky;left:0;background:var(--t-sticky);max-width:260px;overflow:hidden;text-overflow:ellipsis">${esc(i.query)}</td>
-      <td class="small text-secondary">${i.source === 'ozon_my' ? 'свои' : 'рынок'}</td>
       <td class="text-center">${_sparkline(i.series)}</td>
       <td class="text-end fw-bold">${fmt(Math.round(i.last || 0))}</td>
       <td class="text-end" style="color:${(i.slope_pct || 0) > 0 ? 'var(--pos)' : 'var(--neg)'}">${i.slope_pct == null ? '—' : (i.slope_pct > 0 ? '+' : '') + i.slope_pct + '%'}</td>
@@ -3091,22 +3104,24 @@ const _OZ_HINTS = {
   clusters: 'Остатки по кластерам Ozon: покрытие, скорость, что везти / остальное (Ozon сам считает продажи/день и покрытие)',
   ads: 'Реклама Ozon (Performance): расход, ДРР, ROAS, заказы и куда утекают деньги по каждой кампании',
   phrases: 'По каким поисковым запросам показываются и кликают ваши товары в рекламе Ozon',
+  trends: 'Нарастающие поисковые запросы: свои из Ozon API + рыночные из выгрузки ЛК. Скоринг силы тренда — что производить следующим',
 };
 function setOzTool(t) {
   if (_ozTool === t) return;
   _ozTool = t;
-  [['ozFunnel', 'funnel'], ['ozClusters', 'clusters'], ['ozAds', 'ads'], ['ozPhrases', 'phrases']].forEach(([id, k]) =>
+  [['ozFunnel', 'funnel'], ['ozClusters', 'clusters'], ['ozAds', 'ads'], ['ozPhrases', 'phrases'], ['ozTrends', 'trends']].forEach(([id, k]) =>
     document.getElementById(id)?.classList.toggle('active', k === t));
   const hint = document.getElementById('ozToolHint');
   if (hint) hint.textContent = _OZ_HINTS[t] || '';
   loadOzTool();
 }
 function loadOzTool() {
-  ({ funnel: loadFunnel, clusters: loadOzClusters, ads: loadOzAds, phrases: loadOzPhrases })[_ozTool]();
+  ({ funnel: loadFunnel, clusters: loadOzClusters, ads: loadOzAds, phrases: loadOzPhrases, trends: loadTrends })[_ozTool]();
 }
 function reloadOzTool() {
   ({ funnel: () => loadFunnel(true), clusters: () => loadOzClusters(true),
-     ads: () => loadOzAds(true), phrases: () => loadOzPhrases(true) })[_ozTool]();
+     ads: () => loadOzAds(true), phrases: () => loadOzPhrases(true),
+     trends: () => loadTrends(true) })[_ozTool]();
 }
 
 let _ozClustersData = null;

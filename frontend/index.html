@@ -385,9 +385,6 @@
       <div id="toolWhstocks" class="mp-selector-bloc" style="--mp-color:#818cf8" onclick="setTool('whstocks')">
         <span class="mp-selector-dot" style="background:#818cf8"></span>🏬 Остатки по складам
       </div>
-      <div id="toolTrends" class="mp-selector-bloc" style="--mp-color:#22d3ee" onclick="setTool('trends')">
-        <span class="mp-selector-dot" style="background:#22d3ee"></span>📡 Радар трендов
-      </div>
       <span id="toolHint" class="text-secondary small">Анализ отзывов WB по каждому артикулу</span>
       <button class="btn btn-sm btn-outline-secondary ms-auto" onclick="reloadTool()">
         <i class="bi bi-arrow-clockwise"></i> Обновить
@@ -412,6 +409,9 @@
       </div>
       <div id="ozPhrases" class="mp-selector-bloc" style="--mp-color:#34d399" onclick="setOzTool('phrases')">
         <span class="mp-selector-dot" style="background:#34d399"></span>🔍 Запросы (по чему находят)
+      </div>
+      <div id="ozTrends" class="mp-selector-bloc" style="--mp-color:#22d3ee" onclick="setOzTool('trends')">
+        <span class="mp-selector-dot" style="background:#22d3ee"></span>📡 Радар трендов
       </div>
       <span id="ozToolHint" class="text-secondary small">Premium-аналитика Ozon: показы → карточка → корзина → заказ по каждому SKU, где теряем продажи</span>
       <button class="btn btn-sm btn-outline-secondary ms-auto" onclick="reloadOzTool()">
@@ -460,6 +460,6 @@
 
 <script src="vendor/bootstrap.bundle.min.js"></script>
 <script src="vendor/chart.umd.min.js"></script>
-<script src="app.js?v=144"></script>
+<script src="app.js?v=145"></script>
 </body>
 </html>
