@@ -254,7 +254,20 @@ async def run_session(trigger: str = "manual", focus: str = "") -> dict:
                          "данные → план/факт → решения → обнови память → отчёт.")
         messages = [{"role": "user", "content": user_msg}]
         tools_used, saved = [], False
+        started = asyncio.get_event_loop().time()
         for _step in range(_MAX_STEPS):
+            if asyncio.get_event_loop().time() - started > 1500:
+                raise TimeoutError("сессия дольше 25 минут — прервана")
+            try:      # «печатает…» в группе — видно, что стратег жив
+                import httpx as _hx
+                async with _hx.AsyncClient(timeout=8) as _c:
+                    await _c.post(
+                        f"https://api.telegram.org/bot{_ar.TG_BOT_TOKEN}/sendChatAction",
+                        json={"chat_id": _ar.TG_CHAT_ID, "action": "typing"})
+            except Exception:
+                pass
+            _log.info("strategist: шаг %d, инструменты: %s", _step + 1,
+                      ",".join(tools_used[-4:]) or "—")
             msg = await client.messages.create(
                 model=_MODEL, max_tokens=3000, system=_SYSTEM,
                 tools=_tool_schemas(), messages=messages)
