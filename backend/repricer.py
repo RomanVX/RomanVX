@@ -193,6 +193,11 @@ async def overview() -> dict:
             margin[b.get("sku")] = b
     except Exception as e:
         _log.warning("overview margin: %s", e)
+    # коэффициент buyer/seller стабилен у SKU — кешируем на случай, когда
+    # юнитка не собрана (иначе «для покупателя» по WB пустеет)
+    import snapshot as _snap
+    ratios = await asyncio.to_thread(_snap.load, "repricer_ratios", None) or {}
+    ratios_dirty = False
     out = []
     for c in cfg:
         b = margin.get(c["art"])
@@ -202,18 +207,27 @@ async def overview() -> dict:
         op = oz.get(c["art"]) or {}
         row["oz_price_now"] = op.get("price")
         row["oz_buyer_now"] = op.get("marketing_price") or op.get("price")
+        ratio = None
         if b and b.get("price0") and b.get("buyer0"):
-            ratio = b["buyer0"] / b["price0"]          # buyer/seller у SKU стабилен
-            row["wb_buyer_now"] = round((lp.get("discounted") or 0) * ratio)
+            ratio = b["buyer0"] / b["price0"]
+            if abs(ratios.get(c["art"], 0) - ratio) > 1e-6:
+                ratios[c["art"]] = ratio
+                ratios_dirty = True
+        else:
+            ratio = ratios.get(c["art"])
+        if ratio:
+            row["wb_buyer_now"] = round((lp.get("discounted") or 0) * ratio) or None
             if c.get("target"):
-                # какая цена продавца WB нужна, чтобы покупатель увидел target
-                need_seller = c["target"] / ratio if ratio else None
-                row["wb_seller_needed"] = round(need_seller) if need_seller else None
-                mm = _ar._margin_math({**b, "price0": need_seller,
-                                       "buyer0": c["target"]})
-                row["margin_at_target"] = mm.get("margin_pct")
-                row["profit_at_target"] = mm.get("profit_unit")
+                need_seller = c["target"] / ratio
+                row["wb_seller_needed"] = round(need_seller)
+                if b:
+                    mm = _ar._margin_math({**b, "price0": need_seller,
+                                           "buyer0": c["target"]})
+                    row["margin_at_target"] = mm.get("margin_pct")
+                    row["profit_at_target"] = mm.get("profit_unit")
         out.append(row)
+    if ratios_dirty:
+        await asyncio.to_thread(_snap.save, "repricer_ratios", ratios)
     return {"items": out, "proposals": proposals_load(),
             "presets": {k: len(v) for k, v in presets_load().items()}}
 

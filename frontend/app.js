@@ -3121,12 +3121,7 @@ function renderRepricer() {
 
   let h = `<div class="d-flex gap-2 mb-3 flex-wrap align-items-center">
     <h5 class="mb-0">💸 Стратегия по цене для покупателя</h5>
-    <div class="btn-group btn-group-sm ms-3">
-      <button class="btn btn-outline-secondary" onclick="reprPreset('low',this)">Уровень ↓ низкий</button>
-      <button class="btn btn-outline-secondary" onclick="reprPreset('mid',this)">средний</button>
-      <button class="btn btn-outline-secondary" onclick="reprPreset('high',this)">высокий ↑</button>
-    </div>
-    <button class="btn btn-sm btn-outline-warning" onclick="strategyRepricerReview(this)">🧠 Спросить стратега</button>
+    <button class="btn btn-sm btn-outline-warning ms-3" onclick="strategyRepricerReview(this)">🧠 Спросить стратега</button>
     <button class="btn btn-sm btn-outline-secondary" title="Целевые цены = фактические цены для покупателя из кабинетов" onclick="reprSync(this)">⟳ Цели = факт</button>
     <a href="/api/tools/repricer/export" class="btn btn-sm btn-outline-success ms-auto" download>⬇ Файл для ЛК Ozon</a>
     <button class="btn btn-sm btn-outline-secondary" onclick="loadRepricer(true)"><i class="bi bi-arrow-clockwise"></i></button>
@@ -3136,7 +3131,7 @@ function renderRepricer() {
     <table class="table table-sm align-middle mb-0 text-nowrap" style="font-size:.84rem"><thead>
     <tr>
       <th rowspan="2" style="position:sticky;left:0;background:var(--t-sticky);z-index:2;vertical-align:bottom">Товар</th>
-      <th rowspan="2" class="text-end" style="vertical-align:bottom">Целевая цена<br>для покупателя</th>
+      <th rowspan="2" class="text-end" style="vertical-align:bottom" title="Какую цену увидит покупатель, когда репрайсер применит эту цель">Целевая цена<br>для покупателя</th>
       <th colspan="3" class="text-center" style="border-left:1px solid var(--border-2)">Цена на Ozon</th>
       <th colspan="3" class="text-center" style="border-left:1px solid var(--border-2)">Цена на Wildberries</th>
       <th rowspan="2" class="text-center" style="vertical-align:bottom">Вкл</th>
@@ -3166,7 +3161,8 @@ function renderRepricer() {
       const p = props[c.art];
       let rec = '';
       if (p) {
-        rec = `<span style="color:var(--gold)"><b>→ ${p.target ?? '—'} ₽</b></span>
+        const nowB = c.oz_buyer_now || c.wb_buyer_now;
+        rec = `<span style="color:var(--gold)"><b>покупатель: ${nowB ? fmt(nowB) + ' ₽ → ' : '→ '}${p.target ?? '—'} ₽</b></span>
           <span class="small text-secondary" style="white-space:normal;display:inline-block;max-width:230px;vertical-align:top">${esc(p.why || '')}</span>
           <button class="btn btn-sm btn-success py-0" onclick="reprProposal('${esc(c.art)}','apply')">✓</button>
           <button class="btn btn-sm btn-outline-secondary py-0" onclick="reprProposal('${esc(c.art)}','reject')">✗</button>`;
