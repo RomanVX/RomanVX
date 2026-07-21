@@ -360,15 +360,25 @@ _SYSTEM = """Ты — стратег-директор по маркетплей�
 • Как проверим (метрика + дата)
 Если данным не доверяешь (устаревший себес, неполная неделя) — скажи прямо.
 
-ФИНАЛЬНЫЙ ОТВЕТ — отчёт владельцу в Telegram (HTML-теги <b> допустимы):
-краткая сводка состояния → план/факт по задачам → 2-4 решения в формате выше →
-что мониторишь до следующей сессии. Пиши по-русски, деловым тоном, без воды.
+ФИНАЛЬНЫЙ ОТВЕТ — сообщение владельцу в Telegram (HTML-теги <b> допустимы).
+Для полной сессии: краткая сводка → план/факт → решения → что мониторишь.
+Для вопроса: просто ответ на вопрос.
+СТИЛЬ: пиши как опытный коллега-директор в рабочем чате — живым деловым
+языком, на «ты». Без канцелярита («данный», «осуществляется», «в рамках»),
+без шаблонных рубрик с эмодзи в каждом абзаце, без повторения слов
+«Решение/Основано/Риск» как заголовков — структура обоснования должна
+читаться естественно, внутри связного текста. Коротких абзацев и цифр
+достаточно; списки — только там, где перечисление реально удобнее текста.
 Деньгами не распоряжаешься: всё, что меняет цены/ставки/поставки — только
 рекомендация владельцу."""
 
 
-async def run_session(trigger: str = "manual", focus: str = "") -> dict:
-    """Полная стратегическая сессия: цикл с инструментами → отчёт в TG."""
+async def run_session(trigger: str = "manual", focus: str = "",
+                      light: bool = False) -> dict:
+    """Стратегическая сессия: цикл с инструментами → отчёт/ответ в TG.
+
+    light=True — быстрый режим для вопросов: минимум инструментов, память
+    по необходимости, без обязательного save_memory."""
     global _running
     if not ANTHROPIC_API_KEY:
         return {"error": "нет ANTHROPIC_API_KEY"}
@@ -380,7 +390,14 @@ async def run_session(trigger: str = "manual", focus: str = "") -> dict:
         client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
         today = (datetime.utcnow() + timedelta(hours=3)).strftime("%Y-%m-%d (%A)")
         user_msg = f"Сегодня {today}. Триггер сессии: {trigger}."
-        if focus:
+        if light and focus:
+            user_msg += (f"\nБЫСТРЫЙ РЕЖИМ — вопрос владельца: {focus}\n"
+                         "Ответь именно на вопрос. Инструментов — минимум "
+                         "(обычно 1-3, только реально нужные для ответа); память "
+                         "читай только если вопрос про план/задачи/факты; "
+                         "save_memory — только если появилось что сохранить. "
+                         "Ответ короткий и по делу.")
+        elif focus:
             user_msg += f"\nФокус этой сессии: {focus}"
         else:
             user_msg += ("\nПроведи регулярную стратегическую сессию: память → "
@@ -402,12 +419,12 @@ async def run_session(trigger: str = "manual", focus: str = "") -> dict:
             _log.info("strategist: шаг %d, инструменты: %s", _step + 1,
                       ",".join(tools_used[-4:]) or "—")
             msg = await client.messages.create(
-                model=_MODEL, max_tokens=3000, system=_SYSTEM,
+                model=_MODEL, max_tokens=1500 if light else 3000, system=_SYSTEM,
                 tools=_tool_schemas(), messages=messages)
             if msg.stop_reason != "tool_use":
                 report = "".join(b.text for b in msg.content
                                  if getattr(b, "type", "") == "text").strip()
-                if not saved:
+                if not saved and not light:
                     _log.warning("strategist: сессия без save_memory")
                 if report:
                     for i in range(0, len(report), 3900):

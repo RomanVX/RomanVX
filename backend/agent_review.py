@@ -712,11 +712,7 @@ async def bot_loop() -> None:
                     async def _strun(th=thread, fq=focus_q):
                         res = await _st.run_session(
                             trigger="команда /strategy в Telegram",
-                            focus=(f"Владелец задал вопрос: «{fq}». Исследуй "
-                                   f"именно его данными и ответь развёрнуто с "
-                                   f"обоснованием; полный разбор кабинета не "
-                                   f"нужен, но память прочитай и обнови, если "
-                                   f"ответ рождает/закрывает задачи.") if fq else "")
+                            focus=fq, light=bool(fq))
                         if res.get("error"):
                             await tg_send(f"⚠️ Сессия не удалась: {res['error']}",
                                           thread_id=th)
