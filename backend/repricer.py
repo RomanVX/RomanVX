@@ -234,6 +234,8 @@ async def overview(refresh: bool = False, include_margin: bool = True) -> dict:
         op = oz.get(c["art"]) or {}
         row["oz_price_now"] = op.get("price")
         ozr = oz_ratios.get(c["art"])
+        if ozr:
+            row["oz_seller_per_buyer"] = round(1 / ozr, 4)
         mp = op.get("marketing_price")
         if mp and op.get("price") and mp < op["price"]:
             row["oz_buyer_now"] = mp                     # цена с акциями из API

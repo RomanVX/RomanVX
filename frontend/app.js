@@ -3194,7 +3194,8 @@ function renderRepricer() {
         <td class="text-end fw-bold">${c.wb_buyer_now ? fmt(c.wb_buyer_now) : '—'}</td>
         <td class="text-center"><div class="form-check form-switch d-inline-block"><input class="form-check-input" type="checkbox" ${c.active ? 'checked' : ''} onchange="reprToggle('${esc(c.art)}', this.checked)"></div></td>
         <td style="border-left:1px solid var(--border-2)">${rec}</td>
-        <td class="text-end"><input id="rt-${esc(c.art)}" type="number" class="form-control form-control-sm text-end d-inline-block ${p ? 'border-warning' : ''}" style="width:88px" value="${recPrice ?? ''}"></td>
+        <td class="text-end"><input id="rt-${esc(c.art)}" type="number" class="form-control form-control-sm text-end d-inline-block ${p ? 'border-warning' : ''}" style="width:88px" value="${recPrice ?? ''}">
+          ${recPrice ? `<div class="small text-secondary" title="Какую цену продавца выставить, чтобы покупатель увидел эту цену">продавцу: WB ${c.seller_per_buyer ? fmt(Math.round(recPrice * c.seller_per_buyer)) : '—'} · Oz ${c.oz_seller_per_buyer ? fmt(Math.round(recPrice * c.oz_seller_per_buyer)) : '—'}</div>` : ''}</td>
         <td class="text-end" style="color:var(--gold)">${rev}</td>
         <td><button class="btn btn-sm btn-outline-info py-0" title="Сохранить цену" onclick="reprSet('${esc(c.art)}')">💾</button></td>
       </tr>`;
