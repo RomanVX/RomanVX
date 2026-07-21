@@ -41,12 +41,21 @@ def _http() -> httpx.AsyncClient:
 
 
 async def _post(path: str, body: dict) -> dict:
-    r = await _http().post(f"{_BASE}{path}", headers=_headers(), json=body)
-    _log.debug("OZON POST %s → %s", path, r.status_code)
-    if not r.is_success:
-        _log.error("OZON %s → %s %s", path, r.status_code, r.text[:300])
-        r.raise_for_status()
-    return r.json()
+    for attempt in range(4):
+        r = await _http().post(f"{_BASE}{path}", headers=_headers(), json=body)
+        _log.debug("OZON POST %s → %s", path, r.status_code)
+        if r.status_code == 429:      # лимит запросов/сек — ждём и повторяем
+            wait = 2 * (attempt + 1)
+            _log.warning("OZON %s → 429, пауза %dс (попытка %d/4)",
+                         path, wait, attempt + 1)
+            await asyncio.sleep(wait)
+            continue
+        if not r.is_success:
+            _log.error("OZON %s → %s %s", path, r.status_code, r.text[:300])
+            r.raise_for_status()
+        return r.json()
+    r.raise_for_status()
+    return {}
 
 
 async def _get_all_skus() -> list[dict]:
