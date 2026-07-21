@@ -451,6 +451,11 @@ async def get_analytics_data(date_from: str, date_to: str,
 
 
 # ── Поисковые запросы (Seller API, полные данные — Premium/Premium Plus) ──────
+def _ts(d: str, end: bool = False) -> str:
+    """Ozon ждёт google.protobuf.Timestamp: «2026-07-06» → «2026-07-06T00:00:00Z»."""
+    if "T" in d:
+        return d
+    return f"{d}T23:59:59Z" if end else f"{d}T00:00:00Z"
 async def get_product_queries(date_from: str, date_to: str) -> list[dict]:
     """POST /v1/analytics/product-queries — сводка по СВОИМ товарам:
     сколько уникальных пользователей искали, GMV из поиска, конверсия.
@@ -462,7 +467,7 @@ async def get_product_queries(date_from: str, date_to: str) -> list[dict]:
     page = 0
     while True:
         data = await _post("/v1/analytics/product-queries", {
-            "date_from": date_from, "date_to": date_to,
+            "date_from": _ts(date_from), "date_to": _ts(date_to, end=True),
             "page": page, "page_size": 1000,
         })
         items = data.get("items") or (data.get("result") or {}).get("items") or []
@@ -481,7 +486,7 @@ async def get_query_details(date_from: str, date_to: str,
     товарам с частотой/кликами. Источник «радара трендов»."""
     if not OZON_CLIENT_ID or not OZON_API_KEY:
         return []
-    body: dict = {"date_from": date_from, "date_to": date_to,
+    body: dict = {"date_from": _ts(date_from), "date_to": _ts(date_to, end=True),
                   "page": 0, "page_size": 1000}
     if skus:
         body["skus"] = [str(s) for s in skus][:1000]
