@@ -25,7 +25,7 @@ document.addEventListener('DOMContentLoaded', _initThemeBtn);
 const API = '';
 let charts = {};
 let sortState = {};
-const dirty = { salesan: true, stocks: true, reviews: true, finance: true, unit: true, tools: true, toolsoz: true, docs: true };
+const dirty = { salesan: true, stocks: true, reviews: true, finance: true, unit: true, tools: true, toolsoz: true, docs: true, strategy: true };
 let _advertData = [];
 let currentTab = 'finance';
 let prodAllData = [];
@@ -113,6 +113,9 @@ function applyRole() {
   // владельцу — кнопка управления доступами
   const btn = document.getElementById('usersBtn');
   if (btn) btn.style.display = _me.role === 'owner' ? '' : 'none';
+  // вкладка «Стратегия» — только владельцу
+  const st = document.getElementById('tabStrategy');
+  if (st) st.style.display = _me.role === 'owner' ? '' : 'none';
 }
 
 function showOverlay(name) {
@@ -231,7 +234,7 @@ function skuName(r) {
 function switchTab(name, linkEl) {
   document.querySelectorAll('#mainTabs .nav-link').forEach(a => a.classList.remove('active'));
   if (linkEl) linkEl.classList.add('active');
-  ['salesan', 'stocks', 'reviews', 'finance', 'unit', 'tools', 'toolsoz', 'docs'].forEach(t => {
+  ['salesan', 'stocks', 'reviews', 'finance', 'unit', 'tools', 'toolsoz', 'docs', 'strategy'].forEach(t => {
     const el = document.getElementById('pane-' + t);
     if (el) el.style.display = t === name ? 'block' : 'none';
   });
@@ -240,7 +243,7 @@ function switchTab(name, linkEl) {
     dirty[name] = false;
     ({ salesan: loadSalesAnalytics, stocks: loadStocks,
        reviews: loadReviews, finance: loadFinance, tools: loadTools, toolsoz: loadOzTool, docs: loadDocs,
-       unit: loadUnitEconomics })[name]();
+       unit: loadUnitEconomics, strategy: loadStrategy })[name]();
   }
 }
 
@@ -2984,6 +2987,85 @@ function renderTrends() {
   html += `</tbody></table></div></div></div>
   <div class="text-secondary small mt-2">Скоринг 0–100: рост частоты + всплеск против истории + ускорение.
   Смотри «рост»/«выстрел» с малым числом товаров в выдаче — там спрос обгоняет предложение. Обновлено: ${d.fetched_at || ''}</div>`;
+  wrap.innerHTML = html;
+}
+
+// ── Стратегия: план и задачи агента-стратега (только владелец) ───────────────
+let _stratData = null;
+async function loadStrategy(refresh) {
+  const wrap = document.getElementById('strategyWrap');
+  if (!wrap) return;
+  if (_stratData && !refresh) { renderStrategy(); return; }
+  wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>Читаем память стратега…</div>';
+  try {
+    _stratData = await fetchJSON('/api/tools/strategy', 20000);
+    renderStrategy();
+  } catch (e) {
+    wrap.innerHTML = `<div class="alert alert-danger mt-2">Ошибка: ${esc(e.message)}</div>`;
+  }
+}
+
+async function strategyRunNow(btn) {
+  btn.disabled = true; btn.textContent = '🧠 Стратег работает (несколько минут)…';
+  try {
+    await fetch('/api/tools/strategy/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    btn.textContent = '⏳ Сессия запущена — отчёт придёт в Telegram';
+  } catch (e) { btn.textContent = 'Ошибка запуска'; }
+  setTimeout(() => { btn.disabled = false; btn.textContent = '🚀 Запустить сессию'; loadStrategy(true); }, 240000);
+}
+
+const _STRAT_STATUS = {
+  open: ['#3b82f6', 'в работе'], done: ['#22c55e', 'выполнено ✓'],
+  failed: ['#f43f5e', 'не сработало ✗'], dropped: ['#94a3b8', 'снята'],
+};
+const _STRAT_KIND = { goal: '🎯 цель', task: '📌 задача', hypothesis: '🧪 гипотеза' };
+
+function renderStrategy() {
+  const wrap = document.getElementById('strategyWrap');
+  if (!wrap || !_stratData) return;
+  const d = _stratData;
+  const tasks = d.tasks || [];
+  const open = tasks.filter(t => t.status === 'open');
+  const closed = tasks.filter(t => t.status !== 'open');
+
+  let html = `<div class="d-flex gap-2 mb-3 flex-wrap align-items-center">
+    <button class="btn btn-sm btn-outline-info" onclick="strategyRunNow(this)" ${d.running ? 'disabled' : ''}>${d.running ? '🧠 Сессия уже идёт…' : '🚀 Запустить сессию'}</button>
+    <span class="small text-secondary">Автоматически: полная сессия — пн 10:00, проверка задач — ежедневно 10:00. Команда в группе: /strategy</span>
+    ${d.due ? `<span class="badge bg-warning text-dark ms-auto">⏰ задач к проверке: ${d.due}</span>` : ''}
+  </div>`;
+
+  html += `<div class="card bg-card mb-3"><div class="card-body">
+    <div class="d-flex align-items-center mb-2"><h6 class="mb-0">🧭 Текущий план</h6>
+    <span class="small text-secondary ms-auto">${d.updated ? 'обновлён ' + esc(d.updated) + ' UTC' : ''}</span></div>
+    ${d.plan ? `<div style="white-space:pre-wrap;font-size:.92rem">${esc(d.plan)}</div>`
+             : '<div class="text-secondary">Плана ещё нет — запусти первую сессию, стратег изучит кабинет и составит его.</div>'}
+  </div></div>`;
+
+  const row = t => {
+    const [clr, label] = _STRAT_STATUS[t.status] || ['#94a3b8', t.status];
+    return `<tr>
+      <td style="max-width:340px">${_STRAT_KIND[t.kind] || t.kind} <b>${esc(t.title)}</b>
+        ${t.reasoning ? `<div class="small text-secondary">${esc(t.reasoning)}</div>` : ''}</td>
+      <td class="small">${esc(t.metric || '—')}</td>
+      <td class="small text-nowrap">${esc(t.check_date || '—')}</td>
+      <td><span class="badge" style="background:${clr}22;color:${clr};border:1px solid ${clr}55">${label}</span></td>
+      <td class="small" style="max-width:280px">${esc(t.result || '')}</td>
+    </tr>`;
+  };
+  const table = rows => `<div class="table-responsive"><table class="table table-sm align-middle mb-0" style="font-size:.87rem">
+    <thead><tr><th>Задача</th><th>Метрика</th><th>Проверка</th><th>Статус</th><th>Итог</th></tr></thead>
+    <tbody>${rows.map(row).join('')}</tbody></table></div>`;
+
+  html += `<div class="card bg-card mb-3"><div class="card-body">
+    <h6>📌 В работе (${open.length})</h6>
+    ${open.length ? table(open) : '<div class="text-secondary small">Открытых задач нет</div>'}
+  </div></div>`;
+  if (closed.length) {
+    html += `<div class="card bg-card mb-3"><div class="card-body">
+      <h6>🗂 История план/факт (${closed.length})</h6>${table(closed)}
+    </div></div>`;
+  }
+  html += `<div class="text-secondary small">Стратег автономен в анализе и планировании; всё, что касается денег (цены, ставки, поставки) — только рекомендации, решение за тобой. Отчёты сессий приходят в Telegram-группу.</div>`;
   wrap.innerHTML = html;
 }
 

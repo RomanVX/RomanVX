@@ -13,7 +13,7 @@ import logging
 import time as _time
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
 
 import db
 from config import ANTHROPIC_API_KEY
@@ -3813,21 +3813,31 @@ async def trends_get(weeks: int = Query(default=12), min_cnt: float = Query(defa
 
 
 # ══ Агент-стратег ═════════════════════════════════════════════════════════════
+def _owner_only(request):
+    import auth as _auth
+    sess = _auth._session_of(request) or {}
+    if sess.get("role") != "owner":
+        raise HTTPException(403, "Только для владельца")
+
+
 @router.get("/strategy")
-async def strategy_get():
-    """Текущий план стратега + задачи с статусами."""
+async def strategy_get(request: Request):
+    """Текущий план стратега + задачи с статусами (только владелец)."""
+    _owner_only(request)
     import agent_strategist as st
     import snapshot as _snap
     plan = await asyncio.to_thread(_snap.load, "strategist_plan", None) or {}
     tasks = await asyncio.to_thread(st._tasks_load)
     return {"plan": plan.get("text", ""), "updated": plan.get("updated"),
-            "tasks": tasks, "due": len(st.due_tasks())}
+            "tasks": tasks, "due": len(st.due_tasks()),
+            "running": st._running}
 
 
 @router.post("/strategy/run")
-async def strategy_run(body: dict | None = None):
+async def strategy_run(request: Request, body: dict | None = None):
     """Запустить стратегическую сессию (фоном). body.focus — фокус сессии."""
+    _owner_only(request)
     import agent_strategist as st
     focus = str((body or {}).get("focus") or "")
-    _spawn(st.run_session(trigger="manual", focus=focus))
+    _spawn(st.run_session(trigger="кнопка на дашборде", focus=focus))
     return {"started": True}

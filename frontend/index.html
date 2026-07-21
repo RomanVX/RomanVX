@@ -99,6 +99,9 @@
     <li class="nav-item">
       <a class="nav-link" href="#" onclick="switchTab('toolsoz',this);return false">🛠 Инструменты Ozon</a>
     </li>
+    <li class="nav-item" id="tabStrategy" style="display:none">
+      <a class="nav-link" href="#" onclick="switchTab('strategy',this);return false">🧠 Стратегия</a>
+    </li>
   </ul>
 
   <!-- ── Заказы ── -->
@@ -355,6 +358,13 @@
     </div>
   </div><!-- /pane-docs -->
 
+  <!-- ── Стратегия (только владелец) ── -->
+  <div id="pane-strategy" style="display:none">
+    <div id="strategyWrap">
+      <div class="text-center text-secondary py-4"><span class="spinner-border"></span></div>
+    </div>
+  </div><!-- /pane-strategy -->
+
   <!-- ── Инструменты WB ── -->
   <div id="pane-tools" style="display:none">
     <div class="d-flex gap-2 mb-3 flex-wrap align-items-center">
@@ -460,6 +470,6 @@
 
 <script src="vendor/bootstrap.bundle.min.js"></script>
 <script src="vendor/chart.umd.min.js"></script>
-<script src="app.js?v=145"></script>
+<script src="app.js?v=146"></script>
 </body>
 </html>
