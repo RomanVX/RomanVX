@@ -25,7 +25,7 @@ document.addEventListener('DOMContentLoaded', _initThemeBtn);
 const API = '';
 let charts = {};
 let sortState = {};
-const dirty = { salesan: true, stocks: true, reviews: true, finance: true, unit: true, tools: true, toolsoz: true, docs: true, strategy: true };
+const dirty = { salesan: true, stocks: true, reviews: true, finance: true, unit: true, tools: true, toolsoz: true, docs: true, strategy: true, repricer: true };
 let _advertData = [];
 let currentTab = 'finance';
 let prodAllData = [];
@@ -113,9 +113,11 @@ function applyRole() {
   // владельцу — кнопка управления доступами
   const btn = document.getElementById('usersBtn');
   if (btn) btn.style.display = _me.role === 'owner' ? '' : 'none';
-  // вкладка «Стратегия» — только владельцу
-  const st = document.getElementById('tabStrategy');
-  if (st) st.style.display = _me.role === 'owner' ? '' : 'none';
+  // вкладки «Стратегия» и «Репрайсер» — только владельцу
+  ['tabStrategy', 'tabRepricer'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = _me.role === 'owner' ? '' : 'none';
+  });
 }
 
 function showOverlay(name) {
@@ -234,7 +236,7 @@ function skuName(r) {
 function switchTab(name, linkEl) {
   document.querySelectorAll('#mainTabs .nav-link').forEach(a => a.classList.remove('active'));
   if (linkEl) linkEl.classList.add('active');
-  ['salesan', 'stocks', 'reviews', 'finance', 'unit', 'tools', 'toolsoz', 'docs', 'strategy'].forEach(t => {
+  ['salesan', 'stocks', 'reviews', 'finance', 'unit', 'tools', 'toolsoz', 'docs', 'strategy', 'repricer'].forEach(t => {
     const el = document.getElementById('pane-' + t);
     if (el) el.style.display = t === name ? 'block' : 'none';
   });
@@ -243,7 +245,7 @@ function switchTab(name, linkEl) {
     dirty[name] = false;
     ({ salesan: loadSalesAnalytics, stocks: loadStocks,
        reviews: loadReviews, finance: loadFinance, tools: loadTools, toolsoz: loadOzTool, docs: loadDocs,
-       unit: loadUnitEconomics, strategy: loadStrategy })[name]();
+       unit: loadUnitEconomics, strategy: loadStrategy, repricer: loadRepricer })[name]();
   }
 }
 
@@ -2999,9 +3001,7 @@ async function loadStrategy(refresh) {
   if (_stratData && !refresh) { renderStrategy(); return; }
   wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>Читаем память стратега…</div>';
   try {
-    [_stratData, _reprData] = await Promise.all([
-      fetchJSON('/api/tools/strategy', 20000),
-      fetchJSON('/api/tools/repricer', 90000).catch(() => null)]);
+    _stratData = await fetchJSON('/api/tools/strategy', 20000);
     renderStrategy();
   } catch (e) {
     wrap.innerHTML = `<div class="alert alert-danger mt-2">Ошибка: ${esc(e.message)}</div>`;
@@ -3014,18 +3014,18 @@ async function reprSet(art) {
   const mo = document.getElementById('ro-' + art)?.value;
   await fetch('/api/tools/repricer/set', { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ art, target: t ? +t : null, min_wb: mw ? +mw : null, min_ozon: mo ? +mo : null }) });
-  loadStrategy(true);
+  loadRepricer(true);
 }
 
 async function reprPreset(name, btn) {
   btn.disabled = true;
   await fetch('/api/tools/repricer/preset', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
-  loadStrategy(true);
+  loadRepricer(true);
 }
 
 async function reprProposal(art, action) {
   await fetch('/api/tools/repricer/proposal', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ art, action }) });
-  loadStrategy(true);
+  loadRepricer(true);
 }
 
 async function strategyRunNow(btn) {
@@ -3095,60 +3095,124 @@ function renderStrategy() {
       <h6>🗂 История план/факт (${closed.length})</h6>${table(closed)}
     </div></div>`;
   }
-  html += _renderRepricer();
   html += `<div class="text-secondary small">Стратег автономен в анализе и планировании; всё, что касается денег (цены, ставки, поставки) — только рекомендации, решение за тобой. Отчёты сессий приходят в Telegram-группу.</div>`;
   wrap.innerHTML = html;
 }
 
-function _renderRepricer() {
-  if (!_reprData) return '';
-  const items = _reprData.items || [];
-  const props = _reprData.proposals || [];
-  let h = `<div class="card bg-card mb-3"><div class="card-body">
-    <div class="d-flex align-items-center flex-wrap gap-2 mb-2">
-      <h6 class="mb-0">💸 Репрайсер (цена для покупателя)</h6>
-      <div class="btn-group btn-group-sm ms-2">
-        <button class="btn btn-outline-secondary" onclick="reprPreset('low',this)">Уровень ↓ низкий</button>
-        <button class="btn btn-outline-secondary" onclick="reprPreset('mid',this)">средний</button>
-        <button class="btn btn-outline-secondary" onclick="reprPreset('high',this)">высокий ↑</button>
-      </div>
-      <a href="/api/tools/repricer/export" class="btn btn-sm btn-outline-success ms-auto" download>⬇ Файл для ЛК Ozon</a>
-    </div>`;
-  if (props.length) {
-    h += `<div class="alert alert-warning py-2"><b>🧠 Предложения стратега:</b><ul class="mb-1">` +
-      props.map(p => `<li><b>${esc(p.art)}</b> → цель ${p.target ?? '—'} ₽${p.min_wb ? ', мин WB ' + p.min_wb : ''}${p.min_ozon ? ', мин Ozon ' + p.min_ozon : ''}
-        <span class="text-secondary small">${esc(p.why || '')}</span>
-        <button class="btn btn-sm btn-success py-0 ms-1" onclick="reprProposal('${esc(p.art)}','apply')">Принять</button>
-        <button class="btn btn-sm btn-outline-secondary py-0" onclick="reprProposal('${esc(p.art)}','reject')">Отклонить</button></li>`).join('') +
-      `</ul><span class="small">«Принять» меняет только наш конфиг — далее выгрузи файл для Ozon и/или обнови цены WB.</span></div>`;
+async function loadRepricer(refresh) {
+  const wrap = document.getElementById('repricerWrap');
+  if (!wrap) return;
+  if (_reprData && !refresh) { renderRepricer(); return; }
+  wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>Собираем конфиг и живые цены (WB + Ozon)…</div>';
+  try {
+    _reprData = await fetchJSON('/api/tools/repricer', 120000);
+    renderRepricer();
+  } catch (e) {
+    wrap.innerHTML = `<div class="alert alert-danger mt-2">Ошибка: ${esc(e.message)}</div>`;
   }
-  h += `<div class="table-responsive" style="max-height:56vh"><table class="table table-sm align-middle mb-0 text-nowrap" style="font-size:.84rem">
-    <thead><tr><th>Артикул</th><th class="text-end">Цель покуп., ₽</th><th class="text-end">Мин WB</th><th class="text-end">Мин Ozon</th>
-    <th class="text-end" title="Текущая цена продавца WB (до СПП)">WB сейчас</th>
-    <th class="text-end" title="Оценка текущей цены для покупателя WB">Покуп. WB</th>
-    <th class="text-end" title="Маржа при целевой цене (юнитка)">Маржа при цели</th>
-    <th class="text-end">Прибыль/шт</th><th></th></tr></thead><tbody>` +
-    items.map(c => {
-      const m = c.margin_at_target;
-      const mClr = m == null ? '' : m < 10 ? 'color:var(--neg)' : m < 20 ? 'color:var(--gold)' : 'color:var(--pos)';
-      return `<tr>
-      <td><code>${esc(c.art)}</code>${c.active ? '' : ' <span class="badge bg-secondary">выкл</span>'}</td>
-      <td class="text-end"><input id="rt-${esc(c.art)}" type="number" class="form-control form-control-sm text-end d-inline-block" style="width:86px" value="${c.target ?? ''}"></td>
-      <td class="text-end"><input id="rw-${esc(c.art)}" type="number" class="form-control form-control-sm text-end d-inline-block" style="width:78px" value="${c.min_wb ?? ''}"></td>
-      <td class="text-end"><input id="ro-${esc(c.art)}" type="number" class="form-control form-control-sm text-end d-inline-block" style="width:78px" value="${c.min_ozon ?? ''}"></td>
-      <td class="text-end">${c.wb_seller_now ? fmt(c.wb_seller_now) : '—'}</td>
-      <td class="text-end">${c.wb_buyer_now ? fmt(c.wb_buyer_now) : '—'}</td>
-      <td class="text-end fw-bold" style="${mClr}">${m == null ? '—' : m + '%'}</td>
-      <td class="text-end">${c.profit_at_target == null ? '—' : fmtRub(c.profit_at_target)}</td>
-      <td><button class="btn btn-sm btn-outline-info py-0" onclick="reprSet('${esc(c.art)}')">💾</button></td></tr>`;
-    }).join('') +
-  `</tbody></table></div>
-  <div class="small text-secondary mt-2">Цены сам модуль не меняет: Ozon — выгрузи файл и загрузи в ЛК (Цены и акции → Репрайсер → Настроить через шаблон); WB — правь в кабинете по колонке «Маржа при цели». Пресеты low/mid/high — из твоих трёх диапазонов.</div>
-  </div></div>`;
-  return h;
 }
 
-// ── Конкуренты: суточные срезы выдачи WB ─────────────────────────────────────
+function renderRepricer() {
+  const wrap = document.getElementById('repricerWrap');
+  if (!wrap || !_reprData) return;
+  const items = _reprData.items || [];
+  const props = {};
+  (_reprData.proposals || []).forEach(p => props[p.art] = p);
+
+  let h = `<div class="d-flex gap-2 mb-3 flex-wrap align-items-center">
+    <h5 class="mb-0">💸 Стратегия по цене для покупателя</h5>
+    <div class="btn-group btn-group-sm ms-3">
+      <button class="btn btn-outline-secondary" onclick="reprPreset('low',this)">Уровень ↓ низкий</button>
+      <button class="btn btn-outline-secondary" onclick="reprPreset('mid',this)">средний</button>
+      <button class="btn btn-outline-secondary" onclick="reprPreset('high',this)">высокий ↑</button>
+    </div>
+    <button class="btn btn-sm btn-outline-warning" onclick="strategyRepricerReview(this)">🧠 Спросить стратега</button>
+    <a href="/api/tools/repricer/export" class="btn btn-sm btn-outline-success ms-auto" download>⬇ Файл для ЛК Ozon</a>
+    <button class="btn btn-sm btn-outline-secondary" onclick="loadRepricer(true)"><i class="bi bi-arrow-clockwise"></i></button>
+  </div>`;
+
+  h += `<div class="card border-0 bg-card"><div class="card-body p-0"><div class="table-responsive" style="max-height:76vh">
+    <table class="table table-sm align-middle mb-0 text-nowrap" style="font-size:.84rem"><thead>
+    <tr>
+      <th rowspan="2" style="position:sticky;left:0;background:var(--t-sticky);z-index:2;vertical-align:bottom">Товар</th>
+      <th rowspan="2" class="text-end" style="vertical-align:bottom">Целевая цена<br>для покупателя</th>
+      <th colspan="3" class="text-center" style="border-left:1px solid var(--border-2)">Цена на Ozon</th>
+      <th colspan="3" class="text-center" style="border-left:1px solid var(--border-2)">Цена на Wildberries</th>
+      <th rowspan="2" class="text-center" style="vertical-align:bottom">Вкл</th>
+      <th rowspan="2" style="border-left:1px solid var(--border-2);vertical-align:bottom">💡 Рекомендация по цене</th>
+      <th rowspan="2"></th>
+    </tr>
+    <tr>
+      <th class="text-end small" style="border-left:1px solid var(--border-2)">Ваша цена</th>
+      <th class="text-end small">Для покупателя</th><th class="text-end small">Минимальная</th>
+      <th class="text-end small" style="border-left:1px solid var(--border-2)">Ваша цена</th>
+      <th class="text-end small">Для покупателя</th><th class="text-end small">Минимальная</th>
+    </tr></thead><tbody>`;
+
+  const groupMap = {};
+  items.forEach(c => {
+    const g = articleGroup({ supplierArticle: c.art, brand: '' });
+    (groupMap[g] = groupMap[g] || []).push(c);
+  });
+  GROUP_ORDER.filter(g => groupMap[g]).concat(Object.keys(groupMap).filter(g => !GROUP_ORDER.includes(g))).forEach(g => {
+    const list = groupMap[g];
+    if (!list) return;
+    h += `<tr class="table-secondary"><td colspan="11" style="padding:5px 12px"><strong>${esc(g)}</strong>
+      <span class="text-secondary small">· ${list.length} SKU</span></td></tr>`;
+    list.forEach(c => {
+      const m = c.margin_at_target;
+      const mClr = m == null ? '' : m < 10 ? 'var(--neg)' : m < 20 ? 'var(--gold)' : 'var(--pos)';
+      const p = props[c.art];
+      let rec = '';
+      if (p) {
+        rec = `<span style="color:var(--gold)"><b>→ ${p.target ?? '—'} ₽</b></span>
+          <span class="small text-secondary" style="white-space:normal;display:inline-block;max-width:230px;vertical-align:top">${esc(p.why || '')}</span>
+          <button class="btn btn-sm btn-success py-0" onclick="reprProposal('${esc(c.art)}','apply')">✓</button>
+          <button class="btn btn-sm btn-outline-secondary py-0" onclick="reprProposal('${esc(c.art)}','reject')">✗</button>`;
+      } else if (m != null) {
+        rec = `<span class="small" style="color:${mClr}">маржа при цели ${m}%${c.profit_at_target != null ? ' · ' + fmtRub(c.profit_at_target) + '/шт' : ''}</span>`;
+      } else {
+        rec = '<span class="small text-secondary">нет данных юнитки</span>';
+      }
+      h += `<tr>
+        <td style="position:sticky;left:0;background:var(--t-sticky);max-width:240px"><code style="color:var(--val-soft)">${esc(c.art)}</code>
+          <div class="small text-secondary" style="max-width:230px;overflow:hidden;text-overflow:ellipsis">${esc((c.name || '').slice(0, 42))}</div></td>
+        <td class="text-end"><input id="rt-${esc(c.art)}" type="number" class="form-control form-control-sm text-end d-inline-block" style="width:88px" value="${c.target ?? ''}"></td>
+        <td class="text-end" style="border-left:1px solid var(--border-2)">${c.oz_price_now ? fmt(c.oz_price_now) : '—'}</td>
+        <td class="text-end fw-bold">${c.oz_buyer_now ? fmt(c.oz_buyer_now) : '—'}</td>
+        <td class="text-end"><input id="ro-${esc(c.art)}" type="number" class="form-control form-control-sm text-end d-inline-block" style="width:80px" value="${c.min_ozon ?? ''}"></td>
+        <td class="text-end" style="border-left:1px solid var(--border-2)">${c.wb_seller_now ? fmt(c.wb_seller_now) : '—'}</td>
+        <td class="text-end fw-bold">${c.wb_buyer_now ? fmt(c.wb_buyer_now) : '—'}</td>
+        <td class="text-end"><input id="rw-${esc(c.art)}" type="number" class="form-control form-control-sm text-end d-inline-block" style="width:80px" value="${c.min_wb ?? ''}"></td>
+        <td class="text-center"><div class="form-check form-switch d-inline-block"><input class="form-check-input" type="checkbox" ${c.active ? 'checked' : ''} onchange="reprToggle('${esc(c.art)}', this.checked)"></div></td>
+        <td style="border-left:1px solid var(--border-2)">${rec}</td>
+        <td><button class="btn btn-sm btn-outline-info py-0" title="Сохранить строку" onclick="reprSet('${esc(c.art)}')">💾</button></td>
+      </tr>`;
+    });
+  });
+  h += `</tbody></table></div></div></div>
+  <div class="text-secondary small mt-2">«Для покупателя» WB — оценка через коэффициент СПП из юнитки. Сам модуль цены не меняет:
+  Ozon — «⬇ Файл для ЛК Ozon» → Цены и акции → Репрайсер → Настроить через шаблон; WB — правь цены в кабинете WB.
+  «🧠 Спросить стратега» — он проанализирует юнитку/конкурентов/спрос и положит рекомендации в правую колонку.</div>`;
+  wrap.innerHTML = h;
+}
+
+async function reprToggle(art, on) {
+  await fetch('/api/tools/repricer/set', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ art, active: on }) });
+}
+
+async function strategyRepricerReview(btn) {
+  btn.disabled = true; btn.textContent = '🧠 Стратег анализирует (несколько минут)…';
+  try {
+    await fetch('/api/tools/strategy/run', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ focus: 'Проанализируй репрайсер: по каждому SKU оцени целевую цену для покупателя против юнитки, конкурентов и спроса. Где политика неоптимальна — положи предложения через repricer_propose с обоснованием. Отчёт — кратко, основное в предложениях.' }) });
+    btn.textContent = '⏳ Работает — рекомендации появятся здесь, отчёт в Telegram';
+  } catch (e) { btn.textContent = 'Ошибка запуска'; }
+  setTimeout(() => { btn.disabled = false; btn.textContent = '🧠 Спросить стратега'; loadRepricer(true); }, 300000);
+}
+
+// ── Конкуренты: суточные срезы выдачи WB ─────────────────────────────────────// ── Конкуренты: суточные срезы выдачи WB ─────────────────────────────────────
 let _compData = null;
 let _compQueries = null;
 async function loadCompetitors(refresh) {

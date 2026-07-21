@@ -507,3 +507,41 @@ async def get_query_details(date_from: str, date_to: str,
             break
         await asyncio.sleep(1)
     return out
+
+
+async def get_prices() -> dict[str, dict]:
+    """Текущие цены Ozon: {offer_id: {price, old_price, marketing_price}}.
+    marketing_price — цена с учётом акций (ближе всего к «цене для покупателя»)."""
+    if not OZON_CLIENT_ID or not OZON_API_KEY:
+        return {}
+    out: dict[str, dict] = {}
+    cursor = ""
+    for _ in range(10):
+        body = {"filter": {"visibility": "ALL"}, "limit": 1000}
+        if cursor:
+            body["cursor"] = cursor
+        try:
+            data = await _post("/v5/product/info/prices", body)
+        except Exception:
+            data = await _post("/v4/product/info/prices",
+                               {"filter": {"visibility": "ALL"}, "limit": 1000,
+                                "cursor": cursor} if cursor else
+                               {"filter": {"visibility": "ALL"}, "limit": 1000})
+        items = data.get("items") or (data.get("result") or {}).get("items") or []
+        for it in items:
+            p = it.get("price") or {}
+            def _n(v):
+                try:
+                    return round(float(str(v).replace(",", ".")))
+                except (TypeError, ValueError):
+                    return None
+            out[str(it.get("offer_id") or "").strip()] = {
+                "price": _n(p.get("price")),
+                "old_price": _n(p.get("old_price")),
+                "marketing_price": _n(p.get("marketing_price")),
+            }
+        cursor = data.get("cursor") or ""
+        if not cursor or not items:
+            break
+    _log.info("Ozon prices: %d товаров", len(out))
+    return out

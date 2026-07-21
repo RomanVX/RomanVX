@@ -102,6 +102,9 @@
     <li class="nav-item" id="tabStrategy" style="display:none">
       <a class="nav-link" href="#" onclick="switchTab('strategy',this);return false">🧠 Стратегия</a>
     </li>
+    <li class="nav-item" id="tabRepricer" style="display:none">
+      <a class="nav-link" href="#" onclick="switchTab('repricer',this);return false">💸 Репрайсер</a>
+    </li>
   </ul>
 
   <!-- ── Заказы ── -->
@@ -365,6 +368,13 @@
     </div>
   </div><!-- /pane-strategy -->
 
+  <!-- ── Репрайсер (только владелец) ── -->
+  <div id="pane-repricer" style="display:none">
+    <div id="repricerWrap">
+      <div class="text-center text-secondary py-4"><span class="spinner-border"></span></div>
+    </div>
+  </div><!-- /pane-repricer -->
+
   <!-- ── Инструменты WB ── -->
   <div id="pane-tools" style="display:none">
     <div class="d-flex gap-2 mb-3 flex-wrap align-items-center">
@@ -470,6 +480,6 @@
 
 <script src="vendor/bootstrap.bundle.min.js"></script>
 <script src="vendor/chart.umd.min.js"></script>
-<script src="app.js?v=148"></script>
+<script src="app.js?v=149"></script>
 </body>
 </html>

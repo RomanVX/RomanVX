@@ -148,12 +148,17 @@ async def overview() -> dict:
     import agent_review as _ar
     from routers import tools as _tools
     cfg = await asyncio.to_thread(cfg_load)
-    live, margin = {}, {}
+    live, margin, oz = {}, {}, {}
     try:
         import wb_client
         live = await wb_client.get_current_prices()
     except Exception as e:
         _log.warning("overview prices: %s", e)
+    try:
+        import ozon_client
+        oz = await ozon_client.get_prices()
+    except Exception as e:
+        _log.warning("overview ozon prices: %s", e)
     try:
         data = await _tools.get_margin(mp="WB")
         for b in data.get("items") or []:
@@ -166,6 +171,9 @@ async def overview() -> dict:
         row = dict(c)
         lp = live.get(c["art"]) or {}
         row["wb_seller_now"] = lp.get("discounted")
+        op = oz.get(c["art"]) or {}
+        row["oz_price_now"] = op.get("price")
+        row["oz_buyer_now"] = op.get("marketing_price") or op.get("price")
         if b and b.get("price0") and b.get("buyer0"):
             ratio = b["buyer0"] / b["price0"]          # buyer/seller у SKU стабилен
             row["wb_buyer_now"] = round((lp.get("discounted") or 0) * ratio)
