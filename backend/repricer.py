@@ -211,10 +211,12 @@ async def overview(refresh: bool = False) -> dict:
     import snapshot as _snap
     ratios = await asyncio.to_thread(_snap.load, "repricer_ratios", None) or {}
     ratios_dirty = False
+    import catalog as _cat
     out = []
     for c in cfg:
         b = margin.get(c["art"])
         row = dict(c)
+        row["brand"] = _cat.lookup(c["art"]).get("brand", "")
         lp = live.get(c["art"]) or {}
         row["wb_seller_now"] = lp.get("discounted")
         op = oz.get(c["art"]) or {}

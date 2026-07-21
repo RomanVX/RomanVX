@@ -3159,7 +3159,7 @@ function renderRepricer() {
 
   const groupMap = {};
   items.forEach(c => {
-    const g = articleGroup({ supplierArticle: c.art, brand: '' });
+    const g = articleGroup({ supplierArticle: c.art, brand: c.brand || '' });
     (groupMap[g] = groupMap[g] || []).push(c);
   });
   GROUP_ORDER.filter(g => groupMap[g]).concat(Object.keys(groupMap).filter(g => !GROUP_ORDER.includes(g))).forEach(g => {
