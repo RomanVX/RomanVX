@@ -3810,3 +3810,24 @@ async def trends_get(weeks: int = Query(default=12), min_cnt: float = Query(defa
             per_src[it["source"]] = c + 1
     return {"items": capped, "weeks": all_weeks, "sources": src_cnt,
             "fetched_at": datetime.utcnow().strftime("%d.%m.%Y %H:%M UTC")}
+
+
+# ══ Агент-стратег ═════════════════════════════════════════════════════════════
+@router.get("/strategy")
+async def strategy_get():
+    """Текущий план стратега + задачи с статусами."""
+    import agent_strategist as st
+    import snapshot as _snap
+    plan = await asyncio.to_thread(_snap.load, "strategist_plan", None) or {}
+    tasks = await asyncio.to_thread(st._tasks_load)
+    return {"plan": plan.get("text", ""), "updated": plan.get("updated"),
+            "tasks": tasks, "due": len(st.due_tasks())}
+
+
+@router.post("/strategy/run")
+async def strategy_run(body: dict | None = None):
+    """Запустить стратегическую сессию (фоном). body.focus — фокус сессии."""
+    import agent_strategist as st
+    focus = str((body or {}).get("focus") or "")
+    _spawn(st.run_session(trigger="manual", focus=focus))
+    return {"started": True}

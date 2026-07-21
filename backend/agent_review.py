@@ -694,6 +694,12 @@ async def bot_loop() -> None:
                     # фоном: если юнитка ещё собирается (после рестарта это
                     # несколько минут) — ждём и повторяем, а не отказываем
                     asyncio.get_event_loop().create_task(_review_with_retry(thread))
+                elif cmd == "/strategy":
+                    await tg_send("🧠 Стратег сел за данные — отчёт будет через "
+                                  "несколько минут…", thread_id=thread)
+                    import agent_strategist as _st
+                    asyncio.get_event_loop().create_task(
+                        _st.run_session(trigger="команда /strategy в Telegram"))
                 elif cmd == "/reset":
                     _dialogs.pop(_dialog_key(thread), None)
                     await tg_send("🧹 Память диалога очищена.", thread_id=thread)

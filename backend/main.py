@@ -183,6 +183,44 @@ async def _trends_weekly():
         await asyncio.sleep(3600)
 
 
+async def _strategist_loop():
+    """Стратег: полная сессия по понедельникам в 10 МСК; ежедневно в 10 МСК —
+    проверка задач с подошедшей датой (есть due → сфокусированная сессия).
+    Дедуп по дню через kv_cache."""
+    import agent_strategist as st
+    import agent_review
+    if not agent_review.configured():
+        return
+    import snapshot as _snap
+    await asyncio.sleep(1200)   # даём прогреться юнитке после рестарта
+    while True:
+        now = datetime.utcnow() + timedelta(hours=3)
+        today = now.strftime("%Y-%m-%d")
+        if now.hour >= 10:
+            last = await asyncio.to_thread(_snap.load, "strategist_last_day", "")
+            if last != today:
+                try:
+                    if now.weekday() == 0:
+                        res = await st.run_session(trigger="еженедельная сессия (понедельник)")
+                    else:
+                        due = await asyncio.to_thread(st.due_tasks)
+                        res = {"ok": True, "skipped": "нет задач к проверке"}
+                        if due:
+                            titles = "; ".join(t["title"] for t in due[:5])
+                            res = await st.run_session(
+                                trigger="ежедневная проверка задач",
+                                focus=f"Подошла дата проверки задач: {titles}. "
+                                      f"Сверь план/факт по ним и закрой; полный "
+                                      f"разбор кабинета не нужен.")
+                    if res.get("ok"):
+                        await asyncio.to_thread(_snap.save, "strategist_last_day", today)
+                    else:
+                        logging.getLogger("strategist").warning("session: %s", res)
+                except Exception as e:
+                    logging.getLogger("strategist").warning("loop failed: %s", e)
+        await asyncio.sleep(1800)
+
+
 async def _agent_weekly():
     """Агент-аналитик: разбор кабинета в Telegram по понедельникам в 9 МСК.
 
@@ -219,8 +257,9 @@ async def lifespan(app: FastAPI):
     task5 = asyncio.create_task(_agent.bot_loop())
     task6 = asyncio.create_task(_competitors_daily())
     task7 = asyncio.create_task(_trends_weekly())
+    task8 = asyncio.create_task(_strategist_loop())
     yield
-    for t in (task, task2, task3, task4, task5, task6, task7):
+    for t in (task, task2, task3, task4, task5, task6, task7, task8):
         t.cancel()
 
 
