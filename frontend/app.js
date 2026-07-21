@@ -3018,14 +3018,15 @@ const _STRAT_STATUS = {
   open: ['#3b82f6', 'в работе'], done: ['#22c55e', 'выполнено ✓'],
   failed: ['#f43f5e', 'не сработало ✗'], dropped: ['#94a3b8', 'снята'],
 };
-const _STRAT_KIND = { goal: '🎯 цель', task: '📌 задача', hypothesis: '🧪 гипотеза' };
+const _STRAT_KIND = { goal: '🎯 цель', task: '📌 задача', hypothesis: '🧪 гипотеза', note: '📝 факт' };
 
 function renderStrategy() {
   const wrap = document.getElementById('strategyWrap');
   if (!wrap || !_stratData) return;
   const d = _stratData;
   const tasks = d.tasks || [];
-  const open = tasks.filter(t => t.status === 'open');
+  const notes = tasks.filter(t => t.kind === 'note' && t.status === 'open');
+  const open = tasks.filter(t => t.status === 'open' && t.kind !== 'note');
   const closed = tasks.filter(t => t.status !== 'open');
 
   let html = `<div class="d-flex gap-2 mb-3 flex-wrap align-items-center">
@@ -3056,6 +3057,12 @@ function renderStrategy() {
     <thead><tr><th>Задача</th><th>Метрика</th><th>Проверка</th><th>Статус</th><th>Итог</th></tr></thead>
     <tbody>${rows.map(row).join('')}</tbody></table></div>`;
 
+  if (notes.length) {
+    html += `<div class="card bg-card mb-3"><div class="card-body">
+      <h6>📝 База фактов (${notes.length})</h6>
+      <ul class="mb-0 small">${notes.map(n => `<li><b>${esc(n.title)}</b>${n.reasoning ? ' — <span class="text-secondary">' + esc(n.reasoning) + '</span>' : ''}</li>`).join('')}</ul>
+    </div></div>`;
+  }
   html += `<div class="card bg-card mb-3"><div class="card-body">
     <h6>📌 В работе (${open.length})</h6>
     ${open.length ? table(open) : '<div class="text-secondary small">Открытых задач нет</div>'}
