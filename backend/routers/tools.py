@@ -3555,6 +3555,17 @@ async def trends_probe():
         out["base"] = {"rows": len(base), "sample": base[:3]}
     except Exception as e:
         out["base_error"] = _http_err(e)
+    try:
+        raw = await ozon_client._post("/v1/analytics/product-queries/details", {
+            "date_from": ozon_client._ts(d_from),
+            "date_to": ozon_client._ts(d_to, end=True),
+            "skus": [str(p.get("sku")) for p in await ozon_client._get_all_skus()
+                     if p.get("sku")][:1000],
+            "page": 0, "page_size": 100, "limit_by_sku": 15})
+        out["details_raw"] = {k: (v[:5] if isinstance(v, list) else v)
+                              for k, v in raw.items()} if isinstance(raw, dict) else raw
+    except Exception as e:
+        out["details_raw_error"] = _http_err(e)
     return out
 
 
