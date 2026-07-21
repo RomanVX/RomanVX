@@ -394,6 +394,13 @@ async def _gather_context() -> str:
                          + json.dumps(slim, ensure_ascii=False))
     except Exception as e:
         _log.warning("qa competitors: %s", e)
+    try:
+        import agent_strategist as _st
+        mem = await _st._t_memory({})
+        parts.append("СТРАТЕГИЯ (план и задачи агента-стратега; на вопросы "
+                     "«какой план/что решили/какие задачи» отвечай отсюда): " + mem)
+    except Exception as e:
+        _log.warning("qa strategy: %s", e)
     return "\n\n".join(parts)
 
 
@@ -695,13 +702,21 @@ async def bot_loop() -> None:
                     # несколько минут) — ждём и повторяем, а не отказываем
                     asyncio.get_event_loop().create_task(_review_with_retry(thread))
                 elif cmd == "/strategy":
-                    await tg_send("🧠 Стратег сел за данные — отчёт будет через "
-                                  "несколько минут…", thread_id=thread)
+                    focus_q = raw.split(None, 1)[1].strip() if len(raw.split(None, 1)) > 1 else ""
+                    await tg_send("🧠 Стратег сел за данные — "
+                                  + ("разберу вопрос и вернусь с ответом…" if focus_q
+                                     else "отчёт будет через несколько минут…"),
+                                  thread_id=thread)
                     import agent_strategist as _st
 
-                    async def _strun(th=thread):
+                    async def _strun(th=thread, fq=focus_q):
                         res = await _st.run_session(
-                            trigger="команда /strategy в Telegram")
+                            trigger="команда /strategy в Telegram",
+                            focus=(f"Владелец задал вопрос: «{fq}». Исследуй "
+                                   f"именно его данными и ответь развёрнуто с "
+                                   f"обоснованием; полный разбор кабинета не "
+                                   f"нужен, но память прочитай и обнови, если "
+                                   f"ответ рождает/закрывает задачи.") if fq else "")
                         if res.get("error"):
                             await tg_send(f"⚠️ Сессия не удалась: {res['error']}",
                                           thread_id=th)
