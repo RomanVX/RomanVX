@@ -448,3 +448,51 @@ async def get_analytics_data(date_from: str, date_to: str,
         offset += limit
         await asyncio.sleep(1)
     return out
+
+
+# ── Поисковые запросы (Seller API, полные данные — Premium/Premium Plus) ──────
+async def get_product_queries(date_from: str, date_to: str) -> list[dict]:
+    """POST /v1/analytics/product-queries — сводка по СВОИМ товарам:
+    сколько уникальных пользователей искали, GMV из поиска, конверсия.
+
+    Данные считаются с лагом ~3 дня; глубже месяца — только по неделям."""
+    if not OZON_CLIENT_ID or not OZON_API_KEY:
+        return []
+    out: list[dict] = []
+    page = 0
+    while True:
+        data = await _post("/v1/analytics/product-queries", {
+            "date_from": date_from, "date_to": date_to,
+            "page": page, "page_size": 1000,
+        })
+        items = data.get("items") or (data.get("result") or {}).get("items") or []
+        out.extend(items)
+        page += 1
+        pages = int(data.get("page_count") or 0)
+        if not items or page >= max(pages, 1):
+            break
+        await asyncio.sleep(1)
+    return out
+
+
+async def get_query_details(date_from: str, date_to: str,
+                            skus: list | None = None) -> list[dict]:
+    """POST /v1/analytics/product-queries/details — ТЕКСТЫ запросов по своим
+    товарам с частотой/кликами. Источник «радара трендов»."""
+    if not OZON_CLIENT_ID or not OZON_API_KEY:
+        return []
+    body: dict = {"date_from": date_from, "date_to": date_to,
+                  "page": 0, "page_size": 1000}
+    if skus:
+        body["skus"] = [str(s) for s in skus][:1000]
+    out: list[dict] = []
+    while True:
+        data = await _post("/v1/analytics/product-queries/details", body)
+        items = data.get("items") or (data.get("result") or {}).get("items") or []
+        out.extend(items)
+        body["page"] += 1
+        pages = int(data.get("page_count") or 0)
+        if not items or body["page"] >= max(pages, 1):
+            break
+        await asyncio.sleep(1)
+    return out

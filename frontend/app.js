@@ -2743,12 +2743,13 @@ const _TOOL_HINTS = {
   margin: 'Затраты на единицу из фактической юнитки: вводите цену/себестоимость — видите прибыль, маржу и точку безубыточности',
   competitors: 'Суточные срезы выдачи WB по вашим запросам: позиции, цены и демпинг конкурентов (сбор через домашний агент)',
   whstocks: 'Остатки WB по складам и сколько денег заморожено в стоке (по себестоимости)',
+  trends: 'Нарастающие поисковые запросы: свои из Ozon API + рыночные из выгрузки ЛК. Скоринг силы тренда — что производить следующим',
 };
 
 function setTool(t) {
   if (_toolActive === t) return;
   _toolActive = t;
-  ['Prod', 'Clusters', 'Adv', 'Niche', 'Nichecalc', 'Visuals', 'Margin', 'Competitors', 'Whstocks'].forEach(k => {
+  ['Prod', 'Clusters', 'Adv', 'Niche', 'Nichecalc', 'Visuals', 'Margin', 'Competitors', 'Whstocks', 'Trends'].forEach(k => {
     document.getElementById('tool' + k)?.classList.toggle('active', k.toLowerCase() === t);
   });
   const hint = document.getElementById('toolHint');
@@ -2761,13 +2762,14 @@ function reloadTool() {
      adv: () => loadAdv(true), niche: () => loadDemand(true),
      nichecalc: () => renderNicheForm(), visuals: () => renderVisualsForm(),
      margin: () => loadMargin(true), competitors: () => loadCompetitors(true),
-     whstocks: () => loadWhStocks(true) })[_toolActive]();
+     whstocks: () => loadWhStocks(true), trends: () => loadTrends(true) })[_toolActive]();
 }
 function loadTools() {
   ({ prod: loadProductolog, clusters: loadClusters, adv: loadAdv,
      niche: loadDemand, nichecalc: renderNicheForm,
      visuals: renderVisualsForm, margin: loadMargin,
-     competitors: loadCompetitors, whstocks: loadWhStocks })[_toolActive]();
+     competitors: loadCompetitors, whstocks: loadWhStocks,
+     trends: loadTrends })[_toolActive]();
 }
 
 // ── Остатки по складам + стоимость стока ──────────────────────────────────────
@@ -2847,6 +2849,118 @@ function renderWhStocks() {
   });
   html += `</tbody></table></div></div></div>
   <div class="text-secondary small mt-2">Склады отсортированы по объёму, показан топ-8${otherQty ? ' (+«Прочие»)' : ''}. «💰 Заморожено» — деньги в товаре на складах WB по себестоимости. Обновлено: ${d.fetched_at}</div>`;
+  wrap.innerHTML = html;
+}
+
+// ── Радар трендов: нарастающие поисковые запросы ─────────────────────────────
+let _trendsData = null;
+async function loadTrends(refresh) {
+  const wrap = document.getElementById('toolsWrap');
+  if (!wrap || _toolActive !== 'trends') return;
+  if (_trendsData && !refresh) { renderTrends(); return; }
+  wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>Собираем серии запросов…</div>';
+  try {
+    _trendsData = await fetchJSON('/api/tools/trends', 45000);
+    renderTrends();
+  } catch (e) {
+    wrap.innerHTML = `<div class="alert alert-danger mt-2">Ошибка: ${esc(e.message)}</div>`;
+  }
+}
+
+async function trendsCollectNow(btn) {
+  btn.disabled = true; btn.textContent = '⏳ Тянем запросы из Ozon API…';
+  try {
+    const r = await fetch('/api/tools/trends/collect', { method: 'POST' });
+    const d = await r.json();
+    btn.textContent = d.error ? ('Ошибка: ' + d.error.slice(0, 60)) : `Готово: ${d.rows} запросов за нед. ${d.week}`;
+    if (!d.error) loadTrends(true);
+  } catch (e) { btn.textContent = 'Ошибка сети'; }
+  setTimeout(() => { btn.disabled = false; btn.textContent = '🔄 Собрать из Ozon'; }, 5000);
+}
+
+async function trendsUpload(inp) {
+  const f = inp.files && inp.files[0];
+  if (!f) return;
+  const week = document.getElementById('trendsWeek')?.value || '';
+  const lbl = document.getElementById('trendsUploadLbl');
+  if (lbl) lbl.textContent = '⏳ Загружаем…';
+  const fd = new FormData();
+  fd.append('file', f);
+  try {
+    const r = await fetch('/api/tools/trends/upload' + (week ? `?week=${week}` : ''), { method: 'POST', body: fd });
+    const d = await r.json();
+    if (lbl) lbl.textContent = d.error ? ('⚠ ' + d.error) : `✓ ${d.rows} запросов (неделя ${d.week})`;
+    if (!d.error) loadTrends(true);
+  } catch (e) { if (lbl) lbl.textContent = '⚠ Ошибка сети'; }
+  inp.value = '';
+}
+
+function _sparkline(series) {
+  const pts = series.map((v, i) => [i, v]).filter(p => p[1] != null);
+  if (pts.length < 2) return '';
+  const max = Math.max(...pts.map(p => p[1])) || 1;
+  const min = Math.min(...pts.map(p => p[1]));
+  const W = 90, H = 24, n = series.length - 1 || 1;
+  const xy = pts.map(p => `${(p[0] / n * W).toFixed(1)},${(H - 3 - (p[1] - min) / (max - min || 1) * (H - 6)).toFixed(1)}`);
+  const up = pts[pts.length - 1][1] >= pts[0][1];
+  return `<svg width="${W}" height="${H}" style="vertical-align:middle"><polyline points="${xy.join(' ')}" fill="none" stroke="${up ? 'var(--pos)' : 'var(--neg)'}" stroke-width="1.6"/></svg>`;
+}
+
+const _TREND_STAGE = {
+  'выстрел': ['#f43f5e', '🚀'], 'рост': ['#22c55e', '📈'], 'оживление': ['#84cc16', '↗'],
+  'плато': ['#94a3b8', '→'], 'спад': ['#64748b', '↘'], 'мало данных': ['#475569', '·'],
+};
+
+function renderTrends() {
+  if (_toolActive !== 'trends') return;
+  const wrap = document.getElementById('toolsWrap');
+  if (!wrap || !_trendsData) return;
+  const d = _trendsData;
+  const items = d.items || [];
+  const src = d.sources || {};
+  let html = `<div class="card bg-card p-3 mb-3">
+    <div class="d-flex gap-2 flex-wrap align-items-center">
+      <button class="btn btn-sm btn-outline-info" onclick="trendsCollectNow(this)">🔄 Собрать из Ozon</button>
+      <label class="btn btn-sm btn-outline-success mb-0">⬆ Загрузить выгрузку ЛК
+        <input type="file" accept=".xlsx,.csv" hidden onchange="trendsUpload(this)"></label>
+      <input type="date" id="trendsWeek" class="form-control form-control-sm" style="width:150px" title="Понедельник недели выгрузки (для файла из ЛК)">
+      <span id="trendsUploadLbl" class="small text-secondary"></span>
+      <span class="ms-auto small text-secondary">своих: ${src.ozon_my || 0} · рыночных: ${src.ozon_market || 0}</span>
+    </div>
+    <div class="small text-secondary mt-2">Свои запросы приходят из Ozon Seller API автоматически (вт, 12:00).
+    Рыночные: ЛК Ozon → Аналитика → Расширение ассортимента → <b>Поисковые запросы</b> → выгрузка XLSX → кнопка выше (укажи понедельник недели, за которую выгрузка).</div>
+  </div>`;
+  if (d.message) { wrap.innerHTML = html + `<div class="alert alert-info">${esc(d.message)}</div>`; return; }
+  if (!items.length) { wrap.innerHTML = html + '<div class="alert alert-info">Запросов пока нет</div>'; return; }
+
+  html += `<div class="card border-0 bg-card"><div class="card-body p-0"><div class="table-responsive" style="max-height:70vh">
+    <table class="table table-sm align-middle mb-0 text-nowrap" style="font-size:.85rem"><thead><tr>
+    <th style="position:sticky;left:0;background:var(--t-sticky);z-index:2">Запрос</th>
+    <th>Источник</th><th class="text-center">Динамика</th>
+    <th class="text-end" title="Частота за последнюю неделю">Посл. нед</th>
+    <th class="text-end" title="Средний рост, % в неделю">Рост %/нед</th>
+    <th class="text-end" title="Последняя неделя против истории (в сигмах)">Z</th>
+    <th class="text-end" title="Ускорение: наклон последних недель минус ранних">Ускор.</th>
+    <th class="text-end" title="Число товаров в выдаче по запросу (насыщенность ниши)">Товаров</th>
+    <th class="text-end">Скоринг</th><th>Стадия</th></tr></thead><tbody>`;
+  items.forEach(i => {
+    const [clr, ico] = _TREND_STAGE[i.stage] || ['#94a3b8', ''];
+    const scoreClr = i.score >= 70 ? 'var(--pos)' : i.score >= 55 ? 'var(--gold)' : 'var(--text-soft)';
+    html += `<tr>
+      <td style="position:sticky;left:0;background:var(--t-sticky);max-width:260px;overflow:hidden;text-overflow:ellipsis">${esc(i.query)}</td>
+      <td class="small text-secondary">${i.source === 'ozon_my' ? 'свои' : 'рынок'}</td>
+      <td class="text-center">${_sparkline(i.series)}</td>
+      <td class="text-end fw-bold">${fmt(Math.round(i.last || 0))}</td>
+      <td class="text-end" style="color:${(i.slope_pct || 0) > 0 ? 'var(--pos)' : 'var(--neg)'}">${i.slope_pct == null ? '—' : (i.slope_pct > 0 ? '+' : '') + i.slope_pct + '%'}</td>
+      <td class="text-end">${i.z == null ? '—' : i.z}</td>
+      <td class="text-end">${i.accel == null ? '—' : (i.accel > 0 ? '+' : '') + i.accel}</td>
+      <td class="text-end text-secondary">${i.items_cnt ? fmt(Math.round(i.items_cnt)) : '—'}</td>
+      <td class="text-end fw-bold" style="color:${scoreClr}">${i.score == null ? '—' : i.score}</td>
+      <td><span class="badge" style="background:${clr}22;color:${clr};border:1px solid ${clr}55">${ico} ${esc(i.stage)}</span></td></tr>`;
+  });
+  html += `</tbody></table></div></div></div>
+  <div class="text-secondary small mt-2">Скоринг 0–100: рост частоты + всплеск против истории + ускорение.
+  Смотри «рост»/«выстрел» с малым числом товаров в выдаче — там спрос обгоняет предложение. Обновлено: ${d.fetched_at || ''}</div>`;
   wrap.innerHTML = html;
 }
 

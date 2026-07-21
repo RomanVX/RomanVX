@@ -13,7 +13,7 @@ import logging
 import time as _time
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 
 import db
 from config import ANTHROPIC_API_KEY
@@ -3375,3 +3375,307 @@ async def get_funnel(refresh: bool = Query(default=False)):
     import snapshot as _snapmod
     await asyncio.to_thread(_snapmod.save, "oz_funnel", result)
     return result
+
+
+# ══ Радар трендов: нарастающие поисковые запросы (Ozon API + выгрузки ЛК) ═════
+def _trend_init():
+    db.execute("""CREATE TABLE IF NOT EXISTS trend_weekly (
+        week TEXT, source TEXT, query TEXT,
+        cnt REAL, items_cnt REAL, price REAL, conv REAL, gmv REAL,
+        PRIMARY KEY (week, source, query))""")
+
+
+def _trend_monday(d) -> str:
+    return (d - timedelta(days=d.weekday())).strftime("%Y-%m-%d")
+
+
+def _trend_last_week() -> tuple[str, str]:
+    """Последняя ЗАВЕРШЁННАЯ неделя, отстоящая от сегодня минимум на 3 дня
+    (Ozon досчитывает данные ~3 дня)."""
+    from datetime import date as _date
+    safe_end = _date.today() - timedelta(days=3)
+    monday = safe_end - timedelta(days=safe_end.weekday())     # пн текущей «безопасной» недели
+    prev_mon = monday - timedelta(days=7)
+    return prev_mon.isoformat(), (prev_mon + timedelta(days=6)).isoformat()
+
+
+def _trend_pick(d: dict, keys, default=None):
+    for k in keys:
+        if k in d and d[k] not in (None, ""):
+            return d[k]
+    return default
+
+
+_TREND_Q = ("query", "search_query", "query_text", "text", "phrase")
+_TREND_CNT = ("queries_count", "query_count", "count", "unique_search_users",
+              "search_count", "popularity")
+_TREND_GMV = ("gmv", "revenue", "ordered_amount")
+_TREND_CONV = ("view_conversion", "conversion", "conv_to_cart")
+
+
+def _trend_num(v) -> float:
+    try:
+        return float(str(v).replace(",", ".").replace(" ", "").replace(" ", ""))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+async def trends_collect_ozon() -> dict:
+    """Снять тексты запросов своих товаров из Ozon Seller API за последнюю
+    завершённую неделю и сложить в trend_weekly (source='ozon_my')."""
+    import ozon_client
+    import snapshot as _snap
+    _trend_init()
+    d_from, d_to = _trend_last_week()
+    items = await ozon_client.get_query_details(d_from, d_to)
+    if items:
+        await asyncio.to_thread(_snap.save, "trends_probe_last",
+                                {"period": [d_from, d_to], "sample": items[:3]})
+    rows = []
+    for it in items:
+        q = str(_trend_pick(it, _TREND_Q, "") or "").strip().lower()
+        if not q:
+            continue
+        rows.append((d_from, "ozon_my", q[:200],
+                     _trend_num(_trend_pick(it, _TREND_CNT, 0)),
+                     0.0, 0.0,
+                     _trend_num(_trend_pick(it, _TREND_CONV, 0)),
+                     _trend_num(_trend_pick(it, _TREND_GMV, 0))))
+    # один запрос может прийти по нескольким SKU — суммируем частоту
+    merged: dict = {}
+    for w, s, q, cnt, ic, pr, cv, gm in rows:
+        m = merged.setdefault((w, s, q), [w, s, q, 0.0, 0.0, 0.0, 0.0, 0.0])
+        m[3] += cnt
+        m[6] = max(m[6], cv)
+        m[7] += gm
+    rows = [tuple(v) for v in merged.values()]
+    if rows:
+        await asyncio.to_thread(
+            db.executemany,
+            "INSERT INTO trend_weekly VALUES (?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(week, source, query) DO UPDATE SET cnt=excluded.cnt, "
+            "conv=excluded.conv, gmv=excluded.gmv"
+            if db.IS_PG else
+            "INSERT OR REPLACE INTO trend_weekly VALUES (?,?,?,?,?,?,?,?)",
+            rows)
+    _log.info("trends: ozon_my %s—%s → %d запросов", d_from, d_to, len(rows))
+    return {"week": d_from, "period": [d_from, d_to], "rows": len(rows)}
+
+
+@router.post("/trends/collect")
+async def trends_collect_now():
+    """Ручной сбор поисковых запросов Ozon (кнопка на фронте)."""
+    try:
+        return await trends_collect_ozon()
+    except Exception as e:
+        _log.error("trends collect: %s", e)
+        return {"error": str(e)[:300]}
+
+
+@router.get("/trends/probe", include_in_schema=False)
+async def trends_probe():
+    """Диагностика: сырой ответ product-queries/details (первые 3 записи)."""
+    import ozon_client
+    d_from, d_to = _trend_last_week()
+    try:
+        items = await ozon_client.get_query_details(d_from, d_to)
+        return {"period": [d_from, d_to], "rows": len(items), "sample": items[:3]}
+    except Exception as e:
+        return {"period": [d_from, d_to], "error": str(e)[:400]}
+
+
+@router.post("/trends/upload")
+async def trends_upload(file: UploadFile = File(...), week: str = Query(default="")):
+    """Выгрузка «Поисковые запросы» из ЛК Ozon (Аналитика → Расширение
+    ассортимента) — XLSX/CSV с РЫНОЧНЫМИ запросами. week = понедельник периода
+    выгрузки (иначе — последняя завершённая неделя)."""
+    import io
+    _trend_init()
+    wk = (week or _trend_last_week()[0])[:10]
+    raw = await file.read()
+    rows: list[list] = []
+    name = (file.filename or "").lower()
+    try:
+        if name.endswith(".csv") or b";" in raw[:2000] and not name.endswith((".xlsx", ".xls")):
+            import csv
+            text = raw.decode("utf-8-sig", errors="replace")
+            delim = ";" if text.count(";") >= text.count(",") else ","
+            rows = list(csv.reader(io.StringIO(text), delimiter=delim))
+        else:
+            import openpyxl
+            wb_x = openpyxl.load_workbook(io.BytesIO(raw), data_only=True, read_only=True)
+            ws = max(wb_x.worksheets, key=lambda s: s.max_row or 0)
+            rows = [list(r) for r in ws.iter_rows(values_only=True)]
+    except Exception as e:
+        return {"error": f"Не смог прочитать файл: {str(e)[:200]}"}
+
+    # ищем строку заголовков (в ней есть слово «запрос»)
+    hdr_i, hdr = -1, []
+    for i, r in enumerate(rows[:20]):
+        cells = [str(c or "").strip().lower() for c in r]
+        if any("запрос" in c for c in cells):
+            hdr_i, hdr = i, cells
+            break
+    if hdr_i < 0:
+        return {"error": "Не нашёл колонку с запросами — это точно выгрузка "
+                         "«Поисковые запросы» из ЛК Ozon?"}
+
+    def _col(*words, exclude=()):
+        for j, h in enumerate(hdr):
+            if any(w in h for w in words) and not any(x in h for x in exclude):
+                return j
+        return -1
+
+    c_q = _col("запрос")
+    c_cnt = _col("количество запрос", "популярн", "частот")
+    if c_cnt < 0:
+        c_cnt = _col("запросов", exclude=("поисков",))
+    c_items = _col("товаров", "количество товар")
+    c_price = _col("цена", "стоимост")
+    c_conv = _col("конверс")
+
+    out = []
+    for r in rows[hdr_i + 1:]:
+        if not r or c_q >= len(r):
+            continue
+        q = str(r[c_q] or "").strip().lower()
+        if not q or len(q) < 2:
+            continue
+        out.append((wk, "ozon_market", q[:200],
+                    _trend_num(r[c_cnt]) if 0 <= c_cnt < len(r) else 0.0,
+                    _trend_num(r[c_items]) if 0 <= c_items < len(r) else 0.0,
+                    _trend_num(r[c_price]) if 0 <= c_price < len(r) else 0.0,
+                    _trend_num(r[c_conv]) if 0 <= c_conv < len(r) else 0.0,
+                    0.0))
+    if not out:
+        return {"error": "Файл прочитан, но строк с запросами не нашлось"}
+    await asyncio.to_thread(
+        db.executemany,
+        "INSERT INTO trend_weekly VALUES (?,?,?,?,?,?,?,?) "
+        "ON CONFLICT(week, source, query) DO UPDATE SET cnt=excluded.cnt, "
+        "items_cnt=excluded.items_cnt, price=excluded.price, conv=excluded.conv"
+        if db.IS_PG else
+        "INSERT OR REPLACE INTO trend_weekly VALUES (?,?,?,?,?,?,?,?)",
+        out)
+    _log.info("trends: upload %s → %d рыночных запросов (неделя %s)",
+              file.filename, len(out), wk)
+    return {"week": wk, "rows": len(out)}
+
+
+def _trend_score(series: list[tuple[str, float]]) -> dict:
+    """Метрики тренда по недельной серии [(week, cnt), …] (отсортирована).
+
+    slope_pct — средний рост %/нед (лин. регрессия, нормированная на среднее),
+    z — последняя точка против истории, accel — ускорение (наклон 2-й половины
+    минус 1-й), score 0–100, stage — стадия жизни тренда."""
+    import math
+    pts = [(i, c) for i, (_w, c) in enumerate(series) if c is not None]
+    n = len(pts)
+    if n < 2:
+        return {"slope_pct": None, "z": None, "accel": None, "score": None,
+                "stage": "мало данных"}
+    xs = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
+    mean_y = sum(ys) / n or 1.0
+
+    def _slope(px, py):
+        m = len(px)
+        if m < 2:
+            return 0.0
+        mx = sum(px) / m
+        my = sum(py) / m
+        den = sum((x - mx) ** 2 for x in px) or 1.0
+        return sum((x - mx) * (y - my) for x, y in zip(px, py)) / den
+
+    slope_pct = _slope(xs, ys) / mean_y * 100
+    half = n // 2
+    accel = (_slope(xs[half:], ys[half:]) - _slope(xs[:half], ys[:half])) / mean_y * 100
+    hist = ys[:-1]
+    mh = sum(hist) / len(hist)
+    sd = (sum((y - mh) ** 2 for y in hist) / len(hist)) ** 0.5 or max(mh * .1, 1.0)
+    z = (ys[-1] - mh) / sd
+    score = 50 + 25 * math.tanh(slope_pct / 20) + 15 * math.tanh(z / 2) \
+        + 10 * math.tanh(accel / 15)
+    if z >= 2.5 and slope_pct > 0:
+        stage = "выстрел"
+    elif slope_pct >= 15 and z >= 0.5:
+        stage = "рост"
+    elif slope_pct >= 5:
+        stage = "оживление"
+    elif slope_pct <= -10:
+        stage = "спад"
+    else:
+        stage = "плато"
+    return {"slope_pct": round(slope_pct, 1), "z": round(z, 2),
+            "accel": round(accel, 1), "score": round(max(0, min(100, score))),
+            "stage": stage}
+
+
+@router.get("/trends")
+async def trends_get(weeks: int = Query(default=12), min_cnt: float = Query(default=0)):
+    """Радар трендов: недельные серии запросов + скоринг «нарастания»."""
+    from config import USE_MOCK
+    if USE_MOCK:
+        demo = [
+            ("крем с муцином улитки", "ozon_market", [120, 180, 340, 610, 980, 1720], 210),
+            ("пептидная сыворотка", "ozon_market", [850, 900, 1100, 1350, 1600, 2050], 480),
+            ("гель для умывания pH", "ozon_my", [40, 44, 52, 66, 78, 95], 0),
+            ("лубрикант на водной основе", "ozon_my", [210, 205, 215, 208, 220, 212], 0),
+            ("тонер с центеллой", "ozon_market", [2400, 2300, 2100, 1850, 1600, 1350], 890),
+        ]
+        items = []
+        from datetime import date as _date
+        mon = _date.today() - timedelta(days=_date.today().weekday() + 7)
+        wks = [(mon - timedelta(days=7 * (5 - i))).isoformat() for i in range(6)]
+        for q, src, ser, ic in demo:
+            sc = _trend_score(list(zip(wks, [float(x) for x in ser])))
+            items.append({"query": q, "source": src, "series": ser, "weeks": wks,
+                          "last": ser[-1], "items_cnt": ic, "price": 0, "conv": 0,
+                          **sc})
+        items.sort(key=lambda x: -(x["score"] or 0))
+        return {"items": items, "weeks": wks, "sources": {"ozon_my": 2, "ozon_market": 3},
+                "fetched_at": datetime.utcnow().strftime("%d.%m.%Y %H:%M UTC")}
+
+    _trend_init()
+    weeks = max(4, min(26, weeks))
+    rows = await asyncio.to_thread(
+        db.fetchall,
+        "SELECT week, source, query, cnt, items_cnt, price, conv, gmv "
+        "FROM trend_weekly ORDER BY week")
+    if not rows:
+        return {"items": [], "weeks": [], "sources": {},
+                "message": "Данных ещё нет: нажмите «Собрать из Ozon» и/или "
+                           "загрузите выгрузку «Поисковые запросы» из ЛК"}
+    all_weeks = sorted({str(r[0])[:10] for r in rows})[-weeks:]
+    wk_ix = {w: i for i, w in enumerate(all_weeks)}
+    by_key: dict = {}
+    for w, src, q, cnt, ic, pr, cv, gm in rows:
+        w = str(w)[:10]
+        if w not in wk_ix:
+            continue
+        it = by_key.setdefault((src, q), {
+            "query": q, "source": src, "series": [None] * len(all_weeks),
+            "items_cnt": 0, "price": 0, "conv": 0, "gmv": 0})
+        it["series"][wk_ix[w]] = cnt or 0
+        if ic:
+            it["items_cnt"] = ic
+        if pr:
+            it["price"] = pr
+        if cv:
+            it["conv"] = cv
+        if gm:
+            it["gmv"] = (it["gmv"] or 0) + gm
+    items = []
+    src_cnt: dict = {}
+    for (src, _q), it in by_key.items():
+        pts = [(w, c) for w, c in zip(all_weeks, it["series"])]
+        last = next((c for c in reversed(it["series"]) if c is not None), 0)
+        if min_cnt and (last or 0) < min_cnt:
+            continue
+        it.update(_trend_score(pts))
+        it["last"] = last
+        src_cnt[src] = src_cnt.get(src, 0) + 1
+        items.append(it)
+    items.sort(key=lambda x: (-(x["score"] or -1), -(x["last"] or 0)))
+    return {"items": items[:400], "weeks": all_weeks, "sources": src_cnt,
+            "fetched_at": datetime.utcnow().strftime("%d.%m.%Y %H:%M UTC")}
