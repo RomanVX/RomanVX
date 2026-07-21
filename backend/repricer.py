@@ -249,7 +249,11 @@ async def overview(refresh: bool = False, include_margin: bool = True) -> dict:
                 ratios_dirty = True
         else:
             ratio = ratios.get(c["art"])
+        if b:
+            q = b.get("qty_f") if b.get("qty_f") is not None else b.get("qty_m")
+            row["qty_month"] = round(q or 0)
         if ratio:
+            row["seller_per_buyer"] = round(1 / ratio, 4)   # выручка = qty × цена× это
             row["wb_buyer_now"] = round((lp.get("discounted") or 0) * ratio) or None
             if c.get("target"):
                 need_seller = c["target"] / ratio

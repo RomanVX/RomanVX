@@ -3141,11 +3141,12 @@ function renderRepricer() {
     <table class="table table-sm align-middle mb-0 text-nowrap" style="font-size:.84rem"><thead>
     <tr>
       <th rowspan="2" style="position:sticky;left:0;background:var(--t-sticky);z-index:2;vertical-align:bottom">Товар</th>
-      <th rowspan="2" class="text-end" style="vertical-align:bottom" title="Какую цену увидит покупатель, когда репрайсер применит эту цель">Целевая цена<br>для покупателя</th>
       <th colspan="2" class="text-center" style="border-left:1px solid var(--border-2)">Цена на Ozon</th>
       <th colspan="2" class="text-center" style="border-left:1px solid var(--border-2)">Цена на Wildberries</th>
       <th rowspan="2" class="text-center" style="vertical-align:bottom">Вкл</th>
       <th rowspan="2" style="border-left:1px solid var(--border-2);vertical-align:bottom">💡 Рекомендация по цене</th>
+      <th rowspan="2" class="text-end" style="vertical-align:bottom" title="Цена, которую увидит покупатель — её будет держать репрайсер">Реком. цена<br>для покупателя</th>
+      <th rowspan="2" class="text-end" style="vertical-align:bottom" title="Прогноз выручки в месяц при этой цене (прогноз штук × цена продавца)">Выручка/мес<br>при этой цене</th>
       <th rowspan="2"></th>
     </tr>
     <tr>
@@ -3163,12 +3164,12 @@ function renderRepricer() {
   GROUP_ORDER.filter(g => groupMap[g]).concat(Object.keys(groupMap).filter(g => !GROUP_ORDER.includes(g))).forEach(g => {
     const list = groupMap[g];
     if (!list) return;
-    h += `<tr class="table-secondary"><td colspan="9" style="padding:5px 12px"><strong>${esc(g)}</strong>
+    h += `<tr class="table-secondary"><td colspan="10" style="padding:5px 12px"><strong>${esc(g)}</strong>
       <span class="text-secondary small">· ${list.length} SKU</span></td></tr>`;
     list.forEach(c => {
       const m = c.margin_at_target;
       const mClr = m == null ? '' : m < 10 ? 'var(--neg)' : m < 20 ? 'var(--gold)' : 'var(--pos)';
-      const p = props[c.art];
+      const p = props[c.art] || null;
       let rec = '';
       if (p) {
         const nowB = c.oz_buyer_now || c.wb_buyer_now;
@@ -3181,17 +3182,21 @@ function renderRepricer() {
       } else {
         rec = '<span class="small text-secondary">нет данных юнитки</span>';
       }
+      const recPrice = p && p.target != null ? p.target : c.target;
+      const rev = (c.qty_month && c.seller_per_buyer && recPrice)
+        ? fmtRub(Math.round(c.qty_month * recPrice * c.seller_per_buyer)) : '—';
       h += `<tr>
         <td style="position:sticky;left:0;background:var(--t-sticky);max-width:240px"><code style="color:var(--val-soft)">${esc(c.art)}</code>
           <div class="small text-secondary" style="max-width:230px;overflow:hidden;text-overflow:ellipsis">${esc((c.name || '').slice(0, 42))}</div></td>
-        <td class="text-end"><input id="rt-${esc(c.art)}" type="number" class="form-control form-control-sm text-end d-inline-block" style="width:88px" value="${c.target ?? ''}"></td>
         <td class="text-end" style="border-left:1px solid var(--border-2)">${c.oz_price_now ? fmt(c.oz_price_now) : '—'}</td>
         <td class="text-end fw-bold">${c.oz_buyer_now ? fmt(c.oz_buyer_now) : '—'}</td>
         <td class="text-end" style="border-left:1px solid var(--border-2)">${c.wb_seller_now ? fmt(c.wb_seller_now) : '—'}</td>
         <td class="text-end fw-bold">${c.wb_buyer_now ? fmt(c.wb_buyer_now) : '—'}</td>
         <td class="text-center"><div class="form-check form-switch d-inline-block"><input class="form-check-input" type="checkbox" ${c.active ? 'checked' : ''} onchange="reprToggle('${esc(c.art)}', this.checked)"></div></td>
         <td style="border-left:1px solid var(--border-2)">${rec}</td>
-        <td><button class="btn btn-sm btn-outline-info py-0" title="Сохранить строку" onclick="reprSet('${esc(c.art)}')">💾</button></td>
+        <td class="text-end"><input id="rt-${esc(c.art)}" type="number" class="form-control form-control-sm text-end d-inline-block ${p ? 'border-warning' : ''}" style="width:88px" value="${recPrice ?? ''}"></td>
+        <td class="text-end" style="color:var(--gold)">${rev}</td>
+        <td><button class="btn btn-sm btn-outline-info py-0" title="Сохранить цену" onclick="reprSet('${esc(c.art)}')">💾</button></td>
       </tr>`;
     });
   });
