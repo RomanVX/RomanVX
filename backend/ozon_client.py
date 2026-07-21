@@ -498,7 +498,8 @@ async def get_query_details(date_from: str, date_to: str,
     out: list[dict] = []
     while True:
         data = await _post("/v1/analytics/product-queries/details", body)
-        items = data.get("items") or (data.get("result") or {}).get("items") or []
+        items = (data.get("queries") or data.get("items")
+                 or (data.get("result") or {}).get("items") or [])
         out.extend(items)
         body["page"] += 1
         pages = int(data.get("page_count") or 0)
