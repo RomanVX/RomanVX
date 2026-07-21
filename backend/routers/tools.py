@@ -3800,5 +3800,12 @@ async def trends_get(weeks: int = Query(default=12), min_cnt: float = Query(defa
         src_cnt[src] = src_cnt.get(src, 0) + 1
         items.append(it)
     items.sort(key=lambda x: (-(x["score"] or -1), -(x["last"] or 0)))
-    return {"items": items[:400], "weeks": all_weeks, "sources": src_cnt,
+    # лимит по каждому источнику отдельно — иначе «свои» вытесняются рынком
+    capped, per_src = [], {}
+    for it in items:
+        c = per_src.get(it["source"], 0)
+        if c < 400:
+            capped.append(it)
+            per_src[it["source"]] = c + 1
+    return {"items": capped, "weeks": all_weeks, "sources": src_cnt,
             "fetched_at": datetime.utcnow().strftime("%d.%m.%Y %H:%M UTC")}
