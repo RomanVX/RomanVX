@@ -196,16 +196,33 @@ async def _t_promos(_a: dict) -> str:
         out["ozon_error"] = str(e)[:200]
     try:
         import wb_client
+        import catalog as _cat
+        nm_to_art = {str(k): v for k, v in getattr(_cat, "WB_ID_TO_ART", {}).items()}
         promos = await wb_client.get_promotions()
-        out["wb"] = [{"id": p.get("id"), "name": p.get("name"),
-                      "start": (p.get("startDateTime") or "")[:10],
-                      "end": (p.get("endDateTime") or "")[:10],
-                      "type": p.get("type"),
-                      "in_promo": (p.get("inPromoActionTotal")
-                                   or p.get("inPromoActionLeftovers")),
-                      "advantages": p.get("advantages"),
-                      "discount_percent": p.get("participationPercentage")}
-                     for p in promos[:20]] or "акций в календаре WB нет"
+        wb_list = []
+        for p in promos[:12]:
+            row = {"id": p.get("id"), "name": p.get("name"),
+                   "start": (p.get("startDateTime") or "")[:10],
+                   "end": (p.get("endDateTime") or "")[:10],
+                   "type": p.get("type"),
+                   "advantages": p.get("advantages")}
+            try:  # кто из наших уже затянут в акцию и на каких условиях
+                noms = await wb_client.get_promo_nomenclatures(int(p.get("id")))
+                ours = []
+                for n in noms[:60]:
+                    art = nm_to_art.get(str(n.get("id") or n.get("nmID") or ""))
+                    if art:
+                        ours.append({"art": art,
+                                     "plan_price": n.get("planPrice") or n.get("price"),
+                                     "discount": n.get("planDiscount") or n.get("discount")})
+                row["our_in_action"] = ours or "никого"
+            except Exception as e2:
+                row["nomenclatures_error"] = str(e2)[:120]
+            wb_list.append(row)
+        out["wb"] = wb_list or "акций в календаре WB нет"
+        out["wb_note"] = ("our_in_action — наши товары, уже затянутые в акцию, "
+                         "с плановой ценой/скидкой; пусто у всех = автоакции "
+                         "ещё не применились или товары не участвуют")
     except Exception as e:
         out["wb_error"] = str(e)[:200]
     return json.dumps(out, ensure_ascii=False)

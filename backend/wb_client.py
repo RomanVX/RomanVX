@@ -510,3 +510,21 @@ async def get_promotions(days_ahead: int = 30) -> list[dict]:
         det = ((r2.json() or {}).get("data") or {}).get("promotions") or []
         return det
     return promos
+
+
+async def get_promo_nomenclatures(promo_id: int, in_action: bool = True,
+                                  limit: int = 100) -> list[dict]:
+    """Номенклатуры акции WB: кто из наших УЖЕ в акции (in_action=True)
+    или подходит как кандидат (False). Поля прокидываем как есть."""
+    if USE_MOCK:
+        return []
+    r = await _http().get(
+        "https://dp-calendar-api.wildberries.ru/api/v1/calendar/promotions/nomenclatures",
+        headers=_headers(),
+        params={"promotionID": promo_id, "inAction": str(in_action).lower(),
+                "limit": limit, "offset": 0})
+    if not r.is_success:
+        _log.warning("WB promo nomenclatures %s → %s %s",
+                     promo_id, r.status_code, r.text[:150])
+        return []
+    return ((r.json() or {}).get("data") or {}).get("nomenclatures") or []
