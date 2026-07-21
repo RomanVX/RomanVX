@@ -2854,17 +2854,23 @@ function renderWhStocks() {
 
 // ── Радар трендов: нарастающие поисковые запросы ─────────────────────────────
 let _trendsData = null;
+let _trendsQ = '';
 async function loadTrends(refresh) {
   const wrap = document.getElementById('toolsWrap');
   if (!wrap || _toolActive !== 'trends') return;
   if (_trendsData && !refresh) { renderTrends(); return; }
   wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>Собираем серии запросов…</div>';
   try {
-    _trendsData = await fetchJSON('/api/tools/trends', 45000);
+    _trendsData = await fetchJSON('/api/tools/trends' + (_trendsQ ? `?q=${encodeURIComponent(_trendsQ)}` : ''), 45000);
     renderTrends();
   } catch (e) {
     wrap.innerHTML = `<div class="alert alert-danger mt-2">Ошибка: ${esc(e.message)}</div>`;
   }
+}
+
+function trendsFilter() {
+  _trendsQ = document.getElementById('trendsQ')?.value.trim() || '';
+  loadTrends(true);
 }
 
 async function trendsCollectNow(btn) {
@@ -2925,6 +2931,8 @@ function renderTrends() {
         <input type="file" accept=".xlsx,.csv" hidden onchange="trendsUpload(this)"></label>
       <input type="date" id="trendsWeek" class="form-control form-control-sm" style="width:150px" title="Понедельник недели выгрузки (для файла из ЛК)">
       <span id="trendsUploadLbl" class="small text-secondary"></span>
+      <input type="text" id="trendsQ" class="form-control form-control-sm" style="width:220px" placeholder="фильтр: крем сыворотка гель…" value="${esc(_trendsQ)}" onkeydown="if(event.key==='Enter')trendsFilter()">
+      <button class="btn btn-sm btn-outline-secondary" onclick="trendsFilter()">🔍</button>
       <span class="ms-auto small text-secondary">своих: ${src.ozon_my || 0} · рыночных: ${src.ozon_market || 0}</span>
     </div>
     <div class="small text-secondary mt-2">Свои запросы приходят из Ozon Seller API автоматически (вт, 12:00).
@@ -2939,6 +2947,7 @@ function renderTrends() {
     <th>Источник</th><th class="text-center">Динамика</th>
     <th class="text-end" title="Частота за последнюю неделю">Посл. нед</th>
     <th class="text-end" title="Средний рост, % в неделю">Рост %/нед</th>
+    <th class="text-end" title="Динамика за 28 / 7 дней из выгрузки ЛК">Δ28д / Δ7д</th>
     <th class="text-end" title="Последняя неделя против истории (в сигмах)">Z</th>
     <th class="text-end" title="Ускорение: наклон последних недель минус ранних">Ускор.</th>
     <th class="text-end" title="Число товаров в выдаче по запросу (насыщенность ниши)">Товаров</th>
@@ -2952,6 +2961,7 @@ function renderTrends() {
       <td class="text-center">${_sparkline(i.series)}</td>
       <td class="text-end fw-bold">${fmt(Math.round(i.last || 0))}</td>
       <td class="text-end" style="color:${(i.slope_pct || 0) > 0 ? 'var(--pos)' : 'var(--neg)'}">${i.slope_pct == null ? '—' : (i.slope_pct > 0 ? '+' : '') + i.slope_pct + '%'}</td>
+      <td class="text-end small">${i.d28 == null ? '—' : `<span style="color:${i.d28 > 0 ? 'var(--pos)' : 'var(--neg)'}">${i.d28 > 0 ? '+' : ''}${Math.round(i.d28)}%</span> / <span style="color:${(i.d7 || 0) > 0 ? 'var(--pos)' : 'var(--neg)'}">${(i.d7 || 0) > 0 ? '+' : ''}${Math.round(i.d7 || 0)}%</span>`}</td>
       <td class="text-end">${i.z == null ? '—' : i.z}</td>
       <td class="text-end">${i.accel == null ? '—' : (i.accel > 0 ? '+' : '') + i.accel}</td>
       <td class="text-end text-secondary">${i.items_cnt ? fmt(Math.round(i.items_cnt)) : '—'}</td>
