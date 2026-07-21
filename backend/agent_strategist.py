@@ -178,12 +178,18 @@ async def _t_promos(_a: dict) -> str:
     try:
         import ozon_client
         prices = await ozon_client.get_prices()
-        oz = []
+        # группируем по акции (иначе повторы названий съедают весь лимит вывода)
+        by_action: dict = {}
+        auto_arts = []
         for art, p in prices.items():
-            if p.get("actions") or p.get("auto_action"):
-                oz.append({"art": art, "auto_action": p.get("auto_action"),
-                           "actions": p.get("actions")})
-        out["ozon"] = oz or "ни один товар не состоит в акциях"
+            if p.get("auto_action"):
+                auto_arts.append(art)
+            for a in p.get("actions") or []:
+                t = (a.get("title") or "")[:60]
+                by_action.setdefault(t, {"to": a.get("to"), "arts": []})["arts"].append(art)
+        out["ozon"] = [{"action": t, "to": v["to"], "arts": sorted(set(v["arts"]))}
+                       for t, v in by_action.items()] or "ни один товар не состоит в акциях"
+        out["ozon_auto_action"] = sorted(auto_arts) or "нет"
         out["ozon_note"] = ("auto_action=true — Ozon сам добавляет товар в акции "
                             "(риск незаметного среза маржи)")
     except Exception as e:
