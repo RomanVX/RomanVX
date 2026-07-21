@@ -171,22 +171,34 @@ def proposal_reject(art: str) -> bool:
 
 
 # ── обзор для стратега и вкладки: конфиг × факт × юнитка ─────────────────────
-async def overview() -> dict:
-    """Конфиг + текущие цены WB + маржа при целевой цене."""
+_live_cache: dict = {}
+_live_ts: float = 0.0
+
+
+async def overview(refresh: bool = False) -> dict:
+    """Конфиг + текущие цены WB/Ozon (кеш 10 мин) + маржа при целевой цене."""
+    import time as _t
     import agent_review as _ar
     from routers import tools as _tools
+    global _live_cache, _live_ts
     cfg = await asyncio.to_thread(cfg_load)
-    live, margin, oz = {}, {}, {}
-    try:
-        import wb_client
-        live = await wb_client.get_current_prices()
-    except Exception as e:
-        _log.warning("overview prices: %s", e)
-    try:
-        import ozon_client
-        oz = await ozon_client.get_prices()
-    except Exception as e:
-        _log.warning("overview ozon prices: %s", e)
+    if not refresh and _live_cache and _t.monotonic() - _live_ts < 600:
+        live, oz = _live_cache["live"], _live_cache["oz"]
+    else:
+        live, oz = {}, {}
+        try:
+            import wb_client
+            live = await wb_client.get_current_prices()
+        except Exception as e:
+            _log.warning("overview prices: %s", e)
+        try:
+            import ozon_client
+            oz = await ozon_client.get_prices()
+        except Exception as e:
+            _log.warning("overview ozon prices: %s", e)
+        if live or oz:
+            _live_cache = {"live": live, "oz": oz}
+            _live_ts = _t.monotonic()
     try:
         data = await _tools.get_margin(mp="WB")
         for b in data.get("items") or []:

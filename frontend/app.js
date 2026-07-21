@@ -3014,7 +3014,11 @@ async function reprSet(art) {
   const mo = document.getElementById('ro-' + art)?.value;
   await fetch('/api/tools/repricer/set', { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ art, target: t ? +t : null, min_wb: mw ? +mw : null, min_ozon: mo ? +mo : null }) });
-  loadRepricer(true);
+  if (_reprData) {
+    const it = (_reprData.items || []).find(x => x.art === art);
+    if (it) { if (t) it.target = +t; if (mw) it.min_wb = +mw; if (mo) it.min_ozon = +mo; }
+    renderRepricer();
+  }
 }
 
 async function reprPreset(name, btn) {
@@ -3025,7 +3029,15 @@ async function reprPreset(name, btn) {
 
 async function reprProposal(art, action) {
   await fetch('/api/tools/repricer/proposal', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ art, action }) });
-  loadRepricer(true);
+  if (_reprData) {
+    const p = (_reprData.proposals || []).find(x => x.art === art);
+    _reprData.proposals = (_reprData.proposals || []).filter(x => x.art !== art);
+    if (action === 'apply' && p) {
+      const it = (_reprData.items || []).find(x => x.art === art);
+      if (it) { if (p.target != null) it.target = p.target; if (p.min_wb != null) it.min_wb = p.min_wb; if (p.min_ozon != null) it.min_ozon = p.min_ozon; }
+    }
+    renderRepricer();
+  }
 }
 
 async function strategyRunNow(btn) {
