@@ -3469,7 +3469,13 @@ async def trends_collect_ozon() -> dict:
     import snapshot as _snap
     _trend_init()
     d_from, d_to = _trend_last_week()
-    items = await ozon_client.get_query_details(d_from, d_to)
+    try:
+        items = await ozon_client.get_query_details(d_from, d_to)
+    except Exception:
+        # частая причина 400 — метод требует явный список skus
+        skus = [str(p.get("sku")) for p in await ozon_client._get_all_skus()
+                if p.get("sku")]
+        items = await ozon_client.get_query_details(d_from, d_to, skus=skus)
     if items:
         await asyncio.to_thread(_snap.save, "trends_probe_last",
                                 {"period": [d_from, d_to], "sample": items[:3]})
@@ -3504,14 +3510,26 @@ async def trends_collect_ozon() -> dict:
     return {"week": d_from, "period": [d_from, d_to], "rows": len(rows)}
 
 
+def _http_err(e: Exception) -> str:
+    """Ошибка httpx с телом ответа — Ozon в 400 пишет, что именно не так."""
+    body = ""
+    resp = getattr(e, "response", None)
+    if resp is not None:
+        try:
+            body = " · " + resp.text[:250]
+        except Exception:
+            pass
+    return str(e)[:200] + body
+
+
 @router.post("/trends/collect")
 async def trends_collect_now():
     """Ручной сбор поисковых запросов Ozon (кнопка на фронте)."""
     try:
         return await trends_collect_ozon()
     except Exception as e:
-        _log.error("trends collect: %s", e)
-        return {"error": str(e)[:300]}
+        _log.error("trends collect: %s", _http_err(e))
+        return {"error": _http_err(e)}
 
 
 @router.get("/trends/probe", include_in_schema=False)
@@ -3519,11 +3537,25 @@ async def trends_probe():
     """Диагностика: сырой ответ product-queries/details (первые 3 записи)."""
     import ozon_client
     d_from, d_to = _trend_last_week()
+    out = {"period": [d_from, d_to]}
     try:
         items = await ozon_client.get_query_details(d_from, d_to)
-        return {"period": [d_from, d_to], "rows": len(items), "sample": items[:3]}
+        out["details"] = {"rows": len(items), "sample": items[:3]}
     except Exception as e:
-        return {"period": [d_from, d_to], "error": str(e)[:400]}
+        out["details_error"] = _http_err(e)
+    try:
+        skus = [str(p.get("sku")) for p in await ozon_client._get_all_skus() if p.get("sku")]
+        out["skus"] = len(skus)
+        items = await ozon_client.get_query_details(d_from, d_to, skus=skus[:1000])
+        out["details_with_skus"] = {"rows": len(items), "sample": items[:3]}
+    except Exception as e:
+        out["details_with_skus_error"] = _http_err(e)
+    try:
+        base = await ozon_client.get_product_queries(d_from, d_to)
+        out["base"] = {"rows": len(base), "sample": base[:3]}
+    except Exception as e:
+        out["base_error"] = _http_err(e)
+    return out
 
 
 @router.post("/trends/upload")
