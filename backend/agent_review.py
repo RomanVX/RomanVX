@@ -698,8 +698,14 @@ async def bot_loop() -> None:
                     await tg_send("🧠 Стратег сел за данные — отчёт будет через "
                                   "несколько минут…", thread_id=thread)
                     import agent_strategist as _st
-                    asyncio.get_event_loop().create_task(
-                        _st.run_session(trigger="команда /strategy в Telegram"))
+
+                    async def _strun(th=thread):
+                        res = await _st.run_session(
+                            trigger="команда /strategy в Telegram")
+                        if res.get("error"):
+                            await tg_send(f"⚠️ Сессия не удалась: {res['error']}",
+                                          thread_id=th)
+                    asyncio.get_event_loop().create_task(_strun())
                 elif cmd == "/reset":
                     _dialogs.pop(_dialog_key(thread), None)
                     await tg_send("🧹 Память диалога очищена.", thread_id=thread)
