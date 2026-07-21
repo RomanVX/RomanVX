@@ -479,3 +479,34 @@ async def get_report_detail(date_from: datetime, date_to: datetime) -> list[dict
         await asyncio.sleep(62)  # лимит между страницами
 
     return all_records
+
+
+async def get_promotions(days_ahead: int = 30) -> list[dict]:
+    """Календарь акций WB (dp-calendar-api): идущие и предстоящие акции."""
+    if USE_MOCK:
+        return []
+    from datetime import timezone
+    now = datetime.now(timezone.utc)
+    params = {
+        "startDateTime": now.strftime("%Y-%m-%dT00:00:00Z"),
+        "endDateTime": (now + timedelta(days=days_ahead)).strftime("%Y-%m-%dT23:59:59Z"),
+        "allPromo": "false",     # только акции, куда WB зовёт наши товары
+        "limit": 50, "offset": 0,
+    }
+    r = await _http().get(
+        "https://dp-calendar-api.wildberries.ru/api/v1/calendar/promotions",
+        headers=_headers(), params=params)
+    if not r.is_success:
+        _log.warning("WB promotions → %s %s", r.status_code, r.text[:200])
+        return []
+    promos = ((r.json() or {}).get("data") or {}).get("promotions") or []
+    if not promos:
+        return []
+    ids = ",".join(str(p.get("id")) for p in promos[:50] if p.get("id"))
+    r2 = await _http().get(
+        "https://dp-calendar-api.wildberries.ru/api/v1/calendar/promotions/details",
+        headers=_headers(), params={"promotionIDs": ids})
+    if r2.is_success:
+        det = ((r2.json() or {}).get("data") or {}).get("promotions") or []
+        return det
+    return promos

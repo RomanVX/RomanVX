@@ -544,10 +544,16 @@ async def get_prices() -> dict[str, dict]:
                     return round(float(str(v).replace(",", ".")))
                 except (TypeError, ValueError):
                     return None
+            ma = it.get("marketing_actions") or {}
             out[str(it.get("offer_id") or "").strip()] = {
                 "price": _n(p.get("price")),
                 "old_price": _n(p.get("old_price")),
                 "marketing_price": _n(p.get("marketing_price")),
+                "min_price": _n(p.get("min_price")),
+                "auto_action": bool(p.get("auto_action_enabled")),
+                "actions": [{"title": a.get("title"),
+                             "to": (a.get("date_to") or "")[:10]}
+                            for a in (ma.get("actions") or [])[:6]],
             }
         cursor = data.get("cursor") or ""
         if not cursor or not items:

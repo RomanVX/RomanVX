@@ -172,6 +172,39 @@ async def _t_wb_search(a: dict) -> str:
     return f"выдача WB «{q}» (всего товаров {total}): " + json.dumps(slim, ensure_ascii=False)
 
 
+async def _t_promos(_a: dict) -> str:
+    """Акции обеих площадок: где состоим (Ozon) и куда зовут (WB)."""
+    out = {}
+    try:
+        import ozon_client
+        prices = await ozon_client.get_prices()
+        oz = []
+        for art, p in prices.items():
+            if p.get("actions") or p.get("auto_action"):
+                oz.append({"art": art, "auto_action": p.get("auto_action"),
+                           "actions": p.get("actions")})
+        out["ozon"] = oz or "ни один товар не состоит в акциях"
+        out["ozon_note"] = ("auto_action=true — Ozon сам добавляет товар в акции "
+                            "(риск незаметного среза маржи)")
+    except Exception as e:
+        out["ozon_error"] = str(e)[:200]
+    try:
+        import wb_client
+        promos = await wb_client.get_promotions()
+        out["wb"] = [{"id": p.get("id"), "name": p.get("name"),
+                      "start": (p.get("startDateTime") or "")[:10],
+                      "end": (p.get("endDateTime") or "")[:10],
+                      "type": p.get("type"),
+                      "in_promo": (p.get("inPromoActionTotal")
+                                   or p.get("inPromoActionLeftovers")),
+                      "advantages": p.get("advantages"),
+                      "discount_percent": p.get("participationPercentage")}
+                     for p in promos[:20]] or "акций в календаре WB нет"
+    except Exception as e:
+        out["wb_error"] = str(e)[:200]
+    return json.dumps(out, ensure_ascii=False)
+
+
 async def _t_memory(_a: dict) -> str:
     import snapshot as _snap
     plan = await asyncio.to_thread(_snap.load, "strategist_plan", None) or {}
@@ -234,6 +267,8 @@ _TOOLS = {
                   "цены, рейтинги, отзывы) — анализ ниши/конкурентов по запросу. Параметр: query. "
                   "Медленный (до 2 мин), работает днём 11-21 МСК; для наших постоянных запросов "
                   "быстрее competitors"),
+    "promos": (_t_promos, "Акции маркетплейсов: в каких акциях Ozon состоят наши товары "
+               "(+флаг автодобавления), календарь акций WB на 30 дней (куда зовут, даты, условия)"),
     "memory": (_t_memory, "Твоя память: текущий стратегический план и задачи (открытые и закрытые) с датами проверки"),
     "save_memory": (_t_save, "Сохранить обновлённый план и задачи. Параметры: plan (текст стратегии), "
                              "new_tasks [{title, kind: goal|task|hypothesis, metric, check_date YYYY-MM-DD, reasoning}], "
@@ -296,6 +331,12 @@ _SYSTEM = """Ты — стратег-директор по маркетплей�
 к текущей фактической цене, а не к ценам конкурентов. Помни:
 целевая цена — ДЛЯ ПОКУПАТЕЛЯ (после всех скидок), не цена продавца;
 воскресные просадки цен — акционный день репрайсера, это норма.
+АКЦИИ ПЛОЩАДОК: инструмент promos показывает, в каких акциях Ozon состоят
+товары (auto_action = Ozon добавляет сам — проверяй, не режет ли маржу
+лидеров) и календарь акций WB. Входить в акцию имеет смысл, когда скидка
+окупается буст-трафиком (обычно: высокомаржинальные SKU с запасом стока);
+выводить — когда акция режет маржу без прироста темпа (это уже случалось
+с BMN-0115). Вход/выход из акций — только рекомендация владельцу.
 
 5. ФАКТЫ ОТ ВЛАДЕЛЬЦА — если он сообщает контекст, которого нет в данных
    (работает репрайсер, воскресенье — акционный день, сезонность, договорённости
