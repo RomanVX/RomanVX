@@ -60,6 +60,10 @@ def cfg_load() -> list[dict]:
 
 def cfg_set(art: str, **kw) -> bool:
     _init()
+    # минималка — служебное поле репрайсера маркетплейса: держим её
+    # автоматически чуть выше целевой цены, руками не ведём
+    if kw.get("target") and kw.get("min_ozon") is None and kw.get("min_wb") is None:
+        kw["min_ozon"] = kw["min_wb"] = round(float(kw["target"]) * 1.05)
     fields, vals = [], []
     for k in ("target", "min_ozon", "min_wb", "active", "name"):
         if k in kw and kw[k] is not None:

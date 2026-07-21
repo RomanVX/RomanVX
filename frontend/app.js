@@ -3010,13 +3010,11 @@ async function loadStrategy(refresh) {
 
 async function reprSet(art) {
   const t = document.getElementById('rt-' + art)?.value;
-  const mw = document.getElementById('rw-' + art)?.value;
-  const mo = document.getElementById('ro-' + art)?.value;
   await fetch('/api/tools/repricer/set', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ art, target: t ? +t : null, min_wb: mw ? +mw : null, min_ozon: mo ? +mo : null }) });
+    body: JSON.stringify({ art, target: t ? +t : null }) });
   if (_reprData) {
     const it = (_reprData.items || []).find(x => x.art === art);
-    if (it) { if (t) it.target = +t; if (mw) it.min_wb = +mw; if (mo) it.min_ozon = +mo; }
+    if (it && t) { it.target = +t; it.min_wb = Math.round(+t * 1.05); it.min_ozon = Math.round(+t * 1.05); }
     renderRepricer();
   }
 }
@@ -3144,17 +3142,17 @@ function renderRepricer() {
     <tr>
       <th rowspan="2" style="position:sticky;left:0;background:var(--t-sticky);z-index:2;vertical-align:bottom">Товар</th>
       <th rowspan="2" class="text-end" style="vertical-align:bottom" title="Какую цену увидит покупатель, когда репрайсер применит эту цель">Целевая цена<br>для покупателя</th>
-      <th colspan="3" class="text-center" style="border-left:1px solid var(--border-2)">Цена на Ozon</th>
-      <th colspan="3" class="text-center" style="border-left:1px solid var(--border-2)">Цена на Wildberries</th>
+      <th colspan="2" class="text-center" style="border-left:1px solid var(--border-2)">Цена на Ozon</th>
+      <th colspan="2" class="text-center" style="border-left:1px solid var(--border-2)">Цена на Wildberries</th>
       <th rowspan="2" class="text-center" style="vertical-align:bottom">Вкл</th>
       <th rowspan="2" style="border-left:1px solid var(--border-2);vertical-align:bottom">💡 Рекомендация по цене</th>
       <th rowspan="2"></th>
     </tr>
     <tr>
       <th class="text-end small" style="border-left:1px solid var(--border-2)">Ваша цена</th>
-      <th class="text-end small">Для покупателя</th><th class="text-end small">Минимальная</th>
+      <th class="text-end small">Для покупателя</th>
       <th class="text-end small" style="border-left:1px solid var(--border-2)">Ваша цена</th>
-      <th class="text-end small">Для покупателя</th><th class="text-end small">Минимальная</th>
+      <th class="text-end small">Для покупателя</th>
     </tr></thead><tbody>`;
 
   const groupMap = {};
@@ -3165,7 +3163,7 @@ function renderRepricer() {
   GROUP_ORDER.filter(g => groupMap[g]).concat(Object.keys(groupMap).filter(g => !GROUP_ORDER.includes(g))).forEach(g => {
     const list = groupMap[g];
     if (!list) return;
-    h += `<tr class="table-secondary"><td colspan="11" style="padding:5px 12px"><strong>${esc(g)}</strong>
+    h += `<tr class="table-secondary"><td colspan="9" style="padding:5px 12px"><strong>${esc(g)}</strong>
       <span class="text-secondary small">· ${list.length} SKU</span></td></tr>`;
     list.forEach(c => {
       const m = c.margin_at_target;
@@ -3189,10 +3187,8 @@ function renderRepricer() {
         <td class="text-end"><input id="rt-${esc(c.art)}" type="number" class="form-control form-control-sm text-end d-inline-block" style="width:88px" value="${c.target ?? ''}"></td>
         <td class="text-end" style="border-left:1px solid var(--border-2)">${c.oz_price_now ? fmt(c.oz_price_now) : '—'}</td>
         <td class="text-end fw-bold">${c.oz_buyer_now ? fmt(c.oz_buyer_now) : '—'}</td>
-        <td class="text-end"><input id="ro-${esc(c.art)}" type="number" class="form-control form-control-sm text-end d-inline-block" style="width:80px" value="${c.min_ozon ?? ''}"></td>
         <td class="text-end" style="border-left:1px solid var(--border-2)">${c.wb_seller_now ? fmt(c.wb_seller_now) : '—'}</td>
         <td class="text-end fw-bold">${c.wb_buyer_now ? fmt(c.wb_buyer_now) : '—'}</td>
-        <td class="text-end"><input id="rw-${esc(c.art)}" type="number" class="form-control form-control-sm text-end d-inline-block" style="width:80px" value="${c.min_wb ?? ''}"></td>
         <td class="text-center"><div class="form-check form-switch d-inline-block"><input class="form-check-input" type="checkbox" ${c.active ? 'checked' : ''} onchange="reprToggle('${esc(c.art)}', this.checked)"></div></td>
         <td style="border-left:1px solid var(--border-2)">${rec}</td>
         <td><button class="btn btn-sm btn-outline-info py-0" title="Сохранить строку" onclick="reprSet('${esc(c.art)}')">💾</button></td>
@@ -3200,7 +3196,7 @@ function renderRepricer() {
     });
   });
   h += `</tbody></table></div></div></div>
-  <div class="text-secondary small mt-2">«Для покупателя» WB — оценка через коэффициент СПП из юнитки. Сам модуль цены не меняет:
+  <div class="text-secondary small mt-2">«Для покупателя» WB — оценка через коэффициент СПП; Ozon — через коэффициент соплатежа. Минималки для репрайсера ведутся автоматически (цель +5%) и уходят в выгрузку/API. Сам модуль цены не меняет:
   Ozon — «⬇ Файл для ЛК Ozon» → Цены и акции → Репрайсер → Настроить через шаблон; WB — правь цены в кабинете WB.
   «🧠 Спросить стратега» — он проанализирует юнитку/конкурентов/спрос и положит рекомендации в правую колонку.</div>`;
   wrap.innerHTML = h;
