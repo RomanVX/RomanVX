@@ -212,6 +212,12 @@ async def overview(refresh: bool = False) -> dict:
     ratios = await asyncio.to_thread(_snap.load, "repricer_ratios", None) or {}
     ratios_dirty = False
     import catalog as _cat
+    # Ozon API не отдаёт витринную цену с механиками соплатежа — оцениваем
+    # через коэффициент покупатель/продавец из выгрузок озоновского репрайсера
+    try:
+        oz_ratios = json.load(open(_SEED, encoding="utf-8")).get("oz_ratios") or {}
+    except Exception:
+        oz_ratios = {}
     out = []
     for c in cfg:
         b = margin.get(c["art"])
@@ -221,7 +227,14 @@ async def overview(refresh: bool = False) -> dict:
         row["wb_seller_now"] = lp.get("discounted")
         op = oz.get(c["art"]) or {}
         row["oz_price_now"] = op.get("price")
-        row["oz_buyer_now"] = op.get("marketing_price") or op.get("price")
+        ozr = oz_ratios.get(c["art"])
+        mp = op.get("marketing_price")
+        if mp and op.get("price") and mp < op["price"]:
+            row["oz_buyer_now"] = mp                     # цена с акциями из API
+        elif ozr and op.get("price"):
+            row["oz_buyer_now"] = round(op["price"] * ozr)   # оценка по соплатежу
+        else:
+            row["oz_buyer_now"] = op.get("price")
         ratio = None
         if b and b.get("price0") and b.get("buyer0"):
             ratio = b["buyer0"] / b["price0"]
