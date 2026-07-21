@@ -1,0 +1,886 @@
+{
+ "products": {
+  "AL-07": {
+   "name": "Крем для лица ночной питательный и восстанавливающий для всех типов кожи 50 мл",
+   "sku_ozon": "3169703459",
+   "nm_wb": "566457199"
+  },
+  "AL-06": {
+   "name": "Питательный крем для лица увлажняющий восстанавливающий с экстрактом алоэ, 50 мл",
+   "sku_ozon": "3169710914",
+   "nm_wb": "566452615"
+  },
+  "AL-04": {
+   "name": "Тонер для лица увлажняющий и восстанавливающий с экстрактом алоэ, 150 мл",
+   "sku_ozon": "3169707074",
+   "nm_wb": "566446031"
+  },
+  "AL-03": {
+   "name": "Мицеллярная вода для снятия макияжа ALOE с экстрактом алоэ, очищающая увлажняюща",
+   "sku_ozon": "3169703140",
+   "nm_wb": "566412004"
+  },
+  "AL-02": {
+   "name": "Гидрофильное масло для умывания, снятия макияжа для проблемной, жирной и комбини",
+   "sku_ozon": "3169699328",
+   "nm_wb": "566395659"
+  },
+  "AL-01": {
+   "name": "Очищающий гель для умывания лица с экстрактом алоэ для всех типов кожи, 150 мл, ",
+   "sku_ozon": "3169680379",
+   "nm_wb": "566351548"
+  },
+  "AL-05": {
+   "name": "Сыворотка для лица увлажняющая и восстанавливающая с экстрактом алоэ, 50 мл",
+   "sku_ozon": "3169716564",
+   "nm_wb": "554734405"
+  },
+  "ST-07": {
+   "name": "Анальная гель смазка для фистинга с противовоспалительным анестезирующим эффекто",
+   "sku_ozon": "2288262060",
+   "nm_wb": "438969508"
+  },
+  "ST-06": {
+   "name": "Интимная гель смазка 18+ на водной основе с маслом кокоса, соком алоэ и ментолом",
+   "sku_ozon": "2288246035",
+   "nm_wb": "438964592"
+  },
+  "ST-03": {
+   "name": "Интимная гель смазка 18+ на водной основе для анального секса с экстрактом эхина",
+   "sku_ozon": "2288246256",
+   "nm_wb": "438958894"
+  },
+  "ST-02": {
+   "name": "Интимная гель смазка 18+ на водной основе с экстрактами акмеллы и пептида кайенс",
+   "sku_ozon": "2288246125",
+   "nm_wb": "438952353"
+  },
+  "ST-05": {
+   "name": "Интимная гель смазка 18+ на водной основе с гиалуроновой кислотой и соком алоэ, ",
+   "sku_ozon": "2288246198",
+   "nm_wb": "438944459"
+  },
+  "ST-04": {
+   "name": "Интимная гель смазка 18+ на водной основе с эфирными маслами \"Табак-ваниль\", SAT",
+   "sku_ozon": "2288246179",
+   "nm_wb": "438937810"
+  },
+  "ST-01": {
+   "name": "Интимная гель смазка 18+ на водной основе поддерживающая pH4 с лактобактериями, ",
+   "sku_ozon": "2288246098",
+   "nm_wb": "438924700"
+  },
+  "BMN-0058": {
+   "name": "Очищающий спрей с антибактериальным эффектом",
+   "sku_ozon": "1848847275",
+   "nm_wb": "320029558"
+  },
+  "BMN-0115": {
+   "name": "Ультра спрей для минета со вкусом клубники, Deep throat 50 мл.",
+   "sku_ozon": "1848830411",
+   "nm_wb": "320006277"
+  },
+  "BMN-0109": {
+   "name": "Разогревающий гибридный лубрикант HYBRID LUBRICANT WARMING",
+   "sku_ozon": "1848829826",
+   "nm_wb": "320006276"
+  },
+  "BMN-0106": {
+   "name": "Гибридный лубрикант HYBRID LUBRICANT",
+   "sku_ozon": "1848830327",
+   "nm_wb": "320006275"
+  },
+  "BMN-0110": {
+   "name": "Ультра спрей для минета со вкусом ванили, Deep throat 50 мл.",
+   "sku_ozon": "1848829843",
+   "nm_wb": "320006274"
+  },
+  "BMN-0006": {
+   "name": "Интимный гель-смазка HOT SEX",
+   "sku_ozon": "1848831667",
+   "nm_wb": "320006271"
+  },
+  "BMN-0004": {
+   "name": "Интимный гель-смазка SAFE SEX",
+   "sku_ozon": "1848830255",
+   "nm_wb": "320006270"
+  },
+  "BMN-0116": {
+   "name": "Ультра спрей для минета со вкусом бабл гам, Deep throat 50 мл.",
+   "sku_ozon": "1848831568",
+   "nm_wb": "320006269"
+  },
+  "BMN-0111": {
+   "name": "Масло для интимного массажа тела с феромонами Тайны востока",
+   "sku_ozon": "1793181724",
+   "nm_wb": "304476545"
+  },
+  "BMN-0114": {
+   "name": "Масло для интимного массажа тела с феромонами Янтарное утро",
+   "sku_ozon": "1793191393",
+   "nm_wb": "304476544"
+  },
+  "BMN-0069": {
+   "name": "Массажная аромасвеча с афродизиакми Искушение",
+   "sku_ozon": "1624690737",
+   "nm_wb": "243280313"
+  },
+  "BMN-0070": {
+   "name": "Массажная аромасвеча с афродизиакми Клубника со сливками",
+   "sku_ozon": "1624689108",
+   "nm_wb": "243280312"
+  },
+  "BMN-0112": {
+   "name": "Масло для интимного массажа тела с феромонами эротическое Искушение",
+   "sku_ozon": "1624712987",
+   "nm_wb": "243276730"
+  },
+  "BMN-0113": {
+   "name": "Масло для интимного массажа тела с феромонами эротическое Клубника со сливками",
+   "sku_ozon": "1624670212",
+   "nm_wb": "243276729"
+  },
+  "BMN-0036": {
+   "name": "Лубрикант анальная гель-смазка для фистинга FIST MINT 200 мл",
+   "sku_ozon": "1624619390",
+   "nm_wb": "243269755"
+  },
+  "BMN-0008": {
+   "name": "Лубрикант анальная гель-смазка на водной основе 200 мл",
+   "sku_ozon": "1624624952",
+   "nm_wb": "243269751"
+  },
+  "BMN-0002": {
+   "name": "Лубрикант интимная гель-смазка на водной основе 200 мл",
+   "sku_ozon": "1624630670",
+   "nm_wb": "243269748"
+  },
+  "BMN-0028": {
+   "name": "Лубрикант анальная гель-смазка для фистинга SEX FIST 500 мл",
+   "sku_ozon": "1624630926",
+   "nm_wb": "243269746"
+  },
+  "BMN-0013": {
+   "name": "Лубрикант анальная гель-смазка для фистинга SEX FIST 200 мл",
+   "sku_ozon": "1624630769",
+   "nm_wb": "243269745"
+  },
+  "BMN-0035": {
+   "name": "Лубрикант анальная гель-смазка для фистинга FIST MINT 500 мл",
+   "sku_ozon": "1624621026",
+   "nm_wb": "243269743"
+  },
+  "BMN-0121": {
+   "name": "Масло для интимного массажа съедобное с афродизиаком усиливающим желание Японско",
+   "sku_ozon": "1793182500",
+   "nm_wb": "None"
+  },
+  "BMN-0118": {
+   "name": "Масло для интимного массажа съедобное с афродизиаком усиливающим желаниеБаунти",
+   "sku_ozon": "1793182475",
+   "nm_wb": "None"
+  },
+  "BMN-0117": {
+   "name": "Масло для интимного массажа съедобное с афродизиаком усиливающим желание Вишня",
+   "sku_ozon": "1793182454",
+   "nm_wb": "None"
+  },
+  "BMN-0119": {
+   "name": "Масло для интимного массажа съедобное с афродизиаком усиливающим желание Энергет",
+   "sku_ozon": "1793181743",
+   "nm_wb": "None"
+  }
+ },
+ "presets": {
+  "low": {
+   "AL-07": {
+    "target": 490.0,
+    "min_ozon": 808.0,
+    "min_wb": 550.0,
+    "active": true
+   },
+   "AL-06": {
+    "target": 349.0,
+    "min_ozon": 623.0,
+    "min_wb": 400.0,
+    "active": true
+   },
+   "AL-04": {
+    "target": 290.0,
+    "min_ozon": 548.0,
+    "min_wb": 350.0,
+    "active": true
+   },
+   "AL-03": {
+    "target": 190.0,
+    "min_ozon": 484.0,
+    "min_wb": 250.0,
+    "active": true
+   },
+   "AL-02": {
+    "target": 390.0,
+    "min_ozon": 700.0,
+    "min_wb": 450.0,
+    "active": true
+   },
+   "AL-01": {
+    "target": 250.0,
+    "min_ozon": 650.0,
+    "min_wb": 400.0,
+    "active": false
+   },
+   "AL-05": {
+    "target": 390.0,
+    "min_ozon": 715.0,
+    "min_wb": 450.0,
+    "active": true
+   },
+   "ST-07": {
+    "target": 1090.0,
+    "min_ozon": 1847.0,
+    "min_wb": 1390.0,
+    "active": true
+   },
+   "ST-06": {
+    "target": 390.0,
+    "min_ozon": 727.0,
+    "min_wb": 450.0,
+    "active": true
+   },
+   "ST-03": {
+    "target": 490.0,
+    "min_ozon": 911.0,
+    "min_wb": 550.0,
+    "active": true
+   },
+   "ST-02": {
+    "target": 590.0,
+    "min_ozon": 1017.0,
+    "min_wb": 650.0,
+    "active": true
+   },
+   "ST-05": {
+    "target": 299.0,
+    "min_ozon": 666.0,
+    "min_wb": 350.0,
+    "active": true
+   },
+   "ST-04": {
+    "target": 299.0,
+    "min_ozon": 550.0,
+    "min_wb": 450.0,
+    "active": true
+   },
+   "ST-01": {
+    "target": 490.0,
+    "min_ozon": 892.0,
+    "min_wb": 550.0,
+    "active": true
+   },
+   "BMN-0058": {
+    "target": null,
+    "min_ozon": 910.0,
+    "min_wb": 910.0,
+    "active": false
+   },
+   "BMN-0115": {
+    "target": 590.0,
+    "min_ozon": 1057.0,
+    "min_wb": 700.0,
+    "active": true
+   },
+   "BMN-0109": {
+    "target": null,
+    "min_ozon": 1513.0,
+    "min_wb": 1513.0,
+    "active": false
+   },
+   "BMN-0106": {
+    "target": null,
+    "min_ozon": 1548.0,
+    "min_wb": 1548.0,
+    "active": false
+   },
+   "BMN-0110": {
+    "target": 590.0,
+    "min_ozon": 1099.0,
+    "min_wb": 700.0,
+    "active": true
+   },
+   "BMN-0006": {
+    "target": null,
+    "min_ozon": 1015.0,
+    "min_wb": 1015.0,
+    "active": false
+   },
+   "BMN-0004": {
+    "target": null,
+    "min_ozon": 1170.0,
+    "min_wb": 1170.0,
+    "active": false
+   },
+   "BMN-0116": {
+    "target": 590.0,
+    "min_ozon": 1053.0,
+    "min_wb": 700.0,
+    "active": true
+   },
+   "BMN-0111": {
+    "target": null,
+    "min_ozon": 1239.0,
+    "min_wb": 1239.0,
+    "active": false
+   },
+   "BMN-0114": {
+    "target": null,
+    "min_ozon": 1239.0,
+    "min_wb": 1239.0,
+    "active": false
+   },
+   "BMN-0069": {
+    "target": null,
+    "min_ozon": 900.0,
+    "min_wb": 900.0,
+    "active": false
+   },
+   "BMN-0070": {
+    "target": null,
+    "min_ozon": 900.0,
+    "min_wb": 900.0,
+    "active": false
+   },
+   "BMN-0112": {
+    "target": null,
+    "min_ozon": 1239.0,
+    "min_wb": 1239.0,
+    "active": false
+   },
+   "BMN-0113": {
+    "target": null,
+    "min_ozon": 1239.0,
+    "min_wb": 1239.0,
+    "active": false
+   },
+   "BMN-0036": {
+    "target": 690.0,
+    "min_ozon": 1220.0,
+    "min_wb": 750.0,
+    "active": true
+   },
+   "BMN-0008": {
+    "target": null,
+    "min_ozon": 1342.0,
+    "min_wb": 1342.0,
+    "active": false
+   },
+   "BMN-0002": {
+    "target": null,
+    "min_ozon": 1195.0,
+    "min_wb": 1195.0,
+    "active": false
+   },
+   "BMN-0028": {
+    "target": 1190.0,
+    "min_ozon": 2090.0,
+    "min_wb": 1300.0,
+    "active": true
+   },
+   "BMN-0013": {
+    "target": 690.0,
+    "min_ozon": 1194.0,
+    "min_wb": 750.0,
+    "active": true
+   },
+   "BMN-0035": {
+    "target": 1190.0,
+    "min_ozon": 2168.0,
+    "min_wb": 1300.0,
+    "active": true
+   },
+   "BMN-0121": {
+    "target": null,
+    "min_ozon": 1032.0,
+    "min_wb": null,
+    "active": false
+   },
+   "BMN-0118": {
+    "target": null,
+    "min_ozon": 1032.0,
+    "min_wb": null,
+    "active": false
+   },
+   "BMN-0117": {
+    "target": null,
+    "min_ozon": 1032.0,
+    "min_wb": null,
+    "active": false
+   },
+   "BMN-0119": {
+    "target": null,
+    "min_ozon": 1032.0,
+    "min_wb": null,
+    "active": false
+   }
+  },
+  "mid": {
+   "AL-07": {
+    "target": 590.0,
+    "min_ozon": 1000.0,
+    "min_wb": 650.0,
+    "active": true
+   },
+   "AL-06": {
+    "target": 490.0,
+    "min_ozon": 856.0,
+    "min_wb": 550.0,
+    "active": true
+   },
+   "AL-04": {
+    "target": 549.0,
+    "min_ozon": 965.0,
+    "min_wb": 600.0,
+    "active": true
+   },
+   "AL-03": {
+    "target": 390.0,
+    "min_ozon": 800.0,
+    "min_wb": 450.0,
+    "active": true
+   },
+   "AL-02": {
+    "target": 449.0,
+    "min_ozon": 774.0,
+    "min_wb": 500.0,
+    "active": true
+   },
+   "AL-01": {
+    "target": 490.0,
+    "min_ozon": 765.0,
+    "min_wb": 550.0,
+    "active": false
+   },
+   "AL-05": {
+    "target": 790.0,
+    "min_ozon": 950.0,
+    "min_wb": 850.0,
+    "active": true
+   },
+   "ST-07": {
+    "target": 1399.0,
+    "min_ozon": 2367.0,
+    "min_wb": 1500.0,
+    "active": true
+   },
+   "ST-06": {
+    "target": 590.0,
+    "min_ozon": 851.0,
+    "min_wb": 650.0,
+    "active": true
+   },
+   "ST-03": {
+    "target": 542.0,
+    "min_ozon": 993.0,
+    "min_wb": 600.0,
+    "active": true
+   },
+   "ST-02": {
+    "target": 949.0,
+    "min_ozon": 1631.0,
+    "min_wb": 1000.0,
+    "active": true
+   },
+   "ST-05": {
+    "target": 490.0,
+    "min_ozon": 748.0,
+    "min_wb": 550.0,
+    "active": true
+   },
+   "ST-04": {
+    "target": 390.0,
+    "min_ozon": 641.0,
+    "min_wb": 450.0,
+    "active": true
+   },
+   "ST-01": {
+    "target": 562.0,
+    "min_ozon": 899.0,
+    "min_wb": 600.0,
+    "active": true
+   },
+   "BMN-0058": {
+    "target": null,
+    "min_ozon": 910.0,
+    "min_wb": 728.0,
+    "active": false
+   },
+   "BMN-0115": {
+    "target": 649.0,
+    "min_ozon": 1057.0,
+    "min_wb": 700.0,
+    "active": true
+   },
+   "BMN-0109": {
+    "target": null,
+    "min_ozon": 1513.0,
+    "min_wb": 1332.0,
+    "active": false
+   },
+   "BMN-0106": {
+    "target": null,
+    "min_ozon": 1548.0,
+    "min_wb": 1512.0,
+    "active": false
+   },
+   "BMN-0110": {
+    "target": 790.0,
+    "min_ozon": 888.0,
+    "min_wb": 850.0,
+    "active": true
+   },
+   "BMN-0006": {
+    "target": null,
+    "min_ozon": 1015.0,
+    "min_wb": 893.0,
+    "active": false
+   },
+   "BMN-0004": {
+    "target": null,
+    "min_ozon": 1170.0,
+    "min_wb": 989.0,
+    "active": false
+   },
+   "BMN-0116": {
+    "target": 890.0,
+    "min_ozon": 1200.0,
+    "min_wb": 950.0,
+    "active": true
+   },
+   "BMN-0111": {
+    "target": null,
+    "min_ozon": 1239.0,
+    "min_wb": 1252.0,
+    "active": false
+   },
+   "BMN-0114": {
+    "target": null,
+    "min_ozon": 1239.0,
+    "min_wb": 1224.0,
+    "active": false
+   },
+   "BMN-0069": {
+    "target": null,
+    "min_ozon": 900.0,
+    "min_wb": 834.0,
+    "active": false
+   },
+   "BMN-0070": {
+    "target": null,
+    "min_ozon": 900.0,
+    "min_wb": 881.0,
+    "active": false
+   },
+   "BMN-0112": {
+    "target": null,
+    "min_ozon": 1239.0,
+    "min_wb": 1440.0,
+    "active": false
+   },
+   "BMN-0113": {
+    "target": null,
+    "min_ozon": 1239.0,
+    "min_wb": 921.0,
+    "active": false
+   },
+   "BMN-0036": {
+    "target": 899.0,
+    "min_ozon": 1220.0,
+    "min_wb": 950.0,
+    "active": true
+   },
+   "BMN-0008": {
+    "target": null,
+    "min_ozon": 1342.0,
+    "min_wb": 982.0,
+    "active": false
+   },
+   "BMN-0002": {
+    "target": null,
+    "min_ozon": 1195.0,
+    "min_wb": 998.0,
+    "active": false
+   },
+   "BMN-0028": {
+    "target": 1349.0,
+    "min_ozon": 2289.0,
+    "min_wb": 1500.0,
+    "active": true
+   },
+   "BMN-0013": {
+    "target": 1099.0,
+    "min_ozon": 1780.0,
+    "min_wb": 1200.0,
+    "active": true
+   },
+   "BMN-0035": {
+    "target": 1599.0,
+    "min_ozon": 2701.0,
+    "min_wb": 1700.0,
+    "active": true
+   },
+   "BMN-0121": {
+    "target": null,
+    "min_ozon": 1032.0,
+    "min_wb": null,
+    "active": false
+   },
+   "BMN-0118": {
+    "target": null,
+    "min_ozon": 1032.0,
+    "min_wb": null,
+    "active": false
+   },
+   "BMN-0117": {
+    "target": null,
+    "min_ozon": 1032.0,
+    "min_wb": null,
+    "active": false
+   },
+   "BMN-0119": {
+    "target": null,
+    "min_ozon": 1032.0,
+    "min_wb": null,
+    "active": false
+   }
+  },
+  "high": {
+   "AL-07": {
+    "target": 790.0,
+    "min_ozon": 1015.0,
+    "min_wb": 900.0,
+    "active": true
+   },
+   "AL-06": {
+    "target": 590.0,
+    "min_ozon": 865.0,
+    "min_wb": 650.0,
+    "active": true
+   },
+   "AL-04": {
+    "target": 349.0,
+    "min_ozon": 635.0,
+    "min_wb": 400.0,
+    "active": true
+   },
+   "AL-03": {
+    "target": 290.0,
+    "min_ozon": 618.0,
+    "min_wb": 350.0,
+    "active": true
+   },
+   "AL-02": {
+    "target": 649.0,
+    "min_ozon": 805.0,
+    "min_wb": 700.0,
+    "active": true
+   },
+   "AL-01": {
+    "target": 250.0,
+    "min_ozon": 650.0,
+    "min_wb": 300.0,
+    "active": false
+   },
+   "AL-05": {
+    "target": 490.0,
+    "min_ozon": 831.0,
+    "min_wb": 550.0,
+    "active": true
+   },
+   "ST-07": {
+    "target": 1549.0,
+    "min_ozon": 2404.0,
+    "min_wb": 1600.0,
+    "active": true
+   },
+   "ST-06": {
+    "target": 459.0,
+    "min_ozon": 780.0,
+    "min_wb": 500.0,
+    "active": true
+   },
+   "ST-03": {
+    "target": 690.0,
+    "min_ozon": 1021.0,
+    "min_wb": 750.0,
+    "active": true
+   },
+   "ST-02": {
+    "target": 790.0,
+    "min_ozon": 1406.0,
+    "min_wb": 850.0,
+    "active": true
+   },
+   "ST-05": {
+    "target": 349.0,
+    "min_ozon": 701.0,
+    "min_wb": 400.0,
+    "active": true
+   },
+   "ST-04": {
+    "target": 539.0,
+    "min_ozon": 644.0,
+    "min_wb": 600.0,
+    "active": true
+   },
+   "ST-01": {
+    "target": 690.0,
+    "min_ozon": 1022.0,
+    "min_wb": 750.0,
+    "active": true
+   },
+   "BMN-0058": {
+    "target": null,
+    "min_ozon": 910.0,
+    "min_wb": 910.0,
+    "active": false
+   },
+   "BMN-0115": {
+    "target": 849.0,
+    "min_ozon": 1205.0,
+    "min_wb": 900.0,
+    "active": true
+   },
+   "BMN-0109": {
+    "target": null,
+    "min_ozon": 1513.0,
+    "min_wb": 1513.0,
+    "active": false
+   },
+   "BMN-0106": {
+    "target": null,
+    "min_ozon": 1548.0,
+    "min_wb": 1548.0,
+    "active": false
+   },
+   "BMN-0110": {
+    "target": 649.0,
+    "min_ozon": 1219.0,
+    "min_wb": 700.0,
+    "active": true
+   },
+   "BMN-0006": {
+    "target": null,
+    "min_ozon": 1015.0,
+    "min_wb": 1015.0,
+    "active": false
+   },
+   "BMN-0004": {
+    "target": null,
+    "min_ozon": 1170.0,
+    "min_wb": 1170.0,
+    "active": false
+   },
+   "BMN-0116": {
+    "target": 690.0,
+    "min_ozon": 1288.0,
+    "min_wb": 750.0,
+    "active": true
+   },
+   "BMN-0111": {
+    "target": null,
+    "min_ozon": 1239.0,
+    "min_wb": 1239.0,
+    "active": false
+   },
+   "BMN-0114": {
+    "target": null,
+    "min_ozon": 1239.0,
+    "min_wb": 1239.0,
+    "active": false
+   },
+   "BMN-0069": {
+    "target": null,
+    "min_ozon": 900.0,
+    "min_wb": 900.0,
+    "active": false
+   },
+   "BMN-0070": {
+    "target": null,
+    "min_ozon": 900.0,
+    "min_wb": 900.0,
+    "active": false
+   },
+   "BMN-0112": {
+    "target": null,
+    "min_ozon": 1239.0,
+    "min_wb": 1239.0,
+    "active": false
+   },
+   "BMN-0113": {
+    "target": null,
+    "min_ozon": 1239.0,
+    "min_wb": 1239.0,
+    "active": false
+   },
+   "BMN-0036": {
+    "target": 1099.0,
+    "min_ozon": 1651.0,
+    "min_wb": 1150.0,
+    "active": true
+   },
+   "BMN-0008": {
+    "target": null,
+    "min_ozon": 1342.0,
+    "min_wb": 1342.0,
+    "active": false
+   },
+   "BMN-0002": {
+    "target": null,
+    "min_ozon": 1195.0,
+    "min_wb": 1195.0,
+    "active": false
+   },
+   "BMN-0028": {
+    "target": 1599.0,
+    "min_ozon": 2289.0,
+    "min_wb": 1650.0,
+    "active": true
+   },
+   "BMN-0013": {
+    "target": 899.0,
+    "min_ozon": 1651.0,
+    "min_wb": 950.0,
+    "active": true
+   },
+   "BMN-0035": {
+    "target": 1349.0,
+    "min_ozon": 2382.0,
+    "min_wb": 1400.0,
+    "active": true
+   },
+   "BMN-0121": {
+    "target": null,
+    "min_ozon": 1032.0,
+    "min_wb": 1032.0,
+    "active": false
+   },
+   "BMN-0118": {
+    "target": null,
+    "min_ozon": 1032.0,
+    "min_wb": 1032.0,
+    "active": false
+   },
+   "BMN-0117": {
+    "target": null,
+    "min_ozon": 1032.0,
+    "min_wb": 1032.0,
+    "active": false
+   },
+   "BMN-0119": {
+    "target": null,
+    "min_ozon": 1032.0,
+    "min_wb": 1032.0,
+    "active": false
+   }
+  }
+ }
+}

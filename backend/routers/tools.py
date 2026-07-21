@@ -3841,3 +3841,59 @@ async def strategy_run(request: Request, body: dict | None = None):
     focus = str((body or {}).get("focus") or "")
     _spawn(st.run_session(trigger="кнопка на дашборде", focus=focus))
     return {"started": True}
+
+
+# ══ Репрайсер (владелец) ══════════════════════════════════════════════════════
+@router.get("/repricer")
+async def repricer_get(request: Request):
+    """Конфиг репрайсера × текущие цены × маржа при целевой цене."""
+    _owner_only(request)
+    import repricer as rp
+    return await rp.overview()
+
+
+@router.post("/repricer/set")
+async def repricer_set(request: Request, body: dict):
+    """Правка строки: {art, target?, min_wb?, min_ozon?, active?}."""
+    _owner_only(request)
+    import repricer as rp
+    art = str(body.get("art") or "")
+    ok = await asyncio.to_thread(
+        rp.cfg_set, art, target=body.get("target"), min_wb=body.get("min_wb"),
+        min_ozon=body.get("min_ozon"),
+        active=None if body.get("active") is None else int(bool(body.get("active"))))
+    return {"ok": ok}
+
+
+@router.post("/repricer/preset")
+async def repricer_preset(request: Request, body: dict):
+    """Переключить конфиг на пресет low/mid/high."""
+    _owner_only(request)
+    import repricer as rp
+    n = await asyncio.to_thread(rp.preset_apply, str(body.get("name") or ""))
+    return {"applied": n}
+
+
+@router.post("/repricer/proposal")
+async def repricer_proposal(request: Request, body: dict):
+    """Принять/отклонить предложение стратега: {art, action: apply|reject}."""
+    _owner_only(request)
+    import repricer as rp
+    art = str(body.get("art") or "")
+    if body.get("action") == "apply":
+        return {"ok": await asyncio.to_thread(rp.proposal_apply, art)}
+    return {"ok": await asyncio.to_thread(rp.proposal_reject, art)}
+
+
+@router.get("/repricer/export")
+async def repricer_export(request: Request):
+    """XLSX в формате шаблона Ozon — загрузить в ЛК Ozon → Репрайсер."""
+    _owner_only(request)
+    import io
+    import repricer as rp
+    from fastapi.responses import StreamingResponse
+    data = await asyncio.to_thread(rp.export_ozon_xlsx)
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=repricer_ozon.xlsx"})

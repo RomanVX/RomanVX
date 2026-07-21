@@ -128,6 +128,28 @@ async def _t_ozon_queries(_a: dict) -> str:
         + json.dumps(slim, ensure_ascii=False)
 
 
+async def _t_repricer(_a: dict) -> str:
+    import repricer as rp
+    ov = await rp.overview()
+    slim = [{"art": c["art"], "target": c["target"], "min_wb": c["min_wb"],
+             "min_ozon": c["min_ozon"], "active": bool(c["active"]),
+             "wb_seller_now": c.get("wb_seller_now"),
+             "wb_buyer_now": c.get("wb_buyer_now"),
+             "margin_at_target": c.get("margin_at_target"),
+             "profit_at_target": c.get("profit_at_target")}
+            for c in ov["items"]]
+    return json.dumps({"config": slim, "pending_proposals": ov["proposals"],
+                       "presets": ov["presets"]}, ensure_ascii=False)
+
+
+async def _t_repricer_propose(a: dict) -> str:
+    import repricer as rp
+    items = a.get("items") or []
+    reason = str(a.get("reason") or "")
+    n = await asyncio.to_thread(rp.propose, items, reason)
+    return f"предложений сохранено: {n}; владелец увидит их на вкладке Стратегия и решит"
+
+
 async def _t_memory(_a: dict) -> str:
     import snapshot as _snap
     plan = await asyncio.to_thread(_snap.load, "strategist_plan", None) or {}
@@ -181,6 +203,11 @@ _TOOLS = {
     "competitors": (_t_competitors, "Срезы выдачи WB по нашим запросам: позиции, цены и прирост отзывов конкурентов"),
     "trends": (_t_trends, "Радар трендов Ozon: нарастающие поисковые запросы. Параметры: source='my'|'market', filter='слова'"),
     "ozon_search": (_t_ozon_queries, "Поиск Ozon по нашим товарам: частота, наша позиция, конверсия, GMV из поиска"),
+    "repricer": (_t_repricer, "Репрайсер: целевые цены для покупателя, минималки Ozon/WB, "
+                              "текущие цены WB и маржа при целевой цене"),
+    "repricer_propose": (_t_repricer_propose, "Предложить владельцу изменения репрайсера. "
+                         "Параметры: items [{art, target, min_wb, min_ozon, why}], reason. "
+                         "Это ТОЛЬКО предложение — применяет владелец"),
     "memory": (_t_memory, "Твоя память: текущий стратегический план и задачи (открытые и закрытые) с датами проверки"),
     "save_memory": (_t_save, "Сохранить обновлённый план и задачи. Параметры: plan (текст стратегии), "
                              "new_tasks [{title, kind: goal|task|hypothesis, metric, check_date YYYY-MM-DD, reasoning}], "
@@ -195,6 +222,10 @@ def _tool_schemas() -> list[dict]:
         if name == "trends":
             schema["properties"] = {"source": {"type": "string"},
                                     "filter": {"type": "string"}}
+        elif name == "repricer_propose":
+            schema["properties"] = {
+                "items": {"type": "array", "items": {"type": "object"}},
+                "reason": {"type": "string"}}
         elif name == "save_memory":
             schema["properties"] = {
                 "plan": {"type": "string"},
@@ -218,6 +249,14 @@ _SYSTEM = """Ты — стратег-директор по маркетплей�
    (done/failed) с честным выводом, ПОЧЕМУ сработало или нет.
 4. Обнови план и поставь новые задачи через save_memory (обязательно перед
    финальным ответом). Задач в работе держи 3-7, не распыляйся.
+РЕПРАЙСЕР: у кабинета есть репрайсер по цене для покупателя (Ozon-стратегия
++ наш конфиг с тремя уровнями low/mid/high). Смотри инструментом repricer:
+там целевые цены, минималки и маржа при целевой цене. Если видишь, что
+ценовая политика неоптимальна (маржа при целевой цене ниже разумной, либо
+наоборот есть запас поднять цель без потери темпа) — клади конкретные
+предложения через repricer_propose с обоснованием why по каждому артикулу.
+Помни: целевая цена — ДЛЯ ПОКУПАТЕЛЯ (после всех скидок), не цена продавца.
+
 5. ФАКТЫ ОТ ВЛАДЕЛЬЦА — если он сообщает контекст, которого нет в данных
    (работает репрайсер, воскресенье — акционный день, сезонность, договорённости
    с поставщиками, планы производства) — ОБЯЗАТЕЛЬНО сохрани через save_memory

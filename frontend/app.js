@@ -2992,17 +2992,40 @@ function renderTrends() {
 
 // ── Стратегия: план и задачи агента-стратега (только владелец) ───────────────
 let _stratData = null;
+let _reprData = null;
 async function loadStrategy(refresh) {
   const wrap = document.getElementById('strategyWrap');
   if (!wrap) return;
   if (_stratData && !refresh) { renderStrategy(); return; }
   wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>Читаем память стратега…</div>';
   try {
-    _stratData = await fetchJSON('/api/tools/strategy', 20000);
+    [_stratData, _reprData] = await Promise.all([
+      fetchJSON('/api/tools/strategy', 20000),
+      fetchJSON('/api/tools/repricer', 90000).catch(() => null)]);
     renderStrategy();
   } catch (e) {
     wrap.innerHTML = `<div class="alert alert-danger mt-2">Ошибка: ${esc(e.message)}</div>`;
   }
+}
+
+async function reprSet(art) {
+  const t = document.getElementById('rt-' + art)?.value;
+  const mw = document.getElementById('rw-' + art)?.value;
+  const mo = document.getElementById('ro-' + art)?.value;
+  await fetch('/api/tools/repricer/set', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ art, target: t ? +t : null, min_wb: mw ? +mw : null, min_ozon: mo ? +mo : null }) });
+  loadStrategy(true);
+}
+
+async function reprPreset(name, btn) {
+  btn.disabled = true;
+  await fetch('/api/tools/repricer/preset', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
+  loadStrategy(true);
+}
+
+async function reprProposal(art, action) {
+  await fetch('/api/tools/repricer/proposal', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ art, action }) });
+  loadStrategy(true);
 }
 
 async function strategyRunNow(btn) {
@@ -3072,8 +3095,57 @@ function renderStrategy() {
       <h6>🗂 История план/факт (${closed.length})</h6>${table(closed)}
     </div></div>`;
   }
+  html += _renderRepricer();
   html += `<div class="text-secondary small">Стратег автономен в анализе и планировании; всё, что касается денег (цены, ставки, поставки) — только рекомендации, решение за тобой. Отчёты сессий приходят в Telegram-группу.</div>`;
   wrap.innerHTML = html;
+}
+
+function _renderRepricer() {
+  if (!_reprData) return '';
+  const items = _reprData.items || [];
+  const props = _reprData.proposals || [];
+  let h = `<div class="card bg-card mb-3"><div class="card-body">
+    <div class="d-flex align-items-center flex-wrap gap-2 mb-2">
+      <h6 class="mb-0">💸 Репрайсер (цена для покупателя)</h6>
+      <div class="btn-group btn-group-sm ms-2">
+        <button class="btn btn-outline-secondary" onclick="reprPreset('low',this)">Уровень ↓ низкий</button>
+        <button class="btn btn-outline-secondary" onclick="reprPreset('mid',this)">средний</button>
+        <button class="btn btn-outline-secondary" onclick="reprPreset('high',this)">высокий ↑</button>
+      </div>
+      <a href="/api/tools/repricer/export" class="btn btn-sm btn-outline-success ms-auto" download>⬇ Файл для ЛК Ozon</a>
+    </div>`;
+  if (props.length) {
+    h += `<div class="alert alert-warning py-2"><b>🧠 Предложения стратега:</b><ul class="mb-1">` +
+      props.map(p => `<li><b>${esc(p.art)}</b> → цель ${p.target ?? '—'} ₽${p.min_wb ? ', мин WB ' + p.min_wb : ''}${p.min_ozon ? ', мин Ozon ' + p.min_ozon : ''}
+        <span class="text-secondary small">${esc(p.why || '')}</span>
+        <button class="btn btn-sm btn-success py-0 ms-1" onclick="reprProposal('${esc(p.art)}','apply')">Принять</button>
+        <button class="btn btn-sm btn-outline-secondary py-0" onclick="reprProposal('${esc(p.art)}','reject')">Отклонить</button></li>`).join('') +
+      `</ul><span class="small">«Принять» меняет только наш конфиг — далее выгрузи файл для Ozon и/или обнови цены WB.</span></div>`;
+  }
+  h += `<div class="table-responsive" style="max-height:56vh"><table class="table table-sm align-middle mb-0 text-nowrap" style="font-size:.84rem">
+    <thead><tr><th>Артикул</th><th class="text-end">Цель покуп., ₽</th><th class="text-end">Мин WB</th><th class="text-end">Мин Ozon</th>
+    <th class="text-end" title="Текущая цена продавца WB (до СПП)">WB сейчас</th>
+    <th class="text-end" title="Оценка текущей цены для покупателя WB">Покуп. WB</th>
+    <th class="text-end" title="Маржа при целевой цене (юнитка)">Маржа при цели</th>
+    <th class="text-end">Прибыль/шт</th><th></th></tr></thead><tbody>` +
+    items.map(c => {
+      const m = c.margin_at_target;
+      const mClr = m == null ? '' : m < 10 ? 'color:var(--neg)' : m < 20 ? 'color:var(--gold)' : 'color:var(--pos)';
+      return `<tr>
+      <td><code>${esc(c.art)}</code>${c.active ? '' : ' <span class="badge bg-secondary">выкл</span>'}</td>
+      <td class="text-end"><input id="rt-${esc(c.art)}" type="number" class="form-control form-control-sm text-end d-inline-block" style="width:86px" value="${c.target ?? ''}"></td>
+      <td class="text-end"><input id="rw-${esc(c.art)}" type="number" class="form-control form-control-sm text-end d-inline-block" style="width:78px" value="${c.min_wb ?? ''}"></td>
+      <td class="text-end"><input id="ro-${esc(c.art)}" type="number" class="form-control form-control-sm text-end d-inline-block" style="width:78px" value="${c.min_ozon ?? ''}"></td>
+      <td class="text-end">${c.wb_seller_now ? fmt(c.wb_seller_now) : '—'}</td>
+      <td class="text-end">${c.wb_buyer_now ? fmt(c.wb_buyer_now) : '—'}</td>
+      <td class="text-end fw-bold" style="${mClr}">${m == null ? '—' : m + '%'}</td>
+      <td class="text-end">${c.profit_at_target == null ? '—' : fmtRub(c.profit_at_target)}</td>
+      <td><button class="btn btn-sm btn-outline-info py-0" onclick="reprSet('${esc(c.art)}')">💾</button></td></tr>`;
+    }).join('') +
+  `</tbody></table></div>
+  <div class="small text-secondary mt-2">Цены сам модуль не меняет: Ozon — выгрузи файл и загрузи в ЛК (Цены и акции → Репрайсер → Настроить через шаблон); WB — правь в кабинете по колонке «Маржа при цели». Пресеты low/mid/high — из твоих трёх диапазонов.</div>
+  </div></div>`;
+  return h;
 }
 
 // ── Конкуренты: суточные срезы выдачи WB ─────────────────────────────────────
