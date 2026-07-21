@@ -3838,6 +3838,8 @@ async def strategy_run(request: Request, body: dict | None = None):
     """Запустить стратегическую сессию (фоном). body.focus — фокус сессии."""
     _owner_only(request)
     import agent_strategist as st
+    if st._running:
+        return {"error": "Стратег уже работает — дождись окончания текущей сессии"}
     focus = str((body or {}).get("focus") or "")
     _spawn(st.run_session(trigger="кнопка на дашборде", focus=focus))
     return {"started": True}
