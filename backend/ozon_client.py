@@ -490,7 +490,7 @@ async def get_query_details(date_from: str, date_to: str,
     if not OZON_CLIENT_ID or not OZON_API_KEY:
         return []
     body: dict = {"date_from": _ts(date_from), "date_to": _ts(date_to, end=True),
-                  "page": 0, "page_size": 100}
+                  "page": 0, "page_size": 100, "limit_by_sku": 15}
     if skus is None:
         skus = [str(p.get("sku")) for p in await _get_all_skus() if p.get("sku")]
     if skus:
