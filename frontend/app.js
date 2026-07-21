@@ -3127,6 +3127,7 @@ function renderRepricer() {
       <button class="btn btn-outline-secondary" onclick="reprPreset('high',this)">высокий ↑</button>
     </div>
     <button class="btn btn-sm btn-outline-warning" onclick="strategyRepricerReview(this)">🧠 Спросить стратега</button>
+    <button class="btn btn-sm btn-outline-secondary" title="Целевые цены = фактические цены для покупателя из кабинетов" onclick="reprSync(this)">⟳ Цели = факт</button>
     <a href="/api/tools/repricer/export" class="btn btn-sm btn-outline-success ms-auto" download>⬇ Файл для ЛК Ozon</a>
     <button class="btn btn-sm btn-outline-secondary" onclick="loadRepricer(true)"><i class="bi bi-arrow-clockwise"></i></button>
   </div>`;
@@ -3195,6 +3196,17 @@ function renderRepricer() {
   Ozon — «⬇ Файл для ЛК Ozon» → Цены и акции → Репрайсер → Настроить через шаблон; WB — правь цены в кабинете WB.
   «🧠 Спросить стратега» — он проанализирует юнитку/конкурентов/спрос и положит рекомендации в правую колонку.</div>`;
   wrap.innerHTML = h;
+}
+
+async function reprSync(btn) {
+  btn.disabled = true; btn.textContent = '⟳ Синхронизирую…';
+  try {
+    const r = await fetch('/api/tools/repricer/sync', { method: 'POST' });
+    const d = await r.json();
+    btn.textContent = `✓ ${d.synced} целей = факт`;
+    loadRepricer(true);
+  } catch (e) { btn.textContent = 'Ошибка'; }
+  setTimeout(() => { btn.disabled = false; btn.textContent = '⟳ Цели = факт'; }, 4000);
 }
 
 async function reprToggle(art, on) {

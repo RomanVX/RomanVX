@@ -150,6 +150,28 @@ async def _t_repricer_propose(a: dict) -> str:
     return f"предложений сохранено: {n}; владелец увидит их на вкладке Стратегия и решит"
 
 
+async def _t_wb_search(a: dict) -> str:
+    """Живая выдача WB по запросу — через домашний браузерный агент."""
+    from routers import tools as _tools
+    q = str(a.get("query") or "").strip()
+    if not q:
+        return "нужен параметр query"
+    try:
+        products, total = await asyncio.wait_for(_tools._wb_agent_search(q), timeout=150)
+    except asyncio.TimeoutError:
+        return ("домашний агент не ответил за 2.5 мин — он работает днём 11-21 МСК; "
+                "попробуй кешированные срезы (competitors) или продолжи без выдачи")
+    except Exception as e:
+        return f"выдача недоступна: {str(e)[:200]}"
+    if not products:
+        return "выдача пустая — вероятно, агент офлайн; используй competitors"
+    slim = [{"pos": i + 1, "brand": (p.get("brand") or "")[:30],
+             "name": (p.get("name") or "")[:60], "price": p.get("price"),
+             "rating": p.get("rating"), "feedbacks": p.get("feedbacks")}
+            for i, p in enumerate(products[:25])]
+    return f"выдача WB «{q}» (всего товаров {total}): " + json.dumps(slim, ensure_ascii=False)
+
+
 async def _t_memory(_a: dict) -> str:
     import snapshot as _snap
     plan = await asyncio.to_thread(_snap.load, "strategist_plan", None) or {}
@@ -208,6 +230,10 @@ _TOOLS = {
     "repricer_propose": (_t_repricer_propose, "Предложить владельцу изменения репрайсера. "
                          "Параметры: items [{art, target, min_wb, min_ozon, why}], reason. "
                          "Это ТОЛЬКО предложение — применяет владелец"),
+    "wb_search": (_t_wb_search, "ЖИВАЯ выдача WB по любому поисковому запросу (топ-25: бренды, "
+                  "цены, рейтинги, отзывы) — анализ ниши/конкурентов по запросу. Параметр: query. "
+                  "Медленный (до 2 мин), работает днём 11-21 МСК; для наших постоянных запросов "
+                  "быстрее competitors"),
     "memory": (_t_memory, "Твоя память: текущий стратегический план и задачи (открытые и закрытые) с датами проверки"),
     "save_memory": (_t_save, "Сохранить обновлённый план и задачи. Параметры: plan (текст стратегии), "
                              "new_tasks [{title, kind: goal|task|hypothesis, metric, check_date YYYY-MM-DD, reasoning}], "
@@ -222,6 +248,8 @@ def _tool_schemas() -> list[dict]:
         if name == "trends":
             schema["properties"] = {"source": {"type": "string"},
                                     "filter": {"type": "string"}}
+        elif name == "wb_search":
+            schema["properties"] = {"query": {"type": "string"}}
         elif name == "repricer_propose":
             schema["properties"] = {
                 "items": {"type": "array", "items": {"type": "object"}},
@@ -249,13 +277,17 @@ _SYSTEM = """Ты — стратег-директор по маркетплей�
    (done/failed) с честным выводом, ПОЧЕМУ сработало или нет.
 4. Обнови план и поставь новые задачи через save_memory (обязательно перед
    финальным ответом). Задач в работе держи 3-7, не распыляйся.
-РЕПРАЙСЕР: у кабинета есть репрайсер по цене для покупателя (Ozon-стратегия
-+ наш конфиг с тремя уровнями low/mid/high). Смотри инструментом repricer:
-там целевые цены, минималки и маржа при целевой цене. Если видишь, что
-ценовая политика неоптимальна (маржа при целевой цене ниже разумной, либо
-наоборот есть запас поднять цель без потери темпа) — клади конкретные
-предложения через repricer_propose с обоснованием why по каждому артикулу.
-Помни: целевая цена — ДЛЯ ПОКУПАТЕЛЯ (после всех скидок), не цена продавца.
+РЕПРАЙСЕР — ТВОЯ ЗОНА ОТВЕТСТВЕННОСТИ ПО ЦЕНАМ: в конфиге целевые цены =
+ФАКТИЧЕСКИЕ цены для покупателя из кабинетов (как есть). Твоя работа —
+регулярно проверять их против юнитки (margin_at_target), цен конкурентов
+(competitors, wb_search), спроса (trends, ozon_search, sales_daily) и класть
+КОРРЕКТИРОВКИ через repricer_propose с числовым обоснованием why по каждому
+артикулу. Владелец одобряет/отклоняет на вкладке Репрайсер; каждое одобренное
+решение автоматически становится твоей задачей «проверить эффект через
+7 дней» — сверяй её честно: не сработало = failed с выводом. Не предлагай
+изменения ради изменений: если цена оптимальна — так и говори. Помни:
+целевая цена — ДЛЯ ПОКУПАТЕЛЯ (после всех скидок), не цена продавца;
+воскресные просадки цен — акционный день репрайсера, это норма.
 
 5. ФАКТЫ ОТ ВЛАДЕЛЬЦА — если он сообщает контекст, которого нет в данных
    (работает репрайсер, воскресенье — акционный день, сезонность, договорённости

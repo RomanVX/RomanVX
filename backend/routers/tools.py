@@ -3897,3 +3897,12 @@ async def repricer_export(request: Request):
         io.BytesIO(data),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": "attachment; filename=repricer_ozon.xlsx"})
+
+
+@router.post("/repricer/sync")
+async def repricer_sync(request: Request):
+    """Цели репрайсера = фактические цены для покупателя из кабинетов."""
+    _owner_only(request)
+    import repricer as rp
+    n = await rp.sync_targets_to_fact()
+    return {"synced": n}

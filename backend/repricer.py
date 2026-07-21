@@ -124,15 +124,43 @@ def propose(items: list[dict], reason: str) -> int:
 
 
 def proposal_apply(art: str) -> bool:
-    """Владелец принимает предложение — оно переносится в конфиг."""
+    """Владелец принимает предложение — переносится в конфиг, а стратегу
+    ставится задача проверить эффект через неделю (отслеживание решений)."""
+    from datetime import timedelta
     cur = proposals_load()
     for p in cur:
         if p.get("art") == art:
             cfg_set(art, target=p.get("target"), min_wb=p.get("min_wb"),
                     min_ozon=p.get("min_ozon"))
             proposals_save([x for x in cur if x.get("art") != art])
+            try:
+                import uuid
+                check = (datetime.utcnow() + timedelta(days=7)).strftime("%Y-%m-%d")
+                db.execute(
+                    "INSERT INTO strategist_tasks VALUES (?,?,?,?,?,?,?,?,?)",
+                    (uuid.uuid4().hex[:12],
+                     datetime.utcnow().strftime("%Y-%m-%d %H:%M"), "hypothesis",
+                     f"Цена {art}: владелец принял цель {p.get('target')} ₽ — проверить эффект",
+                     f"темп продаж и маржа {art} не ухудшились при цели {p.get('target')} ₽",
+                     check, "open", "",
+                     (p.get("why") or "")[:500]))
+            except Exception as e:
+                _log.warning("apply task: %s", e)
             return True
     return False
+
+
+async def sync_targets_to_fact() -> int:
+    """Цели = фактические цены для покупателя из кабинетов (Ozon приоритетнее,
+    WB — оценка через СПП). Стартовая точка «как есть» для анализа стратега."""
+    ov = await overview()
+    n = 0
+    for c in ov["items"]:
+        fact = c.get("oz_buyer_now") or c.get("wb_buyer_now")
+        if fact and cfg_set(c["art"], target=round(float(fact))):
+            n += 1
+    _log.info("repricer: цели синхронизированы с фактом (%d)", n)
+    return n
 
 
 def proposal_reject(art: str) -> bool:
