@@ -3879,9 +3879,14 @@ async def repricer_get(request: Request):
             _repr_ov_building = True
             _spawn(_repr_refresh_bg())
         return _repr_ov_cache
-    ov = await rp.overview()
+    # холодный старт: быстрый снимок без юнитки (секунды), полный — фоном
+    ov = await rp.overview(include_margin=False)
     ov["fetched_at"] = datetime.utcnow().strftime("%H:%M UTC")
+    ov["partial"] = True
     globals()["_repr_ov_cache"] = ov
+    if not _repr_ov_building:
+        globals()["_repr_ov_building"] = True
+        _spawn(_repr_refresh_bg())
     return ov
 
 

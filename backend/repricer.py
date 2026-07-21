@@ -179,8 +179,9 @@ _live_cache: dict = {}
 _live_ts: float = 0.0
 
 
-async def overview(refresh: bool = False) -> dict:
-    """Конфиг + текущие цены WB/Ozon (кеш 10 мин) + маржа при целевой цене."""
+async def overview(refresh: bool = False, include_margin: bool = True) -> dict:
+    """Конфиг + текущие цены WB/Ozon (кеш 10 мин) + маржа при целевой цене.
+    include_margin=False — быстрый режим без ожидания юнитки (холодный старт)."""
     import time as _t
     import agent_review as _ar
     from routers import tools as _tools
@@ -204,12 +205,13 @@ async def overview(refresh: bool = False) -> dict:
             _live_cache = {"live": live, "oz": oz}
             _live_ts = _t.monotonic()
     margin = {}
-    try:
-        data = await _tools.get_margin(mp="WB")
-        for b in data.get("items") or []:
-            margin[b.get("sku")] = b
-    except Exception as e:
-        _log.warning("overview margin: %s", e)
+    if include_margin:
+        try:
+            data = await _tools.get_margin(mp="WB")
+            for b in data.get("items") or []:
+                margin[b.get("sku")] = b
+        except Exception as e:
+            _log.warning("overview margin: %s", e)
     # коэффициент buyer/seller стабилен у SKU — кешируем на случай, когда
     # юнитка не собрана (иначе «для покупателя» по WB пустеет)
     import snapshot as _snap
