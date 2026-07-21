@@ -463,12 +463,15 @@ async def get_product_queries(date_from: str, date_to: str) -> list[dict]:
     Данные считаются с лагом ~3 дня; глубже месяца — только по неделям."""
     if not OZON_CLIENT_ID or not OZON_API_KEY:
         return []
+    skus = [str(p.get("sku")) for p in await _get_all_skus() if p.get("sku")]
+    if not skus:
+        return []
     out: list[dict] = []
     page = 0
     while True:
         data = await _post("/v1/analytics/product-queries", {
             "date_from": _ts(date_from), "date_to": _ts(date_to, end=True),
-            "page": page, "page_size": 1000,
+            "skus": skus[:1000], "page": page, "page_size": 100,
         })
         items = data.get("items") or (data.get("result") or {}).get("items") or []
         out.extend(items)
@@ -487,7 +490,9 @@ async def get_query_details(date_from: str, date_to: str,
     if not OZON_CLIENT_ID or not OZON_API_KEY:
         return []
     body: dict = {"date_from": _ts(date_from), "date_to": _ts(date_to, end=True),
-                  "page": 0, "page_size": 1000}
+                  "page": 0, "page_size": 100}
+    if skus is None:
+        skus = [str(p.get("sku")) for p in await _get_all_skus() if p.get("sku")]
     if skus:
         body["skus"] = [str(s) for s in skus][:1000]
     out: list[dict] = []
