@@ -199,6 +199,7 @@ async def overview(refresh: bool = False) -> dict:
         if live or oz:
             _live_cache = {"live": live, "oz": oz}
             _live_ts = _t.monotonic()
+    margin = {}
     try:
         data = await _tools.get_margin(mp="WB")
         for b in data.get("items") or []:
