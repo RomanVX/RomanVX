@@ -3851,10 +3851,12 @@ _repr_ov_building = False
 async def _repr_refresh_bg():
     global _repr_ov_cache, _repr_ov_building
     import repricer as rp
+    import snapshot as _snap
     try:
         ov = await rp.overview()
         ov["fetched_at"] = datetime.utcnow().strftime("%H:%M UTC")
         _repr_ov_cache = ov
+        await asyncio.to_thread(_snap.save, "repricer_overview", ov)
     except Exception as e:
         _log.warning("repricer bg: %s", e)
     finally:
@@ -3864,9 +3866,14 @@ async def _repr_refresh_bg():
 @router.get("/repricer")
 async def repricer_get(request: Request):
     """Конфиг репрайсера × цены × маржа. Мгновенно из кеша + фон-обновление."""
-    global _repr_ov_building
+    global _repr_ov_building, _repr_ov_cache
     _owner_only(request)
     import repricer as rp
+    import snapshot as _snap
+    if not _repr_ov_cache:      # рестарт: поднимаем последний снимок из БД
+        snap = await asyncio.to_thread(_snap.load, "repricer_overview", None)
+        if snap:
+            _repr_ov_cache = snap
     if _repr_ov_cache:
         # конфиг и предложения всегда свежие (лёгкие), цены/маржа — из кеша
         cfg = {c["art"]: c for c in await asyncio.to_thread(rp.cfg_load)}
