@@ -3906,3 +3906,14 @@ async def repricer_sync(request: Request):
     import repricer as rp
     n = await rp.sync_targets_to_fact()
     return {"synced": n}
+
+
+@router.get("/repricer/probe", include_in_schema=False)
+async def repricer_probe(request: Request):
+    """Сырые ценовые поля Ozon по первым товарам — подбор правильных полей."""
+    _owner_only(request)
+    import ozon_client
+    data = await ozon_client._post("/v5/product/info/prices",
+                                   {"filter": {"visibility": "ALL"}, "limit": 5})
+    items = data.get("items") or (data.get("result") or {}).get("items") or []
+    return {"count": len(items), "raw": items[:4]}
