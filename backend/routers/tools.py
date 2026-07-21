@@ -3844,12 +3844,45 @@ async def strategy_run(request: Request, body: dict | None = None):
 
 
 # ══ Репрайсер (владелец) ══════════════════════════════════════════════════════
+_repr_ov_cache: dict = {}
+_repr_ov_building = False
+
+
+async def _repr_refresh_bg():
+    global _repr_ov_cache, _repr_ov_building
+    import repricer as rp
+    try:
+        ov = await rp.overview()
+        ov["fetched_at"] = datetime.utcnow().strftime("%H:%M UTC")
+        _repr_ov_cache = ov
+    except Exception as e:
+        _log.warning("repricer bg: %s", e)
+    finally:
+        _repr_ov_building = False
+
+
 @router.get("/repricer")
 async def repricer_get(request: Request):
-    """Конфиг репрайсера × текущие цены × маржа при целевой цене."""
+    """Конфиг репрайсера × цены × маржа. Мгновенно из кеша + фон-обновление."""
+    global _repr_ov_building
     _owner_only(request)
     import repricer as rp
-    return await rp.overview()
+    if _repr_ov_cache:
+        # конфиг и предложения всегда свежие (лёгкие), цены/маржа — из кеша
+        cfg = {c["art"]: c for c in await asyncio.to_thread(rp.cfg_load)}
+        for it in _repr_ov_cache.get("items", []):
+            c = cfg.get(it["art"])
+            if c:
+                it.update({k: c[k] for k in ("target", "min_ozon", "min_wb", "active")})
+        _repr_ov_cache["proposals"] = await asyncio.to_thread(rp.proposals_load)
+        if not _repr_ov_building:
+            _repr_ov_building = True
+            _spawn(_repr_refresh_bg())
+        return _repr_ov_cache
+    ov = await rp.overview()
+    ov["fetched_at"] = datetime.utcnow().strftime("%H:%M UTC")
+    globals()["_repr_ov_cache"] = ov
+    return ov
 
 
 @router.post("/repricer/set")
