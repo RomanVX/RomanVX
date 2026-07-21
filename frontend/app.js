@@ -3041,8 +3041,9 @@ async function reprProposal(art, action) {
 async function strategyRunNow(btn) {
   btn.disabled = true; btn.textContent = '🧠 Стратег работает (несколько минут)…';
   try {
-    await fetch('/api/tools/strategy/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-    btn.textContent = '⏳ Сессия запущена — отчёт придёт в Telegram';
+    const r = await fetch('/api/tools/strategy/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    const d = await r.json();
+    btn.textContent = d.error ? '⏳ ' + d.error : '⏳ Сессия запущена — отчёт придёт в Telegram';
   } catch (e) { btn.textContent = 'Ошибка запуска'; }
   setTimeout(() => { btn.disabled = false; btn.textContent = '🚀 Запустить сессию'; loadStrategy(true); }, 240000);
 }
@@ -3227,8 +3228,14 @@ async function reprToggle(art, on) {
 async function strategyRepricerReview(btn) {
   btn.disabled = true; btn.textContent = '🧠 Стратег анализирует (несколько минут)…';
   try {
-    await fetch('/api/tools/strategy/run', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    const r = await fetch('/api/tools/strategy/run', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ focus: 'ПОЛНЫЙ прайс-аудит репрайсера: пройди ВСЕ активные SKU группа за группой. По каждому определи оптимальную целевую цену для покупателя, взвесив юнитку (маржа/безубыток), спрос и темп продаж, конкурентов, акции площадок, остатки и правила ценовой стратегии (фисты = ценовое лидерство, шаги не более 10-15%). Где оптимальная цель отличается от текущей — положи предложение через repricer_propose с числовым why. Где текущая цель оптимальна — перечисли в отчёте одной строкой со словом «оптимальна». Итог: у КАЖДОГО активного SKU либо предложение, либо явное «оптимальна» — без пропусков.' }) });
+    const d = await r.json();
+    if (d.error) {
+      btn.textContent = '⏳ ' + d.error;
+      setTimeout(() => { btn.disabled = false; btn.textContent = '🧠 Спросить стратега'; }, 8000);
+      return;
+    }
     btn.textContent = '⏳ Работает — рекомендации появятся здесь, отчёт в Telegram';
   } catch (e) { btn.textContent = 'Ошибка запуска'; }
   setTimeout(() => { btn.disabled = false; btn.textContent = '🧠 Спросить стратега'; loadRepricer(true); }, 300000);
