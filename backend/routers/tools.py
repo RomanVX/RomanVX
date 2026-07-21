@@ -3489,11 +3489,12 @@ async def trends_collect_ozon() -> dict:
                      0.0, 0.0,
                      _trend_num(_trend_pick(it, _TREND_CONV, 0)),
                      _trend_num(_trend_pick(it, _TREND_GMV, 0))))
-    # один запрос может прийти по нескольким SKU — суммируем частоту
+    # один запрос приходит по нескольким SKU; частота у запроса рыночная,
+    # одна и та же — берём max (не сумму!), GMV же наш — суммируем
     merged: dict = {}
     for w, s, q, cnt, ic, pr, cv, gm in rows:
         m = merged.setdefault((w, s, q), [w, s, q, 0.0, 0.0, 0.0, 0.0, 0.0, None, None])
-        m[3] += cnt
+        m[3] = max(m[3], cnt)
         m[6] = max(m[6], cv)
         m[7] += gm
     rows = [tuple(v) for v in merged.values()]
