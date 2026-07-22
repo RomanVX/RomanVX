@@ -4065,3 +4065,75 @@ async def fbs_compare():
             "note": "delta>0 — FBS дороже. Не учтены: своё хранение/сборка/дорога "
                     "до пункта приёма WB, падение конверсии из-за сроков доставки, "
                     "буст карточек FBW в выдаче."}
+
+
+# ══ Ставка CPM: запросы и ставки действующих РК ═══════════════════════════════
+_bidq_cache: dict = {}
+_bidq_ts: float = 0.0
+
+
+@router.get("/bid/queries")
+async def bid_queries(refresh: bool = Query(default=False)):
+    """Активные кампании WB: ставка кампании + фразы со статистикой CTR,
+    привязанные к SKU и его юнитке. Кеш 1 час (advert API лимитный)."""
+    import time as _t
+    global _bidq_cache, _bidq_ts
+    if not refresh and _bidq_cache and _t.monotonic() - _bidq_ts < 3600:
+        return _bidq_cache
+    import advert_client as ac
+    import catalog as _cat
+
+    data = await get_margin(mp="WB")
+    marg = {}
+    for b in data.get("items") or []:
+        import agent_review as _ar
+        m = _ar._margin_math(b)
+        marg[str(b.get("sku", "")).upper()] = {
+            "price": m["price_seller"], "be_drr": m["be_drr_pct"]}
+    nm_to_art = {str(k): v for k, v in getattr(_cat, "WB_ID_TO_ART", {}).items()}
+
+    try:
+        ids = await ac._ids_for_status(9)          # активные
+        details = await ac.get_campaign_details(ids[:30])
+    except Exception as e:
+        return {"rows": [], "error": f"advert API: {str(e)[:200]}"}
+
+    rows = []
+    for c in details:
+        cid = c.get("advertId")
+        ctype = c.get("type")
+        name = c.get("name") or str(cid)
+        # ставка и номенклатуры — форматы у типов разные, парсим что есть
+        bid, nms = None, []
+        ap = c.get("autoParams") or {}
+        if ap:
+            bid = ap.get("cpm")
+            nms = ap.get("nms") or []
+        for p in (c.get("unitedParams") or []):
+            bid = bid or p.get("searchCPM") or p.get("catalogCPM")
+            nms.extend(p.get("nms") or [])
+        for p in (c.get("params") or []):
+            bid = bid or p.get("price")
+            nms.extend([n.get("nm") if isinstance(n, dict) else n
+                        for n in (p.get("nms") or [])])
+        arts = sorted({nm_to_art.get(str(n)) for n in nms if nm_to_art.get(str(n))})
+        m = next((marg.get(a.upper()) for a in arts if marg.get(a.upper())), None)
+        try:
+            words = await ac.get_campaign_words(int(cid), ctype)
+        except Exception:
+            words = []
+        await asyncio.sleep(0.4)
+        words = sorted(words, key=lambda w: -w.get("views", 0))[:15]
+        for w in words:
+            rows.append({
+                "campaign": name, "camp_id": cid, "ctype": ctype,
+                "bid": bid, "skus": arts,
+                "price": (m or {}).get("price"), "be_drr": (m or {}).get("be_drr"),
+                "phrase": w.get("phrase"), "views": w.get("views"),
+                "clicks": w.get("clicks"), "ctr": w.get("ctr"),
+                "spend": w.get("sum"), "cluster": w.get("cluster", False),
+            })
+    out = {"rows": rows, "campaigns": len(details),
+           "fetched_at": datetime.utcnow().strftime("%d.%m %H:%M UTC")}
+    _bidq_cache, _bidq_ts = out, _t.monotonic()
+    return out

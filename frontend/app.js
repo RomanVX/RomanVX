@@ -2900,11 +2900,72 @@ function renderBidCalc() {
     <div id="bidOut" class="mt-3"></div>
     <div class="text-secondary small mt-2">Формула: 1000 × CTR × CR × цена × ДРР. Безубыточный ДРР — из фактической юнитки SKU
     (комиссия, эквайринг, логистика, хранение, себес). Ставка при безубытке = торговля в ноль: рабочую считай с целевым ДРР.</div>
+  </div>
+  <div class="card bg-card p-3 mt-3">
+    <div class="d-flex align-items-center gap-2 mb-2">
+      <h6 class="mb-0">📋 Действующие РК: запросы и ставки</h6>
+      <button class="btn btn-sm btn-outline-info ms-auto" onclick="bidLoadQueries(this)">⟳ Выгрузить из WB</button>
+    </div>
+    <div id="bidQueriesOut" class="text-secondary small">Нажми «Выгрузить» — соберём активные кампании, их ставки и фразы с фактическим CTR,
+    и сравним ставку каждой кампании с потолком по юнитке (CR и целевой ДРР берутся из полей выше).</div>
   </div>`;
   bidCompute();
 }
 
+let _bidQData = null;
+async function bidLoadQueries(btn) {
+  const out = document.getElementById('bidQueriesOut');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Собираем (до минуты)…'; }
+  try {
+    _bidQData = await fetchJSON('/api/tools/bid/queries' + (btn ? '?refresh=true' : ''), 180000);
+    renderBidQueries();
+  } catch (e) { if (out) out.innerHTML = `<div class="text-danger">Ошибка: ${esc(e.message)}</div>`; }
+  if (btn) { btn.disabled = false; btn.textContent = '⟳ Выгрузить из WB'; }
+}
+
+function renderBidQueries() {
+  const out = document.getElementById('bidQueriesOut');
+  if (!out || !_bidQData) return;
+  const rows = _bidQData.rows || [];
+  if (_bidQData.error) { out.innerHTML = `<div class="text-warning">⚠ ${esc(_bidQData.error)}</div>`; return; }
+  if (!rows.length) { out.innerHTML = 'Активных кампаний с фразами не нашлось'; return; }
+  const crIn = parseFloat(document.getElementById('bidCr')?.value);
+  const cr = isNaN(crIn) ? 5 : crIn;
+  const drrIn = parseFloat(document.getElementById('bidDrr')?.value);
+  let html = `<div class="table-responsive" style="max-height:56vh"><table class="table table-sm align-middle mb-0 text-nowrap" style="font-size:.83rem"><thead><tr>
+    <th>Кампания · SKU</th><th>Фраза</th><th class="text-end">Показы</th><th class="text-end">CTR, %</th>
+    <th class="text-end" title="Текущая ставка кампании">Ставка</th>
+    <th class="text-end" title="Потолок по юнитке при фактическом CTR фразы, CR ${cr}% и ${isNaN(drrIn) ? 'безубыточном' : 'целевом'} ДРР">Потолок</th>
+    <th>Вердикт</th></tr></thead><tbody>`;
+  let prev = null;
+  rows.forEach(r => {
+    const drr = isNaN(drrIn) ? (r.be_drr || 0) : drrIn;
+    const maxB = (r.price && r.ctr) ? Math.round(1000 * (r.ctr / 100) * (cr / 100) * r.price * drr / 100) : null;
+    let verdict = '—', clr = 'var(--text-soft)';
+    if (maxB != null && r.bid) {
+      if (r.bid > maxB) { verdict = `выше потолка на ${fmt(r.bid - maxB)}`; clr = 'var(--neg)'; }
+      else { verdict = `запас ${fmt(maxB - r.bid)} ₽`; clr = 'var(--pos)'; }
+    } else if (r.cluster) { verdict = 'кластер АРК (CTR нет)'; }
+    const head = r.camp_id !== prev
+      ? `<b>${esc((r.campaign || '').slice(0, 26))}</b><div class="small text-secondary">${esc((r.skus || []).join(', '))} · ставка ${r.bid ? fmt(r.bid) : '—'}</div>`
+      : '';
+    prev = r.camp_id;
+    html += `<tr>
+      <td style="max-width:200px;overflow:hidden">${head}</td>
+      <td style="max-width:240px;overflow:hidden;text-overflow:ellipsis">${esc(r.phrase || '')}</td>
+      <td class="text-end">${fmt(r.views || 0)}</td>
+      <td class="text-end fw-bold">${r.ctr ? r.ctr.toFixed(1) : '—'}</td>
+      <td class="text-end">${r.bid ? fmt(r.bid) : '—'}</td>
+      <td class="text-end fw-bold">${maxB != null ? fmt(maxB) : '—'}</td>
+      <td style="color:${clr}">${verdict}</td></tr>`;
+  });
+  html += `</tbody></table></div>
+  <div class="small text-secondary mt-2">Потолок пересчитывается от полей CR/ДРР калькулятора выше (поменяй — нажми «Выгрузить» не надо, просто пересчитается при вводе). Снято: ${esc(_bidQData.fetched_at || '')}, кампаний: ${_bidQData.campaigns}.</div>`;
+  out.innerHTML = html;
+}
+
 function bidCompute() {
+  if (_bidQData) renderBidQueries();
   const out = document.getElementById('bidOut');
   if (!out || !_bidData) return;
   const sku = document.getElementById('bidSku')?.value;
