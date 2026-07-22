@@ -2933,7 +2933,7 @@ function renderBidQueries() {
   if (!out || !_bidQData) return;
   const rows = _bidQData.rows || [];
   if (_bidQData.error) { out.innerHTML = `<div class="text-warning">⚠ ${esc(_bidQData.error)}</div>`; return; }
-  if (!rows.length) { out.innerHTML = 'Активных кампаний с фразами не нашлось'; return; }
+  if (!rows.length) { out.innerHTML = `Пусто: активных кампаний по API — ${_bidQData.active_ids ?? '?'}, с деталями — ${_bidQData.campaigns ?? '?'}. Если числа не нулевые — WB не отдал фразы, смотри лог bid/queries.`; return; }
   const crIn = parseFloat(document.getElementById('bidCr')?.value);
   const cr = isNaN(crIn) ? 5 : crIn;
   const drrIn = parseFloat(document.getElementById('bidDrr')?.value);
@@ -2951,6 +2951,13 @@ function renderBidQueries() {
       if (r.bid > maxB) { verdict = `выше потолка на ${fmt(r.bid - maxB)}`; clr = 'var(--neg)'; }
       else { verdict = `запас ${fmt(maxB - r.bid)} ₽`; clr = 'var(--pos)'; }
     } else if (r.cluster) { verdict = 'кластер АРК (CTR нет)'; }
+    if (r.no_words) {
+      html += `<tr><td style="max-width:200px"><b>${esc((r.campaign || '').slice(0, 26))}</b>
+        <div class="small text-secondary">${esc((r.skus || []).join(', '))} · ставка ${r.bid ? fmt(r.bid) : '—'}</div></td>
+        <td colspan="6" class="text-secondary small">WB не отдал статистику фраз по этой кампании</td></tr>`;
+      prev = r.camp_id;
+      return;
+    }
     const head = r.camp_id !== prev
       ? `<b>${esc((r.campaign || '').slice(0, 26))}</b><div class="small text-secondary">${esc((r.skus || []).join(', '))} · ставка ${r.bid ? fmt(r.bid) : '—'}</div>`
       : '';

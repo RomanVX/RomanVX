@@ -4130,16 +4130,19 @@ async def bid_queries(refresh: bool = Query(default=False)):
         _log.info("bid/queries: %s (%s) — %d фраз", cid, ctype, len(words))
         await asyncio.sleep(0.4)
         words = sorted(words, key=lambda w: -w.get("views", 0))[:15]
+        base_row = {"campaign": name, "camp_id": cid, "ctype": ctype,
+                    "bid": bid, "skus": arts,
+                    "price": (m or {}).get("price"), "be_drr": (m or {}).get("be_drr")}
+        if not words:
+            rows.append({**base_row, "phrase": None, "views": None,
+                         "clicks": None, "ctr": None, "spend": None,
+                         "cluster": False, "no_words": True})
         for w in words:
-            rows.append({
-                "campaign": name, "camp_id": cid, "ctype": ctype,
-                "bid": bid, "skus": arts,
-                "price": (m or {}).get("price"), "be_drr": (m or {}).get("be_drr"),
-                "phrase": w.get("phrase"), "views": w.get("views"),
-                "clicks": w.get("clicks"), "ctr": w.get("ctr"),
-                "spend": w.get("sum"), "cluster": w.get("cluster", False),
-            })
-    out = {"rows": rows, "campaigns": len(details),
+            rows.append({**base_row,
+                         "phrase": w.get("phrase"), "views": w.get("views"),
+                         "clicks": w.get("clicks"), "ctr": w.get("ctr"),
+                         "spend": w.get("sum"), "cluster": w.get("cluster", False)})
+    out = {"rows": rows, "campaigns": len(details), "active_ids": len(ids),
            "fetched_at": datetime.utcnow().strftime("%d.%m %H:%M UTC")}
     _bidq_cache, _bidq_ts = out, _t.monotonic()
     return out
