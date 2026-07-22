@@ -2888,7 +2888,13 @@ function renderBidCalc() {
   const items = _bidData.items || [];
   if (!items.length) { wrap.innerHTML = `<div class="alert alert-info">${esc(_bidData.message || 'Юнитка собирается — обнови через минуту')}</div>`; return; }
   const opts = items.map(b => `<option value="${esc(b.sku)}">${esc(b.sku)} — ${esc((b.name || '').slice(0, 36))}</option>`).join('');
+  const calcHidden = localStorage.getItem('bidCalcHidden') === '1';
   wrap.innerHTML = `<div class="card bg-card p-3" style="max-width:760px">
+    <div class="d-flex align-items-center mb-1" style="cursor:pointer" onclick="bidToggleCalc()">
+      <h6 class="mb-0">Калькулятор ставки</h6>
+      <span id="bidCalcChevron" class="ms-auto text-secondary">${calcHidden ? '▸ развернуть' : '▾ свернуть'}</span>
+    </div>
+    <div id="bidCalcBody" style="${calcHidden ? 'display:none' : ''}">
     <div class="row g-2 align-items-end">
       <div class="col-md-4"><label class="form-label small mb-1">Артикул</label>
         <select id="bidSku" class="form-select form-select-sm" onchange="bidCompute()">${opts}</select></div>
@@ -2907,6 +2913,7 @@ function renderBidCalc() {
     <div id="bidOut" class="mt-3"></div>
     <div class="text-secondary small mt-2">Формула: 1000 × CTR × CR × цена × ДРР. Безубыточный ДРР — из фактической юнитки SKU
     (комиссия, эквайринг, логистика, хранение, себес). Ставка при безубытке = торговля в ноль: рабочую считай с целевым ДРР.</div>
+    </div>
   </div>
   <div class="card bg-card p-3 mt-3">
     <div class="d-flex align-items-center gap-2 mb-2">
@@ -3082,6 +3089,16 @@ async function loadTrends(refresh) {
 function trendsFilter() {
   _trendsQ = document.getElementById('trendsQ')?.value.trim() || '';
   loadTrends(true);
+}
+
+function bidToggleCalc() {
+  const body = document.getElementById('bidCalcBody');
+  const ch = document.getElementById('bidCalcChevron');
+  if (!body) return;
+  const hide = body.style.display !== 'none';
+  body.style.display = hide ? 'none' : '';
+  if (ch) ch.textContent = hide ? '▸ развернуть' : '▾ свернуть';
+  localStorage.setItem('bidCalcHidden', hide ? '1' : '0');
 }
 
 async function trendsCollectNow(btn) {
