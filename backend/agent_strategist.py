@@ -228,6 +228,21 @@ async def _t_promos(_a: dict) -> str:
     return json.dumps(out, ensure_ascii=False)
 
 
+async def _t_fbs(_a: dict) -> str:
+    """Сравнение затрат FBW против FBS по официальным тарифам."""
+    from routers import tools as _tools
+    res = await _tools.fbs_compare()
+    if res.get("error") or res.get("message"):
+        return str(res.get("error") or res.get("message"))
+    slim = [{"sku": i["sku"], "d_unit": i["delta_unit"], "d_month": i["delta_month"],
+             "comm": f"{i['fbo_comm_pct']}→{i['fbs_comm_pct']}%",
+             "logist": f"{i['fbo_logist']}→{i['fbs_logist']}",
+             "storage_saved": i["fbo_storage"]}
+            for i in res["items"]]
+    return json.dumps({"delta_month_total": res["delta_month"],
+                       "note": res["note"], "by_sku": slim}, ensure_ascii=False)
+
+
 async def _t_memory(_a: dict) -> str:
     import snapshot as _snap
     plan = await asyncio.to_thread(_snap.load, "strategist_plan", None) or {}
@@ -292,6 +307,8 @@ _TOOLS = {
                   "быстрее competitors"),
     "promos": (_t_promos, "Акции маркетплейсов: в каких акциях Ozon состоят наши товары "
                "(+флаг автодобавления), календарь акций WB на 30 дней (куда зовут, даты, условия)"),
+    "fbs_compare": (_t_fbs, "Переход WB на FBS: дельта прямых затрат на штуку и месяц по каждому "
+                    "SKU (комиссия/логистика/хранение по официальным тарифам); конверсию и сроки не моделирует"),
     "memory": (_t_memory, "Твоя память: текущий стратегический план и задачи (открытые и закрытые) с датами проверки"),
     "save_memory": (_t_save, "Сохранить обновлённый план и задачи. Параметры: plan (текст стратегии), "
                              "new_tasks [{title, kind: goal|task|hypothesis, metric, check_date YYYY-MM-DD, reasoning}], "
