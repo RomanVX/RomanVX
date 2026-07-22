@@ -2940,20 +2940,33 @@ function renderBidQueries() {
   const cr = isNaN(crIn) ? 5 : crIn;
   const drrIn = parseFloat(document.getElementById('bidDrr')?.value);
   let html = `<div class="table-responsive" style="max-height:56vh"><table class="table table-sm align-middle mb-0 text-nowrap" style="font-size:.83rem"><thead><tr>
-    <th>Кампания · SKU</th><th>Фраза</th><th class="text-end">Показы</th><th class="text-end">CTR, %</th>
+    <th>Фраза</th><th class="small">Кампания</th><th class="text-end">Показы</th><th class="text-end">CTR, %</th>
     <th class="text-end" title="Заказы из этого кластера за 14 дней">Заказы</th>
     <th class="text-end" title="Фактическая конверсия клика в заказ по кластеру">CR, %</th>
-    <th class="text-end" title="Текущая ставка кампании">Ставка</th>
-    <th class="text-end" title="Потолок по юнитке при фактическом CTR фразы, CR ${cr}% и ${isNaN(drrIn) ? 'безубыточном' : 'целевом'} ДРР">Потолок</th>
+    <th class="text-end" title="Ставка кластера, иначе — товара в кампании">Ставка</th>
+    <th class="text-end" title="Потолок по юнитке при фактическом CTR фразы, CR и ДРР">Потолок</th>
     <th>Вердикт</th></tr></thead><tbody>`;
-  // группируем по кампаниям: крупные сверху, внутри — по показам
-  const byCamp = {};
-  rows.forEach(r => { (byCamp[r.camp_id] = byCamp[r.camp_id] || []).push(r); });
-  const ordered = Object.values(byCamp)
-    .sort((a, b) => b.reduce((s, r) => s + (r.views || 0), 0) - a.reduce((s, r) => s + (r.views || 0), 0))
-    .flatMap(g => g.sort((a, b) => (b.views || 0) - (a.views || 0)));
+  // группируем по товару: SKU-блоками, внутри — фразы по показам
+  const bySku = {};
+  rows.forEach(r => { const k = (r.skus || [])[0] || '?'; (bySku[k] = bySku[k] || []).push(r); });
+  const groups = Object.entries(bySku)
+    .sort((a, b) => b[1].reduce((s, r) => s + (r.views || 0), 0) - a[1].reduce((s, r) => s + (r.views || 0), 0));
+  const nameOf = sku => ((_bidData && (_bidData.items || []).find(i => i.sku === sku)) || {}).name || '';
+  const ordered = [];
+  groups.forEach(([sku, list]) => {
+    const gv = list.reduce((s, r) => s + (r.views || 0), 0);
+    const go = list.reduce((s, r) => s + (r.orders || 0), 0);
+    ordered.push({ _group: sku, _name: nameOf(sku), _views: gv, _orders: go });
+    list.sort((a, b) => (b.views || 0) - (a.views || 0)).forEach(r => ordered.push(r));
+  });
   let prev = null;
   ordered.forEach(r => {
+    if (r._group) {
+      html += `<tr class="table-secondary"><td colspan="9" style="padding:5px 12px"><strong><code>${esc(r._group)}</code></strong>
+        <span class="text-secondary small">${esc((r._name || '').slice(0, 44))} · показы ${fmt(r._views)} · заказы ${fmt(r._orders)}</span></td></tr>`;
+      prev = null;
+      return;
+    }
     const drr = isNaN(drrIn) ? (r.be_drr || 0) : drrIn;
     const enough = r.cr != null && (r.clicks || 0) >= 30;   // факт-CR только при статистике
     const crUse = enough ? r.cr : cr;
@@ -2973,13 +2986,10 @@ function renderBidQueries() {
       prev = r.camp_id;
       return;
     }
-    const head = r.camp_id !== prev
-      ? `<b>${esc((r.campaign || '').slice(0, 26))}</b><div class="small text-secondary">${esc((r.skus || []).join(', '))} · ставка ${r.bid ? fmt(r.bid) : '—'}</div>`
-      : '';
     prev = r.camp_id;
     html += `<tr>
-      <td style="max-width:200px;overflow:hidden">${head}</td>
-      <td style="max-width:240px;overflow:hidden;text-overflow:ellipsis">${esc(r.phrase || '')}</td>
+      <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis">${esc(r.phrase || '')}</td>
+      <td class="small text-secondary" style="max-width:170px;overflow:hidden;text-overflow:ellipsis">${esc((r.campaign || '').slice(0, 24))}</td>
       <td class="text-end">${fmt(r.views || 0)}</td>
       <td class="text-end fw-bold">${r.ctr ? r.ctr.toFixed(1) : '—'}</td>
       <td class="text-end">${r.orders ?? '—'}</td>
