@@ -47,6 +47,7 @@ async function loadCabinetInfo() {
     _cab = await (await fetch('/api/cabinet')).json();
   } catch (e) { return; }
   if (_cab.group_order) GROUP_ORDER = _cab.group_order;
+  if (_me) applyRole();
   if (_cab.brand_order) BRAND_ORDER = _cab.brand_order;
   if (_cab.subgroups) SUBGROUPS = _cab.subgroups;
   // имя кабинета в шапке и на карточке выбора
@@ -113,10 +114,11 @@ function applyRole() {
   // владельцу — кнопка управления доступами
   const btn = document.getElementById('usersBtn');
   if (btn) btn.style.display = _me.role === 'owner' ? '' : 'none';
-  // вкладки «Стратегия» и «Репрайсер» — только владельцу
+  // вкладки «Стратегия» и «Репрайсер» — только владельцу и не в демо
+  const isDemo = typeof _cab !== 'undefined' && _cab && _cab.demo;
   ['tabStrategy', 'tabRepricer'].forEach(id => {
     const el = document.getElementById(id);
-    if (el) el.style.display = _me.role === 'owner' ? '' : 'none';
+    if (el) el.style.display = (_me.role === 'owner' && !isDemo) ? '' : 'none';
   });
 }
 
@@ -3005,7 +3007,8 @@ function bidCompute() {
     } else { revOut.innerHTML = ''; }
   }
   let html = `<div class="d-flex gap-3 flex-wrap mb-2">
-    <div class="metric-card"><div class="mc-head">Цена продавца</div><div class="mc-val">${fmtRub(price)}</div></div>
+    <div class="metric-card"><div class="mc-head">Цена для покупателя</div><div class="mc-val">${fmtRub(b.buyer0 || price)}</div></div>
+    <div class="metric-card"><div class="mc-head" title="Средняя выручка на штуку (цена продавца из юнитки) — от неё считается ставка">Наша выручка/шт</div><div class="mc-val">${fmtRub(price)}</div></div>
     <div class="metric-card"><div class="mc-head">Безубыточный ДРР</div><div class="mc-val">${be}%</div></div>
     <div class="metric-card"><div class="mc-head">₽ рекламы на 1 заказ (ДРР ${Math.round(drr)}%)</div><div class="mc-val" style="color:var(--gold)">${fmtRub(Math.round(perOrder))}</div></div>
   </div>`;

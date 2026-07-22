@@ -311,7 +311,9 @@ def get_cabinet():
     """Конфигурация кабинета: имя, площадки, группировки, ссылка на второй кабинет."""
     from config import (CABINET, CABINET_NAME, CABINET_MARKETPLACES,
                         OTHER_CABINET_URL, OTHER_CABINET_NAME)
-    out = {"id": CABINET, "name": CABINET_NAME, "marketplaces": CABINET_MARKETPLACES}
+    from config import USE_MOCK
+    out = {"id": CABINET, "name": CABINET_NAME, "marketplaces": CABINET_MARKETPLACES,
+           "demo": USE_MOCK}
     if CABINET == "fk":
         import catalog_fk
         out["group_order"] = catalog_fk.GROUP_ORDER
