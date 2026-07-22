@@ -4191,3 +4191,29 @@ async def bid_probe(request: Request):
         except Exception as e:
             out[name + "_error"] = str(e)[:200]
     return out
+
+
+@router.post("/adv/sandbox", include_in_schema=False)
+async def adv_sandbox(request: Request, body: dict):
+    """Owner-only прокси к advert-api (песочница или бой) для отладки методов.
+    body: {path, method: GET|POST|PATCH|PUT, params?, json?, sandbox: true}."""
+    _owner_only(request)
+    import httpx
+    import advert_client as ac
+    base = ("https://advert-api-sandbox.wildberries.ru" if body.get("sandbox", True)
+            else "https://advert-api.wildberries.ru")
+    path = str(body.get("path") or "")
+    if not path.startswith("/"):
+        return {"error": "path должен начинаться с /"}
+    method = str(body.get("method") or "GET").upper()
+    try:
+        async with httpx.AsyncClient(timeout=30) as c:
+            r = await c.request(method, base + path, headers=ac._headers(),
+                                params=body.get("params"), json=body.get("json"))
+        try:
+            payload = r.json()
+        except Exception:
+            payload = r.text[:2000]
+        return {"status": r.status_code, "body": payload}
+    except Exception as e:
+        return {"error": str(e)[:300]}
