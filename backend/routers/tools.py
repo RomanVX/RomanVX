@@ -3964,3 +3964,104 @@ async def repricer_probe(request: Request):
                                    {"filter": {"visibility": "ALL"}, "limit": 5})
     items = data.get("items") or (data.get("result") or {}).get("items") or []
     return {"count": len(items), "raw": items[:4]}
+
+
+# ══ Сравнение FBW → FBS: как изменятся затраты ════════════════════════════════
+@router.get("/fbs_compare")
+async def fbs_compare():
+    """По каждому SKU: комиссия FBW против FBS (официальные тарифы), логистика
+    FBW (факт из юнитки) против расчётной FBS (база + литры), хранение WB → 0.
+    Скорость доставки и конверсия НЕ моделируются — только прямые затраты."""
+    import wb_client
+
+    data = await get_margin(mp="WB")
+    items = data.get("items") or []
+    if not items:
+        return {"items": [], "message": data.get("message") or "юнитка собирается"}
+
+    # nmId → (fbo pct, fbs pct) напрямую из тарифов × категорий карточек
+    try:
+        tariffs, subjects = await asyncio.gather(
+            wb_client.get_commission_tariffs(), wb_client.get_card_subjects())
+    except Exception as e:
+        return {"items": [], "error": f"тарифы WB недоступны: {str(e)[:150]}"}
+    comm_nm = {}
+    for nm, sinfo in subjects.items():
+        t = tariffs.get(int(sinfo.get("subjectID") or 0))
+        if t:
+            comm_nm[str(nm)] = {"fbo": t.get("fbo"), "fbs": t.get("fbs")}
+
+    def _n(v):
+        try:
+            return float(str(v).replace(",", "."))
+        except (TypeError, ValueError):
+            return 0.0
+
+    # объём единицы, л — из отчёта платного хранения (последние 2 дня)
+    vols: dict = {}
+    try:
+        from datetime import date as _date
+        d_to = (_date.today() - timedelta(days=1)).isoformat()
+        d_from = (_date.today() - timedelta(days=2)).isoformat()
+        for r in await wb_client.get_paid_storage(d_from, d_to):
+            v = _n(r.get("volume"))
+            if v > 0 and r.get("nmId"):
+                vols[str(r["nmId"])] = v
+    except Exception as e:
+        _log.warning("fbs volumes: %s", e)
+
+    # логистика FBS: медианный тариф Marketplace по складам
+    fbs_base, fbs_liter = 50.0, 5.0     # дефолт, если API недоступен
+    try:
+        boxes = await wb_client.get_box_tariffs()
+        bases = sorted(_n(w.get("boxDeliveryMarketplaceBase")) for w in boxes
+                       if _n(w.get("boxDeliveryMarketplaceBase")) > 0)
+        liters = sorted(_n(w.get("boxDeliveryMarketplaceLiter")) for w in boxes
+                        if _n(w.get("boxDeliveryMarketplaceLiter")) > 0)
+        if bases:
+            fbs_base = bases[len(bases) // 2]
+        if liters:
+            fbs_liter = liters[len(liters) // 2]
+    except Exception as e:
+        _log.warning("fbs box tariffs: %s", e)
+
+    out, t_fbo, t_fbs, t_qty = [], 0.0, 0.0, 0
+    for b in items:
+        sku = b.get("sku")
+        price = b.get("price0") or 0
+        qty = round(b.get("qty_f") if b.get("qty_f") is not None else b.get("qty_m", 0) or 0)
+        import catalog as _cat
+        nm_id = next((str(n) for n, a in getattr(_cat, "WB_ID_TO_ART", {}).items()
+                      if a == sku), "")
+        cinfo = comm_nm.get(nm_id) or {}
+        fbo_pct = cinfo.get("fbo") or b.get("comm_pct") or 0
+        fbs_pct = cinfo.get("fbs")
+        if fbs_pct is None:
+            fbs_pct = fbo_pct                     # нет тарифа — считаем равной
+        vol = vols.get(nm_id, 0) or 1.0
+        # прямая доставка FBS + 20% надбавка на невыкупы/возвраты (факт FBW
+        # в юнитке невыкупы уже содержит — выравниваем сопоставимость)
+        fbs_logist = round((fbs_base + fbs_liter * max(vol - 1, 0)) * 1.2, 1)
+        fbo_logist = b.get("logist") or 0
+        storage = b.get("storage") or 0
+        d_unit = round((price * (fbs_pct - fbo_pct) / 100)
+                       + (fbs_logist - fbo_logist) - storage, 1)
+        out.append({
+            "sku": sku, "price": price, "qty_month": qty, "volume_l": vol,
+            "fbo_comm_pct": round(fbo_pct, 1), "fbs_comm_pct": round(fbs_pct, 1),
+            "fbo_logist": round(fbo_logist, 1), "fbs_logist": fbs_logist,
+            "fbo_storage": round(storage, 1),
+            "delta_unit": d_unit,                  # >0 = FBS дороже на штуку
+            "delta_month": round(d_unit * qty),
+        })
+        t_fbo += (price * fbo_pct / 100 + fbo_logist + storage) * qty
+        t_fbs += (price * fbs_pct / 100 + fbs_logist) * qty
+        t_qty += qty
+    out.sort(key=lambda x: x["delta_month"])
+    return {"items": out, "qty_month": t_qty,
+            "fbo_month": round(t_fbo), "fbs_month": round(t_fbs),
+            "delta_month": round(t_fbs - t_fbo),
+            "fbs_tariff": {"base": fbs_base, "liter": fbs_liter},
+            "note": "delta>0 — FBS дороже. Не учтены: своё хранение/сборка/дорога "
+                    "до пункта приёма WB, падение конверсии из-за сроков доставки, "
+                    "буст карточек FBW в выдаче."}

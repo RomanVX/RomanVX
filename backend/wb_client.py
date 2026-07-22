@@ -528,3 +528,19 @@ async def get_promo_nomenclatures(promo_id: int, in_action: bool = True,
                      promo_id, r.status_code, r.text[:150])
         return []
     return ((r.json() or {}).get("data") or {}).get("nomenclatures") or []
+
+
+async def get_box_tariffs() -> list[dict]:
+    """Тарифы коробов по складам (FBW и FBS/Marketplace): база + литр.
+    Числа приходят строками с запятой."""
+    if USE_MOCK:
+        return []
+    from datetime import date as _d
+    resp = await _http().get(f"{COMMON_BASE}/api/v1/tariffs/box",
+                             headers=_headers(),
+                             params={"date": _d.today().isoformat()})
+    if not resp.is_success:
+        _log.warning("WB tariffs/box → %s %s", resp.status_code, resp.text[:150])
+        return []
+    data = ((resp.json() or {}).get("response") or {}).get("data") or {}
+    return data.get("warehouseList") or []
