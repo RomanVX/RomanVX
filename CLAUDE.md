@@ -87,6 +87,16 @@ DATABASE_URL (+DB_SCHEMA!), WB_API_TOKEN, OZON_CLIENT_ID/API_KEY,
 OZON_PERF_CLIENT_ID/SECRET, YM_TOKEN/BUSINESS_ID, ANTHROPIC_API_KEY,
 WB_AGENT_MODE=1 + WB_AGENT_TOKEN, KEEP_AWAKE, SQLITE_PATH (локально).
 
+## Документация WB API
+
+`docs/wb_api/` — официальные OpenAPI-спеки всех разделов WB
+(13 файлов + INDEX.md со списком методов). При любой работе с WB API
+СНАЧАЛА смотреть метод/поля/лимиты там, потом писать код — WB часто
+выключает старые методы (напр., POST /adv/v1/promotion/adverts умер
+07.2026), а dev.wildberries.ru с сервера недоступен.
+Owner-only прокси для живой проверки методов (бой и песочница):
+POST /api/tools/adv/sandbox {path, method, params?, json?, sandbox: bool}.
+
 ## Известные грабли
 
 - Юнитка/P&L WB готовы только когда `pnl.source == "detail"` — до этого
