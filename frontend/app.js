@@ -2864,13 +2864,25 @@ let _bidData = null;
 async function loadBidCalc(refresh) {
   const wrap = document.getElementById('toolsWrap');
   if (!wrap || _toolActive !== 'bid') return;
-  if (_bidData && !refresh) { renderBidCalc(); return; }
+  if (_bidData && (_bidData.items || []).length && !refresh) { renderBidCalc(); return; }
+  // юнитка уже загружена вкладкой «Калькулятор маржи» — берём её
+  if (typeof _marginData !== 'undefined' && _marginData && (_marginData.items || []).length) {
+    _bidData = _marginData;
+    renderBidCalc();
+    return;
+  }
   wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>Тянем юнитку…</div>';
   try {
-    _bidData = await fetchJSON('/api/tools/margin?mp=WB', 150000);
+    _bidData = await fetchJSON('/api/tools/margin?mp=WB', 60000);
+    if (!(_bidData.items || []).length) {
+      wrap.innerHTML = `<div class="alert alert-info mt-2">${esc(_bidData.message || 'Юнитка собирается после рестарта')} — обновлю сам через 20 сек…</div>`;
+      setTimeout(() => { if (_toolActive === 'bid') loadBidCalc(true); }, 20000);
+      return;
+    }
     renderBidCalc();
   } catch (e) {
-    wrap.innerHTML = `<div class="alert alert-danger mt-2">Ошибка: ${esc(e.message)}</div>`;
+    wrap.innerHTML = `<div class="alert alert-warning mt-2">Юнитка ещё собирается (${esc(e.message)}) — повторю через 30 сек…</div>`;
+    setTimeout(() => { if (_toolActive === 'bid') loadBidCalc(true); }, 30000);
   }
 }
 
