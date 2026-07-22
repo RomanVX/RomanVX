@@ -427,3 +427,37 @@ async def get_campaign_words(advert_id: int, ctype: int | None = None) -> list[d
         except Exception:
             pass
     return words
+
+
+async def get_campaigns_info(ids: list[int]) -> list[dict]:
+    """Детали кампаний с фолбэками: WB убил POST /adv/v1/promotion/adverts
+    (404 с лета 2026). Цепочка: v1 → GET /adv/v0/auction/adverts (ручные
+    ставки) → GET /api/advert/v2/adverts. Возвращаем как есть."""
+    if not ids:
+        return []
+    want = {int(i) for i in ids}
+    try:
+        result = await _post("/adv/v1/promotion/adverts", list(want)[:100])
+        if isinstance(result, list) and result:
+            return [x for x in result if isinstance(x, dict)]
+    except Exception as e:
+        _log.info("[ADVERT] promotion/adverts недоступен (%s) — фолбэк", str(e)[:80])
+    out: list[dict] = []
+    for path in ("/adv/v0/auction/adverts", "/api/advert/v2/adverts"):
+        try:
+            data = await _get(path)
+        except Exception as e:
+            _log.info("[ADVERT] %s: %s", path, str(e)[:120])
+            continue
+        items = data if isinstance(data, list) else \
+            (data.get("adverts") or data.get("result") or []) if isinstance(data, dict) else []
+        for c in items:
+            if isinstance(c, dict):
+                cid = c.get("advertId") or c.get("id")
+                if cid and int(cid) in want:
+                    c.setdefault("advertId", cid)
+                    out.append(c)
+        if out:
+            _log.info("[ADVERT] %s → %d кампаний", path, len(out))
+            break
+    return out

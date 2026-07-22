@@ -4095,7 +4095,7 @@ async def bid_queries(refresh: bool = Query(default=False)):
     try:
         ids = await asyncio.wait_for(ac.get_all_campaign_ids_ext(), timeout=45)
         _log.info("bid/queries: кампаний всего %d", len(ids))
-        details = await asyncio.wait_for(ac.get_campaign_details(ids[:50]), timeout=30)
+        details = await asyncio.wait_for(ac.get_campaigns_info(ids[:50]), timeout=45)
     except asyncio.TimeoutError:
         return {"rows": [], "error": "advert API не ответил — попробуй позже"}
     except Exception as e:
@@ -4148,4 +4148,30 @@ async def bid_queries(refresh: bool = Query(default=False)):
     out = {"rows": rows, "campaigns": len(act), "active_ids": len(ids),
            "fetched_at": datetime.utcnow().strftime("%d.%m %H:%M UTC")}
     _bidq_cache, _bidq_ts = out, _t.monotonic()
+    return out
+
+
+@router.get("/bid/probe", include_in_schema=False)
+async def bid_probe(request: Request):
+    """Сырые ответы кандидатов на детали кампаний — подбор полей."""
+    _owner_only(request)
+    import advert_client as ac
+    out = {}
+    try:
+        ids = await ac.get_all_campaign_ids_ext()
+        out["ids"] = ids[:10]
+    except Exception as e:
+        out["ids_error"] = str(e)[:200]
+        ids = []
+    for name, coro in (
+        ("promotion_adverts", ac._post("/adv/v1/promotion/adverts", ids[:3])),
+        ("auction_adverts", ac._get("/adv/v0/auction/adverts")),
+        ("advert_v2", ac._get("/api/advert/v2/adverts")),
+    ):
+        try:
+            data = await coro
+            s = data if isinstance(data, list) else [data]
+            out[name] = s[:2]
+        except Exception as e:
+            out[name + "_error"] = str(e)[:200]
     return out
