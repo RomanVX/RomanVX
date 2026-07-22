@@ -496,15 +496,23 @@ async def get_cluster_stats(pairs: list[tuple[int, int]],
     ctr, atbs, orders, cpm, spend, avg_pos (по спеке docs/wb_api/promotion.yaml)."""
     if not pairs:
         return []
-    body = {"from": d_from, "to": d_to,
-            "items": [{"advert_id": int(a), "nm_id": int(n)}
-                      for a, n in pairs[:100]]}
-    try:
-        data = await _post("/adv/v0/normquery/stats", body)
-    except Exception as e:
-        _log.warning("[ADVERT] normquery/stats: %s", str(e)[:150])
-        return []
     rows = []
+    for i in range(0, len(pairs), 100):     # лимит метода — 100 пар за запрос
+        body = {"from": d_from, "to": d_to,
+                "items": [{"advert_id": int(a), "nm_id": int(n)}
+                          for a, n in pairs[i:i + 100]]}
+        try:
+            data = await _post("/adv/v0/normquery/stats", body)
+        except Exception as e:
+            _log.warning("[ADVERT] normquery/stats: %s", str(e)[:150])
+            break
+        await asyncio.sleep(0.3)
+        _collect_stats(rows, data)
+    _log.info("[ADVERT] cluster stats: %d строк", len(rows))
+    return rows
+
+
+def _collect_stats(rows: list, data) -> None:
     for it in (data.get("stats") or []) if isinstance(data, dict) else []:
         aid, nm = it.get("advert_id"), it.get("nm_id")
         for st in it.get("stats") or []:
@@ -514,5 +522,3 @@ async def get_cluster_stats(pairs: list[tuple[int, int]],
                          "ctr": st.get("ctr"), "orders": st.get("orders"),
                          "atbs": st.get("atbs"), "cpm": st.get("cpm"),
                          "spend": st.get("spend"), "avg_pos": st.get("avg_pos")})
-    _log.info("[ADVERT] cluster stats: %d строк", len(rows))
-    return rows

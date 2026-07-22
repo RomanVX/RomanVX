@@ -4136,7 +4136,8 @@ async def bid_queries(refresh: bool = Query(default=False)):
         _log.warning("bid/queries cluster bids: %s", e)
 
     rows = []
-    for st in sorted(stats, key=lambda x: -(x.get("views") or 0))[:400]:
+    seen_clusters = set()
+    for st in sorted(stats, key=lambda x: -(x.get("views") or 0))[:1000]:
         cid = int(st.get("advert_id") or 0)
         nm = st.get("nm_id")
         meta = camp_meta.get(cid, {})
@@ -4155,6 +4156,21 @@ async def bid_queries(refresh: bool = Query(default=False)):
             "price": m.get("price"), "be_drr": m.get("be_drr"),
             "cluster": False,
         })
+        seen_clusters.add((cid, str(st.get("cluster") or "").lower()))
+    # фразы со ставкой, но без показов за период — тоже показываем (Саша: «не все фразы»)
+    for (cid, cl), bidv in cbids.items():
+        if (cid, cl) in seen_clusters or not cl:
+            continue
+        meta = camp_meta.get(cid, {})
+        nm = next(iter(meta.get("nm_bids") or {}), None)
+        art = nm_to_art.get(str(nm)) or (str(nm) if nm else "?")
+        m = marg.get(str(art).upper()) or {}
+        rows.append({"campaign": meta.get("name"), "camp_id": cid,
+                     "skus": [art], "phrase": cl, "views": 0, "clicks": 0,
+                     "ctr": None, "orders": 0, "cr": None, "spend": None,
+                     "avg_pos": None, "bid": bidv,
+                     "price": m.get("price"), "be_drr": m.get("be_drr"),
+                     "cluster": False, "no_stats": True})
     if not rows and act:
         for cid, meta in camp_meta.items():
             rows.append({"campaign": meta.get("name"), "camp_id": cid,

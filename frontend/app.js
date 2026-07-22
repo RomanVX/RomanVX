@@ -2910,7 +2910,8 @@ function renderBidCalc() {
   </div>
   <div class="card bg-card p-3 mt-3">
     <div class="d-flex align-items-center gap-2 mb-2">
-      <h6 class="mb-0">📋 Действующие РК: запросы и ставки</h6>
+      <h6 class="mb-0">Действующие РК: запросы и ставки <span class="text-secondary small fw-normal">статистика за 14 дней</span></h6>
+      <select id="bidCampFilter" class="form-select form-select-sm" style="width:auto" onchange="renderBidQueries()"><option value="">Все кампании</option></select>
       <button class="btn btn-sm btn-outline-info ms-auto" onclick="bidLoadQueries(this)">⟳ Выгрузить из WB</button>
     </div>
     <div id="bidQueriesOut" class="text-secondary small">Нажми «Выгрузить» — соберём активные кампании, их ставки и фразы с фактическим CTR,
@@ -2933,7 +2934,15 @@ async function bidLoadQueries(btn) {
 function renderBidQueries() {
   const out = document.getElementById('bidQueriesOut');
   if (!out || !_bidQData) return;
-  const rows = _bidQData.rows || [];
+  let rows = _bidQData.rows || [];
+  // фильтр по кампании
+  const sel = document.getElementById('bidCampFilter');
+  if (sel && sel.options.length <= 1) {
+    const camps = [...new Map(rows.map(r => [r.camp_id, r.campaign])).entries()];
+    camps.forEach(([id, name]) => { const o = document.createElement('option'); o.value = id; o.textContent = (name || id).slice(0, 40); sel.appendChild(o); });
+  }
+  const cf = sel && sel.value;
+  if (cf) rows = rows.filter(r => String(r.camp_id) === String(cf));
   if (_bidQData.error) { out.innerHTML = `<div class="text-warning">⚠ ${esc(_bidQData.error)}</div>`; return; }
   if (!rows.length) { out.innerHTML = `Пусто: активных кампаний по API — ${_bidQData.active_ids ?? '?'}, с деталями — ${_bidQData.campaigns ?? '?'}. Если числа не нулевые — WB не отдал фразы, смотри лог bid/queries.`; return; }
   const crIn = parseFloat(document.getElementById('bidCr')?.value);
@@ -2987,8 +2996,8 @@ function renderBidQueries() {
       return;
     }
     prev = r.camp_id;
-    html += `<tr>
-      <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis">${esc(r.phrase || '')}</td>
+    html += `<tr${r.no_stats ? ' style="opacity:.55"' : ''}>
+      <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis">${esc(r.phrase || '')}${r.no_stats ? ' <span class="small text-secondary">(без показов за период)</span>' : ''}</td>
       <td class="small text-secondary" style="max-width:170px;overflow:hidden;text-overflow:ellipsis">${esc((r.campaign || '').slice(0, 24))}</td>
       <td class="text-end">${fmt(r.views || 0)}</td>
       <td class="text-end fw-bold">${r.ctr ? r.ctr.toFixed(1) : '—'}</td>
