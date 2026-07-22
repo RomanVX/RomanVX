@@ -2897,6 +2897,11 @@ function renderBidCalc() {
       <div class="col-md-3"><label class="form-label small mb-1" title="Целевой ДРР; пусто = безубыточный из юнитки">Целевой ДРР, %</label>
         <input id="bidDrr" type="number" step="1" value="" placeholder="безубыточный" class="form-control form-control-sm" oninput="bidCompute()"></div>
     </div>
+    <div class="row g-2 align-items-end mt-1">
+      <div class="col-md-4"><label class="form-label small mb-1" title="Обратный режим: известна ставка (например, минималка запроса) — считаем, что нужно, чтобы её отбить">Известная ставка, ₽/1000 показов</label>
+        <input id="bidRev" type="number" step="10" value="" placeholder="напр. 500 (минималка)" class="form-control form-control-sm" oninput="bidCompute()"></div>
+      <div class="col-md-8"><div id="bidRevOut" class="small"></div></div>
+    </div>
     <div id="bidOut" class="mt-3"></div>
     <div class="text-secondary small mt-2">Формула: 1000 × CTR × CR × цена × ДРР. Безубыточный ДРР — из фактической юнитки SKU
     (комиссия, эквайринг, логистика, хранение, себес). Ставка при безубытке = торговля в ноль: рабочую считай с целевым ДРР.</div>
@@ -2978,6 +2983,20 @@ function bidCompute() {
   const drr = isNaN(drrIn) ? be : drrIn;
   const perOrder = price * drr / 100;
   const cpm = cr => 1000 * (ctr / 100) * (cr / 100) * perOrder;
+  // обратный режим: от известной ставки к требуемым CR и цене
+  const revOut = document.getElementById('bidRevOut');
+  const rev = parseFloat(document.getElementById('bidRev')?.value);
+  if (revOut) {
+    if (!isNaN(rev) && rev > 0 && ctr > 0 && drr > 0) {
+      const crNeed = rev / (1000 * (ctr / 100) * price * (drr / 100)) * 100;
+      const crUse = (!isNaN(crIn) && crIn > 0) ? crIn : 5;
+      const priceNeed = rev / (1000 * (ctr / 100) * (crUse / 100) * (drr / 100));
+      const crClr = (!isNaN(crIn) && crIn > 0) ? (crIn >= crNeed ? 'var(--pos)' : 'var(--neg)') : 'var(--gold)';
+      revOut.innerHTML = `Чтобы отбить <b>${fmt(rev)} ₽</b> при CTR ${ctr}% и ДРР ${Math.round(drr)}%:
+        нужен <b style="color:${crClr}">CR ≥ ${crNeed.toFixed(1)}%</b>${(!isNaN(crIn) && crIn > 0) ? ` (у нас ${crIn}% — ${crIn >= crNeed ? 'проходим ✓' : 'мимо ✗'})` : ''}
+        · либо цена товара ≥ <b>${fmt(Math.round(priceNeed))} ₽</b> при CR ${crUse}% (сейчас ${fmt(price)} ₽)`;
+    } else { revOut.innerHTML = ''; }
+  }
   let html = `<div class="d-flex gap-3 flex-wrap mb-2">
     <div class="metric-card"><div class="mc-head">Цена продавца</div><div class="mc-val">${fmtRub(price)}</div></div>
     <div class="metric-card"><div class="mc-head">Безубыточный ДРР</div><div class="mc-val">${be}%</div></div>
