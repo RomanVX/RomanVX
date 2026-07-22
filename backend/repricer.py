@@ -157,7 +157,7 @@ def proposal_apply(art: str) -> bool:
 async def sync_targets_to_fact() -> int:
     """Цели = фактические цены для покупателя из кабинетов (Ozon приоритетнее,
     WB — оценка через СПП). Стартовая точка «как есть» для анализа стратега."""
-    ov = await overview()
+    ov = await overview(include_margin=False)   # марже тут делать нечего — только цены
     n = 0
     for c in ov["items"]:
         fact = c.get("oz_buyer_now") or c.get("wb_buyer_now")
