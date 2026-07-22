@@ -577,6 +577,62 @@ async def _review_with_retry(thread: int | None) -> None:
                   thread_id=thread)
 
 
+async def build_bid_calc(args: str) -> str:
+    """Калькулятор максимальной ставки CPM из юнитки.
+
+    /bid <артикул> <CTR%> [CR%] [целевой ДРР%]
+    Максимальная ставка за 1000 показов = 1000 × CTR × CR × цена × ДРР
+    (ДРР по умолчанию — безубыточный из юнитки данного SKU)."""
+    parts = args.split()
+    if len(parts) < 2:
+        return ("🎯 <b>Калькулятор ставки</b>\n"
+                "Формат: /bid АРТИКУЛ CTR% [CR%] [ДРР%]\n"
+                "Пример: /bid AL-01 4 — потолок ставки при CTR 4%\n"
+                "CR — конверсия клика в заказ (не задашь — покажу сетку), "
+                "ДРР — целевой (не задашь — безубыточный из юнитки).")
+    sku_q = parts[0].upper()
+    try:
+        ctr = float(parts[1].replace(",", "."))
+        cr_in = float(parts[2].replace(",", ".")) if len(parts) > 2 else None
+        drr_in = float(parts[3].replace(",", ".")) if len(parts) > 3 else None
+    except ValueError:
+        return "Не понял числа. Формат: /bid AL-01 4 [5] [15]"
+
+    from routers import tools as _tools
+    data = await _tools.get_margin(mp="WB")
+    items = data.get("items") or []
+    if not items:
+        return "Юнитка ещё собирается — повтори через пару минут."
+    b = next((x for x in items if str(x.get("sku", "")).upper() == sku_q), None)
+    if not b:
+        near = [x["sku"] for x in items if sku_q in str(x.get("sku", "")).upper()][:5]
+        return f"Артикул {sku_q} не нашёл." + (f" Похожие: {', '.join(near)}" if near else "")
+    m = _margin_math(b)
+    price = m["price_seller"]
+    be = m["be_drr_pct"]
+    drr = drr_in if drr_in is not None else be
+    rub_per_order = price * drr / 100          # допустимые ₽ рекламы на 1 заказ
+
+    def cpm(cr):
+        return 1000 * (ctr / 100) * (cr / 100) * rub_per_order
+
+    lines = [f"🎯 <b>{m['sku']}</b> · цена {price:.0f} ₽ · безубыточный ДРР {be}%"
+             + (f" · считаю по ДРР {drr:.0f}%" if drr_in is not None else ""),
+             f"Допустимо рекламы на 1 заказ: <b>{rub_per_order:.0f} ₽</b>",
+             f"CTR {ctr}%:"]
+    if cr_in is not None:
+        lines.append(f"CR {cr_in}% → <b>макс. ставка {cpm(cr_in):.0f} ₽/1000 показов</b>")
+    else:
+        for cr in (3, 5, 8, 12):
+            lines.append(f"  CR {cr}% → макс. <b>{cpm(cr):.0f} ₽</b>/1000 показов")
+        lines.append("CR = конверсия клика в заказ; свой: /bid "
+                     f"{m['sku']} {ctr} 5")
+    if drr_in is None:
+        lines.append("⚠️ Это ставка НУЛЕВОЙ маржи. Рабочий потолок — с целевым "
+                     f"ДРР, напр.: /bid {m['sku']} {ctr} 5 15")
+    return "\n".join(lines)
+
+
 async def bot_loop() -> None:
     """Long-polling: команды в группе — /stocks (остатки) и /review (разбор).
     Отвечает только в чате TG_CHAT_ID (чужим — молчит)."""
@@ -694,7 +750,10 @@ async def bot_loop() -> None:
                 if not text.startswith("/"):
                     continue
                 cmd = text.split()[0].split("@")[0]
-                if cmd == "/stocks":
+                if cmd == "/bid":
+                    arg = raw.split(None, 1)[1] if len(raw.split(None, 1)) > 1 else ""
+                    await tg_send(await build_bid_calc(arg), thread_id=thread)
+                elif cmd == "/stocks":
                     await tg_send(await build_stocks_summary(), thread_id=thread)
                 elif cmd == "/review":
                     await tg_send("⏳ Готовлю разбор кабинета — минута…", thread_id=thread)
