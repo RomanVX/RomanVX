@@ -4072,13 +4072,57 @@ _bidq_cache: dict = {}
 _bidq_ts: float = 0.0
 
 
+def _bidq_init():
+    db.execute("""CREATE TABLE IF NOT EXISTS adv_cluster_daily (
+        day TEXT, advert_id INTEGER, nm TEXT, cluster TEXT,
+        views INTEGER, clicks INTEGER, orders_cnt INTEGER,
+        spend REAL, bid REAL,
+        PRIMARY KEY (day, advert_id, nm, cluster))""")
+
+
+async def bid_collect_daily() -> dict:
+    """Суточный срез кластерной статистики и ставок в БД — вечная история."""
+    import advert_client as ac
+    _bidq_init()
+    day = (datetime.utcnow() - timedelta(days=1)).strftime("%Y-%m-%d")
+    ids = await ac.get_all_campaign_ids_ext()
+    details = await ac.get_campaigns_info(ids[:50])
+    act = [c for c in details if c.get("status") in (9, 11)]
+    pairs = [(int(c["advertId"]), int(n["nm_id"]))
+             for c in act for n in (c.get("nm_settings") or []) if n.get("nm_id")]
+    stats = await ac.get_cluster_stats(pairs, day, day)
+    bids = {}
+    for r in await ac.get_cluster_bids([c["advertId"] for c in act]):
+        bids[(int(r.get("advert_id") or 0), str(r.get("cluster") or "").lower())] = r.get("bid")
+    rows = [(day, int(st["advert_id"]), str(st["nm_id"]), st["cluster"],
+             st.get("views") or 0, st.get("clicks") or 0, st.get("orders") or 0,
+             st.get("spend") or 0,
+             bids.get((int(st["advert_id"]), str(st["cluster"] or "").lower())))
+            for st in stats if st.get("cluster")]
+    if rows:
+        await asyncio.to_thread(
+            db.executemany,
+            "INSERT INTO adv_cluster_daily VALUES (?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(day, advert_id, nm, cluster) DO UPDATE SET "
+            "views=excluded.views, clicks=excluded.clicks, "
+            "orders_cnt=excluded.orders_cnt, spend=excluded.spend, bid=excluded.bid"
+            if db.IS_PG else
+            "INSERT OR REPLACE INTO adv_cluster_daily VALUES (?,?,?,?,?,?,?,?,?)",
+            rows)
+    _log.info("bid history: %s — %d строк кластеров", day, len(rows))
+    return {"day": day, "rows": len(rows)}
+
+
 @router.get("/bid/queries")
-async def bid_queries(refresh: bool = Query(default=False)):
+async def bid_queries(refresh: bool = Query(default=False),
+                      date_from: str = Query(default=""),
+                      date_to: str = Query(default="")):
     """Активные кампании WB: ставка кампании + фразы со статистикой CTR,
     привязанные к SKU и его юнитке. Кеш 1 час (advert API лимитный)."""
     import time as _t
     global _bidq_cache, _bidq_ts
-    if not refresh and _bidq_cache and _t.monotonic() - _bidq_ts < 3600:
+    if not refresh and not date_from and not date_to and _bidq_cache \
+            and _t.monotonic() - _bidq_ts < 3600:
         return _bidq_cache
     import advert_client as ac
     import catalog as _cat
@@ -4122,8 +4166,8 @@ async def bid_queries(refresh: bool = Query(default=False)):
     _log.info("bid/queries: пар кампания×артикул %d", len(pairs))
 
     from datetime import date as _date
-    d_to = (_date.today() - timedelta(days=1)).isoformat()
-    d_from = (_date.today() - timedelta(days=14)).isoformat()
+    d_to = (date_to or (_date.today() - timedelta(days=1)).isoformat())[:10]
+    d_from = (date_from or (_date.today() - timedelta(days=14)).isoformat())[:10]
     stats = await ac.get_cluster_stats(pairs, d_from, d_to)
     cbids = {}
     try:
@@ -4179,6 +4223,7 @@ async def bid_queries(refresh: bool = Query(default=False)):
                          "bid": next(iter((meta.get("nm_bids") or {}).values()), None),
                          "phrase": None, "no_words": True})
     out = {"rows": rows, "campaigns": len(act), "active_ids": len(ids),
+           "period": [d_from, d_to],
            "fetched_at": datetime.utcnow().strftime("%d.%m %H:%M UTC")}
     _bidq_cache, _bidq_ts = out, _t.monotonic()
     return out

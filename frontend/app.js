@@ -2932,6 +2932,8 @@ function renderBidCalc() {
       <h6 class="mb-0">Действующие РК: запросы и ставки <span class="text-secondary small fw-normal">статистика за 14 дней</span></h6>
       <select id="bidCampFilter" class="form-select form-select-sm" style="width:auto" onchange="renderBidQueries()"><option value="">Все кампании</option></select>
       <select id="bidSkuFilter" class="form-select form-select-sm" style="width:auto" onchange="renderBidQueries()"><option value="">Все продукты</option></select>
+      <input type="date" id="bidFrom" class="form-control form-control-sm" style="width:auto" title="Начало периода">
+      <input type="date" id="bidTo" class="form-control form-control-sm" style="width:auto" title="Конец периода">
       <button class="btn btn-sm btn-outline-info ms-auto" onclick="bidLoadQueries(this)">⟳ Выгрузить из WB</button>
     </div>
     <div id="bidQueriesOut" class="text-secondary small">Нажми «Выгрузить» — соберём активные кампании, их ставки и фразы с фактическим CTR,
@@ -2950,7 +2952,12 @@ async function bidLoadQueries(btn) {
   const out = document.getElementById('bidQueriesOut');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Собираем (до минуты)…'; }
   try {
-    _bidQData = await fetchJSON('/api/tools/bid/queries' + (btn ? '?refresh=true' : ''), 180000);
+    const df = document.getElementById('bidFrom')?.value, dt = document.getElementById('bidTo')?.value;
+    const qp = new URLSearchParams();
+    if (btn) qp.set('refresh', 'true');
+    if (df) qp.set('date_from', df);
+    if (dt) qp.set('date_to', dt);
+    _bidQData = await fetchJSON('/api/tools/bid/queries' + (qp.toString() ? '?' + qp : ''), 180000);
     renderBidQueries();
   } catch (e) { if (out) out.innerHTML = `<div class="text-danger">Ошибка: ${esc(e.message)}</div>`; }
   if (btn) { btn.disabled = false; btn.textContent = '⟳ Выгрузить из WB'; }
@@ -3049,7 +3056,7 @@ function renderBidQueries() {
       <td style="color:${clr}">${verdict}</td></tr>`;
   });
   html += `</tbody></table></div>
-  <div class="small text-secondary mt-2">Потолок пересчитывается от полей CR/ДРР калькулятора выше (поменяй — нажми «Выгрузить» не надо, просто пересчитается при вводе). Снято: ${esc(_bidQData.fetched_at || '')}, кампаний: ${_bidQData.campaigns}.</div>`;
+  <div class="small text-secondary mt-2">Потолок пересчитывается от полей CR/ДРР калькулятора выше (поменяй — нажми «Выгрузить» не надо, просто пересчитается при вводе). Период: ${(_bidQData.period || []).join(' — ')} · снято: ${esc(_bidQData.fetched_at || '')}, кампаний: ${_bidQData.campaigns}. История копится на сервере ежедневно.</div>`;
   out.innerHTML = html;
 }
 

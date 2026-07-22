@@ -162,6 +162,26 @@ async def _competitors_daily():
         await asyncio.sleep(1800)
 
 
+async def _bid_history_daily():
+    """История рекламных кластеров: суточный срез в БД (13:00 МСК, дедуп)."""
+    import snapshot as _snap
+    from routers import tools as _tools
+    await asyncio.sleep(1500)
+    while True:
+        now = datetime.utcnow() + timedelta(hours=3)
+        today = now.strftime("%Y-%m-%d")
+        if now.hour >= 13:
+            last = await asyncio.to_thread(_snap.load, "bid_history_last", "")
+            if last != today:
+                try:
+                    res = await _tools.bid_collect_daily()
+                    if res.get("rows") is not None:
+                        await asyncio.to_thread(_snap.save, "bid_history_last", today)
+                except Exception as e:
+                    logging.getLogger("bid_history").warning("daily failed: %s", e)
+        await asyncio.sleep(1800)
+
+
 async def _trends_weekly():
     """Радар трендов: раз в неделю (вторник 12 МСК) снимаем поисковые запросы
     своих товаров из Ozon Seller API. Дедуп по неделе через kv_cache."""
@@ -258,8 +278,9 @@ async def lifespan(app: FastAPI):
     task6 = asyncio.create_task(_competitors_daily())
     task7 = asyncio.create_task(_trends_weekly())
     task8 = asyncio.create_task(_strategist_loop())
+    task9 = asyncio.create_task(_bid_history_daily())
     yield
-    for t in (task, task2, task3, task4, task5, task6, task7, task8):
+    for t in (task, task2, task3, task4, task5, task6, task7, task8, task9):
         t.cancel()
 
 
