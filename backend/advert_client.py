@@ -430,34 +430,60 @@ async def get_campaign_words(advert_id: int, ctype: int | None = None) -> list[d
 
 
 async def get_campaigns_info(ids: list[int]) -> list[dict]:
-    """Детали кампаний с фолбэками: WB убил POST /adv/v1/promotion/adverts
-    (404 с лета 2026). Цепочка: v1 → GET /adv/v0/auction/adverts (ручные
-    ставки) → GET /api/advert/v2/adverts. Возвращаем как есть."""
+    """Детали кампаний: GET /api/advert/v2/adverts?ids=… (актуальный метод,
+    единая/ручная ставка; старый POST /adv/v1/promotion/adverts выключен WB).
+    Максимум 50 ID за запрос."""
     if not ids:
         return []
-    want = {int(i) for i in ids}
-    try:
-        result = await _post("/adv/v1/promotion/adverts", list(want)[:100])
-        if isinstance(result, list) and result:
-            return [x for x in result if isinstance(x, dict)]
-    except Exception as e:
-        _log.info("[ADVERT] promotion/adverts недоступен (%s) — фолбэк", str(e)[:80])
     out: list[dict] = []
-    for path in ("/adv/v0/auction/adverts", "/api/advert/v2/adverts"):
-        try:
-            data = await _get(path)
-        except Exception as e:
-            _log.info("[ADVERT] %s: %s", path, str(e)[:120])
-            continue
-        items = data if isinstance(data, list) else \
-            (data.get("adverts") or data.get("result") or []) if isinstance(data, dict) else []
-        for c in items:
+    chunk = [str(int(i)) for i in ids[:50]]
+    try:
+        data = await _get("/api/advert/v2/adverts", {"ids": ",".join(chunk)})
+        adverts = (data.get("adverts") or []) if isinstance(data, dict) else \
+            (data if isinstance(data, list) else [])
+        for c in adverts:
             if isinstance(c, dict):
-                cid = c.get("advertId") or c.get("id")
-                if cid and int(cid) in want:
-                    c.setdefault("advertId", cid)
-                    out.append(c)
-        if out:
-            _log.info("[ADVERT] %s → %d кампаний", path, len(out))
-            break
+                c.setdefault("advertId", c.get("advertId") or c.get("id"))
+                out.append(c)
+        _log.info("[ADVERT] advert/v2/adverts → %d кампаний", len(out))
+    except Exception as e:
+        _log.warning("[ADVERT] advert/v2/adverts: %s", str(e)[:150])
     return out
+
+
+async def get_cluster_bids(advert_ids: list[int]) -> list[dict]:
+    """Ставки поисковых кластеров: POST /adv/v0/normquery/get-bids.
+    Возвращает [{advert_id, nm_id, cluster, bid}] — поля нормализуем."""
+    if not advert_ids:
+        return []
+    body = {"items": [{"advert_id": int(i)} for i in advert_ids[:100]]}
+    try:
+        data = await _post("/adv/v0/normquery/get-bids", body)
+    except Exception as e:
+        _log.warning("[ADVERT] normquery/get-bids: %s", str(e)[:150])
+        return []
+    rows = []
+    src = (data.get("bids") or []) if isinstance(data, dict) else []
+    for b in src:
+        if not isinstance(b, dict):
+            continue
+        subs = b.get("bids") or b.get("norm_queries") or b.get("normQueries")
+        if isinstance(subs, list) and subs and isinstance(subs[0], dict):
+            for q in subs:
+                rows.append({
+                    "advert_id": b.get("advert_id") or b.get("advertId"),
+                    "nm_id": b.get("nm_id") or b.get("nmId") or q.get("nm_id"),
+                    "cluster": q.get("norm_query") or q.get("normQuery")
+                               or q.get("cluster") or q.get("name") or "",
+                    "bid": q.get("bid") or q.get("cpm") or q.get("price"),
+                })
+        else:
+            rows.append({
+                "advert_id": b.get("advert_id") or b.get("advertId"),
+                "nm_id": b.get("nm_id") or b.get("nmId"),
+                "cluster": b.get("norm_query") or b.get("normQuery")
+                           or b.get("cluster") or b.get("name") or "",
+                "bid": b.get("bid") or b.get("cpm") or b.get("price"),
+            })
+    _log.info("[ADVERT] cluster bids: %d строк", len(rows))
+    return rows
