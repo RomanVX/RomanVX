@@ -487,3 +487,32 @@ async def get_cluster_bids(advert_ids: list[int]) -> list[dict]:
             })
     _log.info("[ADVERT] cluster bids: %d строк", len(rows))
     return rows
+
+
+async def get_cluster_stats(pairs: list[tuple[int, int]],
+                            d_from: str, d_to: str) -> list[dict]:
+    """Статистика поисковых кластеров: POST /adv/v0/normquery/stats.
+    pairs — [(advert_id, nm_id)]; ответ: по каждому кластеру views, clicks,
+    ctr, atbs, orders, cpm, spend, avg_pos (по спеке docs/wb_api/promotion.yaml)."""
+    if not pairs:
+        return []
+    body = {"from": d_from, "to": d_to,
+            "items": [{"advert_id": int(a), "nm_id": int(n)}
+                      for a, n in pairs[:100]]}
+    try:
+        data = await _post("/adv/v0/normquery/stats", body)
+    except Exception as e:
+        _log.warning("[ADVERT] normquery/stats: %s", str(e)[:150])
+        return []
+    rows = []
+    for it in (data.get("stats") or []) if isinstance(data, dict) else []:
+        aid, nm = it.get("advert_id"), it.get("nm_id")
+        for st in it.get("stats") or []:
+            rows.append({"advert_id": aid, "nm_id": nm,
+                         "cluster": st.get("norm_query") or "",
+                         "views": st.get("views"), "clicks": st.get("clicks"),
+                         "ctr": st.get("ctr"), "orders": st.get("orders"),
+                         "atbs": st.get("atbs"), "cpm": st.get("cpm"),
+                         "spend": st.get("spend"), "avg_pos": st.get("avg_pos")})
+    _log.info("[ADVERT] cluster stats: %d строк", len(rows))
+    return rows

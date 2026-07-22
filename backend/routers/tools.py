@@ -4104,63 +4104,64 @@ async def bid_queries(refresh: bool = Query(default=False)):
     act = [c for c in details if c.get("status") in (7, 9, 11)] or details
     _log.info("bid/queries: с деталями %d, активных/пауза %d", len(details), len(act))
 
-    # ставки по поисковым кластерам (Сашины «своя ставка на запрос»)
+    # пары (кампания, артикул) из настроек товаров кампаний (спека v2/adverts)
+    pairs, camp_meta = [], {}
+    for c in act:
+        cid = int(c.get("advertId") or c.get("id") or 0)
+        st = c.get("settings") or {}
+        camp_meta[cid] = {"name": st.get("name") or c.get("name") or str(cid),
+                          "bid_type": c.get("bid_type"), "status": c.get("status")}
+        for nm_s in c.get("nm_settings") or []:
+            nm = nm_s.get("nm_id")
+            if not nm:
+                continue
+            bk = nm_s.get("bids_kopecks") or {}
+            camp_meta[cid].setdefault("nm_bids", {})[int(nm)] = round(
+                (bk.get("search") or bk.get("recommendations") or 0) / 100)
+            pairs.append((cid, int(nm)))
+    _log.info("bid/queries: пар кампания×артикул %d", len(pairs))
+
+    from datetime import date as _date
+    d_to = (_date.today() - timedelta(days=1)).isoformat()
+    d_from = (_date.today() - timedelta(days=14)).isoformat()
+    stats = await ac.get_cluster_stats(pairs, d_from, d_to)
+    cbids = {}
     try:
-        cb = await asyncio.wait_for(
-            ac.get_cluster_bids([c.get("advertId") for c in act if c.get("advertId")]),
-            timeout=30)
+        for r in await ac.get_cluster_bids(list(camp_meta.keys())):
+            key = (int(r.get("advert_id") or 0),
+                   str(r.get("cluster") or "").lower())
+            if r.get("bid"):
+                cbids[key] = r["bid"]
     except Exception as e:
         _log.warning("bid/queries cluster bids: %s", e)
-        cb = []
-    cbids = {}
-    for r in cb:
-        key = (int(r.get("advert_id") or 0), str(r.get("cluster") or "").lower())
-        if r.get("bid"):
-            cbids[key] = r["bid"]
 
     rows = []
-    for c in act:
-        cid = c.get("advertId")
-        ctype = c.get("type")
-        name = c.get("name") or str(cid)
-        # ставка и номенклатуры — форматы у типов разные, парсим что есть
-        bid, nms = None, []
-        ap = c.get("autoParams") or {}
-        if ap:
-            bid = ap.get("cpm")
-            nms = ap.get("nms") or []
-        for p in (c.get("unitedParams") or []):
-            bid = bid or p.get("searchCPM") or p.get("catalogCPM")
-            nms.extend(p.get("nms") or [])
-        for p in (c.get("params") or []):
-            bid = bid or p.get("price")
-            nms.extend([n.get("nm") if isinstance(n, dict) else n
-                        for n in (p.get("nms") or [])])
-        arts = sorted({nm_to_art.get(str(n)) for n in nms if nm_to_art.get(str(n))})
-        m = next((marg.get(a.upper()) for a in arts if marg.get(a.upper())), None)
-        try:
-            words = await asyncio.wait_for(
-                ac.get_campaign_words(int(cid), ctype), timeout=20)
-        except Exception as e:
-            _log.warning("bid/queries words %s: %s", cid, e)
-            words = []
-        _log.info("bid/queries: %s (%s) — %d фраз", cid, ctype, len(words))
-        await asyncio.sleep(0.4)
-        words = sorted(words, key=lambda w: -w.get("views", 0))[:15]
-        base_row = {"campaign": name, "camp_id": cid, "ctype": ctype,
-                    "bid": bid, "skus": arts,
-                    "price": (m or {}).get("price"), "be_drr": (m or {}).get("be_drr")}
-        if not words:
-            rows.append({**base_row, "phrase": None, "views": None,
-                         "clicks": None, "ctr": None, "spend": None,
-                         "cluster": False, "no_words": True})
-        for w in words:
-            ph = (w.get("phrase") or "").lower()
-            rows.append({**base_row,
-                         "phrase": w.get("phrase"), "views": w.get("views"),
-                         "clicks": w.get("clicks"), "ctr": w.get("ctr"),
-                         "spend": w.get("sum"), "cluster": w.get("cluster", False),
-                         "bid": cbids.get((int(cid), ph)) or bid})
+    for st in sorted(stats, key=lambda x: -(x.get("views") or 0))[:400]:
+        cid = int(st.get("advert_id") or 0)
+        nm = st.get("nm_id")
+        meta = camp_meta.get(cid, {})
+        art = nm_to_art.get(str(nm)) or str(nm)
+        m = marg.get(str(art).upper()) or {}
+        clicks, orders = st.get("clicks") or 0, st.get("orders") or 0
+        rows.append({
+            "campaign": meta.get("name"), "camp_id": cid,
+            "skus": [art], "phrase": st.get("cluster"),
+            "views": st.get("views"), "clicks": clicks, "ctr": st.get("ctr"),
+            "orders": orders,
+            "cr": round(orders / clicks * 100, 1) if clicks else None,
+            "spend": st.get("spend"), "avg_pos": st.get("avg_pos"),
+            "bid": cbids.get((cid, str(st.get("cluster") or "").lower()))
+                   or (meta.get("nm_bids") or {}).get(int(nm) if nm else 0),
+            "price": m.get("price"), "be_drr": m.get("be_drr"),
+            "cluster": False,
+        })
+    if not rows and act:
+        for cid, meta in camp_meta.items():
+            rows.append({"campaign": meta.get("name"), "camp_id": cid,
+                         "skus": sorted({nm_to_art.get(str(n), str(n))
+                                         for n in (meta.get("nm_bids") or {})}),
+                         "bid": next(iter((meta.get("nm_bids") or {}).values()), None),
+                         "phrase": None, "no_words": True})
     out = {"rows": rows, "campaigns": len(act), "active_ids": len(ids),
            "fetched_at": datetime.utcnow().strftime("%d.%m %H:%M UTC")}
     _bidq_cache, _bidq_ts = out, _t.monotonic()

@@ -2941,13 +2941,16 @@ function renderBidQueries() {
   const drrIn = parseFloat(document.getElementById('bidDrr')?.value);
   let html = `<div class="table-responsive" style="max-height:56vh"><table class="table table-sm align-middle mb-0 text-nowrap" style="font-size:.83rem"><thead><tr>
     <th>Кампания · SKU</th><th>Фраза</th><th class="text-end">Показы</th><th class="text-end">CTR, %</th>
+    <th class="text-end" title="Заказы из этого кластера за 14 дней">Заказы</th>
+    <th class="text-end" title="Фактическая конверсия клика в заказ по кластеру">CR, %</th>
     <th class="text-end" title="Текущая ставка кампании">Ставка</th>
     <th class="text-end" title="Потолок по юнитке при фактическом CTR фразы, CR ${cr}% и ${isNaN(drrIn) ? 'безубыточном' : 'целевом'} ДРР">Потолок</th>
     <th>Вердикт</th></tr></thead><tbody>`;
   let prev = null;
   rows.forEach(r => {
     const drr = isNaN(drrIn) ? (r.be_drr || 0) : drrIn;
-    const maxB = (r.price && r.ctr) ? Math.round(1000 * (r.ctr / 100) * (cr / 100) * r.price * drr / 100) : null;
+    const crUse = (r.cr != null && r.clicks >= 20) ? r.cr : cr;   // факт при достатке кликов
+    const maxB = (r.price && r.ctr) ? Math.round(1000 * (r.ctr / 100) * (crUse / 100) * r.price * drr / 100) : null;
     let verdict = '—', clr = 'var(--text-soft)';
     if (maxB != null && r.bid) {
       if (r.bid > maxB) { verdict = `выше потолка на ${fmt(r.bid - maxB)}`; clr = 'var(--neg)'; }
@@ -2956,7 +2959,7 @@ function renderBidQueries() {
     if (r.no_words) {
       html += `<tr><td style="max-width:200px"><b>${esc((r.campaign || '').slice(0, 26))}</b>
         <div class="small text-secondary">${esc((r.skus || []).join(', '))} · ставка ${r.bid ? fmt(r.bid) : '—'}</div></td>
-        <td colspan="6" class="text-secondary small">WB не отдал статистику фраз по этой кампании</td></tr>`;
+        <td colspan="8" class="text-secondary small">WB не отдал статистику кластеров по этой кампании</td></tr>`;
       prev = r.camp_id;
       return;
     }
@@ -2969,6 +2972,8 @@ function renderBidQueries() {
       <td style="max-width:240px;overflow:hidden;text-overflow:ellipsis">${esc(r.phrase || '')}</td>
       <td class="text-end">${fmt(r.views || 0)}</td>
       <td class="text-end fw-bold">${r.ctr ? r.ctr.toFixed(1) : '—'}</td>
+      <td class="text-end">${r.orders ?? '—'}</td>
+      <td class="text-end ${r.cr != null && r.clicks >= 20 ? 'fw-bold' : 'text-secondary'}">${r.cr != null ? r.cr : '—'}</td>
       <td class="text-end">${r.bid ? fmt(r.bid) : '—'}</td>
       <td class="text-end fw-bold">${maxB != null ? fmt(maxB) : '—'}</td>
       <td style="color:${clr}">${verdict}</td></tr>`;
