@@ -4093,16 +4093,19 @@ async def bid_queries(refresh: bool = Query(default=False)):
     nm_to_art = {str(k): v for k, v in getattr(_cat, "WB_ID_TO_ART", {}).items()}
 
     try:
-        ids = await asyncio.wait_for(ac._ids_for_status(9), timeout=30)
-        _log.info("bid/queries: активных кампаний %d", len(ids))
-        details = await asyncio.wait_for(ac.get_campaign_details(ids[:30]), timeout=30)
+        ids = await asyncio.wait_for(ac.get_all_campaign_ids(), timeout=45)
+        _log.info("bid/queries: кампаний всего %d", len(ids))
+        details = await asyncio.wait_for(ac.get_campaign_details(ids[:50]), timeout=30)
     except asyncio.TimeoutError:
-        return {"rows": [], "error": "advert API не ответил за 30с — попробуй позже"}
+        return {"rows": [], "error": "advert API не ответил — попробуй позже"}
     except Exception as e:
         return {"rows": [], "error": f"advert API: {str(e)[:200]}"}
+    # 9 = идут показы, 11 = пауза; завершённые не интересны
+    act = [c for c in details if c.get("status") in (9, 11)] or details
+    _log.info("bid/queries: с деталями %d, активных/пауза %d", len(details), len(act))
 
     rows = []
-    for c in details:
+    for c in act:
         cid = c.get("advertId")
         ctype = c.get("type")
         name = c.get("name") or str(cid)
@@ -4142,7 +4145,7 @@ async def bid_queries(refresh: bool = Query(default=False)):
                          "phrase": w.get("phrase"), "views": w.get("views"),
                          "clicks": w.get("clicks"), "ctr": w.get("ctr"),
                          "spend": w.get("sum"), "cluster": w.get("cluster", False)})
-    out = {"rows": rows, "campaigns": len(details), "active_ids": len(ids),
+    out = {"rows": rows, "campaigns": len(act), "active_ids": len(ids),
            "fetched_at": datetime.utcnow().strftime("%d.%m %H:%M UTC")}
     _bidq_cache, _bidq_ts = out, _t.monotonic()
     return out
