@@ -621,3 +621,14 @@ html[data-theme="light"] .text-info { color: #0369a1 !important; }
   .mp-cab-card { width: 136px; height: 136px; font-size: 12px; gap: 10px; }
   .mp-cab-card img, .mp-cab-card .cab-mono { width: 52px !important; height: 52px !important; }
 }
+
+/* ── Закреплённые шапки таблиц: заголовок не уезжает при прокрутке ── */
+.table-responsive thead th {
+  position: sticky;
+  top: 0;
+  background: var(--t-sticky);
+  z-index: 3;
+}
+.table-responsive thead tr:nth-child(2) th {
+  top: 34px;   /* вторая строка шапки (репрайсер) липнет под первой */
+}
