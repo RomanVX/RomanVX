@@ -302,46 +302,34 @@ def get_count_meta() -> dict[int, dict]:
 
 
 async def get_campaigns_meta(ids: list[int]) -> dict[int, dict]:
-    """{advertId: {name, type, status}} через POST promotion/adverts (чанки по 50)."""
+    """{advertId: {name, type, status, nms, bids}} через GET /api/advert/v2/adverts
+    (старый POST promotion/adverts выключен WB 07.2026; спека docs/wb_api)."""
     out: dict[int, dict] = {}
     for ci in range(0, len(ids), 50):
-        try:
-            data = await _post("/adv/v1/promotion/adverts?order=create&direction=desc",
-                               ids[ci:ci + 50])
-        except Exception as e:
-            _log.warning("[ADVERT] adverts meta failed: %s", e)
-            continue
-        if not isinstance(data, list) or not data:
-            _log.warning("[ADVERT] adverts meta: неожиданный ответ %s", str(data)[:300])
-        for c in data if isinstance(data, list) else []:
-            aid = c.get("advertId")
+        adverts = await get_campaigns_info(ids[ci:ci + 50])
+        for c in adverts:
+            aid = c.get("advertId") or c.get("id")
             if not aid:
                 continue
-            meta = {"name": c.get("name") or f"Кампания {aid}",
-                    "type": c.get("type"), "status": c.get("status"),
-                    "nms": [], "bids": {}}
-            # ставки и товары: структура зависит от типа кампании
-            ap = c.get("autoParams") or {}
-            if ap:
-                if ap.get("cpm") is not None:
-                    meta["bids"]["cpm"] = ap.get("cpm")
-                meta["nms"] += [int(n) for n in (ap.get("nms") or []) if n]
-            for up in c.get("unitedParams") or []:
-                if up.get("searchCPM") is not None:
-                    meta["bids"]["search"] = up.get("searchCPM")
-                if up.get("catalogCPM") is not None:
-                    meta["bids"]["catalog"] = up.get("catalogCPM")
-                meta["nms"] += [int(n) for n in (up.get("nms") or []) if n]
-            for p in c.get("params") or []:
-                if p.get("price") is not None:
-                    meta["bids"]["cpm"] = p.get("price")
-                for nm in p.get("nms") or []:
-                    v = nm.get("nm") if isinstance(nm, dict) else nm
-                    if v:
-                        meta["nms"].append(int(v))
+            st = c.get("settings") or {}
+            meta = {"name": st.get("name") or f"Кампания {aid}",
+                    "type": (_count_meta.get(int(aid)) or {}).get("type"),
+                    "status": c.get("status"), "nms": [], "bids": {}}
+            for nm_s in c.get("nm_settings") or []:
+                nm = nm_s.get("nm_id")
+                if nm:
+                    meta["nms"].append(int(nm))
+                bk = nm_s.get("bids_kopecks") or {}
+                if bk.get("search"):
+                    meta["bids"]["search"] = round(bk["search"] / 100)
+                if bk.get("recommendations"):
+                    meta["bids"]["catalog"] = round(bk["recommendations"] / 100)
+            if meta["bids"]:
+                meta["bids"].setdefault("cpm", meta["bids"].get("search")
+                                        or meta["bids"].get("catalog"))
             meta["nms"] = list(dict.fromkeys(meta["nms"]))[:60]
             out[int(aid)] = meta
-        await asyncio.sleep(1)
+        await asyncio.sleep(0.5)
     return out
 
 
@@ -396,36 +384,37 @@ async def get_fullstats_campaigns(ids: list[int], begin: str, end: str) -> dict[
 
 
 async def get_campaign_words(advert_id: int, ctype: int | None = None) -> list[dict]:
-    """Статистика ключевых фраз кампании → [{phrase, views, clicks, ctr, sum}].
+    """Фразы кампании → [{phrase, views, clicks, ctr, sum}].
 
-    Поисковые/аукционные кампании: GET /adv/v1/stat/words (поле stat — метрики
-    по фразам). Автоматические (type 8): GET /adv/v2/auto/stat-words (кластеры,
-    только счётчики). Возвращаем нормализованный список, пустой — если тип
-    кампании фраз не отдаёт."""
-    words: list[dict] = []
-    try:
-        data = await _get("/adv/v1/stat/words", {"id": advert_id})
-        for s in (data.get("stat") or []) if isinstance(data, dict) else []:
-            kw = s.get("keyword") or ""
-            if not kw or kw == "Всего по кампании":
-                continue
-            words.append({"phrase": kw,
-                          "views": int(s.get("views") or 0),
-                          "clicks": int(s.get("clicks") or 0),
-                          "ctr": float(s.get("ctr") or 0),
-                          "sum": float(s.get("sum") or 0)})
-    except Exception:
-        pass
-    if not words and ctype == 8:
-        try:
-            data = await _get("/adv/v2/auto/stat-words", {"id": advert_id})
-            clusters = (data.get("clusters") or []) if isinstance(data, dict) else []
-            for c in clusters:
-                words.append({"phrase": c.get("cluster") or "", "views": int(c.get("count") or 0),
-                              "clicks": 0, "ctr": 0.0, "sum": 0.0, "cluster": True,
-                              "keywords": (c.get("keywords") or [])[:8]})
-        except Exception:
-            pass
+    Старые /adv/v1/stat/words и /adv/v2/auto/stat-words WB выключил (07.2026);
+    теперь — статистика поисковых кластеров /adv/v0/normquery/stats по парам
+    (кампания, артикул) за 30 дней. Артикулы берём из v2/adverts."""
+    from datetime import date as _d, timedelta as _td
+    adverts = await get_campaigns_info([advert_id])
+    nms = []
+    for c in adverts:
+        for nm_s in c.get("nm_settings") or []:
+            if nm_s.get("nm_id"):
+                nms.append(int(nm_s["nm_id"]))
+    if not nms:
+        return []
+    pairs = [(int(advert_id), nm) for nm in nms[:100]]
+    d_to = (_d.today() - _td(days=1)).isoformat()
+    d_from = (_d.today() - _td(days=30)).isoformat()
+    stats = await get_cluster_stats(pairs, d_from, d_to)
+    agg: dict[str, dict] = {}
+    for st in stats:
+        ph = st.get("cluster") or ""
+        if not ph:
+            continue
+        w = agg.setdefault(ph, {"phrase": ph, "views": 0, "clicks": 0, "sum": 0.0})
+        w["views"] += st.get("views") or 0
+        w["clicks"] += st.get("clicks") or 0
+        w["sum"] += st.get("spend") or 0
+    words = list(agg.values())
+    for w in words:
+        w["ctr"] = round(w["clicks"] / w["views"] * 100, 2) if w["views"] else 0.0
+        w["sum"] = round(w["sum"], 1)
     return words
 
 
