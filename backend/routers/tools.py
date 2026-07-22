@@ -4093,7 +4093,7 @@ async def bid_queries(refresh: bool = Query(default=False)):
     nm_to_art = {str(k): v for k, v in getattr(_cat, "WB_ID_TO_ART", {}).items()}
 
     try:
-        ids = await asyncio.wait_for(ac.get_all_campaign_ids(), timeout=45)
+        ids = await asyncio.wait_for(ac.get_all_campaign_ids_ext(), timeout=45)
         _log.info("bid/queries: кампаний всего %d", len(ids))
         details = await asyncio.wait_for(ac.get_campaign_details(ids[:50]), timeout=30)
     except asyncio.TimeoutError:
@@ -4101,7 +4101,7 @@ async def bid_queries(refresh: bool = Query(default=False)):
     except Exception as e:
         return {"rows": [], "error": f"advert API: {str(e)[:200]}"}
     # 9 = идут показы, 11 = пауза; завершённые не интересны
-    act = [c for c in details if c.get("status") in (9, 11)] or details
+    act = [c for c in details if c.get("status") in (7, 9, 11)] or details
     _log.info("bid/queries: с деталями %d, активных/пауза %d", len(details), len(act))
 
     rows = []
