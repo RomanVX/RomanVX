@@ -2928,9 +2928,10 @@ function renderBidCalc() {
     </div>
   </div>
   <div class="card bg-card p-3 mt-3">
-    <div class="d-flex align-items-center gap-2 mb-2">
+    <div class="d-flex align-items-center gap-2 mb-2" style="position:sticky;top:0;z-index:6;background:var(--surface-2,var(--bs-body-bg));padding:6px 0">
       <h6 class="mb-0">Действующие РК: запросы и ставки <span class="text-secondary small fw-normal">статистика за 14 дней</span></h6>
       <select id="bidCampFilter" class="form-select form-select-sm" style="width:auto" onchange="renderBidQueries()"><option value="">Все кампании</option></select>
+      <select id="bidSkuFilter" class="form-select form-select-sm" style="width:auto" onchange="renderBidQueries()"><option value="">Все продукты</option></select>
       <button class="btn btn-sm btn-outline-info ms-auto" onclick="bidLoadQueries(this)">⟳ Выгрузить из WB</button>
     </div>
     <div id="bidQueriesOut" class="text-secondary small">Нажми «Выгрузить» — соберём активные кампании, их ставки и фразы с фактическим CTR,
@@ -2940,6 +2941,11 @@ function renderBidCalc() {
 }
 
 let _bidQData = null;
+let _bidSort = { key: '', dir: -1 };
+function bidSetSort(key) {
+  _bidSort = _bidSort.key === key ? { key, dir: -_bidSort.dir } : { key, dir: -1 };
+  renderBidQueries();
+}
 async function bidLoadQueries(btn) {
   const out = document.getElementById('bidQueriesOut');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Собираем (до минуты)…'; }
@@ -2962,31 +2968,47 @@ function renderBidQueries() {
   }
   const cf = sel && sel.value;
   if (cf) rows = rows.filter(r => String(r.camp_id) === String(cf));
+  const ssel = document.getElementById('bidSkuFilter');
+  if (ssel && ssel.options.length <= 1) {
+    [...new Set((_bidQData.rows || []).map(r => (r.skus || [])[0]).filter(Boolean))].sort()
+      .forEach(sku => { const o = document.createElement('option'); o.value = sku; o.textContent = sku; ssel.appendChild(o); });
+  }
+  const sf = ssel && ssel.value;
+  if (sf) rows = rows.filter(r => (r.skus || [])[0] === sf);
   if (_bidQData.error) { out.innerHTML = `<div class="text-warning">⚠ ${esc(_bidQData.error)}</div>`; return; }
   if (!rows.length) { out.innerHTML = `Пусто: активных кампаний по API — ${_bidQData.active_ids ?? '?'}, с деталями — ${_bidQData.campaigns ?? '?'}. Если числа не нулевые — WB не отдал фразы, смотри лог bid/queries.`; return; }
   const crIn = parseFloat(document.getElementById('bidCr')?.value);
   const cr = isNaN(crIn) ? 5 : crIn;
   const drrIn = parseFloat(document.getElementById('bidDrr')?.value);
   let html = `<div class="table-responsive" style="max-height:56vh"><table class="table table-sm align-middle mb-0 text-nowrap" style="font-size:.83rem"><thead><tr>
-    <th>Фраза</th><th class="small">Кампания</th><th class="text-end">Показы</th><th class="text-end">CTR, %</th>
-    <th class="text-end" title="Заказы из этого кластера за 14 дней">Заказы</th>
-    <th class="text-end" title="Фактическая конверсия клика в заказ по кластеру">CR, %</th>
-    <th class="text-end" title="Ставка кластера, иначе — товара в кампании">Ставка</th>
+    <th>Фраза</th><th class="small">Кампания</th>
+    <th class="text-end" style="cursor:pointer" onclick="bidSetSort('views')">Показы${_bidSort.key === 'views' ? (_bidSort.dir < 0 ? ' ↓' : ' ↑') : ''}</th>
+    <th class="text-end" style="cursor:pointer" onclick="bidSetSort('ctr')">CTR, %${_bidSort.key === 'ctr' ? (_bidSort.dir < 0 ? ' ↓' : ' ↑') : ''}</th>
+    <th class="text-end" style="cursor:pointer" onclick="bidSetSort('orders')" title="Заказы из этого кластера за 14 дней">Заказы${_bidSort.key === 'orders' ? (_bidSort.dir < 0 ? ' ↓' : ' ↑') : ''}</th>
+    <th class="text-end" style="cursor:pointer" onclick="bidSetSort('cr')" title="Фактическая конверсия клика в заказ">CR, %${_bidSort.key === 'cr' ? (_bidSort.dir < 0 ? ' ↓' : ' ↑') : ''}</th>
+    <th class="text-end" style="cursor:pointer" onclick="bidSetSort('bid')" title="Ставка кластера, иначе — товара в кампании">Ставка${_bidSort.key === 'bid' ? (_bidSort.dir < 0 ? ' ↓' : ' ↑') : ''}</th>
     <th class="text-end" title="Потолок по юнитке при фактическом CTR фразы, CR и ДРР">Потолок</th>
     <th>Вердикт</th></tr></thead><tbody>`;
+  // явная сортировка по колонке — плоский список без групп
+  if (_bidSort.key) {
+    const k = _bidSort.key, d = _bidSort.dir;
+    const flat = [...rows].sort((a, b) => d * (((b[k] ?? -1)) - ((a[k] ?? -1))));
+    var ordered = flat;
+  } else {
   // группируем по товару: SKU-блоками, внутри — фразы по показам
   const bySku = {};
   rows.forEach(r => { const k = (r.skus || [])[0] || '?'; (bySku[k] = bySku[k] || []).push(r); });
   const groups = Object.entries(bySku)
     .sort((a, b) => b[1].reduce((s, r) => s + (r.views || 0), 0) - a[1].reduce((s, r) => s + (r.views || 0), 0));
   const nameOf = sku => ((_bidData && (_bidData.items || []).find(i => i.sku === sku)) || {}).name || '';
-  const ordered = [];
+  var ordered = [];
   groups.forEach(([sku, list]) => {
     const gv = list.reduce((s, r) => s + (r.views || 0), 0);
     const go = list.reduce((s, r) => s + (r.orders || 0), 0);
     ordered.push({ _group: sku, _name: nameOf(sku), _views: gv, _orders: go });
     list.sort((a, b) => (b.views || 0) - (a.views || 0)).forEach(r => ordered.push(r));
   });
+  }
   let prev = null;
   ordered.forEach(r => {
     if (r._group) {
