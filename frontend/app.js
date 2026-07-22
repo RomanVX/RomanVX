@@ -2946,14 +2946,24 @@ function renderBidQueries() {
     <th class="text-end" title="Текущая ставка кампании">Ставка</th>
     <th class="text-end" title="Потолок по юнитке при фактическом CTR фразы, CR ${cr}% и ${isNaN(drrIn) ? 'безубыточном' : 'целевом'} ДРР">Потолок</th>
     <th>Вердикт</th></tr></thead><tbody>`;
+  // группируем по кампаниям: крупные сверху, внутри — по показам
+  const byCamp = {};
+  rows.forEach(r => { (byCamp[r.camp_id] = byCamp[r.camp_id] || []).push(r); });
+  const ordered = Object.values(byCamp)
+    .sort((a, b) => b.reduce((s, r) => s + (r.views || 0), 0) - a.reduce((s, r) => s + (r.views || 0), 0))
+    .flatMap(g => g.sort((a, b) => (b.views || 0) - (a.views || 0)));
   let prev = null;
-  rows.forEach(r => {
+  ordered.forEach(r => {
     const drr = isNaN(drrIn) ? (r.be_drr || 0) : drrIn;
-    const crUse = (r.cr != null && r.clicks >= 20) ? r.cr : cr;   // факт при достатке кликов
+    const enough = r.cr != null && (r.clicks || 0) >= 30;   // факт-CR только при статистике
+    const crUse = enough ? r.cr : cr;
     const maxB = (r.price && r.ctr) ? Math.round(1000 * (r.ctr / 100) * (crUse / 100) * r.price * drr / 100) : null;
     let verdict = '—', clr = 'var(--text-soft)';
-    if (maxB != null && r.bid) {
+    if (enough && r.cr === 0) {
+      verdict = '0 заказов — кандидат в минус-фразы'; clr = 'var(--neg)';
+    } else if (maxB != null && r.bid) {
       if (r.bid > maxB) { verdict = `выше потолка на ${fmt(r.bid - maxB)}`; clr = 'var(--neg)'; }
+      else if (maxB > r.bid * 5) { verdict = `запас огромный (аукцион ниже)`; clr = 'var(--pos)'; }
       else { verdict = `запас ${fmt(maxB - r.bid)} ₽`; clr = 'var(--pos)'; }
     } else if (r.cluster) { verdict = 'кластер АРК (CTR нет)'; }
     if (r.no_words) {
