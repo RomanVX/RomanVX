@@ -4093,8 +4093,11 @@ async def bid_queries(refresh: bool = Query(default=False)):
     nm_to_art = {str(k): v for k, v in getattr(_cat, "WB_ID_TO_ART", {}).items()}
 
     try:
-        ids = await ac._ids_for_status(9)          # активные
-        details = await ac.get_campaign_details(ids[:30])
+        ids = await asyncio.wait_for(ac._ids_for_status(9), timeout=30)
+        _log.info("bid/queries: активных кампаний %d", len(ids))
+        details = await asyncio.wait_for(ac.get_campaign_details(ids[:30]), timeout=30)
+    except asyncio.TimeoutError:
+        return {"rows": [], "error": "advert API не ответил за 30с — попробуй позже"}
     except Exception as e:
         return {"rows": [], "error": f"advert API: {str(e)[:200]}"}
 
@@ -4119,9 +4122,12 @@ async def bid_queries(refresh: bool = Query(default=False)):
         arts = sorted({nm_to_art.get(str(n)) for n in nms if nm_to_art.get(str(n))})
         m = next((marg.get(a.upper()) for a in arts if marg.get(a.upper())), None)
         try:
-            words = await ac.get_campaign_words(int(cid), ctype)
-        except Exception:
+            words = await asyncio.wait_for(
+                ac.get_campaign_words(int(cid), ctype), timeout=20)
+        except Exception as e:
+            _log.warning("bid/queries words %s: %s", cid, e)
             words = []
+        _log.info("bid/queries: %s (%s) — %d фраз", cid, ctype, len(words))
         await asyncio.sleep(0.4)
         words = sorted(words, key=lambda w: -w.get("views", 0))[:15]
         for w in words:
