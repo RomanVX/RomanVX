@@ -2748,12 +2748,13 @@ const _TOOL_HINTS = {
   margin: 'Затраты на единицу из фактической юнитки: вводите цену/себестоимость — видите прибыль, маржу и точку безубыточности',
   competitors: 'Суточные срезы выдачи WB по вашим запросам: позиции, цены и демпинг конкурентов (сбор через домашний агент)',
   whstocks: 'Остатки WB по складам и сколько денег заморожено в стоке (по себестоимости)',
+  bid: 'Максимальная ставка за 1000 показов из юнитки: вводишь CTR запроса и конверсию карточки — видишь потолок ставки при нулевой марже и при целевом ДРР',
 };
 
 function setTool(t) {
   if (_toolActive === t) return;
   _toolActive = t;
-  ['Prod', 'Clusters', 'Adv', 'Niche', 'Nichecalc', 'Visuals', 'Margin', 'Competitors', 'Whstocks'].forEach(k => {
+  ['Prod', 'Clusters', 'Adv', 'Niche', 'Nichecalc', 'Visuals', 'Margin', 'Competitors', 'Whstocks', 'Bid'].forEach(k => {
     document.getElementById('tool' + k)?.classList.toggle('active', k.toLowerCase() === t);
   });
   const hint = document.getElementById('toolHint');
@@ -2772,7 +2773,8 @@ function loadTools() {
   ({ prod: loadProductolog, clusters: loadClusters, adv: loadAdv,
      niche: loadDemand, nichecalc: renderNicheForm,
      visuals: renderVisualsForm, margin: loadMargin,
-     competitors: loadCompetitors, whstocks: loadWhStocks })[_toolActive]();
+     competitors: loadCompetitors, whstocks: loadWhStocks,
+     bid: loadBidCalc })[_toolActive]();
 }
 
 // ── Остатки по складам + стоимость стока ──────────────────────────────────────
@@ -2853,6 +2855,81 @@ function renderWhStocks() {
   html += `</tbody></table></div></div></div>
   <div class="text-secondary small mt-2">Склады отсортированы по объёму, показан топ-8${otherQty ? ' (+«Прочие»)' : ''}. «💰 Заморожено» — деньги в товаре на складах WB по себестоимости. Обновлено: ${d.fetched_at}</div>`;
   wrap.innerHTML = html;
+}
+
+// ── Калькулятор ставки CPM из юнитки ─────────────────────────────────────────
+let _bidData = null;
+async function loadBidCalc(refresh) {
+  const wrap = document.getElementById('toolsWrap');
+  if (!wrap || _toolActive !== 'bid') return;
+  if (_bidData && !refresh) { renderBidCalc(); return; }
+  wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>Тянем юнитку…</div>';
+  try {
+    _bidData = await fetchJSON('/api/tools/margin?mp=WB', 150000);
+    renderBidCalc();
+  } catch (e) {
+    wrap.innerHTML = `<div class="alert alert-danger mt-2">Ошибка: ${esc(e.message)}</div>`;
+  }
+}
+
+function _bidMath(b) {
+  const price = b.price0 || 0;
+  const fixed = (b.logist || 0) + (b.storage || 0) + (b.other || 0) + (b.cogs || 0);
+  const be = price ? Math.max((price * (1 - ((b.comm_pct || 0) + (b.acq_pct || 0)) / 100) - fixed) / price * 100, 0) : 0;
+  return { price, be: Math.round(be * 10) / 10 };
+}
+
+function renderBidCalc() {
+  if (_toolActive !== 'bid') return;
+  const wrap = document.getElementById('toolsWrap');
+  if (!wrap || !_bidData) return;
+  const items = _bidData.items || [];
+  if (!items.length) { wrap.innerHTML = `<div class="alert alert-info">${esc(_bidData.message || 'Юнитка собирается — обнови через минуту')}</div>`; return; }
+  const opts = items.map(b => `<option value="${esc(b.sku)}">${esc(b.sku)} — ${esc((b.name || '').slice(0, 36))}</option>`).join('');
+  wrap.innerHTML = `<div class="card bg-card p-3" style="max-width:760px">
+    <div class="row g-2 align-items-end">
+      <div class="col-md-4"><label class="form-label small mb-1">Артикул</label>
+        <select id="bidSku" class="form-select form-select-sm" onchange="bidCompute()">${opts}</select></div>
+      <div class="col-md-2"><label class="form-label small mb-1" title="CTR запроса/кампании">CTR, %</label>
+        <input id="bidCtr" type="number" step="0.1" value="4" class="form-control form-control-sm" oninput="bidCompute()"></div>
+      <div class="col-md-3"><label class="form-label small mb-1" title="Конверсия клика в заказ (заказы/клики в статистике кампании)">CR клик→заказ, %</label>
+        <input id="bidCr" type="number" step="0.5" value="" placeholder="сетка 3-12%" class="form-control form-control-sm" oninput="bidCompute()"></div>
+      <div class="col-md-3"><label class="form-label small mb-1" title="Целевой ДРР; пусто = безубыточный из юнитки">Целевой ДРР, %</label>
+        <input id="bidDrr" type="number" step="1" value="" placeholder="безубыточный" class="form-control form-control-sm" oninput="bidCompute()"></div>
+    </div>
+    <div id="bidOut" class="mt-3"></div>
+    <div class="text-secondary small mt-2">Формула: 1000 × CTR × CR × цена × ДРР. Безубыточный ДРР — из фактической юнитки SKU
+    (комиссия, эквайринг, логистика, хранение, себес). Ставка при безубытке = торговля в ноль: рабочую считай с целевым ДРР.</div>
+  </div>`;
+  bidCompute();
+}
+
+function bidCompute() {
+  const out = document.getElementById('bidOut');
+  if (!out || !_bidData) return;
+  const sku = document.getElementById('bidSku')?.value;
+  const b = (_bidData.items || []).find(x => x.sku === sku);
+  if (!b) return;
+  const { price, be } = _bidMath(b);
+  const ctr = parseFloat(document.getElementById('bidCtr')?.value) || 0;
+  const crIn = parseFloat(document.getElementById('bidCr')?.value);
+  const drrIn = parseFloat(document.getElementById('bidDrr')?.value);
+  const drr = isNaN(drrIn) ? be : drrIn;
+  const perOrder = price * drr / 100;
+  const cpm = cr => 1000 * (ctr / 100) * (cr / 100) * perOrder;
+  let html = `<div class="d-flex gap-3 flex-wrap mb-2">
+    <div class="metric-card"><div class="mc-head">Цена продавца</div><div class="mc-val">${fmtRub(price)}</div></div>
+    <div class="metric-card"><div class="mc-head">Безубыточный ДРР</div><div class="mc-val">${be}%</div></div>
+    <div class="metric-card"><div class="mc-head">₽ рекламы на 1 заказ (ДРР ${Math.round(drr)}%)</div><div class="mc-val" style="color:var(--gold)">${fmtRub(Math.round(perOrder))}</div></div>
+  </div>`;
+  if (!isNaN(crIn) && crIn > 0) {
+    html += `<div class="fs-5">CTR ${ctr}% × CR ${crIn}% → <b style="color:var(--pos)">макс. ставка ${fmt(Math.round(cpm(crIn)))} ₽ за 1000 показов</b></div>`;
+  } else {
+    html += `<table class="table table-sm" style="max-width:420px"><thead><tr><th>CR клик→заказ</th><th class="text-end">Макс. ставка, ₽/1000 показов</th></tr></thead><tbody>` +
+      [3, 5, 8, 12].map(cr => `<tr><td>${cr}%</td><td class="text-end fw-bold">${fmt(Math.round(cpm(cr)))}</td></tr>`).join('') +
+      `</tbody></table><div class="small text-secondary">CR не задан — сетка типовых значений. Реальный CR = заказы ÷ клики в статистике кампании.</div>`;
+  }
+  out.innerHTML = html;
 }
 
 // ── Радар трендов: нарастающие поисковые запросы ─────────────────────────────
