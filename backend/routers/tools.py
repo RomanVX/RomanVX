@@ -4104,6 +4104,20 @@ async def bid_queries(refresh: bool = Query(default=False)):
     act = [c for c in details if c.get("status") in (7, 9, 11)] or details
     _log.info("bid/queries: с деталями %d, активных/пауза %d", len(details), len(act))
 
+    # ставки по поисковым кластерам (Сашины «своя ставка на запрос»)
+    try:
+        cb = await asyncio.wait_for(
+            ac.get_cluster_bids([c.get("advertId") for c in act if c.get("advertId")]),
+            timeout=30)
+    except Exception as e:
+        _log.warning("bid/queries cluster bids: %s", e)
+        cb = []
+    cbids = {}
+    for r in cb:
+        key = (int(r.get("advert_id") or 0), str(r.get("cluster") or "").lower())
+        if r.get("bid"):
+            cbids[key] = r["bid"]
+
     rows = []
     for c in act:
         cid = c.get("advertId")
@@ -4141,10 +4155,12 @@ async def bid_queries(refresh: bool = Query(default=False)):
                          "clicks": None, "ctr": None, "spend": None,
                          "cluster": False, "no_words": True})
         for w in words:
+            ph = (w.get("phrase") or "").lower()
             rows.append({**base_row,
                          "phrase": w.get("phrase"), "views": w.get("views"),
                          "clicks": w.get("clicks"), "ctr": w.get("ctr"),
-                         "spend": w.get("sum"), "cluster": w.get("cluster", False)})
+                         "spend": w.get("sum"), "cluster": w.get("cluster", False),
+                         "bid": cbids.get((int(cid), ph)) or bid})
     out = {"rows": rows, "campaigns": len(act), "active_ids": len(ids),
            "fetched_at": datetime.utcnow().strftime("%d.%m %H:%M UTC")}
     _bidq_cache, _bidq_ts = out, _t.monotonic()
