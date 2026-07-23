@@ -96,6 +96,10 @@ WB_AGENT_MODE=1 + WB_AGENT_TOKEN, KEEP_AWAKE, SQLITE_PATH (локально).
 07.2026), а dev.wildberries.ru с сервера недоступен.
 Owner-only прокси для живой проверки методов (бой и песочница):
 POST /api/tools/adv/sandbox {path, method, params?, json?, sandbox: bool}.
+`docs/ozon_api/seller.json` — полная спека Ozon Seller API (458 методов).
+ПРАВИЛО при написании любого вызова API: выгружать из спеки ПОЛНУЮ схему
+запроса + блок `example` (не обрезая вывод!) — enum-значения и обязательные
+поля брать только оттуда, никогда не дописывать «по смыслу».
 
 ## Известные грабли
 
