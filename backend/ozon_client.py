@@ -640,7 +640,8 @@ async def get_supply_orders() -> list[dict]:
               "IN_TRANSIT", "ACCEPTANCE_AT_STORAGE_WAREHOUSE"]
     data = await _post("/v3/supply-order/list",
                        {"filter": {"states": states}, "limit": 50,
-                        "sort_by": "ORDER_CREATION_DATE", "last_id": ""})
+                        "sort_by": "ORDER_CREATION", "sort_dir": "DESC",
+                        "last_id": ""})
     ids = data.get("order_ids") or []
     if not ids:
         return []
