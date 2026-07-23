@@ -4607,6 +4607,20 @@ async def supply_boxes_apply(request: Request, body: dict):
             status = info.get("status") or "UNKNOWN"
             if status in ("SUCCESS", "FAILED"):
                 err = info.get("errors")
+                if status == "SUCCESS":
+                    # ключ короба → cargo_id (нужно для именных этикеток)
+                    import snapshot as _snap
+                    cmap = await asyncio.to_thread(
+                        _snap.load, "supply_cargo_map", None) or {}
+                    pairs = {}
+                    for c in (info.get("result") or {}).get("cargoes") or []:
+                        cid = (c.get("value") or {}).get("cargo_id")
+                        if c.get("key") and cid:
+                            pairs[c["key"]] = int(cid)
+                    if pairs:
+                        cmap[str(sp["supply_id"])] = pairs
+                        await asyncio.to_thread(
+                            _snap.save, "supply_cargo_map", cmap)
                 break
         note = None
         if err and (err.get("error_reasons") or err.get("items_validation")):
@@ -4631,31 +4645,58 @@ async def supply_labels(request: Request, order_id: int):
     if not order:
         raise HTTPException(404, "Заявка не найдена")
     names = await ozon_client.get_cluster_names()
+    import snapshot as _snap
+    cmap = await asyncio.to_thread(_snap.load, "supply_cargo_map", None) or {}
+    plan = await asyncio.to_thread(_snap.load, "supply_boxes_plan", None) or []
+    # (исходный кластер, № короба) → куда едет («Новый кластер»)
+    targets = {(b["src"], int(b["box"])): b.get("target") or b["src"]
+               for b in plan}
+
+    async def _label_pdf(supply_id, cargo_ids=None) -> bytes:
+        resp = await ozon_client.cargoes_label_create(supply_id, cargo_ids)
+        op = resp.get("operation_id")
+        if not op:
+            raise RuntimeError(str(resp.get("errors") or resp)[:300])
+        for _i in range(30):
+            await asyncio.sleep(2)
+            st = await ozon_client.cargoes_label_get(op)
+            stat = st.get("status") or ""
+            if stat == "SUCCESS":
+                res = st.get("result") or {}
+                url = res.get("file_url") or res.get("file_guid")
+                if not url:
+                    raise RuntimeError("SUCCESS без ссылки на файл")
+                return await ozon_client.download_label_file(url)
+            if stat == "FAILED":
+                raise RuntimeError(str(st.get("errors") or "FAILED")[:300])
+        raise RuntimeError("этикетки не готовы за 60 секунд")
+
     buf = _io.BytesIO()
     with _zf.ZipFile(buf, "w", _zf.ZIP_DEFLATED) as zf:
         for s in order.get("supplies") or []:
             cid = int(s.get("macrolocal_cluster_id") or 0)
             cluster = names.get(cid, f"кластер {cid}")
+            sid = s.get("supply_id")
+            boxes = cmap.get(str(sid)) or {}
             try:
-                resp = await ozon_client.cargoes_label_create(s.get("supply_id"))
-                op = resp.get("operation_id")
-                if not op:
-                    raise RuntimeError(str(resp.get("errors") or resp)[:300])
-                url = None
-                for _i in range(30):
-                    await asyncio.sleep(2)
-                    st = await ozon_client.cargoes_label_get(op)
-                    stat = st.get("status") or ""
-                    if stat == "SUCCESS":
-                        res = st.get("result") or {}
-                        url = res.get("file_url") or res.get("file_guid")
-                        break
-                    if stat == "FAILED":
-                        raise RuntimeError(str(st.get("errors") or "FAILED")[:300])
-                if not url:
-                    raise RuntimeError("этикетки не готовы за 60 секунд")
-                pdf = await ozon_client.download_label_file(url)
-                zf.writestr(f"{cluster}.pdf", pdf)
+                if boxes:
+                    # PDF на каждый короб: «Короб N (откуда) NEW куда.pdf»;
+                    # несколько коробов в кластере — в папке кластера
+                    folder = f"{cluster}/" if len(boxes) > 1 else ""
+                    for key in sorted(boxes):
+                        src, _, num = key.rpartition("-")
+                        try:
+                            n = int(num)
+                        except ValueError:
+                            src, n = key, 0
+                        target = targets.get((src, n), cluster)
+                        pdf = await _label_pdf(sid, [boxes[key]])
+                        zf.writestr(
+                            f"{folder}Короб {n} ({src}) NEW {target}.pdf", pdf)
+                else:
+                    # заливали не через дашборд — общий PDF поставки
+                    pdf = await _label_pdf(sid)
+                    zf.writestr(f"{cluster}.pdf", pdf)
             except Exception as e:
                 zf.writestr(f"{cluster}_ОШИБКА.txt", _http_err(e))
     buf.seek(0)
