@@ -630,3 +630,25 @@ def extract_timeslots(resp: dict) -> list[dict]:
                 walk(v, ctx)
     walk(resp)
     return out
+
+
+async def get_supply_orders() -> list[dict]:
+    """Заявки на поставку (вкл. черновики DATA_FILLING): list → get."""
+    if not OZON_CLIENT_ID or not OZON_API_KEY:
+        return []
+    states = ["DATA_FILLING", "READY_TO_SUPPLY", "ACCEPTED_AT_SUPPLY_WAREHOUSE",
+              "IN_TRANSIT", "ACCEPTANCE_AT_STORAGE_WAREHOUSE"]
+    data = await _post("/v3/supply-order/list",
+                       {"filter": {"states": states}, "limit": 50,
+                        "sort_by": "ORDER_CREATION_DATE", "last_id": ""})
+    ids = data.get("order_ids") or []
+    if not ids:
+        return []
+    det = await _post("/v3/supply-order/get", {"order_ids": [str(i) for i in ids[:50]]})
+    return det.get("orders") or []
+
+
+async def get_order_timeslots(order_id: int) -> dict:
+    """Доступные интервалы для существующей заявки."""
+    return await _post("/v1/supply-order/timeslot/get",
+                       {"supply_order_id": int(order_id)})

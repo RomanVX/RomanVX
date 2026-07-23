@@ -2859,6 +2859,75 @@ function renderWhStocks() {
   wrap.innerHTML = html;
 }
 
+// ── Охота за слотами поставки Ozon ───────────────────────────────────────────
+let _slotsData = null;
+async function loadSlots(refresh) {
+  const wrap = document.getElementById('toolsOzWrap');
+  if (!wrap || _ozTool !== 'slots') return;
+  wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>Загружаем заявки и статус охоты…</div>';
+  try {
+    const [orders, watch] = await Promise.all([
+      fetchJSON('/api/tools/supply/orders', 60000).catch(e => ({ error: e.message })),
+      fetchJSON('/api/tools/supply/watch', 15000).catch(() => null)]);
+    _slotsData = { orders, watch };
+    renderSlots();
+  } catch (e) {
+    wrap.innerHTML = `<div class="alert alert-danger mt-2">Ошибка: ${esc(e.message)}</div>`;
+  }
+}
+
+async function slotsWatch(body) {
+  await fetch('/api/tools/supply/watch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  loadSlots(true);
+}
+
+function slotsWatchDraft() {
+  const v = parseInt(document.getElementById('slotDraftId')?.value);
+  if (v) slotsWatch({ draft_id: v });
+}
+
+function renderSlots() {
+  const wrap = document.getElementById('toolsOzWrap');
+  if (!wrap || !_slotsData) return;
+  const w = _slotsData.watch || {};
+  const watching = !!(w && (w.draft_id || w.order_id));
+  let html = `<div class="card bg-card p-3 mb-3">
+    <div class="d-flex align-items-center gap-2 flex-wrap">
+      <h6 class="mb-0">Охота за слотами</h6>
+      ${watching
+        ? `<span class="badge bg-success">идёт: ${w.mode === 'order' ? 'заявка' : 'черновик'} ${w.draft_id || w.order_id}</span>
+           <span class="small text-secondary">проверка каждые 7 минут, найденное — в Telegram; слотов замечено: ${(w.seen || []).length}</span>
+           <button class="btn btn-sm btn-outline-danger ms-auto" onclick="slotsWatch({off:true})">Выключить</button>`
+        : `<input id="slotDraftId" type="number" class="form-control form-control-sm" style="width:170px" placeholder="№ черновика из ЛК">
+           <button class="btn btn-sm btn-outline-info" onclick="slotsWatchDraft()">Охотиться за черновиком</button>
+           <span class="small text-secondary">или включи охоту по заявке из списка ниже</span>`}
+    </div>
+    <div class="small text-secondary mt-2">Номер черновика — из заголовка «Создание черновика №…» в ЛК Ozon. Когда слоты появятся, бот напишет в группу — бронируешь в ЛК.</div>
+  </div>`;
+
+  const od = _slotsData.orders || {};
+  if (od.error) {
+    html += `<div class="alert alert-warning">Заявки не загрузились: ${esc(od.error)}</div>`;
+  } else {
+    const orders = od.orders || [];
+    html += `<div class="card bg-card"><div class="card-body p-0"><div class="table-responsive">
+      <table class="table table-sm align-middle mb-0 text-nowrap" style="font-size:.85rem"><thead><tr>
+      <th>Заявка</th><th>Статус</th><th>Точка отгрузки</th><th>Создана</th><th>Слот</th><th></th></tr></thead><tbody>` +
+      (orders.length ? orders.map(o => {
+        const st = { DATA_FILLING: 'черновик / заполнение', READY_TO_SUPPLY: 'готова к отгрузке',
+                     ACCEPTED_AT_SUPPLY_WAREHOUSE: 'принята на точке', IN_TRANSIT: 'в пути',
+                     ACCEPTANCE_AT_STORAGE_WAREHOUSE: 'приёмка на складе' }[o.state] || o.state;
+        const ts = o.timeslot && o.timeslot.from ? `${(o.timeslot.from || '').slice(0, 16).replace('T', ' ')}` : '—';
+        return `<tr><td><b>${esc(String(o.number || o.order_id))}</b></td>
+          <td>${esc(st)}</td><td>${esc(o.dropoff || '—')}</td>
+          <td class="text-secondary small">${esc(o.created || '')}</td><td>${ts}</td>
+          <td>${ts === '—' ? `<button class="btn btn-sm btn-outline-info py-0" onclick="slotsWatch({order_id:${o.order_id}})">Охота</button>` : ''}</td></tr>`;
+      }).join('') : '<tr><td colspan="6" class="text-secondary p-3">Заявок нет</td></tr>') +
+      `</tbody></table></div></div></div>`;
+  }
+  wrap.innerHTML = html;
+}
+
 // ── Калькулятор ставки CPM из юнитки ─────────────────────────────────────────
 let _bidData = null;
 async function loadBidCalc(refresh) {
@@ -3619,23 +3688,24 @@ const _OZ_HINTS = {
   ads: 'Реклама Ozon (Performance): расход, ДРР, ROAS, заказы и куда утекают деньги по каждой кампании',
   phrases: 'По каким поисковым запросам показываются и кликают ваши товары в рекламе Ozon',
   trends: 'Нарастающие поисковые запросы: свои из Ozon API + рыночные из выгрузки ЛК. Скоринг силы тренда — что производить следующим',
+  slots: 'Охота за таймслотами поставки: сервер проверяет слоты каждые 7 минут и пишет в Telegram, как только появятся',
 };
 function setOzTool(t) {
   if (_ozTool === t) return;
   _ozTool = t;
-  [['ozFunnel', 'funnel'], ['ozClusters', 'clusters'], ['ozAds', 'ads'], ['ozPhrases', 'phrases'], ['ozTrends', 'trends']].forEach(([id, k]) =>
+  [['ozFunnel', 'funnel'], ['ozClusters', 'clusters'], ['ozAds', 'ads'], ['ozPhrases', 'phrases'], ['ozTrends', 'trends'], ['ozSlots', 'slots']].forEach(([id, k]) =>
     document.getElementById(id)?.classList.toggle('active', k === t));
   const hint = document.getElementById('ozToolHint');
   if (hint) hint.textContent = _OZ_HINTS[t] || '';
   loadOzTool();
 }
 function loadOzTool() {
-  ({ funnel: loadFunnel, clusters: loadOzClusters, ads: loadOzAds, phrases: loadOzPhrases, trends: loadTrends })[_ozTool]();
+  ({ funnel: loadFunnel, clusters: loadOzClusters, ads: loadOzAds, phrases: loadOzPhrases, trends: loadTrends, slots: loadSlots })[_ozTool]();
 }
 function reloadOzTool() {
   ({ funnel: () => loadFunnel(true), clusters: () => loadOzClusters(true),
      ads: () => loadOzAds(true), phrases: () => loadOzPhrases(true),
-     trends: () => loadTrends(true) })[_ozTool]();
+     trends: () => loadTrends(true), slots: () => loadSlots(true) })[_ozTool]();
 }
 
 let _ozClustersData = null;
