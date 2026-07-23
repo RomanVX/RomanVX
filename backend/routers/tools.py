@@ -4313,3 +4313,13 @@ async def adv_sandbox(request: Request, body: dict):
         return {"status": r.status_code, "body": payload}
     except Exception as e:
         return {"error": str(e)[:300]}
+
+
+@router.get("/supply/volumes", include_in_schema=False)
+async def supply_volumes(request: Request):
+    """Точный литраж каждой штуки из габаритов карточек Ozon."""
+    _owner_only(request)
+    import ozon_client
+    vols = await ozon_client.get_product_volumes()
+    return {"count": len(vols),
+            "volumes": {k: v for k, v in sorted(vols.items())}}
