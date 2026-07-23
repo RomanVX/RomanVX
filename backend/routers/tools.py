@@ -4344,6 +4344,28 @@ async def supply_orders(request: Request):
     return {"orders": slim}
 
 
+@router.get("/supply/probe", include_in_schema=False)
+async def supply_probe(request: Request, q: str = ""):
+    """Сырой просмотр заявок в браузере: /api/tools/supply/probe?q=119613312.
+    Отдаёт полный JSON заявки + доступные таймслоты по ней."""
+    _owner_only(request)
+    import ozon_client
+    orders = await ozon_client.get_supply_orders()
+    out = []
+    for o in orders:
+        num = str(o.get("order_number") or o.get("supply_order_number") or "")
+        if q and q not in num and q != str(o.get("order_id")):
+            continue
+        item = {"order": o}
+        try:
+            item["timeslots"] = await ozon_client.get_order_timeslots(o.get("order_id"))
+        except Exception as e:
+            item["timeslots_error"] = str(e)[:400]
+        out.append(item)
+        await asyncio.sleep(0.5)
+    return {"found": len(out), "total_orders": len(orders), "orders": out}
+
+
 def _watch_list_load():
     import snapshot as _snap
     v = _snap.load("slot_watch", None)
