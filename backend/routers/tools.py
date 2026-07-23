@@ -2745,30 +2745,38 @@ async def get_ozon_clusters(refresh: bool = Query(default=False)):
     if not rows:
         return {"items": [], "message": "Ozon не вернул аналитику остатков (нужен ключ с доступом к аналитике)"}
 
-    clusters: dict = {}
+    # строки приходят ПО СКЛАДАМ (SKU × склад): ads_cluster/idc_cluster
+    # одинаковы у всех складов кластера — сначала склеиваем в (кластер × SKU),
+    # суммируя только складские остатки, иначе продажи/день задваиваются
+    per_sku: dict = {}
     for r in rows:
         cl = r.get("cluster_name") or "—"
-        ads = float(r.get("ads_cluster") or 0)              # продажи/день в кластере
-        idc = r.get("idc_cluster")                          # дни покрытия в кластере
-        stock = int(r.get("available_stock_count") or 0)
-        excess = int(r.get("excess_stock_count") or 0)
-        grade = r.get("turnover_grade_cluster") or r.get("turnover_grade") or "UNKNOWN"
         offer = r.get("offer_id") or ""
         sku = _cat.canon(offer) if offer else str(r.get("sku") or "")
-        name = r.get("name") or ""
-        c = clusters.setdefault(cl, {"cluster": cl, "stock": 0, "ads": 0.0,
-                                     "excess": 0, "skus": []})
-        c["stock"] += stock
+        p = per_sku.setdefault((cl, sku), {
+            "cluster": cl, "sku": sku, "name": r.get("name") or "",
+            "ads": float(r.get("ads_cluster") or 0),
+            "idc": r.get("idc_cluster"),
+            "grade": r.get("turnover_grade_cluster") or r.get("turnover_grade") or "UNKNOWN",
+            "stock": 0, "excess": 0})
+        p["stock"] += int(r.get("available_stock_count") or 0)
+        p["excess"] += int(r.get("excess_stock_count") or 0)
+
+    clusters: dict = {}
+    for p in per_sku.values():
+        ads, idc = p["ads"], p["idc"]
+        c = clusters.setdefault(p["cluster"], {"cluster": p["cluster"], "stock": 0,
+                                               "ads": 0.0, "excess": 0, "skus": []})
+        c["stock"] += p["stock"]
         c["ads"] += ads
-        c["excess"] += excess
-        # нужно довезти до целевого покрытия
+        c["excess"] += p["excess"]
         need = 0
         if ads > 0 and idc is not None and idc < _OZ_TARGET_DAYS:
             need = max(0, round((_OZ_TARGET_DAYS - idc) * ads))
-        c["skus"].append({"sku": sku, "name": name, "ads": round(ads, 2),
-                          "stock": stock, "idc": idc if idc is not None else "∞",
-                          "grade": _OZ_TURNOVER.get(grade, grade), "need": need,
-                          "excess": excess})
+        c["skus"].append({"sku": p["sku"], "name": p["name"], "ads": round(ads, 2),
+                          "stock": p["stock"], "idc": idc if idc is not None else "∞",
+                          "grade": _OZ_TURNOVER.get(p["grade"], p["grade"]),
+                          "need": need, "excess": p["excess"]})
 
     items = []
     for c in clusters.values():
