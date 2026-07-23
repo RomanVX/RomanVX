@@ -24,7 +24,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" />
-  <link rel="stylesheet" href="style.css?v=16" />
+  <link rel="stylesheet" href="style.css?v=17" />
 </head>
 <body>
 
@@ -64,24 +64,21 @@
       <img src="/static/lion_logo.svg" alt="" style="width:26px;height:26px;margin-right:8px;vertical-align:-6px" /><span id="cabBrandName">Biomed Nutrition — аналитика</span>
     </span>
   </div>
-  <div class="d-flex align-items-center gap-2 flex-wrap">
+  <div class="d-flex align-items-center gap-2">
     <button id="themeBtn" class="btn btn-sm btn-outline-secondary" onclick="toggleTheme()" title="Тема">
       <i class="bi bi-sun"></i>
     </button>
-    <button class="btn btn-sm btn-outline-light" onclick="loadAll()">
-      <i class="bi bi-arrow-clockwise"></i><span class="btn-label"> Обновить</span>
-    </button>
-    <button id="changeCabBtn" class="btn btn-sm btn-outline-warning" onclick="changeCabinet()">
-      <i class="bi bi-person-circle"></i><span class="btn-label"> Сменить кабинет</span>
-    </button>
-    <button id="usersBtn" class="btn btn-sm btn-outline-info" style="display:none" onclick="openUsers()">
-      <i class="bi bi-people"></i><span class="btn-label"> Доступы</span>
-    </button>
-    <button class="btn btn-sm btn-outline-secondary" onclick="doLogout()" title="Выйти">
-      <i class="bi bi-box-arrow-right"></i>
-    </button>
-    <small class="text-secondary" id="lastUpdated">—</small>
-    <small class="text-secondary" style="opacity:.4">v2.6</small>
+    <div class="mp-menu-item mp-acc">
+      <span class="mp-menu-title" id="accCabName">Biomed Nutrition <i class="bi bi-chevron-down small"></i></span>
+      <div class="mp-menu-drop mp-drop-right">
+        <a href="#" onclick="loadAll();return false">Обновить данные</a>
+        <a href="#" id="changeCabBtn" onclick="changeCabinet();return false">Сменить кабинет</a>
+        <a href="#" id="usersBtn" style="display:none" onclick="openUsers();return false">Доступы</a>
+        <div class="mp-drop-sep"></div>
+        <a href="#" onclick="doLogout();return false">Выйти</a>
+        <div class="mp-drop-note">обновлено: <span id="lastUpdated">—</span> · v2.6</div>
+      </div>
+    </div>
   </div>
 </nav>
 
@@ -523,6 +520,6 @@
 
 <script src="vendor/bootstrap.bundle.min.js"></script>
 <script src="vendor/chart.umd.min.js"></script>
-<script src="app.js?v=177"></script>
+<script src="app.js?v=178"></script>
 </body>
 </html>

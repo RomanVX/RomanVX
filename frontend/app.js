@@ -53,6 +53,8 @@ async function loadCabinetInfo() {
   // имя кабинета в шапке и на карточке выбора
   const brand = document.getElementById('cabBrandName');
   if (brand) brand.textContent = `${_cab.name} — аналитика`;
+  const acc = document.getElementById('accCabName');
+  if (acc) acc.innerHTML = `${esc(_cab.name)} <i class="bi bi-chevron-down small"></i>`;
   const cabName = document.getElementById('cabCurrentName');
   if (cabName) cabName.textContent = _cab.name;
   if (_cab.id === 'fk') {

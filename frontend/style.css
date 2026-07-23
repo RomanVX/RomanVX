@@ -338,6 +338,16 @@ body {
 }
 .mp-menu-drop a:hover { background: var(--brand-soft); color: var(--brand); }
 .mp-drop-sep { border-top: 1px solid var(--border); margin: 4px 8px; }
+.mp-drop-right { right: 0; left: auto; }
+.mp-drop-note {
+  padding: 6px 13px 4px;
+  font-size: .74rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+/* аккаунт-меню в навбаре: навбар обрезает absolute-дропдауны — разрешаем */
+.navbar { overflow: visible; }
+.mp-acc .mp-menu-title { font-size: .88rem; padding: 7px 14px; }
 
 /* ══ Логин / выбор кабинета — «пруд»: тёмно-зелёная вода, круги, стекло ══ */
 .mp-overlay {
