@@ -4323,3 +4323,66 @@ async def supply_volumes(request: Request):
     vols = await ozon_client.get_product_volumes()
     return {"count": len(vols),
             "volumes": {k: v for k, v in sorted(vols.items())}}
+
+
+# ══ Ловец слотов поставки Ozon ════════════════════════════════════════════════
+@router.post("/supply/watch")
+async def supply_watch(request: Request, body: dict):
+    """Включить охоту за таймслотами: {draft_id, clusters?: [id], off?: true}."""
+    _owner_only(request)
+    import snapshot as _snap
+    if body.get("off"):
+        await asyncio.to_thread(_snap.save, "slot_watch", None)
+        return {"watching": False}
+    draft_id = int(body.get("draft_id") or 0)
+    if not draft_id:
+        return {"error": "нужен draft_id (номер черновика из ЛК)"}
+    clusters = body.get("clusters") or []
+    if not clusters:
+        import ozon_client
+        rows = await ozon_client.get_stocks_by_cluster()
+        clusters = sorted({int(r["macrolocal_cluster_id"]) for r in rows
+                           if r.get("macrolocal_cluster_id")})
+    cfg = {"draft_id": draft_id, "clusters": clusters[:20],
+           "started": datetime.utcnow().isoformat(), "seen": []}
+    await asyncio.to_thread(_snap.save, "slot_watch", cfg)
+    return {"watching": True, "draft_id": draft_id, "clusters": clusters[:20]}
+
+
+@router.get("/supply/watch")
+async def supply_watch_status(request: Request):
+    _owner_only(request)
+    import snapshot as _snap
+    cfg = await asyncio.to_thread(_snap.load, "slot_watch", None)
+    return cfg or {"watching": False}
+
+
+async def slot_watch_tick() -> None:
+    """Один проход охоты: опросить таймслоты, о новых — в Telegram."""
+    import snapshot as _snap
+    import ozon_client
+    import agent_review as _ar
+    cfg = await asyncio.to_thread(_snap.load, "slot_watch", None)
+    if not cfg:
+        return
+    if (datetime.utcnow() - datetime.fromisoformat(cfg["started"])).days >= 7:
+        await asyncio.to_thread(_snap.save, "slot_watch", None)
+        await _ar.tg_send("Охота за слотами: неделя прошла, выключаю. "
+                          "Включить заново — с дашборда.")
+        return
+    try:
+        resp = await ozon_client.get_draft_timeslots(cfg["draft_id"], cfg["clusters"])
+    except Exception as e:
+        _log.warning("slot watch: %s", str(e)[:200])
+        return
+    slots = ozon_client.extract_timeslots(resp)
+    seen = set(cfg.get("seen") or [])
+    fresh = [s for s in slots if f"{s['from']}|{s['to']}" not in seen]
+    if fresh:
+        lines = [f"СЛОТЫ ПОЯВИЛИСЬ — черновик {cfg['draft_id']}, бронируй в ЛК:"]
+        for s in fresh[:15]:
+            lines.append(f"{s['from'][:16].replace('T', ' ')} — {s['to'][11:16]}")
+        await _ar.tg_send("\n".join(lines))
+        seen |= {f"{s['from']}|{s['to']}" for s in fresh}
+        cfg["seen"] = sorted(seen)[-300:]
+        await asyncio.to_thread(_snap.save, "slot_watch", cfg)

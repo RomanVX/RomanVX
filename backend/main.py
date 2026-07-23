@@ -162,6 +162,18 @@ async def _competitors_daily():
         await asyncio.sleep(1800)
 
 
+async def _slot_watcher():
+    """Охота за таймслотами поставки Ozon: опрос каждые 7 минут, пока включена."""
+    from routers import tools as _tools
+    await asyncio.sleep(300)
+    while True:
+        try:
+            await _tools.slot_watch_tick()
+        except Exception as e:
+            logging.getLogger("slot_watch").warning("tick: %s", e)
+        await asyncio.sleep(420)
+
+
 async def _bid_history_daily():
     """История рекламных кластеров: суточный срез в БД (13:00 МСК, дедуп)."""
     import snapshot as _snap
@@ -279,8 +291,9 @@ async def lifespan(app: FastAPI):
     task7 = asyncio.create_task(_trends_weekly())
     task8 = asyncio.create_task(_strategist_loop())
     task9 = asyncio.create_task(_bid_history_daily())
+    task10 = asyncio.create_task(_slot_watcher())
     yield
-    for t in (task, task2, task3, task4, task5, task6, task7, task8, task9):
+    for t in (task, task2, task3, task4, task5, task6, task7, task8, task9, task10):
         t.cancel()
 
 

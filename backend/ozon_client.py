@@ -595,3 +595,38 @@ async def get_product_volumes() -> dict[str, dict]:
             break
     _log.info("Ozon volumes: %d товаров", len(out))
     return out
+
+
+async def get_draft_timeslots(draft_id: int, cluster_ids: list[int],
+                              days: int = 27) -> dict:
+    """Доступные таймслоты черновика поставки (v2/draft/timeslot/info).
+    supply_type=MULTI_CLUSTER, кластеры — macrolocal_cluster_id."""
+    from datetime import date as _d, timedelta as _td
+    body = {
+        "draft_id": int(draft_id),
+        "date_from": _d.today().isoformat(),
+        "date_to": (_d.today() + _td(days=min(days, 27))).isoformat(),
+        "supply_type": "MULTI_CLUSTER",
+        "selected_cluster_warehouses": [
+            {"macrolocal_cluster_id": int(c)} for c in cluster_ids[:20]],
+    }
+    return await _post("/v2/draft/timeslot/info", body)
+
+
+def extract_timeslots(resp: dict) -> list[dict]:
+    """Достаём все интервалы из ответа timeslot/info (структура вложенная,
+    парсим устойчиво: ищем объекты с from/to)."""
+    out = []
+
+    def walk(o, ctx=""):
+        if isinstance(o, dict):
+            if "from" in o and "to" in o and isinstance(o.get("from"), str):
+                out.append({"from": o["from"], "to": o["to"], "ctx": ctx})
+                return
+            for k, v in o.items():
+                walk(v, f"{ctx}.{k}" if ctx else k)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v, ctx)
+    walk(resp)
+    return out
