@@ -345,9 +345,18 @@ body {
   color: var(--muted);
   white-space: nowrap;
 }
-/* аккаунт-меню в навбаре: навбар обрезает absolute-дропдауны — разрешаем */
-.navbar { overflow: visible; }
+/* аккаунт-меню в навбаре: дропдаун поверх липких шапок таблиц */
+.navbar { overflow: visible; position: relative; z-index: 2000; }
 .mp-acc .mp-menu-title { font-size: .88rem; padding: 7px 14px; }
+
+/* Chrome-автозаполнение красит поля логина белым — возвращаем стекло */
+.mp-box .mp-input:-webkit-autofill,
+.mp-box .mp-input:-webkit-autofill:hover,
+.mp-box .mp-input:-webkit-autofill:focus {
+  -webkit-box-shadow: 0 0 0 1000px #1d3a2c inset;
+  -webkit-text-fill-color: #fff;
+  caret-color: #fff;
+}
 
 /* ══ Логин / выбор кабинета — «пруд»: тёмно-зелёная вода, круги, стекло ══ */
 .mp-overlay {
@@ -497,8 +506,8 @@ body {
 }
 .mp-cab-card:hover {
   transform: translateY(-6px);
-  border-color: #111;
-  box-shadow: 0 12px 36px rgba(0,0,0,.25);
+  border-color: var(--brand);
+  box-shadow: 0 12px 36px rgba(14, 122, 79, .3);
 }
 
 /* ══ Метрики (P&L карточки) ══ */
@@ -682,14 +691,15 @@ html[data-theme="light"] .text-info { color: #0369a1 !important; }
 .cab-mono {
   width: 64px; height: 64px;
   border-radius: 16px;
-  background: #14110a;
-  border: 1px solid #c9a84c;
-  color: #c9a84c;
+  background: linear-gradient(135deg, #1db477 0%, #0e7a4f 100%);
+  border: none;
+  color: #fff;
   font-weight: 800;
   font-size: 22px;
   letter-spacing: 1px;
   display: flex; align-items: center; justify-content: center;
   flex-shrink: 0;
+  box-shadow: 0 6px 18px rgba(14, 122, 79, .35);
 }
 .cab-mono.cab-mono-sm { width: 26px; height: 26px; border-radius: 7px; font-size: 11px; letter-spacing: 0; display: inline-flex; margin-right: 8px; vertical-align: middle; position: relative; top: -1px; }
 

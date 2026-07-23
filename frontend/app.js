@@ -57,13 +57,9 @@ async function loadCabinetInfo() {
   if (acc) acc.innerHTML = `${esc(_cab.name)} <i class="bi bi-chevron-down small"></i>`;
   const cabName = document.getElementById('cabCurrentName');
   if (cabName) cabName.textContent = _cab.name;
-  if (_cab.id === 'fk') {
-    // иконка текущего кабинета — монограмма ФК в стиле квадрата BN
-    const img = document.querySelector('#cabBiomed img');
-    if (img) img.outerHTML = '<div class="cab-mono">ФК</div>';
-    const navImg = document.querySelector('.navbar-brand img');
-    if (navImg) navImg.outerHTML = '<span class="cab-mono cab-mono-sm">ФК</span>';
-  }
+  // монограмма текущего кабинета (зелёный квадрат в стиле темы)
+  const mono = document.querySelector('#cabBiomed .cab-mono');
+  if (mono) mono.textContent = _cab.id === 'fk' ? 'ФК' : 'BN';
   // карточка второго кабинета
   const grid = document.querySelector('.mp-cab-grid');
   if (grid && _cab.other && _cab.other.url && !document.getElementById('cabOther')) {
@@ -71,11 +67,7 @@ async function loadCabinetInfo() {
     div.id = 'cabOther';
     div.className = 'mp-cab-card';
     div.onclick = () => { window.location.href = _cab.other.url.replace(/\/+$/, '') + '/?enter=1'; };
-    // иконка второй карточки — по тому, КУДА она ведёт: у ФК ссылка на Biomed (лев BN), у Biomed — на ФК (помада)
-    const otherIcon = _cab.id === 'fk'
-      ? '<img src="/static/lion_logo.svg" alt="BN" style="width:64px;height:64px" />'
-      : '<div class="cab-mono">ФК</div>';
-    div.innerHTML = `${otherIcon}<span>${_cab.other.name}</span>`;
+    div.innerHTML = `<div class="cab-mono">${_cab.id === 'fk' ? 'BN' : 'ФК'}</div><span>${esc(_cab.other.name)}</span>`;
     grid.appendChild(div);
   }
   // скрываем площадки, которых нет в кабинете (ЯМ у Фабрики красоты)
