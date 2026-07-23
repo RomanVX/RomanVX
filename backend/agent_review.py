@@ -755,13 +755,13 @@ async def bot_loop() -> None:
                         await asyncio.to_thread(_snap.save, "agent_paused", False)
                         await tg_send("Снова в строю.", thread_id=thread)
                     continue
-                if _paused[0]:
-                    continue
                 # брендовые ассеты дашборда: картинка с подписью «лого»/«фон»
-                # (лого слать файлом-документом — сохранится прозрачность PNG)
-                _akey = text.split()[0].rstrip(':').lstrip('/') if text else ""
-                if _akey in ("лого", "логотип", "фон") and \
-                        (msg.get("photo") or msg.get("document")):
+                # (работает и на паузе; лого слать файлом — сохранится
+                # прозрачность PNG; слова-команды в подписи игнорируем)
+                _akey = next((w.rstrip(':').lstrip('/') for w in text.split()[:3]
+                              if w.rstrip(':').lstrip('/')
+                              in ("лого", "логотип", "фон")), "")
+                if _akey and (msg.get("photo") or msg.get("document")):
                     doc = msg.get("document") or {}
                     fid, mime = None, "image/jpeg"
                     if str(doc.get("mime_type") or "").startswith("image/"):
@@ -781,6 +781,8 @@ async def bot_loop() -> None:
                         else:
                             await tg_send("Не смог скачать файл (лимит 4.5 МБ).",
                                           thread_id=thread)
+                    continue
+                if _paused[0]:
                     continue
                 # свободный вопрос: упоминание @бота или reply на его сообщение
                 reply_from = ((msg.get("reply_to_message") or {}).get("from") or {})
