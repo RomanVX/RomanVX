@@ -4344,21 +4344,38 @@ async def supply_orders(request: Request):
     return {"orders": slim}
 
 
+def _watch_list_load():
+    import snapshot as _snap
+    v = _snap.load("slot_watch", None)
+    if not v:
+        return []
+    return v if isinstance(v, list) else [v]
+
+
 @router.post("/supply/watch")
 async def supply_watch(request: Request, body: dict):
-    """Включить охоту: {draft_id} ИЛИ {order_id}; {off: true} — выключить."""
+    """Охоты (несколько параллельно): {draft_id}|{order_id} добавляет,
+    {off: id} снимает одну, {off: true} — все."""
     _owner_only(request)
     import snapshot as _snap
-    if body.get("off"):
-        await asyncio.to_thread(_snap.save, "slot_watch", None)
-        return {"watching": False}
+    watches = await asyncio.to_thread(_watch_list_load)
+    off = body.get("off")
+    if off:
+        if off is True:
+            watches = []
+        else:
+            watches = [w for w in watches
+                       if str(w.get("draft_id") or w.get("order_id")) != str(off)]
+        await asyncio.to_thread(_snap.save, "slot_watch", watches)
+        return {"watching": len(watches)}
     order_id = int(body.get("order_id") or 0)
     draft_id = int(body.get("draft_id") or 0)
     if order_id:
-        cfg = {"mode": "order", "order_id": order_id,
-               "started": datetime.utcnow().isoformat(), "seen": []}
-        await asyncio.to_thread(_snap.save, "slot_watch", cfg)
-        return {"watching": True, "mode": "order", "order_id": order_id}
+        watches = [w for w in watches if w.get("order_id") != order_id]
+        watches.append({"mode": "order", "order_id": order_id,
+                        "started": datetime.utcnow().isoformat(), "seen": []})
+        await asyncio.to_thread(_snap.save, "slot_watch", watches[:6])
+        return {"watching": len(watches), "added": order_id}
     if not draft_id:
         return {"error": "нужен draft_id (номер черновика) или order_id (заявка)"}
     clusters = body.get("clusters") or []
@@ -4367,51 +4384,58 @@ async def supply_watch(request: Request, body: dict):
         rows = await ozon_client.get_stocks_by_cluster()
         clusters = sorted({int(r["macrolocal_cluster_id"]) for r in rows
                            if r.get("macrolocal_cluster_id")})
-    cfg = {"mode": "draft", "draft_id": draft_id, "clusters": clusters[:20],
-           "started": datetime.utcnow().isoformat(), "seen": []}
-    await asyncio.to_thread(_snap.save, "slot_watch", cfg)
-    return {"watching": True, "mode": "draft", "draft_id": draft_id,
-            "clusters": clusters[:20]}
+    watches = [w for w in watches if w.get("draft_id") != draft_id]
+    watches.append({"mode": "draft", "draft_id": draft_id,
+                    "clusters": clusters[:20],
+                    "started": datetime.utcnow().isoformat(), "seen": []})
+    await asyncio.to_thread(_snap.save, "slot_watch", watches[:6])
+    return {"watching": len(watches), "added": draft_id}
 
 
 @router.get("/supply/watch")
 async def supply_watch_status(request: Request):
     _owner_only(request)
-    import snapshot as _snap
-    cfg = await asyncio.to_thread(_snap.load, "slot_watch", None)
-    return cfg or {"watching": False}
+    return {"watches": await asyncio.to_thread(_watch_list_load)}
 
 
 async def slot_watch_tick() -> None:
-    """Один проход охоты: опросить таймслоты, о новых — в Telegram."""
+    """Один проход охоты по всем целям: новые слоты — в Telegram."""
     import snapshot as _snap
     import ozon_client
     import agent_review as _ar
-    cfg = await asyncio.to_thread(_snap.load, "slot_watch", None)
-    if not cfg:
+    watches = await asyncio.to_thread(_watch_list_load)
+    if not watches:
         return
-    if (datetime.utcnow() - datetime.fromisoformat(cfg["started"])).days >= 7:
-        await asyncio.to_thread(_snap.save, "slot_watch", None)
-        await _ar.tg_send("Охота за слотами: неделя прошла, выключаю. "
-                          "Включить заново — с дашборда.")
-        return
-    try:
-        if cfg.get("mode") == "order":
-            resp = await ozon_client.get_order_timeslots(cfg["order_id"])
-        else:
-            resp = await ozon_client.get_draft_timeslots(cfg["draft_id"], cfg["clusters"])
-    except Exception as e:
-        _log.warning("slot watch: %s", str(e)[:200])
-        return
-    slots = ozon_client.extract_timeslots(resp)
-    seen = set(cfg.get("seen") or [])
-    fresh = [s for s in slots if f"{s['from']}|{s['to']}" not in seen]
-    if fresh:
-        tgt = cfg.get("draft_id") or cfg.get("order_id")
-        lines = [f"СЛОТЫ ПОЯВИЛИСЬ — {('черновик' if cfg.get('mode') != 'order' else 'заявка')} {tgt}, бронируй в ЛК:"]
-        for s in fresh[:15]:
-            lines.append(f"{s['from'][:16].replace('T', ' ')} — {s['to'][11:16]}")
-        await _ar.tg_send("\n".join(lines))
-        seen |= {f"{s['from']}|{s['to']}" for s in fresh}
-        cfg["seen"] = sorted(seen)[-300:]
-        await asyncio.to_thread(_snap.save, "slot_watch", cfg)
+    keep, dirty = [], False
+    for cfg in watches:
+        if (datetime.utcnow() - datetime.fromisoformat(cfg["started"])).days >= 7:
+            await _ar.tg_send(f"Охота за слотами ({cfg.get('draft_id') or cfg.get('order_id')}): "
+                              "неделя прошла, выключаю.")
+            dirty = True
+            continue
+        keep.append(cfg)
+        try:
+            if cfg.get("mode") == "order":
+                resp = await ozon_client.get_order_timeslots(cfg["order_id"])
+            else:
+                resp = await ozon_client.get_draft_timeslots(cfg["draft_id"], cfg["clusters"])
+        except Exception as e:
+            _log.warning("slot watch %s: %s",
+                         cfg.get("draft_id") or cfg.get("order_id"), str(e)[:200])
+            continue
+        slots = ozon_client.extract_timeslots(resp)
+        seen = set(cfg.get("seen") or [])
+        fresh = [s for s in slots if f"{s['from']}|{s['to']}" not in seen]
+        if fresh:
+            tgt = cfg.get("draft_id") or cfg.get("order_id")
+            kind = "черновик" if cfg.get("mode") != "order" else "заявка"
+            lines = [f"СЛОТЫ ПОЯВИЛИСЬ — {kind} {tgt}, бронируй в ЛК:"]
+            for s in fresh[:15]:
+                lines.append(f"{s['from'][:16].replace('T', ' ')} — {s['to'][11:16]}")
+            await _ar.tg_send("\n".join(lines))
+            seen |= {f"{s['from']}|{s['to']}" for s in fresh}
+            cfg["seen"] = sorted(seen)[-300:]
+            dirty = True
+        await asyncio.sleep(1)
+    if dirty or len(keep) != len(watches):
+        await asyncio.to_thread(_snap.save, "slot_watch", keep)

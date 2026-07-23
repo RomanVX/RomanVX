@@ -2889,20 +2889,20 @@ function slotsWatchDraft() {
 function renderSlots() {
   const wrap = document.getElementById('toolsOzWrap');
   if (!wrap || !_slotsData) return;
-  const w = _slotsData.watch || {};
-  const watching = !!(w && (w.draft_id || w.order_id));
+  const watches = (_slotsData.watch && _slotsData.watch.watches) || [];
   let html = `<div class="card bg-card p-3 mb-3">
     <div class="d-flex align-items-center gap-2 flex-wrap">
       <h6 class="mb-0">Охота за слотами</h6>
-      ${watching
-        ? `<span class="badge bg-success">идёт: ${w.mode === 'order' ? 'заявка' : 'черновик'} ${w.draft_id || w.order_id}</span>
-           <span class="small text-secondary">проверка каждые 7 минут, найденное — в Telegram; слотов замечено: ${(w.seen || []).length}</span>
-           <button class="btn btn-sm btn-outline-danger ms-auto" onclick="slotsWatch({off:true})">Выключить</button>`
-        : `<input id="slotDraftId" type="number" class="form-control form-control-sm" style="width:170px" placeholder="№ черновика из ЛК">
-           <button class="btn btn-sm btn-outline-info" onclick="slotsWatchDraft()">Охотиться за черновиком</button>
-           <span class="small text-secondary">или включи охоту по заявке из списка ниже</span>`}
+      <input id="slotDraftId" type="number" class="form-control form-control-sm" style="width:170px" placeholder="№ черновика из ЛК">
+      <button class="btn btn-sm btn-outline-info" onclick="slotsWatchDraft()">Добавить охоту</button>
+      <span class="small text-secondary">параллельно до 6 целей; охоту по заявке — кнопкой в списке ниже</span>
     </div>
-    <div class="small text-secondary mt-2">Номер черновика — из заголовка «Создание черновика №…» в ЛК Ozon. Когда слоты появятся, бот напишет в группу — бронируешь в ЛК.</div>
+    ${watches.length ? `<div class="mt-2">` + watches.map(w =>
+      `<span class="badge bg-success me-2 mb-1">${w.mode === 'order' ? 'заявка' : 'черновик'} ${w.draft_id || w.order_id}
+        · слотов замечено: ${(w.seen || []).length}
+        <a href="#" class="text-white ms-1" onclick="slotsWatch({off:'${w.draft_id || w.order_id}'});return false" title="снять">✕</a></span>`).join('') + `</div>` : ''}
+    <div class="small text-secondary mt-2">Проверка каждые 7 минут круглосуточно; новые слоты — сообщением в Telegram, бронируешь в ЛК.
+    Совет: единый слот — это пересечение свободных дат всех кластеров заявки; дроби заявку на группы с одинаковым «временем в пути», так слоты находятся в разы быстрее.</div>
   </div>`;
 
   const od = _slotsData.orders || {};
