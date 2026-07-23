@@ -4335,7 +4335,8 @@ async def supply_orders(request: Request):
     orders = await ozon_client.get_supply_orders()
     slim = []
     for o in orders:
-        ts = o.get("timeslot") or {}
+        # timeslot вложен: {"timeslot": {"from","to"}, "timezone_info": …}
+        ts = (o.get("timeslot") or {}).get("timeslot") or {}
         slim.append({"order_id": o.get("order_id"),
                      "number": o.get("order_number") or o.get("supply_order_number"),
                      "state": o.get("state"),

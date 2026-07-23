@@ -3043,7 +3043,9 @@ function renderSlots() {
         const st = { DATA_FILLING: 'черновик / заполнение', READY_TO_SUPPLY: 'готова к отгрузке',
                      ACCEPTED_AT_SUPPLY_WAREHOUSE: 'принята на точке', IN_TRANSIT: 'в пути',
                      ACCEPTANCE_AT_STORAGE_WAREHOUSE: 'приёмка на складе' }[o.state] || o.state;
-        const ts = o.timeslot && o.timeslot.from ? `${(o.timeslot.from || '').slice(0, 16).replace('T', ' ')}` : '—';
+        const ts = o.timeslot && o.timeslot.from
+          ? new Date(Date.parse(o.timeslot.from) + 3 * 3600e3).toISOString().slice(0, 16).replace('T', ' ') + ' МСК'
+          : '—';
         return `<tr><td><b>${esc(String(o.number || o.order_id))}</b></td>
           <td>${esc(st)}</td><td>${esc(o.dropoff || '—')}</td>
           <td class="text-secondary small">${esc(o.created || '')}</td><td>${ts}</td>

@@ -538,6 +538,11 @@ body {
 .prio-planned { color: var(--warn);   font-weight: 600; }
 .prio-ok      { color: var(--ok); }
 
+/* Пилюли инструментов внутри вкладок WB/Ozon скрыты — навигация через
+   верхнее меню; в строке остаются подсказка и «Обновить» */
+#pane-tools .mp-selector-bloc,
+#pane-toolsoz .mp-selector-bloc { display: none; }
+
 /* ══ Переключатели площадок ══ */
 .mp-selector-bloc {
   display: flex;
