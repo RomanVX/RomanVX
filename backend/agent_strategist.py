@@ -21,6 +21,7 @@ _MAX_STEPS = 18          # предохранитель цикла
 _TOOL_TRIM = 7000        # символов на результат инструмента
 
 _running = False         # одна сессия за раз (512 МБ и здравый смысл)
+_cancel = False          # стоп-слово из TG: прервать текущую сессию
 
 
 def _init():
@@ -440,6 +441,11 @@ async def run_session(trigger: str = "manual", focus: str = "",
         tools_used, saved = [], False
         started = asyncio.get_event_loop().time()
         for _step in range(_MAX_STEPS):
+            global _cancel
+            if _cancel:
+                _cancel = False
+                _log.info("strategist: остановлен стоп-словом")
+                return {"ok": True, "stopped": True}
             if asyncio.get_event_loop().time() - started > 1500:
                 raise TimeoutError("сессия дольше 25 минут — прервана")
             try:      # «печатает…» в группе — видно, что стратег жив

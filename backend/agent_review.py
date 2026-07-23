@@ -651,6 +651,7 @@ async def bot_loop() -> None:
     # офсет переживает рестарты: сообщения из деплой-окна не теряются
     # и старые команды не выполняются повторно
     offset = int(await asyncio.to_thread(_snap.load, "tg_offset", 0) or 0)
+    _paused = [bool(await asyncio.to_thread(_snap.load, "agent_paused", False))]
     while True:
         try:
             async with httpx.AsyncClient(timeout=70) as c:
@@ -691,6 +692,24 @@ async def bot_loop() -> None:
                 text = raw.lower()
                 thread = msg.get("message_thread_id")
                 if chat != TG_CHAT_ID or not raw:
+                    continue
+                # стоп-слово: прервать сессию стратега и замолчать до «старт»
+                low = raw.strip().lower().rstrip('!.')
+                if low in ("стоп", "stop") or low.startswith(("стоп ", "stop ")):
+                    import agent_strategist as _st
+                    _st._cancel = True
+                    _paused[0] = True
+                    await asyncio.to_thread(_snap.save, "agent_paused", True)
+                    await tg_send("🛑 Остановился: сессию прерываю, на вопросы "
+                                  "не отвечаю. Вернуть: «старт»", thread_id=thread)
+                    continue
+                if low in ("старт", "start", "работай"):
+                    if _paused[0]:
+                        _paused[0] = False
+                        await asyncio.to_thread(_snap.save, "agent_paused", False)
+                        await tg_send("▶️ Снова в строю.", thread_id=thread)
+                    continue
+                if _paused[0]:
                     continue
                 # свободный вопрос: упоминание @бота или reply на его сообщение
                 reply_from = ((msg.get("reply_to_message") or {}).get("from") or {})
