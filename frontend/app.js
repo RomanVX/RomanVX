@@ -2886,9 +2886,97 @@ function slotsWatchDraft() {
   if (v) slotsWatch({ draft_id: v });
 }
 
+// Короба из файла производства → грузоместа Ozon + этикетки
+let _slotsBoxes = null, _slotsMatch = {}, _slotsApply = {};
+async function slotsBoxUpload(input) {
+  const f = input.files[0];
+  if (!f) return;
+  const fd = new FormData();
+  fd.append('file', f);
+  const el = document.getElementById('slotBoxInfo');
+  if (el) el.innerHTML = '<span class="spinner-border spinner-border-sm"></span> разбираю файл…';
+  try {
+    const r = await fetch('/api/tools/supply/boxes/upload', { method: 'POST', body: fd });
+    const j = await r.json();
+    if (j.error) { if (el) el.innerHTML = `<span class="text-danger">${esc(j.error)}</span>`; return; }
+    _slotsBoxes = j;
+    _slotsMatch = {}; _slotsApply = {};
+    renderSlots();
+  } catch (e) {
+    if (el) el.innerHTML = `<span class="text-danger">Ошибка: ${esc(e.message)}</span>`;
+  }
+  input.value = '';
+}
+
+function _slotWave() { return document.getElementById('slotWave')?.value || '1'; }
+
+async function slotsBoxMatch(orderId) {
+  _slotsMatch[orderId] = { loading: true };
+  renderSlots();
+  try {
+    _slotsMatch[orderId] = await fetchJSON(
+      `/api/tools/supply/boxes/match?order_id=${orderId}&wave=${encodeURIComponent(_slotWave())}`, 180000);
+  } catch (e) {
+    _slotsMatch[orderId] = { error: e.message };
+  }
+  renderSlots();
+}
+
+async function slotsBoxApply(orderId) {
+  if (!confirm('Залить короба в Ozon по этой заявке? Существующие грузоместа в ней будут заменены составом из файла.')) return;
+  _slotsApply[orderId] = { loading: true };
+  renderSlots();
+  try {
+    const r = await fetch('/api/tools/supply/boxes/apply', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ order_id: orderId, wave: _slotWave() }) });
+    const j = await r.json();
+    _slotsApply[orderId] = r.ok ? j : { error: j.detail || j.error || ('HTTP ' + r.status) };
+  } catch (e) {
+    _slotsApply[orderId] = { error: e.message };
+  }
+  renderSlots();
+}
+
+function _slotsBoxRow(o) {
+  const m = _slotsMatch[o.order_id], a = _slotsApply[o.order_id];
+  if (!m && !a) return '';
+  let inner = '';
+  if (m) {
+    if (m.loading) inner += '<div class="small text-secondary"><span class="spinner-border spinner-border-sm"></span> сверяю с составом заявки…</div>';
+    else if (m.error) inner += `<div class="small text-danger">Сверка: ${esc(m.error)}</div>`;
+    else {
+      inner += `<table class="table table-sm mb-1" style="font-size:.8rem"><thead><tr>
+        <th>Кластер</th><th>Коробов</th><th>Шт (файл)</th><th>Шт (заявка)</th><th>Статус</th></tr></thead><tbody>` +
+        (m.clusters || []).map(c => `<tr>
+          <td>${esc(c.cluster)}</td><td>${c.boxes}</td><td>${c.qty}</td><td>${c.order_qty}</td>
+          <td>${c.ok ? '<span class="text-success">сходится</span>'
+                     : c.boxes ? '<span class="text-danger">расхождения: ' +
+                       esc((c.diffs || []).map(d => `${d.offer_id}: файл ${d.in_file} / заявка ${d.in_order}`).join('; ')) + '</span>'
+                     : '<span class="text-secondary">нет коробов в файле</span>'}</td></tr>`).join('') +
+        `</tbody></table>`;
+      if ((m.unmatched || []).length)
+        inner += `<div class="small text-warning mb-1">Не попали ни в один кластер заявки: ${esc(m.unmatched.join(', '))}</div>`;
+      const allOk = (m.clusters || []).length && (m.clusters || []).every(c => c.ok || !c.boxes);
+      inner += `<button class="btn btn-sm ${allOk ? 'btn-info' : 'btn-outline-warning'}" onclick="slotsBoxApply(${o.order_id})">
+        Залить короба в Ozon${allOk ? '' : ' (есть расхождения)'}</button>`;
+    }
+  }
+  if (a) {
+    if (a.loading) inner += '<div class="small text-secondary mt-1"><span class="spinner-border spinner-border-sm"></span> заливаю короба (до минуты на кластер)…</div>';
+    else if (a.error) inner += `<div class="small text-danger mt-1">Заливка: ${esc(a.error)}</div>`;
+    else inner += `<div class="small mt-1">` + (a.results || []).map(r =>
+      `<span class="badge ${r.status === 'SUCCESS' ? 'bg-success' : r.status === 'SKIP' ? 'bg-secondary' : 'bg-danger'} me-1 mb-1">
+        ${esc(r.cluster)}: ${r.status === 'SUCCESS' ? (r.boxes + ' кор.') : esc(r.note || r.status)}</span>`).join('') +
+      `</div>`;
+  }
+  return `<tr><td colspan="7" class="bg-transparent"><div class="p-2 border-start border-info ms-2">${inner}</div></td></tr>`;
+}
+
 function renderSlots() {
   const wrap = document.getElementById('toolsOzWrap');
   if (!wrap || !_slotsData) return;
+  const _slotWaveSel = _slotWave();
   const watches = (_slotsData.watch && _slotsData.watch.watches) || [];
   let html = `<div class="card bg-card p-3 mb-3">
     <div class="d-flex align-items-center gap-2 flex-wrap">
@@ -2903,6 +2991,21 @@ function renderSlots() {
         <a href="#" class="text-white ms-1" onclick="slotsWatch({off:'${w.draft_id || w.order_id}'});return false" title="снять">✕</a></span>`).join('') + `</div>` : ''}
     <div class="small text-secondary mt-2">Проверка каждые 7 минут круглосуточно; новые слоты — сообщением в Telegram, бронируешь в ЛК.
     Совет: единый слот — это пересечение свободных дат всех кластеров заявки; дроби заявку на группы с одинаковым «временем в пути», так слоты находятся в разы быстрее.</div>
+  </div>
+  <div class="card bg-card p-3 mb-3">
+    <div class="d-flex align-items-center gap-2 flex-wrap">
+      <h6 class="mb-0">Короба из файла производства</h6>
+      <input type="file" id="slotBoxFile" accept=".xlsx" class="form-control form-control-sm" style="width:250px"
+        onchange="slotsBoxUpload(this)">
+      <label class="small text-secondary mb-0">Волна:</label>
+      <select id="slotWave" class="form-select form-select-sm" style="width:80px">
+        ${[1, 2, 3, 4, 5, 6].map(w => `<option value="${w}" ${String(w) === _slotWaveSel ? 'selected' : ''}>${w}</option>`).join('')}
+      </select>
+    </div>
+    <div id="slotBoxInfo" class="small mt-2">${_slotsBoxes ? `Файл разобран: <b>${_slotsBoxes.boxes} коробов</b>,
+      ${_slotsBoxes.qty} шт · волны: ${esc(Object.entries(_slotsBoxes.waves || {}).map(([w, n]) => `${w} — ${n} кор.`).join(', '))}
+      ${(_slotsBoxes.conflicts || []).length ? `<span class="text-danger d-block">Конфликты: ${esc(_slotsBoxes.conflicts.join('; '))}</span>` : ''}`
+      : '<span class="text-secondary">Загрузи файл с листом «отгрузка OZON» (короб → кластер → волна) — дальше «Сверка» и «Залить короба» у нужной заявки, этикетки скачаются архивом по кластерам.</span>'}</div>
   </div>`;
 
   const od = _slotsData.orders || {};
@@ -2912,7 +3015,7 @@ function renderSlots() {
     const orders = od.orders || [];
     html += `<div class="card bg-card"><div class="card-body p-0"><div class="table-responsive">
       <table class="table table-sm align-middle mb-0 text-nowrap" style="font-size:.85rem"><thead><tr>
-      <th>Заявка</th><th>Статус</th><th>Точка отгрузки</th><th>Создана</th><th>Слот</th><th></th></tr></thead><tbody>` +
+      <th>Заявка</th><th>Статус</th><th>Точка отгрузки</th><th>Создана</th><th>Слот</th><th>Короба</th><th></th></tr></thead><tbody>` +
       (orders.length ? orders.map(o => {
         const st = { DATA_FILLING: 'черновик / заполнение', READY_TO_SUPPLY: 'готова к отгрузке',
                      ACCEPTED_AT_SUPPLY_WAREHOUSE: 'принята на точке', IN_TRANSIT: 'в пути',
@@ -2921,8 +3024,12 @@ function renderSlots() {
         return `<tr><td><b>${esc(String(o.number || o.order_id))}</b></td>
           <td>${esc(st)}</td><td>${esc(o.dropoff || '—')}</td>
           <td class="text-secondary small">${esc(o.created || '')}</td><td>${ts}</td>
-          <td>${ts === '—' ? `<button class="btn btn-sm btn-outline-info py-0" onclick="slotsWatch({order_id:${o.order_id}})">Охота</button>` : ''}</td></tr>`;
-      }).join('') : '<tr><td colspan="6" class="text-secondary p-3">Заявок нет</td></tr>') +
+          <td>${_slotsBoxes ? `<button class="btn btn-sm btn-outline-info py-0 me-1" onclick="slotsBoxMatch(${o.order_id})">Сверка</button>` : ''}
+            <a class="btn btn-sm btn-outline-secondary py-0" href="/api/tools/supply/labels?order_id=${o.order_id}"
+              title="ZIP: PDF-этикетки грузомест по кластерам">Этикетки ZIP</a></td>
+          <td>${ts === '—' ? `<button class="btn btn-sm btn-outline-info py-0" onclick="slotsWatch({order_id:${o.order_id}})">Охота</button>` : ''}</td></tr>` +
+          _slotsBoxRow(o);
+      }).join('') : '<tr><td colspan="7" class="text-secondary p-3">Заявок нет</td></tr>') +
       `</tbody></table></div></div></div>`;
   }
   wrap.innerHTML = html;

@@ -653,3 +653,73 @@ async def get_order_timeslots(order_id: int) -> dict:
     """Доступные интервалы для существующей заявки."""
     return await _post("/v1/supply-order/timeslot/get",
                        {"supply_order_id": int(order_id)})
+
+
+# ══ Грузоместа (короба) и этикетки заявок FBO ════════════════════════════════
+async def get_cluster_names() -> dict[int, str]:
+    """macrolocal_cluster_id → название («Ярославль», «Санкт-Петербург и СЗО»)."""
+    data = await _post("/v2/cluster/list", {})
+    out: dict[int, str] = {}
+    for r in data.get("result") or []:
+        cid = r.get("macrolocal_cluster_id")
+        name = ((r.get("data") or {}).get("macrolocal_cluster") or {}).get("name")
+        if cid and name:
+            out[int(cid)] = name
+    return out
+
+
+async def get_bundle_items(bundle_ids: list[str]) -> list[dict]:
+    """Состав поставки/заявки по bundle_id (v1/supply-order/bundle, пагинация)."""
+    items, last_id = [], ""
+    while True:
+        data = await _post("/v1/supply-order/bundle",
+                           {"bundle_ids": bundle_ids, "limit": 100,
+                            "last_id": last_id})
+        chunk = data.get("items") or []
+        items.extend(chunk)
+        if not data.get("has_next") or not chunk:
+            return items
+        last_id = data.get("last_id") or ""
+
+
+async def cargoes_create(supply_id: int, cargoes: list[dict],
+                         delete_current: bool = True) -> dict:
+    """Установка грузомест поставки (≤30 коробок за вызов) → operation_id."""
+    return await _post("/v1/cargoes/create",
+                       {"supply_id": int(supply_id),
+                        "delete_current_version": bool(delete_current),
+                        "cargoes": cargoes})
+
+
+async def cargoes_create_info(operation_id: str) -> dict:
+    """Статус установки грузомест: SUCCESS / IN_PROGRESS / FAILED + ошибки."""
+    return await _post("/v2/cargoes/create/info", {"operation_id": operation_id})
+
+
+async def cargoes_list(supply_ids: list[int]) -> dict:
+    """Грузоместа по поставкам (v1/cargoes/get)."""
+    return await _post("/v1/cargoes/get",
+                       {"supply_ids": [str(s) for s in supply_ids]})
+
+
+async def cargoes_label_create(supply_id: int,
+                               cargo_ids: list[int] | None = None) -> dict:
+    """Задание на генерацию этикеток грузомест поставки → operation_id."""
+    body: dict = {"supply_id": int(supply_id)}
+    if cargo_ids:
+        body["cargoes"] = [{"cargo_id": int(c)} for c in cargo_ids]
+    return await _post("/v1/cargoes-label/create", body)
+
+
+async def cargoes_label_get(operation_id: str) -> dict:
+    """Статус этикеток: SUCCESS → result.file_url (PDF)."""
+    return await _post("/v1/cargoes-label/get", {"operation_id": operation_id})
+
+
+async def download_label_file(url_or_guid: str) -> bytes:
+    """Скачать PDF этикеток: по полному file_url либо по file_guid."""
+    url = url_or_guid if url_or_guid.startswith("http") \
+        else f"{_BASE}/v1/cargoes-label/file/{url_or_guid}"
+    r = await _http().get(url, headers=_headers())
+    r.raise_for_status()
+    return r.content

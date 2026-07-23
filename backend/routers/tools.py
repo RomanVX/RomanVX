@@ -10,6 +10,7 @@ import base64
 import os
 import json
 import logging
+import re
 import time as _time
 from datetime import datetime, timedelta
 
@@ -4364,6 +4365,304 @@ async def supply_probe(request: Request, q: str = ""):
         out.append(item)
         await asyncio.sleep(0.5)
     return {"found": len(out), "total_orders": len(orders), "orders": out}
+
+
+# ══ Короба (грузоместа) заявок Ozon из файла производства ════════════════════
+_BOX_ALIAS = {"питер": "санкт петербург", "спб": "санкт петербург",
+              "мск": "москва", "екб": "екатеринбург"}
+
+
+def _box_norm(s) -> str:
+    """Нормализация имени кластера: буквы+пробелы, нижний регистр."""
+    s = re.sub(r"[^а-яёa-z ]", " ", str(s or "").lower().replace("-", " "))
+    s = " ".join(s.split())
+    return _BOX_ALIAS.get(s.replace(" ", ""), _BOX_ALIAS.get(s, s))
+
+
+def _box_cluster_match(file_name: str, api_name: str) -> bool:
+    """«Санк Петербург» ↔ «Санкт-Петербург и СЗО», «Москва» ↔ «Москва, МО и
+    Дальние регионы»: каждый токен из файла находится в API-имени по префиксу."""
+    ftoks = _box_norm(file_name).split()
+    atoks = _box_norm(api_name).split()
+    if not ftoks or not atoks:
+        return False
+    return all(any(a.startswith(f) or f.startswith(a) for a in atoks)
+               for f in ftoks)
+
+
+@router.post("/supply/boxes/upload")
+async def supply_boxes_upload(request: Request, file: UploadFile = File(...)):
+    """Файл производства (лист «отгрузка OZON»): строки SKU×короб×кластер.
+    Короб целиком едет на один кластер («Новый кластер», иначе «Кластер»)."""
+    _owner_only(request)
+    import io
+    import openpyxl
+    import snapshot as _snap
+    raw = await file.read()
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(raw), data_only=True)
+    except Exception as e:
+        return {"error": f"Не смог открыть XLSX: {str(e)[:200]}"}
+    ws = None
+    for name in wb.sheetnames:
+        hdr = [str(c.value or "").strip().lower() for c in wb[name][1]]
+        if any("короб" in h for h in hdr) and any("кластер" in h for h in hdr) \
+                and any("ozon" in h or "озон" in h for h in hdr):
+            ws = wb[name]
+            break
+    if ws is None:
+        return {"error": "Не нашёл лист с колонками «Кластер» и «Коробов OZON» "
+                         "(обычно лист «отгрузка OZON»)"}
+    hdr = [str(c.value or "").strip().lower() for c in ws[1]]
+
+    def col(*words, exclude=()):
+        for j, h in enumerate(hdr):
+            if any(w in h for w in words) and not any(x in h for x in exclude):
+                return j
+        return -1
+
+    c_art = col("артикул")
+    c_bar = col("штрихкод")
+    c_cl = col("кластер", exclude=("новый",))
+    c_qty = col("шт", exclude=("штрихкод",))
+    c_box = col("короб")
+    c_exp = col("срок")
+    c_wave = col("волна")
+    c_new = col("новый")
+    if -1 in (c_art, c_bar, c_cl, c_qty, c_box):
+        return {"error": f"Не хватает колонок (артикул/штрихкод/кластер/шт/короб), заголовок: {hdr}"}
+
+    boxes: dict[str, dict] = {}
+    conflicts: list[str] = []
+    for r in ws.iter_rows(min_row=2, values_only=True):
+        art = str(r[c_art] or "").strip() if c_art < len(r) else ""
+        if not art:
+            continue
+        try:
+            box_no = int(float(str(r[c_box]).strip()))
+            qty = int(float(str(r[c_qty]).strip()))
+        except (TypeError, ValueError):
+            continue
+        if qty <= 0:
+            continue
+        src = str(r[c_cl] or "").strip()
+        target = str(r[c_new] or "").strip() if (c_new >= 0 and c_new < len(r)
+                                                 and r[c_new]) else src
+        wave = ""
+        if c_wave >= 0 and c_wave < len(r) and r[c_wave]:
+            m = re.search(r"\d+", str(r[c_wave]))
+            wave = m.group(0) if m else str(r[c_wave]).strip()
+        exp = None
+        if c_exp >= 0 and c_exp < len(r) and hasattr(r[c_exp], "strftime"):
+            exp = r[c_exp].strftime("%Y-%m-%dT00:00:00Z")
+        key = f"{src}|{box_no}"
+        b = boxes.setdefault(key, {"src": src, "box": box_no, "target": target,
+                                   "wave": wave, "items": []})
+        if b["target"] != target or b["wave"] != wave:
+            conflicts.append(f"{src} короб {box_no}: разные кластер/волна в строках")
+        b["items"].append({"offer_id": art, "barcode": str(r[c_bar] or "").strip(),
+                           "quantity": qty, "expires_at": exp})
+    plan = sorted(boxes.values(), key=lambda b: (b["src"], b["box"]))
+    if not plan:
+        return {"error": "Не разобрал ни одного короба — проверь файл"}
+    await asyncio.to_thread(_snap.save, "supply_boxes_plan", plan)
+    waves: dict[str, int] = {}
+    for b in plan:
+        waves[b["wave"] or "?"] = waves.get(b["wave"] or "?", 0) + 1
+    return {"boxes": len(plan), "items": sum(len(b["items"]) for b in plan),
+            "qty": sum(i["quantity"] for b in plan for i in b["items"]),
+            "waves": dict(sorted(waves.items())),
+            "clusters": sorted({b["target"] for b in plan}),
+            "conflicts": sorted(set(conflicts))[:10]}
+
+
+async def _box_match_order(order_id: int, wave: str):
+    """Заявка + её поставки-кластера + короба выбранной волны по кластерам."""
+    import ozon_client
+    import snapshot as _snap
+    plan = await asyncio.to_thread(_snap.load, "supply_boxes_plan", None) or []
+    if not plan:
+        raise HTTPException(400, "Сначала загрузи файл с коробами")
+    orders = await ozon_client.get_supply_orders()
+    order = next((o for o in orders
+                  if str(o.get("order_id")) == str(order_id)), None)
+    if not order:
+        raise HTTPException(404, "Заявка не найдена")
+    names = await ozon_client.get_cluster_names()
+    supplies = []
+    for s in order.get("supplies") or []:
+        cid = int(s.get("macrolocal_cluster_id") or 0)
+        supplies.append({"supply_id": s.get("supply_id"),
+                         "bundle_id": s.get("bundle_id"),
+                         "cluster_id": cid,
+                         "cluster": names.get(cid, f"кластер {cid}")})
+    wave = str(wave or "").strip()
+    matched: dict[int, list] = {sp["supply_id"]: [] for sp in supplies}
+    unmatched = []
+    for b in plan:
+        if wave and str(b.get("wave")) != wave:
+            continue
+        sp = next((sp for sp in supplies
+                   if _box_cluster_match(b["target"], sp["cluster"])), None)
+        if sp:
+            matched[sp["supply_id"]].append(b)
+        else:
+            unmatched.append(b)
+    return order, supplies, matched, unmatched
+
+
+@router.get("/supply/boxes/match")
+async def supply_boxes_match(request: Request, order_id: int, wave: str = "1"):
+    """Сверка: короба из файла против состава заявки, по каждому кластеру."""
+    _owner_only(request)
+    import ozon_client
+    order, supplies, matched, unmatched = await _box_match_order(order_id, wave)
+    out = []
+    for sp in supplies:
+        boxes = matched.get(sp["supply_id"]) or []
+        bundle = await ozon_client.get_bundle_items([sp["bundle_id"]]) \
+            if sp["bundle_id"] else []
+        need: dict[str, int] = {}
+        for it in bundle:
+            bc = str(it.get("barcode") or "")
+            need[bc] = need.get(bc, 0) + int(it.get("quantity") or 0)
+        got: dict[str, int] = {}
+        for b in boxes:
+            for it in b["items"]:
+                got[it["barcode"]] = got.get(it["barcode"], 0) + it["quantity"]
+        diffs = []
+        for bc in sorted(set(need) | set(got)):
+            if need.get(bc, 0) != got.get(bc, 0):
+                art = next((i.get("offer_id") for i in bundle
+                            if str(i.get("barcode")) == bc), None) \
+                    or next((i["offer_id"] for b in boxes for i in b["items"]
+                             if i["barcode"] == bc), bc)
+                diffs.append({"offer_id": art, "in_order": need.get(bc, 0),
+                              "in_file": got.get(bc, 0)})
+        out.append({"cluster": sp["cluster"], "supply_id": sp["supply_id"],
+                    "boxes": len(boxes), "qty": sum(got.values()),
+                    "order_qty": sum(need.values()),
+                    "ok": bool(boxes) and not diffs, "diffs": diffs[:15]})
+    return {"order": order.get("order_number"), "wave": wave, "clusters": out,
+            "unmatched": sorted({f"{b['target']} ({b['src']} короб {b['box']})"
+                                 for b in unmatched})[:20]}
+
+
+@router.post("/supply/boxes/apply")
+async def supply_boxes_apply(request: Request, body: dict):
+    """Заливка коробов в Ozon по каждой поставке заявки (cargoes/create,
+    replace: старые грузоместа удаляются)."""
+    _owner_only(request)
+    import ozon_client
+    order_id = int(body.get("order_id") or 0)
+    wave = str(body.get("wave") or "1")
+    order, supplies, matched, _ = await _box_match_order(order_id, wave)
+    results = []
+    for sp in supplies:
+        boxes = matched.get(sp["supply_id"]) or []
+        if not boxes:
+            results.append({"cluster": sp["cluster"],
+                            "status": "SKIP", "note": "в файле нет коробов"})
+            continue
+        bundle = await ozon_client.get_bundle_items([sp["bundle_id"]]) \
+            if sp["bundle_id"] else []
+        by_bar = {str(i.get("barcode") or ""): i for i in bundle}
+        cargoes = []
+        for b in sorted(boxes, key=lambda x: (x["src"], x["box"])):
+            items = []
+            for it in b["items"]:
+                bi = by_bar.get(it["barcode"]) or {}
+                item = {"barcode": it["barcode"],
+                        "offer_id": bi.get("offer_id") or it["offer_id"],
+                        "quantity": int(it["quantity"]),
+                        "quant": int(bi.get("quant") or 1)}
+                if it.get("expires_at"):
+                    item["expires_at"] = it["expires_at"]
+                items.append(item)
+            cargoes.append({"key": f"{b['src']}-{b['box']}",
+                            "value": {"type": "BOX", "items": items}})
+        if len(cargoes) > 30:
+            results.append({"cluster": sp["cluster"], "status": "FAILED",
+                            "note": f"{len(cargoes)} коробок — лимит 30"})
+            continue
+        try:
+            resp = await ozon_client.cargoes_create(
+                sp["supply_id"], cargoes, delete_current=True)
+        except Exception as e:
+            results.append({"cluster": sp["cluster"], "status": "FAILED",
+                            "note": _http_err(e)})
+            continue
+        op = resp.get("operation_id") or ""
+        status, err = ("UNKNOWN", resp.get("errors"))
+        for _i in range(20):
+            if not op:
+                break
+            await asyncio.sleep(3)
+            try:
+                info = await ozon_client.cargoes_create_info(op)
+            except Exception:
+                continue
+            status = info.get("status") or "UNKNOWN"
+            if status in ("SUCCESS", "FAILED"):
+                err = info.get("errors")
+                break
+        note = None
+        if err and (err.get("error_reasons") or err.get("items_validation")):
+            note = str(err)[:400]
+        results.append({"cluster": sp["cluster"], "boxes": len(cargoes),
+                        "status": status, "note": note})
+    return {"order": order.get("order_number"), "wave": wave, "results": results}
+
+
+@router.get("/supply/labels")
+async def supply_labels(request: Request, order_id: int):
+    """ZIP с PDF-этикетками грузомест: файл на каждый кластер заявки."""
+    _owner_only(request)
+    import io as _io
+    import zipfile as _zf
+    from urllib.parse import quote
+    from fastapi.responses import StreamingResponse
+    import ozon_client
+    orders = await ozon_client.get_supply_orders()
+    order = next((o for o in orders
+                  if str(o.get("order_id")) == str(order_id)), None)
+    if not order:
+        raise HTTPException(404, "Заявка не найдена")
+    names = await ozon_client.get_cluster_names()
+    buf = _io.BytesIO()
+    with _zf.ZipFile(buf, "w", _zf.ZIP_DEFLATED) as zf:
+        for s in order.get("supplies") or []:
+            cid = int(s.get("macrolocal_cluster_id") or 0)
+            cluster = names.get(cid, f"кластер {cid}")
+            try:
+                resp = await ozon_client.cargoes_label_create(s.get("supply_id"))
+                op = resp.get("operation_id")
+                if not op:
+                    raise RuntimeError(str(resp.get("errors") or resp)[:300])
+                url = None
+                for _i in range(30):
+                    await asyncio.sleep(2)
+                    st = await ozon_client.cargoes_label_get(op)
+                    stat = st.get("status") or ""
+                    if stat == "SUCCESS":
+                        res = st.get("result") or {}
+                        url = res.get("file_url") or res.get("file_guid")
+                        break
+                    if stat == "FAILED":
+                        raise RuntimeError(str(st.get("errors") or "FAILED")[:300])
+                if not url:
+                    raise RuntimeError("этикетки не готовы за 60 секунд")
+                pdf = await ozon_client.download_label_file(url)
+                zf.writestr(f"{cluster}.pdf", pdf)
+            except Exception as e:
+                zf.writestr(f"{cluster}_ОШИБКА.txt", _http_err(e))
+    buf.seek(0)
+    num = str(order.get("order_number") or order_id).replace("/", "-")
+    fname = quote(f"Этикетки_{num}.zip")
+    return StreamingResponse(
+        buf, media_type="application/zip",
+        headers={"Content-Disposition":
+                 f"attachment; filename=labels_{num}.zip; filename*=UTF-8''{fname}"})
 
 
 def _watch_list_load():
