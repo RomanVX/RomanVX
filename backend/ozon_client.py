@@ -563,35 +563,35 @@ async def get_prices() -> dict[str, dict]:
 
 
 async def get_product_volumes() -> dict[str, dict]:
-    """Габариты карточек (мм) → точный литраж на штуку.
-    POST /v3/product/info/list по offer_id всех товаров."""
+    """Габариты карточек → литраж штуки. По спеке docs/ozon_api/seller.json
+    габариты отдаёт /v4/product/info/attributes (height/depth/width в мм,
+    weight в г); v3/product/info/list их НЕ содержит."""
     if not OZON_CLIENT_ID or not OZON_API_KEY:
         return {}
-    skus = await _get_all_skus()
-    offers = [s["offer_id"] for s in skus if s.get("offer_id")]
     out: dict[str, dict] = {}
-    for i in range(0, len(offers), 100):
-        try:
-            data = await _post("/v3/product/info/list",
-                               {"offer_id": offers[i:i + 100]})
-        except Exception as e:
-            _log.warning("OZON product info: %s", e)
-            continue
-        items = data.get("items") or (data.get("result") or {}).get("items") or []
-        for it in items:
+    last_id = ""
+    while True:
+        data = await _post("/v4/product/info/attributes", {
+            "filter": {"visibility": "ALL"}, "last_id": last_id, "limit": 1000})
+        result = data.get("result") or []
+        if not result:
+            break
+        for r in result:
             def _n(v):
                 try:
                     return float(v or 0)
                 except (TypeError, ValueError):
                     return 0.0
-            h, w, d = _n(it.get("height")), _n(it.get("width")), _n(it.get("depth"))
-            unit = (it.get("dimension_unit") or "mm").lower()
+            h, w, dep = _n(r.get("height")), _n(r.get("width")), _n(r.get("depth"))
+            unit = (r.get("dimension_unit") or "mm").lower()
             k = {"mm": 1e-6, "cm": 1e-3, "in": 0.0163871}.get(unit, 1e-6)
-            litres = round(h * w * d * k, 2)
-            out[str(it.get("offer_id") or "").strip()] = {
-                "height": h, "width": w, "depth": d, "unit": unit,
-                "litres": litres,
-                "weight_g": _n(it.get("weight")),
+            out[str(r.get("offer_id") or "").strip()] = {
+                "height": h, "width": w, "depth": dep, "unit": unit,
+                "litres": round(h * w * dep * k, 2),
+                "weight_g": _n(r.get("weight")),
             }
+        last_id = data.get("last_id", "")
+        if not last_id or len(result) < 1000:
+            break
     _log.info("Ozon volumes: %d товаров", len(out))
     return out
