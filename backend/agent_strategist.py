@@ -448,6 +448,15 @@ async def run_session(trigger: str = "manual", focus: str = "",
         else:
             user_msg += ("\nПроведи регулярную стратегическую сессию: память → "
                          "данные → план/факт → решения → обнови память → отчёт.")
+        # диалоговая память: последние обмены /strategy (переживает рестарт)
+        import snapshot as _snap
+        dialog = await asyncio.to_thread(_snap.load, "strategist_dialog", None) or []
+        if dialog and focus:
+            recent = "\n".join(f"- Владелец: {d['q']}\n  Ты ответил: {d['a']}"
+                                for d in dialog[-4:])
+            user_msg += ("\n\nНЕДАВНИЙ ДИАЛОГ (короткие реплики владельца — "
+                         "обычно уточнение к нему; «это озон» после записи факта "
+                         "= поправь тот факт, а не новое исследование):\n" + recent)
         messages = [{"role": "user", "content": user_msg}]
         tools_used, saved = [], False
         started = asyncio.get_event_loop().time()
@@ -480,6 +489,10 @@ async def run_session(trigger: str = "manual", focus: str = "",
                 if report:
                     for i in range(0, len(report), 3900):
                         await _ar.tg_send(report[i:i + 3900])
+                    if focus:
+                        dialog.append({"q": focus[:300], "a": report[:500]})
+                        await asyncio.to_thread(_snap.save, "strategist_dialog",
+                                                dialog[-8:])
                 _log.info("strategist: сессия ок, шагов %d, инструменты: %s",
                           _step + 1, ",".join(tools_used))
                 return {"ok": True, "steps": _step + 1, "tools": tools_used,
