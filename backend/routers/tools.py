@@ -4497,10 +4497,12 @@ async def _box_match_order(order_id: int, wave: str):
                          "cluster_id": cid,
                          "cluster": names.get(cid, f"кластер {cid}")})
     wave = str(wave or "").strip()
+    # файл может быть без колонки «Волна» — тогда берём все короба
+    waves_present = any(str(b.get("wave") or "").strip() for b in plan)
     matched: dict[int, list] = {sp["supply_id"]: [] for sp in supplies}
     unmatched = []
     for b in plan:
-        if wave and str(b.get("wave")) != wave:
+        if waves_present and wave and str(b.get("wave")) != wave:
             continue
         sp = next((sp for sp in supplies
                    if _box_cluster_match(b["target"], sp["cluster"])), None)

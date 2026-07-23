@@ -2908,7 +2908,14 @@ async function slotsBoxUpload(input) {
   input.value = '';
 }
 
-function _slotWave() { return document.getElementById('slotWave')?.value || '1'; }
+function _slotsHasWaves() {
+  return !_slotsBoxes || Object.keys(_slotsBoxes.waves || {}).some(k => k !== '?');
+}
+
+function _slotWave() {
+  if (!_slotsHasWaves()) return '';
+  return document.getElementById('slotWave')?.value || '1';
+}
 
 async function slotsBoxMatch(orderId) {
   _slotsMatch[orderId] = { loading: true };
@@ -2956,7 +2963,7 @@ function _slotsBoxRow(o) {
                      : '<span class="text-secondary">нет коробов в файле</span>'}</td></tr>`).join('') +
         `</tbody></table>`;
       if ((m.unmatched || []).length)
-        inner += `<div class="small text-warning mb-1">Не попали ни в один кластер заявки: ${esc(m.unmatched.join(', '))}</div>`;
+        inner += `<div class="small text-secondary mb-1">Остальные короба ${m.wave ? 'волны ' + esc(String(m.wave)) + ' ' : ''}поедут другими заявками (их кластеров нет в этой): ${esc(m.unmatched.join(', '))}</div>`;
       const allOk = (m.clusters || []).length && (m.clusters || []).every(c => c.ok || !c.boxes);
       inner += `<button class="btn btn-sm ${allOk ? 'btn-info' : 'btn-outline-warning'}" onclick="slotsBoxApply(${o.order_id})">
         Залить короба в Ozon${allOk ? '' : ' (есть расхождения)'}</button>`;
@@ -2997,15 +3004,15 @@ function renderSlots() {
       <h6 class="mb-0">Короба из файла производства</h6>
       <input type="file" id="slotBoxFile" accept=".xlsx" class="form-control form-control-sm" style="width:250px"
         onchange="slotsBoxUpload(this)">
-      <label class="small text-secondary mb-0">Волна:</label>
+      ${_slotsHasWaves() ? `<label class="small text-secondary mb-0">Волна:</label>
       <select id="slotWave" class="form-select form-select-sm" style="width:80px">
         ${[1, 2, 3, 4, 5, 6].map(w => `<option value="${w}" ${String(w) === _slotWaveSel ? 'selected' : ''}>${w}</option>`).join('')}
-      </select>
+      </select>` : '<span class="small text-secondary">файл без волн — берём все короба</span>'}
     </div>
     <div id="slotBoxInfo" class="small mt-2">${_slotsBoxes ? `Файл разобран: <b>${_slotsBoxes.boxes} коробов</b>,
-      ${_slotsBoxes.qty} шт · волны: ${esc(Object.entries(_slotsBoxes.waves || {}).map(([w, n]) => `${w} — ${n} кор.`).join(', '))}
+      ${_slotsBoxes.qty} шт${_slotsHasWaves() ? ` · волны: ${esc(Object.entries(_slotsBoxes.waves || {}).map(([w, n]) => `${w} — ${n} кор.`).join(', '))}` : ''}
       ${(_slotsBoxes.conflicts || []).length ? `<span class="text-danger d-block">Конфликты: ${esc(_slotsBoxes.conflicts.join('; '))}</span>` : ''}`
-      : '<span class="text-secondary">Загрузи файл с листом «отгрузка OZON» (короб → кластер → волна) — дальше «Сверка» и «Залить короба» у нужной заявки, этикетки скачаются архивом по кластерам.</span>'}</div>
+      : '<span class="text-secondary">Загрузи файл с листом «отгрузка OZON» (короб → кластер, волна — если есть) — дальше «Сверка» и «Залить короба» у нужной заявки, этикетки скачаются архивом по кластерам.</span>'}</div>
   </div>`;
 
   const od = _slotsData.orders || {};
