@@ -757,6 +757,31 @@ async def bot_loop() -> None:
                     continue
                 if _paused[0]:
                     continue
+                # брендовые ассеты дашборда: картинка с подписью «лого»/«фон»
+                # (лого слать файлом-документом — сохранится прозрачность PNG)
+                _akey = text.split()[0].rstrip(':').lstrip('/') if text else ""
+                if _akey in ("лого", "логотип", "фон") and \
+                        (msg.get("photo") or msg.get("document")):
+                    doc = msg.get("document") or {}
+                    fid, mime = None, "image/jpeg"
+                    if str(doc.get("mime_type") or "").startswith("image/"):
+                        fid, mime = doc.get("file_id"), doc["mime_type"]
+                    elif msg.get("photo"):
+                        fid = msg["photo"][-1].get("file_id")
+                    if fid:
+                        b64 = await _tg_get_photo(fid)
+                        if b64:
+                            key = "asset_bg" if _akey == "фон" else "asset_logo"
+                            await asyncio.to_thread(
+                                _snap.save, key, {"mime": mime, "b64": b64})
+                            await tg_send(
+                                ("Фон" if key == "asset_bg" else "Логотип") +
+                                " сохранил. Обнови страницу дашборда — подтянется.",
+                                thread_id=thread)
+                        else:
+                            await tg_send("Не смог скачать файл (лимит 4.5 МБ).",
+                                          thread_id=thread)
+                    continue
                 # свободный вопрос: упоминание @бота или reply на его сообщение
                 reply_from = ((msg.get("reply_to_message") or {}).get("from") or {})
                 is_mention = me and f"@{me}" in text

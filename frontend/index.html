@@ -18,19 +18,20 @@
   <meta property="og:description" content="Финансы, юнит-экономика, реклама и остатки WB · Ozon · Яндекс.Маркет в одном дашборде" />
   <meta property="og:type" content="website" />
   <meta name="description" content="Финансы, юнит-экономика, реклама и остатки WB · Ozon · Яндекс.Маркет в одном дашборде" />
+  <link rel="icon" href="/api/tools/asset/logo" />
   <link rel="stylesheet" href="vendor/bootstrap.min.css" />
   <link rel="stylesheet" href="vendor/bootstrap-icons.min.css" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" />
-  <link rel="stylesheet" href="style.css?v=15" />
+  <link rel="stylesheet" href="style.css?v=16" />
 </head>
 <body>
 
 <!-- ══ LOGIN OVERLAY ══ -->
 <div id="loginOverlay" class="mp-overlay">
   <div class="mp-box">
-    <img src="/static/mp_logo_mono.svg" alt="Market Partners" class="mp-logo" />
+    <img src="/api/tools/asset/logo" alt="Market Partners" class="mp-logo" onerror="this.onerror=null;this.src='/static/mp_logo_mono.svg';this.classList.add('mp-logo-mono')" />
     <h2 class="mp-title">Вход в систему</h2>
     <input id="loginUser" type="text" class="mp-input" placeholder="Логин" autocomplete="username" />
     <input id="loginPass" type="password" class="mp-input" placeholder="Пароль" autocomplete="current-password" />
@@ -43,7 +44,7 @@
 <!-- ══ CABINET OVERLAY ══ -->
 <div id="cabinetOverlay" class="mp-overlay" style="display:none">
   <div class="mp-box" style="width:640px;max-width:94vw">
-    <img src="/static/mp_logo_mono.svg" alt="Market Partners" class="mp-logo" />
+    <img src="/api/tools/asset/logo" alt="Market Partners" class="mp-logo" onerror="this.onerror=null;this.src='/static/mp_logo_mono.svg';this.classList.add('mp-logo-mono')" />
     <h2 class="mp-title">Выберите кабинет</h2>
     <div class="mp-cab-grid">
       <div id="cabBiomed" class="mp-cab-card" onclick="enterCabinet()">
@@ -57,6 +58,7 @@
 <!-- ══ NAVBAR ══ -->
 <nav class="navbar navbar-dark px-3" id="mainNav" style="display:none">
   <div class="d-flex align-items-center gap-3">
+    <img src="/api/tools/asset/logo" alt="" style="width:30px;height:30px;object-fit:contain" onerror="this.style.display='none'" />
     <span class="brand-text">MARKET PARTNERS</span>
     <span class="navbar-brand fw-bold fs-6 mb-0 d-none d-md-inline">
       <img src="/static/lion_logo.svg" alt="" style="width:26px;height:26px;margin-right:8px;vertical-align:-6px" /><span id="cabBrandName">Biomed Nutrition — аналитика</span>

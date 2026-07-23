@@ -4367,6 +4367,22 @@ async def supply_probe(request: Request, q: str = ""):
     return {"found": len(out), "total_orders": len(orders), "orders": out}
 
 
+# ══ Брендовые ассеты (логотип/фон) — загружаются через TG-бота ═══════════════
+@router.get("/asset/{name}", include_in_schema=False)
+async def asset_get(name: str):
+    """Публично (нужно на экране логина): логотип и фон из kv_cache."""
+    if name not in ("logo", "bg"):
+        raise HTTPException(404)
+    import snapshot as _snap
+    v = await asyncio.to_thread(_snap.load, f"asset_{name}", None)
+    if not v or not isinstance(v, dict) or not v.get("b64"):
+        raise HTTPException(404)
+    from fastapi.responses import Response
+    return Response(base64.b64decode(v["b64"]),
+                    media_type=v.get("mime") or "image/jpeg",
+                    headers={"Cache-Control": "public, max-age=1800"})
+
+
 # ══ Короба (грузоместа) заявок Ozon из файла производства ════════════════════
 _BOX_ALIAS = {"питер": "санкт петербург", "спб": "санкт петербург",
               "мск": "москва", "екб": "екатеринбург"}

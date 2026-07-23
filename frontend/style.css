@@ -344,6 +344,7 @@ body {
   position: fixed;
   inset: 0;
   background:
+    url('/api/tools/asset/bg') center / cover no-repeat,
     radial-gradient(900px 500px at 72% 12%, rgba(214, 178, 92, .16), transparent 55%),
     repeating-radial-gradient(circle at 50% 46%,
       rgba(255, 255, 255, .045) 0 2px, transparent 2px 44px),
@@ -370,7 +371,14 @@ body {
   -webkit-backdrop-filter: blur(14px) saturate(1.1);
 }
 .mp-box .mp-title { color: rgba(255, 255, 255, .92); }
-.mp-box .mp-logo { filter: brightness(0) invert(1); opacity: .95; }
+/* кастомный логотип (маскот) — компактный; фолбэк-вордмарк — белый широкий */
+.mp-box .mp-logo { width: auto; max-width: 82%; max-height: 110px; margin-bottom: 24px; }
+.mp-box .mp-logo-mono {
+  width: 300px;
+  max-height: none;
+  filter: brightness(0) invert(1);
+  opacity: .95;
+}
 .mp-box .mp-input {
   background: rgba(255, 255, 255, .08);
   border-color: rgba(255, 255, 255, .2);
