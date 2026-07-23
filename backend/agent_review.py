@@ -174,7 +174,7 @@ P&L последних месяцев: {pnl_note or "нет"}
 Изменение тарифов WB: {json.dumps(tariff, ensure_ascii=False) if tariff else "не менялись"}
 
 Формат ответа (Telegram, HTML: только <b> и <i>, без markdown, без заголовков-решёток):
-1) 📊 Сводка — 2-3 предложения о состоянии кабинета.
+1) Сводка — 2-3 предложения о состоянии кабинета.
 2) 🔥 Главные проблемы — до 3, каждая с цифрой потерь.
 3) ✅ Действия на неделю — 3-5 пунктов, каждый: что сделать + ожидаемый эффект в ₽.
 Приоритезируй по деньгам. Если у артикула ДРР выше безубыточного — это всегда
@@ -516,6 +516,11 @@ WB/Ozon/ЯМ), общаешься с владельцем и его команд
 ответить с сарказмом — поддержи шутку остроумно и по-доброму, можешь поддеть
 в ответ; юмор юмором, а числа не выдумывай и грубым не будь.
 
+ОФОРМЛЕНИЕ (навык профессионального копирайтера): без эмодзи вовсе.
+Каждая законченная мысль — с новой строки; смысловые блоки разделяй
+пустой строкой. Никаких простыней текста: абзац = 1-2 коротких
+предложения. Цифры и выводы — в начале строки, пояснения после.
+
 {KNOWLEDGE}"""
         history = list(_dialogs.get(_dialog_key(thread), [])) if use_history else []
         user_text = f"АКТУАЛЬНЫЕ ДАННЫЕ КАБИНЕТА:\n{ctx}\n\nВОПРОС: {question}"
@@ -585,7 +590,7 @@ async def build_bid_calc(args: str) -> str:
     (ДРР по умолчанию — безубыточный из юнитки данного SKU)."""
     parts = args.split()
     if len(parts) < 2:
-        return ("🎯 <b>Калькулятор ставки</b>\n"
+        return ("<b>Калькулятор ставки</b>\n"
                 "Формат: /bid АРТИКУЛ CTR% [CR%] [ДРР%]\n"
                 "Пример: /bid AL-01 4 — потолок ставки при CTR 4%\n"
                 "CR — конверсия клика в заказ (не задашь — покажу сетку), "
@@ -616,7 +621,7 @@ async def build_bid_calc(args: str) -> str:
     def cpm(cr):
         return 1000 * (ctr / 100) * (cr / 100) * rub_per_order
 
-    lines = [f"🎯 <b>{m['sku']}</b> · цена {price:.0f} ₽ · безубыточный ДРР {be}%"
+    lines = [f"<b>{m['sku']}</b> · цена {price:.0f} ₽ · безубыточный ДРР {be}%"
              + (f" · считаю по ДРР {drr:.0f}%" if drr_in is not None else ""),
              f"Допустимо рекламы на 1 заказ: <b>{rub_per_order:.0f} ₽</b>",
              f"CTR {ctr}%:"]
@@ -628,7 +633,7 @@ async def build_bid_calc(args: str) -> str:
         lines.append("CR = конверсия клика в заказ; свой: /bid "
                      f"{m['sku']} {ctr} 5")
     if drr_in is None:
-        lines.append("⚠️ Это ставка НУЛЕВОЙ маржи. Рабочий потолок — с целевым "
+        lines.append("Это ставка НУЛЕВОЙ маржи. Рабочий потолок — с целевым "
                      f"ДРР, напр.: /bid {m['sku']} {ctr} 5 15")
     return "\n".join(lines)
 
@@ -640,6 +645,19 @@ async def bot_loop() -> None:
     if not TG_BOT_TOKEN:
         return
     _log.info("agent bot: слушаю команды в чате %s", TG_CHAT_ID)
+    try:      # меню команд Telegram: подсказки при вводе «/»
+        async with httpx.AsyncClient(timeout=15) as c:
+            await c.post(f"https://api.telegram.org/bot{TG_BOT_TOKEN}/setMyCommands",
+                         json={"commands": [
+                             {"command": "stocks", "description": "Остатки по площадкам"},
+                             {"command": "review", "description": "Разбор кабинета"},
+                             {"command": "strategy", "description": "Стратег: сессия или вопрос после команды"},
+                             {"command": "bid", "description": "Ставка CPM: /bid АРТИКУЛ CTR% [CR%] [ДРР%]"},
+                             {"command": "reset", "description": "Очистить память диалога"},
+                             {"command": "help", "description": "Справка"},
+                         ]})
+    except Exception as e:
+        _log.warning("setMyCommands: %s", e)
     me = ""
     try:
         async with httpx.AsyncClient(timeout=30) as c:
@@ -700,14 +718,14 @@ async def bot_loop() -> None:
                     _st._cancel = True
                     _paused[0] = True
                     await asyncio.to_thread(_snap.save, "agent_paused", True)
-                    await tg_send("🛑 Остановился: сессию прерываю, на вопросы "
+                    await tg_send("Остановился: сессию прерываю, на вопросы "
                                   "не отвечаю. Вернуть: «старт»", thread_id=thread)
                     continue
                 if low in ("старт", "start", "работай"):
                     if _paused[0]:
                         _paused[0] = False
                         await asyncio.to_thread(_snap.save, "agent_paused", False)
-                        await tg_send("▶️ Снова в строю.", thread_id=thread)
+                        await tg_send("Снова в строю.", thread_id=thread)
                     continue
                 if _paused[0]:
                     continue
@@ -756,7 +774,7 @@ async def bot_loop() -> None:
                             except Exception:
                                 pass
                         else:
-                            await tg_send("🔎 Смотрю данные…", thread_id=thread)
+                            await tg_send("Смотрю данные…", thread_id=thread)
                         async def _run(qq=q, th=thread, k=key, hq=has_quote, ph=photo_id):
                             try:
                                 img = await _tg_get_photo(ph) if ph else None
@@ -775,13 +793,13 @@ async def bot_loop() -> None:
                 elif cmd == "/stocks":
                     await tg_send(await build_stocks_summary(), thread_id=thread)
                 elif cmd == "/review":
-                    await tg_send("⏳ Готовлю разбор кабинета — минута…", thread_id=thread)
+                    await tg_send("Готовлю разбор кабинета — минута…", thread_id=thread)
                     # фоном: если юнитка ещё собирается (после рестарта это
                     # несколько минут) — ждём и повторяем, а не отказываем
                     asyncio.get_event_loop().create_task(_review_with_retry(thread))
                 elif cmd == "/strategy":
                     focus_q = raw.split(None, 1)[1].strip() if len(raw.split(None, 1)) > 1 else ""
-                    await tg_send("🧠 Стратег сел за данные — "
+                    await tg_send("Стратег сел за данные — "
                                   + ("разберу вопрос и вернусь с ответом…" if focus_q
                                      else "отчёт будет через несколько минут…"),
                                   thread_id=thread)
@@ -792,12 +810,12 @@ async def bot_loop() -> None:
                             trigger="команда /strategy в Telegram",
                             focus=fq, light=bool(fq))
                         if res.get("error"):
-                            await tg_send(f"⚠️ Сессия не удалась: {res['error']}",
+                            await tg_send(f"Сессия не удалась: {res['error']}",
                                           thread_id=th)
                     asyncio.get_event_loop().create_task(_strun())
                 elif cmd == "/reset":
                     _dialogs.pop(_dialog_key(thread), None)
-                    await tg_send("🧹 Память диалога очищена.", thread_id=thread)
+                    await tg_send("Память диалога очищена.", thread_id=thread)
                 elif cmd in ("/start", "/help"):
                     await tg_send(
                         "Команды:\n/stocks — короткий расклад по остаткам (горящие позиции)\n"
