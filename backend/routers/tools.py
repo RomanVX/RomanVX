@@ -4689,10 +4689,11 @@ async def supply_labels(request: Request, order_id: int):
                             n = int(num)
                         except ValueError:
                             src, n = key, 0
-                        target = targets.get((src, n), cluster)
+                        target = str(targets.get((src, n), cluster)).strip()
                         pdf = await _label_pdf(sid, [boxes[key]])
                         zf.writestr(
-                            f"{folder}Короб {n} ({src}) NEW {target}.pdf", pdf)
+                            f"{folder}Короб {n} ({src.strip()}) NEW {target}.pdf",
+                            pdf)
                 else:
                     # заливали не через дашборд — общий PDF поставки
                     pdf = await _label_pdf(sid)
