@@ -4,7 +4,7 @@
   <script>
     // тема до первой отрисовки — чтобы не мигало
     (function () {
-      var t = localStorage.getItem('mp_theme') || 'dark';
+      var t = localStorage.getItem('mp_theme') || 'light';
       document.documentElement.dataset.theme = t;
       document.documentElement.setAttribute('data-bs-theme', t);
     })();
@@ -23,7 +23,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" />
-  <link rel="stylesheet" href="style.css?v=14" />
+  <link rel="stylesheet" href="style.css?v=15" />
 </head>
 <body>
 
@@ -36,6 +36,7 @@
     <input id="loginPass" type="password" class="mp-input" placeholder="Пароль" autocomplete="current-password" />
     <button id="loginBtn" class="mp-btn" onclick="doLogin()">Войти</button>
     <div id="loginError" class="mp-error"></div>
+    <div class="mp-powered">Powered by<b>Market Partners</b></div>
   </div>
 </div>
 
@@ -86,26 +87,60 @@
 <div id="mainContent" style="display:none">
 <div class="container-fluid py-3">
 
-  <ul class="nav nav-tabs mb-3" id="mainTabs">
-    <li class="nav-item"><a class="nav-link active" href="#" onclick="switchTab('salesan',this);return false">Заказы</a></li>
-    <li class="nav-item"><a class="nav-link" href="#" onclick="switchTab('stocks',this);return false">Остатки</a></li>
-    <li class="nav-item"><a class="nav-link" href="#" onclick="switchTab('reviews',this);return false">Отзывы</a></li>
-    <li class="nav-item"><a class="nav-link" href="#" onclick="switchTab('finance',this);return false">Финансы</a></li>
-    <li class="nav-item"><a class="nav-link" href="#" onclick="switchTab('unit',this);return false">Юнитка</a></li>
-    <li class="nav-item"><a class="nav-link" href="#" onclick="switchTab('docs',this);return false">Документы</a></li>
-    <li class="nav-item ms-2" style="border-left:1px solid var(--border-2);padding-left:6px">
-      <a class="nav-link" href="#" onclick="switchTab('tools',this);return false">🛠 Инструменты WB</a>
-    </li>
-    <li class="nav-item">
-      <a class="nav-link" href="#" onclick="switchTab('toolsoz',this);return false">🛠 Инструменты Ozon</a>
-    </li>
-    <li class="nav-item" id="tabStrategy" style="display:none">
-      <a class="nav-link" href="#" onclick="switchTab('strategy',this);return false">Стратегия</a>
-    </li>
-    <li class="nav-item" id="tabRepricer" style="display:none">
-      <a class="nav-link" href="#" onclick="switchTab('repricer',this);return false">Репрайсер</a>
-    </li>
-  </ul>
+  <nav class="mp-menu mb-3" id="mainMenu">
+    <div class="mp-menu-item active" id="navAnalytics">
+      <span class="mp-menu-title" onclick="goNav('salesan','navAnalytics')">Аналитика</span>
+      <div class="mp-menu-drop">
+        <a href="#" onclick="goNav('salesan','navAnalytics');return false">Заказы</a>
+        <a href="#" id="navFinance" onclick="goNav('finance','navAnalytics');return false">Финансы</a>
+        <a href="#" onclick="goNav('unit','navAnalytics');return false">Юнитка</a>
+      </div>
+    </div>
+    <div class="mp-menu-item" id="navWarehouse">
+      <span class="mp-menu-title" onclick="goNav('stocks','navWarehouse')">Склад</span>
+      <div class="mp-menu-drop">
+        <a href="#" onclick="goNav('stocks','navWarehouse');return false">Остатки</a>
+        <div class="mp-drop-sep"></div>
+        <a href="#" onclick="goNavTool('tools','clusters','navWarehouse');return false">WB: остатки по кластерам</a>
+        <a href="#" onclick="goNavTool('tools','whstocks','navWarehouse');return false">WB: остатки по складам</a>
+        <div class="mp-drop-sep"></div>
+        <a href="#" onclick="goNavTool('toolsoz','clusters','navWarehouse');return false">Ozon: остатки по кластерам</a>
+        <a href="#" onclick="goNavTool('toolsoz','slots','navWarehouse');return false">Ozon: поставки — слоты и короба</a>
+      </div>
+    </div>
+    <div class="mp-menu-item" id="navOps">
+      <span class="mp-menu-title" onclick="goNav('reviews','navOps')">Операционка</span>
+      <div class="mp-menu-drop">
+        <a href="#" onclick="goNav('reviews','navOps');return false">Отзывы</a>
+        <a href="#" onclick="goNav('docs','navOps');return false">Документы</a>
+        <a href="#" id="tabRepricer" style="display:none" onclick="goNav('repricer','navOps');return false">Репрайсер</a>
+        <a href="#" id="tabStrategy" style="display:none" onclick="goNav('strategy','navOps');return false">Стратегия</a>
+      </div>
+    </div>
+    <div class="mp-menu-item" id="navWB">
+      <span class="mp-menu-title" onclick="goNavTool('tools','prod','navWB')">Wildberries</span>
+      <div class="mp-menu-drop">
+        <a href="#" onclick="goNavTool('tools','prod','navWB');return false">Продуктолог</a>
+        <a href="#" onclick="goNavTool('tools','adv','navWB');return false">Реклама</a>
+        <a href="#" onclick="goNavTool('tools','margin','navWB');return false">Калькулятор маржи</a>
+        <a href="#" onclick="goNavTool('tools','bid','navWB');return false">Ставка CPM</a>
+        <div class="mp-drop-sep"></div>
+        <a href="#" onclick="goNavTool('tools','niche','navWB');return false">Спрос WB (Джем)</a>
+        <a href="#" onclick="goNavTool('tools','nichecalc','navWB');return false">Калькулятор ниши</a>
+        <a href="#" onclick="goNavTool('tools','visuals','navWB');return false">Визуалы топ-20</a>
+        <a href="#" onclick="goNavTool('tools','competitors','navWB');return false">Конкуренты</a>
+      </div>
+    </div>
+    <div class="mp-menu-item" id="navOzon">
+      <span class="mp-menu-title" onclick="goNavTool('toolsoz','funnel','navOzon')">Ozon</span>
+      <div class="mp-menu-drop">
+        <a href="#" onclick="goNavTool('toolsoz','funnel','navOzon');return false">Воронка продаж</a>
+        <a href="#" onclick="goNavTool('toolsoz','ads','navOzon');return false">Реклама (Performance)</a>
+        <a href="#" onclick="goNavTool('toolsoz','phrases','navOzon');return false">Запросы</a>
+        <a href="#" onclick="goNavTool('toolsoz','trends','navOzon');return false">Радар трендов</a>
+      </div>
+    </div>
+  </nav>
 
   <!-- ── Заказы ── -->
   <div id="pane-salesan" style="display:none">
@@ -486,6 +521,6 @@
 
 <script src="vendor/bootstrap.bundle.min.js"></script>
 <script src="vendor/chart.umd.min.js"></script>
-<script src="app.js?v=176"></script>
+<script src="app.js?v=177"></script>
 </body>
 </html>

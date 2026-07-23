@@ -23,6 +23,9 @@
   --gold:      #c9a84c;
   --gold-soft: rgba(201, 168, 76, .14);
   --gold-grad: linear-gradient(135deg, #e8d28a 0%, #c9a84c 55%, #a07828 100%);
+  --brand:      #17a06a;
+  --brand-dark: #0e7a4f;
+  --brand-soft: rgba(23, 160, 106, .13);
 
   /* площадки (категориальная палитра, CVD-safe) */
   --mp-wb:    #c026d3;
@@ -289,28 +292,108 @@ body {
 ::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: #454e6e; }
 
-/* ══ Логин / выбор кабинета — строго чёрно-белые ══ */
+/* ══ Верхнее меню разделов с выпадающими списками ══ */
+.mp-menu {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.mp-menu-item { position: relative; }
+.mp-menu-title {
+  display: inline-block;
+  padding: 9px 18px;
+  border-radius: 11px;
+  font-weight: 600;
+  font-size: .95rem;
+  color: var(--ink-2);
+  cursor: pointer;
+  user-select: none;
+  transition: background .15s, color .15s;
+}
+.mp-menu-item:hover .mp-menu-title { background: var(--surface-2); color: var(--ink); }
+.mp-menu-item.active .mp-menu-title { background: var(--brand-soft); color: var(--brand); }
+.mp-menu-drop {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  min-width: 250px;
+  padding: 6px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-2);
+  border-radius: 13px;
+  box-shadow: var(--shadow);
+  z-index: 1500;
+}
+.mp-menu-item:hover .mp-menu-drop { display: block; }
+.mp-menu-drop a {
+  display: block;
+  padding: 8px 13px;
+  border-radius: 8px;
+  color: var(--ink-2);
+  text-decoration: none;
+  font-size: .9rem;
+  white-space: nowrap;
+}
+.mp-menu-drop a:hover { background: var(--brand-soft); color: var(--brand); }
+.mp-drop-sep { border-top: 1px solid var(--border); margin: 4px 8px; }
+
+/* ══ Логин / выбор кабинета — «пруд»: тёмно-зелёная вода, круги, стекло ══ */
 .mp-overlay {
   position: fixed;
   inset: 0;
-  background: #0a0a0a;
+  background:
+    radial-gradient(900px 500px at 72% 12%, rgba(214, 178, 92, .16), transparent 55%),
+    repeating-radial-gradient(circle at 50% 46%,
+      rgba(255, 255, 255, .045) 0 2px, transparent 2px 44px),
+    repeating-radial-gradient(circle at 50% 46%,
+      rgba(0, 0, 0, .12) 10px 13px, transparent 13px 44px),
+    radial-gradient(1200px 900px at 50% 40%, #14402d 0%, #0d2e20 55%, #081d14 100%);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 9999;
 }
 
-/* белая карточка — логотип Market Partners на белом фоне */
+/* стеклянная карточка поверх воды */
 .mp-box {
   width: 430px;
   max-width: 92vw;
   text-align: center;
-  padding: 46px 42px 38px;
-  background: #ffffff;
-  border: 1px solid #e5e5e5;
+  padding: 46px 42px 34px;
+  background: rgba(16, 34, 26, .42);
+  border: 1px solid rgba(255, 255, 255, .16);
   border-radius: 22px;
-  box-shadow: 0 30px 90px rgba(0,0,0,.7);
+  box-shadow: 0 30px 90px rgba(0, 0, 0, .55);
+  backdrop-filter: blur(14px) saturate(1.1);
+  -webkit-backdrop-filter: blur(14px) saturate(1.1);
 }
+.mp-box .mp-title { color: rgba(255, 255, 255, .92); }
+.mp-box .mp-logo { filter: brightness(0) invert(1); opacity: .95; }
+.mp-box .mp-input {
+  background: rgba(255, 255, 255, .08);
+  border-color: rgba(255, 255, 255, .2);
+  color: #fff;
+}
+.mp-box .mp-input::placeholder { color: rgba(255, 255, 255, .45); }
+.mp-box .mp-input:focus {
+  border-color: var(--brand);
+  background: rgba(255, 255, 255, .12);
+}
+.mp-box .mp-btn {
+  background: var(--brand);
+  color: #fff;
+}
+.mp-box .mp-btn:hover { background: var(--brand-dark); }
+.mp-powered {
+  margin-top: 22px;
+  font-size: 10px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, .45);
+}
+.mp-powered b { display: block; color: rgba(255, 255, 255, .75); letter-spacing: 3px; }
 
 .mp-logo {
   width: 300px;

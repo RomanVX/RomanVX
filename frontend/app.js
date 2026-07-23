@@ -105,12 +105,9 @@ let _me = null;   // {login, role} — текущий пользователь (
 
 function applyRole() {
   if (!_me) return;
-  // менеджеру скрываем вкладку Финансы (юнитка остаётся)
-  if (_me.role === 'manager') {
-    document.querySelectorAll('#mainTabs .nav-link').forEach(a => {
-      if (a.textContent.trim() === 'Финансы') a.closest('li').style.display = 'none';
-    });
-  }
+  // менеджеру скрываем пункт Финансы (юнитка остаётся)
+  const fin = document.getElementById('navFinance');
+  if (fin) fin.style.display = _me.role === 'manager' ? 'none' : '';
   // владельцу — кнопка управления доступами
   const btn = document.getElementById('usersBtn');
   if (btn) btn.style.display = _me.role === 'owner' ? '' : 'none';
@@ -234,6 +231,23 @@ function skuName(r) {
 }
 
 // ── Tab switching ─────────────────────────────────────────────────────────────
+
+// Навигация верхнего меню: раздел → вкладка (+ инструмент внутри вкладки)
+function markNav(id) {
+  document.querySelectorAll('#mainMenu .mp-menu-item').forEach(el =>
+    el.classList.toggle('active', el.id === id));
+}
+
+function goNav(tab, navId) {
+  switchTab(tab, null);
+  if (navId) markNav(navId);
+}
+
+function goNavTool(tab, tool, navId) {
+  switchTab(tab, null);
+  (tab === 'tools' ? setTool : setOzTool)(tool);
+  if (navId) markNav(navId);
+}
 
 function switchTab(name, linkEl) {
   document.querySelectorAll('#mainTabs .nav-link').forEach(a => a.classList.remove('active'));
@@ -5122,7 +5136,7 @@ async function checkTariffAlert() {
     div.className = 'alert alert-warning d-flex align-items-center gap-2 m-2 mb-0';
     div.style.cssText = 'position:sticky;top:0;z-index:1050';
     div.innerHTML = `<span>⚠️</span><div class="flex-grow-1"><b>WB изменил комиссию по вашим категориям</b> (${esc(a.date)}): ${list}.
-      Проверьте цены в <a href="#" onclick="const l=[...document.querySelectorAll('#mainTabs .nav-link')].find(a=>a.textContent.includes('Инструменты WB'));switchTab('tools',l);setTool('margin');this.closest('.alert').remove();return false">Калькуляторе маржи</a>.</div>
+      Проверьте цены в <a href="#" onclick="goNavTool('tools','margin','navWB');this.closest('.alert').remove();return false">Калькуляторе маржи</a>.</div>
       <button class="btn-close" onclick="localStorage.setItem('tariff_alert_seen','${esc(a.date)}');this.closest('.alert').remove()"></button>`;
     document.body.prepend(div);
   } catch (e) { /* не мешаем работе */ }
