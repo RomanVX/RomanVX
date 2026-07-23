@@ -4070,6 +4070,21 @@ async def fbs_compare():
 # ══ Ставка CPM: запросы и ставки действующих РК ═══════════════════════════════
 _bidq_cache: dict = {}
 _bidq_ts: float = 0.0
+_bidq_building = [False]
+
+
+async def _bidq_refresh_bg():
+    global _bidq_cache, _bidq_ts
+    import time as _t
+    import snapshot as _snap
+    try:
+        out = await bid_queries(refresh=True)
+        if out.get("rows"):
+            await asyncio.to_thread(_snap.save, "bidq_default", out)
+    except Exception as e:
+        _log.warning("bidq bg: %s", e)
+    finally:
+        _bidq_building[0] = False
 
 
 def _bidq_init():
@@ -4092,7 +4107,7 @@ async def bid_collect_daily() -> dict:
              for c in act for n in (c.get("nm_settings") or []) if n.get("nm_id")]
     stats = await ac.get_cluster_stats(pairs, day, day)
     bids = {}
-    for r in await ac.get_cluster_bids([c["advertId"] for c in act]):
+    for r in await ac.get_cluster_bids(pairs):
         bids[(int(r.get("advert_id") or 0), str(r.get("cluster") or "").lower())] = r.get("bid")
     rows = [(day, int(st["advert_id"]), str(st["nm_id"]), st["cluster"],
              st.get("views") or 0, st.get("clicks") or 0, st.get("orders") or 0,
@@ -4120,9 +4135,18 @@ async def bid_queries(refresh: bool = Query(default=False),
     """Активные кампании WB: ставка кампании + фразы со статистикой CTR,
     привязанные к SKU и его юнитке. Кеш 1 час (advert API лимитный)."""
     import time as _t
+    import snapshot as _snap
     global _bidq_cache, _bidq_ts
-    if not refresh and not date_from and not date_to and _bidq_cache \
-            and _t.monotonic() - _bidq_ts < 3600:
+    default_period = not date_from and not date_to
+    if default_period and not _bidq_cache:
+        snap = await asyncio.to_thread(_snap.load, "bidq_default", None)
+        if snap:
+            _bidq_cache = snap
+            _bidq_ts = _t.monotonic() - 3600
+    if not refresh and default_period and _bidq_cache:
+        if _t.monotonic() - _bidq_ts >= 3600 and not _bidq_building[0]:
+            _bidq_building[0] = True
+            _spawn(_bidq_refresh_bg())
         return _bidq_cache
     import advert_client as ac
     import catalog as _cat
@@ -4171,7 +4195,7 @@ async def bid_queries(refresh: bool = Query(default=False),
     stats = await ac.get_cluster_stats(pairs, d_from, d_to)
     cbids = {}
     try:
-        for r in await ac.get_cluster_bids(list(camp_meta.keys())):
+        for r in await ac.get_cluster_bids(pairs):
             key = (int(r.get("advert_id") or 0),
                    str(r.get("cluster") or "").lower())
             if r.get("bid"):
@@ -4225,7 +4249,9 @@ async def bid_queries(refresh: bool = Query(default=False),
     out = {"rows": rows, "campaigns": len(act), "active_ids": len(ids),
            "period": [d_from, d_to],
            "fetched_at": datetime.utcnow().strftime("%d.%m %H:%M UTC")}
-    _bidq_cache, _bidq_ts = out, _t.monotonic()
+    if default_period:
+        _bidq_cache, _bidq_ts = out, _t.monotonic()
+        await asyncio.to_thread(_snap.save, "bidq_default", out)
     return out
 
 

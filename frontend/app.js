@@ -2932,14 +2932,14 @@ function renderBidCalc() {
       <h6 class="mb-0">Действующие РК: запросы и ставки <span class="text-secondary small fw-normal">статистика за 14 дней</span></h6>
       <select id="bidCampFilter" class="form-select form-select-sm" style="width:auto" onchange="renderBidQueries()"><option value="">Все кампании</option></select>
       <select id="bidSkuFilter" class="form-select form-select-sm" style="width:auto" onchange="renderBidQueries()"><option value="">Все продукты</option></select>
-      <input type="date" id="bidFrom" class="form-control form-control-sm" style="width:auto" title="Начало периода">
-      <input type="date" id="bidTo" class="form-control form-control-sm" style="width:auto" title="Конец периода">
-      <button class="btn btn-sm btn-outline-info ms-auto" onclick="bidLoadQueries(this)">⟳ Выгрузить из WB</button>
+      <input type="date" id="bidFrom" class="form-control form-control-sm" style="width:auto" title="Начало периода" onchange="bidLoadQueries()">
+      <input type="date" id="bidTo" class="form-control form-control-sm" style="width:auto" title="Конец периода" onchange="bidLoadQueries()">
+      <button class="btn btn-sm btn-outline-secondary ms-auto" title="Обновить с WB" onclick="bidLoadQueries(this)">⟳</button>
     </div>
-    <div id="bidQueriesOut" class="text-secondary small">Нажми «Выгрузить» — соберём активные кампании, их ставки и фразы с фактическим CTR,
-    и сравним ставку каждой кампании с потолком по юнитке (CR и целевой ДРР берутся из полей выше).</div>
+    <div id="bidQueriesOut" class="text-secondary small"><span class="spinner-border spinner-border-sm me-2"></span>Загружаем запросы и ставки…</div>
   </div>`;
   bidCompute();
+  bidLoadQueries();
 }
 
 let _bidQData = null;
@@ -2950,7 +2950,8 @@ function bidSetSort(key) {
 }
 async function bidLoadQueries(btn) {
   const out = document.getElementById('bidQueriesOut');
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ Собираем (до минуты)…'; }
+  if (out && !_bidQData) out.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Загружаем запросы и ставки…';
+  if (btn) { btn.disabled = true; btn.textContent = '⏳'; }
   try {
     const df = document.getElementById('bidFrom')?.value, dt = document.getElementById('bidTo')?.value;
     const qp = new URLSearchParams();
@@ -2960,7 +2961,7 @@ async function bidLoadQueries(btn) {
     _bidQData = await fetchJSON('/api/tools/bid/queries' + (qp.toString() ? '?' + qp : ''), 180000);
     renderBidQueries();
   } catch (e) { if (out) out.innerHTML = `<div class="text-danger">Ошибка: ${esc(e.message)}</div>`; }
-  if (btn) { btn.disabled = false; btn.textContent = '⟳ Выгрузить из WB'; }
+  if (btn) { btn.disabled = false; btn.textContent = '⟳'; }
 }
 
 function renderBidQueries() {

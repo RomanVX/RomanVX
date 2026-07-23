@@ -440,18 +440,27 @@ async def get_campaigns_info(ids: list[int]) -> list[dict]:
     return out
 
 
-async def get_cluster_bids(advert_ids: list[int]) -> list[dict]:
+async def get_cluster_bids(pairs: list[tuple[int, int]]) -> list[dict]:
     """Ставки поисковых кластеров: POST /adv/v0/normquery/get-bids.
-    Возвращает [{advert_id, nm_id, cluster, bid}] — поля нормализуем."""
-    if not advert_ids:
+    По спеке элемент требует ОБА поля: advert_id и nm_id. Чанки по 100."""
+    if not pairs:
         return []
-    body = {"items": [{"advert_id": int(i)} for i in advert_ids[:100]]}
-    try:
-        data = await _post("/adv/v0/normquery/get-bids", body)
-    except Exception as e:
-        _log.warning("[ADVERT] normquery/get-bids: %s", str(e)[:150])
-        return []
-    rows = []
+    rows: list[dict] = []
+    for i in range(0, len(pairs), 100):
+        body = {"items": [{"advert_id": int(a), "nm_id": int(n)}
+                          for a, n in pairs[i:i + 100]]}
+        try:
+            data = await _post("/adv/v0/normquery/get-bids", body)
+        except Exception as e:
+            _log.warning("[ADVERT] normquery/get-bids: %s", str(e)[:150])
+            break
+        _collect_bids(rows, data)
+        await asyncio.sleep(0.3)
+    _log.info("[ADVERT] cluster bids: %d строк", len(rows))
+    return rows
+
+
+def _collect_bids(rows: list, data) -> None:
     src = (data.get("bids") or []) if isinstance(data, dict) else []
     for b in src:
         if not isinstance(b, dict):
@@ -474,8 +483,6 @@ async def get_cluster_bids(advert_ids: list[int]) -> list[dict]:
                            or b.get("cluster") or b.get("name") or "",
                 "bid": b.get("bid") or b.get("cpm") or b.get("price"),
             })
-    _log.info("[ADVERT] cluster bids: %d строк", len(rows))
-    return rows
 
 
 async def get_cluster_stats(pairs: list[tuple[int, int]],
