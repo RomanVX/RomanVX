@@ -60,30 +60,7 @@
   <div class="d-flex align-items-center gap-3">
     <img src="/api/tools/asset/logo" alt="Market Partners" style="width:46px;height:46px;object-fit:contain" onerror="this.style.display='none'" />
     <span id="cabBrandName" class="d-none"></span>
-  </div>
-  <div class="d-flex align-items-center gap-2">
-    <button id="themeBtn" class="btn btn-sm btn-outline-secondary" onclick="toggleTheme()" title="Тема">
-      <i class="bi bi-sun"></i>
-    </button>
-    <div class="mp-menu-item mp-acc">
-      <span class="mp-menu-title" id="accCabName">Biomed Nutrition <i class="bi bi-chevron-down small"></i></span>
-      <div class="mp-menu-drop mp-drop-right">
-        <a href="#" onclick="loadAll();return false">Обновить данные</a>
-        <a href="#" id="changeCabBtn" onclick="changeCabinet();return false">Сменить кабинет</a>
-        <a href="#" id="usersBtn" style="display:none" onclick="openUsers();return false">Доступы</a>
-        <div class="mp-drop-sep"></div>
-        <a href="#" onclick="doLogout();return false">Выйти</a>
-        <div class="mp-drop-note">обновлено: <span id="lastUpdated">—</span> · v2.6</div>
-      </div>
-    </div>
-  </div>
-</nav>
-
-<!-- ══ MAIN CONTENT ══ -->
-<div id="mainContent" style="display:none">
-<div class="container-fluid py-3">
-
-  <nav class="mp-menu mb-3" id="mainMenu">
+    <nav class="mp-menu" id="mainMenu">
     <div class="mp-menu-item active" id="navAnalytics">
       <span class="mp-menu-title" onclick="goNav('salesan','navAnalytics')">Аналитика</span>
       <div class="mp-menu-drop">
@@ -137,6 +114,28 @@
       </div>
     </div>
   </nav>
+  </div>
+  <div class="d-flex align-items-center gap-2">
+    <button id="themeBtn" class="btn btn-sm btn-outline-secondary" onclick="toggleTheme()" title="Тема">
+      <i class="bi bi-sun"></i>
+    </button>
+    <div class="mp-menu-item mp-acc">
+      <span class="mp-menu-title" id="accCabName">Biomed Nutrition <i class="bi bi-chevron-down small"></i></span>
+      <div class="mp-menu-drop mp-drop-right">
+        <a href="#" onclick="loadAll();return false">Обновить данные</a>
+        <a href="#" id="changeCabBtn" onclick="changeCabinet();return false">Сменить кабинет</a>
+        <a href="#" id="usersBtn" style="display:none" onclick="openUsers();return false">Доступы</a>
+        <div class="mp-drop-sep"></div>
+        <a href="#" onclick="doLogout();return false">Выйти</a>
+        <div class="mp-drop-note">обновлено: <span id="lastUpdated">—</span> · v2.6</div>
+      </div>
+    </div>
+  </div>
+</nav>
+
+<!-- ══ MAIN CONTENT ══ -->
+<div id="mainContent" style="display:none">
+<div class="container-fluid py-3">
 
   <!-- ── Заказы ── -->
   <div id="pane-salesan" style="display:none">
@@ -517,6 +516,6 @@
 
 <script src="vendor/bootstrap.bundle.min.js"></script>
 <script src="vendor/chart.umd.min.js"></script>
-<script src="app.js?v=180"></script>
+<script src="app.js?v=181"></script>
 </body>
 </html>
