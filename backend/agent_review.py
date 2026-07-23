@@ -83,6 +83,34 @@ OZON: Performance-реклама отдельным кабинетом, числ
 видны — оговаривать; не советовать резких движений без проверки на 3-5 днях."""
 
 
+async def tg_send_id(text: str, thread_id: int | None = None) -> int | None:
+    """Как tg_send, но возвращает message_id (для последующего edit)."""
+    if not TG_BOT_TOKEN:
+        return None
+    body = {"chat_id": TG_CHAT_ID, "text": text[:3900], "parse_mode": "HTML"}
+    if thread_id:
+        body["message_thread_id"] = thread_id
+    async with httpx.AsyncClient(timeout=30) as c:
+        r = await c.post(f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendMessage",
+                         json=body)
+    try:
+        return (r.json().get("result") or {}).get("message_id")
+    except Exception:
+        return None
+
+
+async def tg_edit(message_id: int, text: str) -> None:
+    if not TG_BOT_TOKEN or not message_id:
+        return
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            await c.post(f"https://api.telegram.org/bot{TG_BOT_TOKEN}/editMessageText",
+                         json={"chat_id": TG_CHAT_ID, "message_id": message_id,
+                               "text": text[:3900], "parse_mode": "HTML"})
+    except Exception:
+        pass
+
+
 async def tg_send(text: str, chat_id: str = "", thread_id: int | None = None) -> bool:
     """Отправка в Telegram; длинные тексты режутся по 3900 символов.
     thread_id — тема в группе-форуме (отвечаем туда, откуда спросили)."""
@@ -799,16 +827,16 @@ async def bot_loop() -> None:
                     asyncio.get_event_loop().create_task(_review_with_retry(thread))
                 elif cmd == "/strategy":
                     focus_q = raw.split(None, 1)[1].strip() if len(raw.split(None, 1)) > 1 else ""
-                    await tg_send("Стратег сел за данные — "
+                    status_id = await tg_send_id("Стратег сел за данные — "
                                   + ("разберу вопрос и вернусь с ответом…" if focus_q
                                      else "отчёт будет через несколько минут…"),
                                   thread_id=thread)
                     import agent_strategist as _st
 
-                    async def _strun(th=thread, fq=focus_q):
+                    async def _strun(th=thread, fq=focus_q, sid=status_id):
                         res = await _st.run_session(
                             trigger="команда /strategy в Telegram",
-                            focus=fq, light=bool(fq))
+                            focus=fq, light=bool(fq), status_msg_id=sid)
                         if res.get("error"):
                             await tg_send(f"Сессия не удалась: {res['error']}",
                                           thread_id=th)

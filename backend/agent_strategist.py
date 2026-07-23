@@ -410,8 +410,17 @@ _SYSTEM = """Ты — стратег-директор по маркетплей�
 рекомендация владельцу."""
 
 
+_TOOL_RU = {"unit_economics": "юнитка", "stocks": "остатки", "pnl": "P&L",
+            "advertising": "реклама", "prices": "цены", "sales_daily": "продажи",
+            "competitors": "конкуренты", "trends": "тренды",
+            "ozon_search": "поиск Ozon", "repricer": "репрайсер",
+            "repricer_propose": "предложения цен", "wb_search": "выдача WB",
+            "promos": "акции", "fbs_compare": "FBS-расчёт", "memory": "память",
+            "save_memory": "запись памяти"}
+
+
 async def run_session(trigger: str = "manual", focus: str = "",
-                      light: bool = False) -> dict:
+                      light: bool = False, status_msg_id: int | None = None) -> dict:
     """Стратегическая сессия: цикл с инструментами → отчёт/ответ в TG.
 
     light=True — быстрый режим для вопросов: минимум инструментов, память
@@ -429,11 +438,11 @@ async def run_session(trigger: str = "manual", focus: str = "",
         user_msg = f"Сегодня {today}. Триггер сессии: {trigger}."
         if light and focus:
             user_msg += (f"\nБЫСТРЫЙ РЕЖИМ — вопрос владельца: {focus}\n"
-                         "Ответь именно на вопрос. Инструментов — минимум "
-                         "(обычно 1-3, только реально нужные для ответа); память "
-                         "читай только если вопрос про план/задачи/факты; "
-                         "save_memory — только если появилось что сохранить. "
-                         "Ответ короткий и по делу.")
+                         "Ответь именно на вопрос МАКСИМУМ за 2 обращения к "
+                         "инструментам (лучше 1); wb_search НЕ используй, если "
+                         "вопрос решается кешированными данными; память читай "
+                         "только если вопрос про план/задачи/факты; save_memory "
+                         "— только если появилось что сохранить. Ответ короткий.")
         elif focus:
             user_msg += f"\nФокус этой сессии: {focus}"
         else:
@@ -476,20 +485,26 @@ async def run_session(trigger: str = "manual", focus: str = "",
                 return {"ok": True, "steps": _step + 1, "tools": tools_used,
                         "report": report[:500]}
             messages.append({"role": "assistant", "content": msg.content})
-            results = []
-            for block in msg.content:
-                if getattr(block, "type", "") != "tool_use":
-                    continue
-                fn = _TOOLS.get(block.name, (None, ""))[0]
-                tools_used.append(block.name)
-                if block.name == "save_memory":
+            blocks = [b for b in msg.content if getattr(b, "type", "") == "tool_use"]
+            for b in blocks:
+                tools_used.append(b.name)
+                if b.name == "save_memory":
                     saved = True
+            if status_msg_id and blocks:
+                names = " → ".join(_TOOL_RU.get(n, n) for n in tools_used[-8:])
+                await _ar.tg_edit(status_msg_id,
+                                  f"Стратег работает. Смотрю: {names}…")
+
+            async def _run_tool(b):
+                fn = _TOOLS.get(b.name, (None, ""))[0]
                 try:
-                    out = await fn(block.input or {}) if fn else f"неизвестный инструмент {block.name}"
+                    return await fn(b.input or {}) if fn else f"неизвестный инструмент {b.name}"
                 except Exception as e:
-                    out = f"ошибка инструмента: {str(e)[:300]}"
-                results.append({"type": "tool_result", "tool_use_id": block.id,
-                                "content": str(out)[:_TOOL_TRIM]})
+                    return f"ошибка инструмента: {str(e)[:300]}"
+            outs = await asyncio.gather(*[_run_tool(b) for b in blocks])
+            results = [{"type": "tool_result", "tool_use_id": b.id,
+                        "content": str(o)[:_TOOL_TRIM]}
+                       for b, o in zip(blocks, outs)]
             messages.append({"role": "user", "content": results})
         return {"error": f"превышен лимит шагов ({_MAX_STEPS})"}
     except Exception as e:
