@@ -118,6 +118,127 @@ async def _t_adv_bids(_a: dict) -> str:
             + json.dumps(out[:25], ensure_ascii=False))
 
 
+async def _t_reviews(_a: dict) -> str:
+    """Отзывы и рейтинг: где просел рейтинг и что пишут в негативе."""
+    import reviews_client as rc
+    table = await asyncio.to_thread(rc.get_rating_table)
+    arts = table.get("articles") or []
+
+    def _worst(a):
+        vals = [a.get(p) for p in ("wb", "ozon", "ym")
+                if a.get(p) and (a.get(p + "_cnt") or 0) >= 3]
+        return min(vals) if vals else 5.0
+    weak = [{"sku": a["sku"], "name": a.get("name"),
+             "wb": a.get("wb"), "wb_n": a.get("wb_cnt"),
+             "ozon": a.get("ozon"), "ozon_n": a.get("ozon_cnt"),
+             "ym": a.get("ym"), "ym_n": a.get("ym_cnt")}
+            for a in sorted(arts, key=_worst)[:12] if _worst(a) < 4.9]
+    neg = await asyncio.to_thread(rc.get_all_reviews, None, 300)
+    bad = [{"sku": r.get("sku"), "pf": r.get("platform"), "rating": r.get("rating"),
+            "text": (r.get("text") or "")[:180],
+            "date": str(r.get("created_at") or "")[:10],
+            "answered": bool(r.get("answer"))}
+           for r in neg if (r.get("rating") or 5) <= 3 and (r.get("text") or "")][:25]
+    unans = sum(1 for r in neg if not r.get("answer") and (r.get("text") or ""))
+    return json.dumps({"слабые_по_рейтингу": weak,
+                       "негатив_последний": bad,
+                       "без_ответа_всего": unans}, ensure_ascii=False, default=str)
+
+
+async def _t_ozon_ads(_a: dict) -> str:
+    """Реклама Ozon (Performance): кампании, расход, ДРР, воронка."""
+    from routers import tools as _tools
+    d = await _tools.get_ozads(refresh=False, days=28)
+    camps = [{"name": c.get("name"), "state": c.get("state"),
+              "spend": c.get("spend"), "revenue": c.get("revenue"),
+              "drr": c.get("drr"), "orders": c.get("orders"),
+              "views": c.get("views"), "clicks": c.get("clicks"),
+              "ctr": c.get("ctr")} for c in (d.get("campaigns") or [])][:30]
+    return json.dumps({"итого": {k: d.get(k) for k in
+                                 ("total_spend", "total_revenue", "total_drr",
+                                  "total_orders", "days")},
+                       "кампании": camps}, ensure_ascii=False, default=str)
+
+
+async def _t_ozon_phrases(_a: dict) -> str:
+    """Поисковые фразы рекламы Ozon: где показы без заказов."""
+    from routers import tools as _tools
+    d = await _tools.get_ozphrases(refresh=False, days=14)
+    rows = (d.get("rows") or d.get("phrases") or [])[:60]
+    return json.dumps(rows, ensure_ascii=False, default=str)
+
+
+async def _t_funnel(_a: dict) -> str:
+    """Воронка Ozon: показы → карточка → корзина → заказ по SKU."""
+    from routers import tools as _tools
+    d = await _tools.get_funnel(refresh=False)
+    rows = (d.get("rows") or d.get("items") or [])[:60]
+    return json.dumps(rows, ensure_ascii=False, default=str)
+
+
+async def _t_clusters(a: dict) -> str:
+    """Остатки по кластерам: WB и/или Ozon — где кончается товар."""
+    from routers import tools as _tools
+    which = str(a.get("platform") or "both").lower()
+    out = {}
+    if which in ("both", "ozon"):
+        try:
+            d = await _tools.get_ozon_clusters(refresh=False)
+            out["ozon"] = (d.get("rows") or d.get("clusters") or [])[:40]
+        except Exception as e:
+            out["ozon_error"] = str(e)[:200]
+    if which in ("both", "wb"):
+        try:
+            d = await _tools.get_clusters(refresh=False)
+            out["wb"] = (d.get("rows") or d.get("clusters") or [])[:40]
+        except Exception as e:
+            out["wb_error"] = str(e)[:200]
+    return json.dumps(out, ensure_ascii=False, default=str)
+
+
+async def _t_pnl_all(_a: dict) -> str:
+    """P&L всех площадок: WB + Ozon + ЯМ, а не только WB."""
+    from routers import finance as _fin
+    out = {}
+    for name, fn in (("wb", lambda: _fin.get_wb_pnl(months=3, refresh=False)),
+                     ("ozon", lambda: _fin.get_ozon_pnl(months=3, refresh=False)),
+                     ("ym", lambda: _fin.get_ym_pnl(months=3, refresh=False))):
+        try:
+            pnl = await fn()
+            out[name] = {r["key"]: r.get("values") or {}
+                         for r in pnl.get("rows") or []}
+        except Exception as e:
+            out[name] = f"ошибка: {str(e)[:150]}"
+    return json.dumps(out, ensure_ascii=False, default=str)
+
+
+async def _t_history(a: dict) -> str:
+    """Вечная история продаж из БД: любой период, а не только 14 дней."""
+    import sales_history as sh
+    days = int(a.get("days") or 90)
+    d_from = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
+    d = await asyncio.to_thread(sh.get_summary, d_from, None)
+    daily = d.get("daily") or []
+    # для длинных периодов сворачиваем в недели, чтобы не раздувать контекст
+    if len(daily) > 45:
+        weeks: dict = {}
+        for row in daily:
+            wk = str(row.get("date"))[:10]
+            key = (datetime.strptime(wk, "%Y-%m-%d")
+                   - timedelta(days=datetime.strptime(wk, "%Y-%m-%d").weekday())
+                   ).strftime("%Y-%m-%d")
+            w = weeks.setdefault(key, {})
+            for k, v in row.items():
+                if k != "date" and isinstance(v, (int, float)):
+                    w[k] = round(w.get(k, 0) + v)
+        series = [{"week": k, **v} for k, v in sorted(weeks.items())]
+    else:
+        series = daily
+    return json.dumps({"итоги_по_площадкам": d.get("by_platform"),
+                       "хранится_с": d.get("stored_from"),
+                       "ряд": series}, ensure_ascii=False, default=str)
+
+
 async def _t_prices(_a: dict) -> str:
     return (await _ar._prices_context()) or "нет данных"
 
@@ -333,6 +454,13 @@ _TOOLS = {
     "pnl": (_t_pnl, "P&L WB по месяцам за 3 месяца: выручка, комиссия, логистика, хранение, реклама, прибыль"),
     "advertising": (_t_adv, "Рекламные кампании WB: расход, выручка, ДРР, вердикты где сливается бюджет"),
     "adv_bids": (_t_adv_bids, "Ставки CPM по кампаниям и артикулам WB: показы, клики, CTR, CR, факт-CPM, топ-фразы по расходу и кандидаты в минус-фразы"),
+    "reviews": (_t_reviews, "Отзывы и рейтинг: слабые SKU по рейтингу, свежий негатив с текстом, сколько отзывов без ответа"),
+    "ozon_ads": (_t_ozon_ads, "Реклама Ozon (Performance): кампании, расход, ДРР, показы/клики — вторая половина рекламного бюджета"),
+    "ozon_phrases": (_t_ozon_phrases, "Поисковые фразы рекламы Ozon: где показы есть, а заказов нет"),
+    "funnel": (_t_funnel, "Воронка Ozon по SKU: показы → карточка → корзина → заказ; где теряем продажи"),
+    "clusters": (_t_clusters, "Остатки по кластерам WB и Ozon: где физически кончается товар (аргумент platform: wb|ozon|both)"),
+    "pnl_all": (_t_pnl_all, "P&L всех трёх площадок за 3 месяца (WB, Ozon, ЯМ) — инструмент pnl показывает только WB"),
+    "history": (_t_history, "Вечная история продаж из БД за любой период (аргумент days, по умолчанию 90) — не ограничена 14 днями и 90 днями API"),
     "prices": (_t_prices, "Текущие цены наших товаров и история изменений за 14 дней"),
     "sales_daily": (_t_sales, "Продажи по дням за 14 дней по площадкам + по SKU за 7 дней"),
     "competitors": (_t_competitors, "Срезы выдачи WB по нашим запросам: позиции, цены и прирост отзывов конкурентов"),
@@ -474,6 +602,10 @@ _SYSTEM = """Ты — стратег-директор по маркетплей�
 _TOOL_RU = {"unit_economics": "юнитка", "stocks": "остатки", "pnl": "P&L",
             "advertising": "реклама", "adv_bids": "ставки CPM",
             "prices": "цены", "sales_daily": "продажи",
+            "reviews": "отзывы", "ozon_ads": "реклама Ozon",
+            "ozon_phrases": "фразы Ozon", "funnel": "воронка Ozon",
+            "clusters": "кластеры", "pnl_all": "P&L площадок",
+            "history": "история продаж",
             "competitors": "конкуренты", "trends": "тренды",
             "ozon_search": "поиск Ozon", "repricer": "репрайсер",
             "repricer_propose": "предложения цен", "wb_search": "выдача WB",
