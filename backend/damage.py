@@ -37,7 +37,12 @@ _NOTES = {
 def _init() -> None:
     db.execute("""CREATE TABLE IF NOT EXISTS damage (
         id TEXT PRIMARY KEY, warehouse TEXT, sku TEXT, nm TEXT, name TEXT,
-        qty INTEGER, cost REAL, retail REAL, note TEXT, updated TEXT)""")
+        qty INTEGER, cost REAL, retail REAL, source TEXT, note TEXT,
+        updated TEXT)""")
+    try:      # таблица могла быть создана до появления колонки источника
+        db.execute("ALTER TABLE damage ADD COLUMN source TEXT")
+    except Exception:
+        pass
 
 
 def _msk() -> str:
@@ -45,25 +50,41 @@ def _msk() -> str:
 
 
 def _seed_if_empty() -> None:
-    """Первый запуск: заливаем расчёты, которые уже сделаны по файлам WB."""
+    """Заливаем расчёты, уже сделанные по отчётам WB.
+
+    Ключ включает источник: один артикул может гореть и в складских
+    остатках, и в поставке, принятой перед пожаром (AL-01: 30 + 440 шт).
+    Без этого вторая строка затиралась и сумма занижалась.
+    """
     _init()
-    row = db.fetchone("SELECT COUNT(*) FROM damage")
-    if row and int(row[0] or 0) > 0:
-        return
     try:
         rows = json.load(open(_SEED, encoding="utf-8"))
     except Exception as e:
         _log.warning("seed: %s", e)
         return
+    seeded = {r["wh"] for r in rows}
+    marks = ",".join("?" * len(seeded))
+    have = db.fetchone(
+        f"SELECT COUNT(*) FROM damage WHERE warehouse IN ({marks})",
+        tuple(seeded))
+    have_n = int((have or [0])[0] or 0)
+    if have_n == len(rows):
+        return
+    if have_n:      # была залита урезанная версия — переписываем начисто
+        _log.warning("damage: пересев (было %d строк, ожидается %d)",
+                     have_n, len(rows))
+        for wh in seeded:
+            db.execute("DELETE FROM damage WHERE warehouse = ?", (wh,))
     now = _msk()
-    for r in rows:
+    for i, r in enumerate(rows):
+        src = r.get("source") or ""
         db.execute(
             "INSERT INTO damage (id, warehouse, sku, nm, name, qty, cost, "
-            "retail, note, updated) VALUES (?,?,?,?,?,?,?,?,?,?) "
+            "retail, source, note, updated) VALUES (?,?,?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT (id) DO NOTHING",
-            (f"{r['wh']}|{r['sku']}", r["wh"], r["sku"], r.get("nm", ""),
+            (f"{r['wh']}|{r['sku']}|{i}", r["wh"], r["sku"], r.get("nm", ""),
              r.get("name", ""), int(r["qty"]), float(r.get("cost") or 0),
-             float(r.get("retail") or 0), _NOTES.get(r["wh"], ""), now))
+             float(r.get("retail") or 0), src, _NOTES.get(r["wh"], ""), now))
     _log.info("damage: залито %d позиций", len(rows))
 
 
@@ -72,11 +93,12 @@ def rows(warehouse: str = "") -> list[dict]:
     where, params = [], []
     if warehouse:
         where.append("warehouse = ?"); params.append(warehouse)
-    q = ("SELECT warehouse, sku, nm, name, qty, cost, retail, note, updated "
-         "FROM damage" + (" WHERE " + " AND ".join(where) if where else "")
+    q = ("SELECT warehouse, sku, nm, name, qty, cost, retail, source, note, "
+         "updated FROM damage"
+         + (" WHERE " + " AND ".join(where) if where else "")
          + " ORDER BY warehouse, qty DESC")
     keys = ["warehouse", "sku", "nm", "name", "qty", "cost", "retail",
-            "note", "updated"]
+            "source", "note", "updated"]
     out = []
     for r in db.fetchall(q, tuple(params)):
         d = dict(zip(keys, r))
@@ -108,6 +130,22 @@ def summary() -> dict:
     warehouses = sorted(by_wh.values(),
                         key=lambda x: order.get(x["warehouse"], 99))
     no_cost = [r["sku"] for r in all_rows if not r.get("cost")]
+    # контроль: сходится ли с исходными расчётами по файлам WB
+    control = {}
+    try:
+        for r in json.load(open(_SEED, encoding="utf-8")):
+            c = control.setdefault(r["wh"], {"qty": 0, "cost_total": 0})
+            c["qty"] += int(r["qty"])
+            c["cost_total"] += int(r["qty"]) * float(r.get("cost") or 0)
+        for w in by_wh.values():
+            exp = control.get(w["warehouse"])
+            if exp:
+                w["control_qty"] = exp["qty"]
+                w["control_cost"] = round(exp["cost_total"])
+                w["matches"] = (w["qty"] == exp["qty"]
+                                and abs(w["cost_total"] - exp["cost_total"]) < 1)
+    except Exception:
+        pass
     return {
         "warehouses": warehouses,
         "total": {
@@ -199,13 +237,13 @@ async def upload(warehouse: str, raw: bytes) -> dict:
             name = str(row[c_name] or "")[:120] if c_name >= 0 else ""
             db.execute(
                 "INSERT INTO damage (id, warehouse, sku, nm, name, qty, cost, "
-                "retail, note, updated) VALUES (?,?,?,?,?,?,?,?,?,?) "
+                "retail, source, note, updated) VALUES (?,?,?,?,?,?,?,?,?,?,?) "
                 "ON CONFLICT (id) DO UPDATE SET qty=excluded.qty, "
                 "cost=excluded.cost, retail=excluded.retail, "
                 "name=excluded.name, updated=excluded.updated",
-                (f"{warehouse}|{art}", warehouse, art,
+                (f"{warehouse}|{art}|upload", warehouse, art,
                  nm_by_art.get(art.upper(), ""), name, qty, cost, retail,
-                 _NOTES.get(warehouse, ""), now))
+                 "загружено файлом", _NOTES.get(warehouse, ""), now))
             added += 1
     if not added:
         return {"error": "не нашёл строк с артикулом и количеством — "

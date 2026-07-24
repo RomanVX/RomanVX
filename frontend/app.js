@@ -6554,7 +6554,10 @@ function renderDamage() {
       <td class="text-end">${w.qty ? fmt(w.qty) : '—'}</td>
       <td class="text-end fw-semibold"${w.cost_total ? ' style="color:var(--danger)"' : ''}>${w.cost_total ? fmtRub(w.cost_total) : '—'}</td>
       <td class="text-end">${w.retail_total ? fmtRub(w.retail_total) : '—'}</td>
-      <td class="small text-secondary">${esc(w.note || '')}</td>
+      <td class="small text-secondary">${esc(w.note || '')}
+        ${w.control_qty !== undefined ? (w.matches
+          ? '<div class="text-success">сходится с исходным расчётом</div>'
+          : `<div class="text-danger">РАСХОЖДЕНИЕ: в исходнике ${fmt(w.control_qty)} шт / ${fmtRub(w.control_cost)}</div>`) : ''}</td>
       <td><label class="btn btn-sm btn-outline-info py-0 mb-0">Загрузить остатки
         <input type="file" accept=".xlsx" style="display:none" onchange="damageUpload(this,'${esc(w.warehouse)}')"></label></td>
     </tr>`).join('') +
@@ -6569,7 +6572,7 @@ function renderDamage() {
     <div class="p-3 pb-2 fw-semibold">Детализация по товарам (${rows.length})</div>
     <div class="table-responsive" style="max-height:60vh">
     <table class="table table-sm align-middle mb-0" style="font-size:.83rem"><thead><tr>
-      <th>Склад</th><th>Артикул</th><th>Название</th><th class="text-end">Штук</th>
+      <th>Склад</th><th>Артикул</th><th>Название</th><th>Источник</th><th class="text-end">Штук</th>
       <th class="text-end">Себес, ₽</th><th class="text-end">Ущерб, ₽</th>
       <th class="text-end">Розница, ₽</th><th class="text-end">По рознице, ₽</th>
     </tr></thead><tbody>` +
@@ -6577,6 +6580,7 @@ function renderDamage() {
       <td class="text-secondary">${esc(r.warehouse)}</td>
       <td class="fw-semibold">${esc(r.sku)}</td>
       <td>${esc(r.name || '')}</td>
+      <td class="small text-secondary">${esc(r.source || '')}</td>
       <td class="text-end">${r.qty}</td>
       <td class="text-end">${r.cost ? fmt(r.cost) : '<span class="text-warning">—</span>'}</td>
       <td class="text-end fw-semibold">${fmtRub(r.cost_total)}</td>
