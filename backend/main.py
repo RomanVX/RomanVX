@@ -174,6 +174,21 @@ async def _slot_watcher():
         await asyncio.sleep(420)
 
 
+async def _agent_watch_loop():
+    """Сторожа агента: раз в час проверяет и пишет сам, если что-то горит."""
+    import agent_watch
+    await asyncio.sleep(600)          # дать серверу прогреться после старта
+    while True:
+        try:
+            res = await agent_watch.tick()
+            if res.get("sent"):
+                logging.getLogger("agent_watch").info("отправлено тревог: %s",
+                                                      res["sent"])
+        except Exception as e:
+            logging.getLogger("agent_watch").warning("tick: %s", e)
+        await asyncio.sleep(3600)
+
+
 async def _bid_history_daily():
     """История рекламных кластеров: суточный срез в БД (13:00 МСК, дедуп)."""
     import snapshot as _snap
@@ -288,12 +303,14 @@ async def lifespan(app: FastAPI):
     import agent_review as _agent
     task5 = asyncio.create_task(_agent.bot_loop())
     task6 = asyncio.create_task(_competitors_daily())
+    task_watch = asyncio.create_task(_agent_watch_loop())
     task7 = asyncio.create_task(_trends_weekly())
     task8 = asyncio.create_task(_strategist_loop())
     task9 = asyncio.create_task(_bid_history_daily())
     task10 = asyncio.create_task(_slot_watcher())
     yield
-    for t in (task, task2, task3, task4, task5, task6, task7, task8, task9, task10):
+    for t in (task, task2, task3, task4, task5, task6, task7, task8, task9,
+              task10, task_watch):
         t.cancel()
 
 

@@ -4828,3 +4828,11 @@ async def slot_watch_tick() -> None:
         await asyncio.sleep(1)
     if dirty or len(keep) != len(watches):
         await asyncio.to_thread(_snap.save, "slot_watch", keep)
+
+
+@router.post("/agent/watch_now", include_in_schema=False)
+async def agent_watch_now(request: Request):
+    """Прогнать сторожей вручную (owner) — проверить, что и как они видят."""
+    _owner_only(request)
+    import agent_watch
+    return await agent_watch.tick()
