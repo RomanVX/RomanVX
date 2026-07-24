@@ -731,7 +731,7 @@ async def bot_loop() -> None:
                 r = await c.get(
                     f"https://api.telegram.org/bot{TG_BOT_TOKEN}/getUpdates",
                     params={"timeout": 50, "offset": offset,
-                            "allowed_updates": '["message"]'})
+                            "allowed_updates": '["message","callback_query"]'})
             if r.status_code == 409:
                 # 409 = либо второй потребитель getUpdates этим токеном,
                 # либо на боте включён webhook. Webhook снимаем сами; чужой
@@ -759,6 +759,33 @@ async def bot_loop() -> None:
                           (m0.get("chat") or {}).get("id"),
                           (m0.get("from") or {}).get("username"),
                           (m0.get("text") or "")[:80])
+                cq = upd.get("callback_query")
+                if cq:
+                    data = str(cq.get("data") or "")
+                    cq_chat = str(((cq.get("message") or {}).get("chat") or {}).get("id") or "")
+                    if data.startswith(("act_ok_", "act_no_")) and cq_chat == TG_CHAT_ID:
+                        import agent_actions as _aa
+                        aid = data[7:]
+                        res = (await _aa.apply(aid) if data.startswith("act_ok_")
+                               else await _aa.reject(aid))
+                        note = ("Применил." if res.get("status") == "done"
+                                else "Отклонил, запомнил." if res.get("status") == "rejected"
+                                else f"Не вышло: {res.get('error') or res.get('result')}")
+                        try:
+                            async with httpx.AsyncClient(timeout=15) as c4:
+                                await c4.post(
+                                    f"https://api.telegram.org/bot{TG_BOT_TOKEN}/answerCallbackQuery",
+                                    json={"callback_query_id": cq.get("id"),
+                                          "text": note[:180]})
+                                await c4.post(
+                                    f"https://api.telegram.org/bot{TG_BOT_TOKEN}/editMessageReplyMarkup",
+                                    json={"chat_id": cq_chat,
+                                          "message_id": (cq.get("message") or {}).get("message_id"),
+                                          "reply_markup": {"inline_keyboard": []}})
+                        except Exception:
+                            pass
+                        await tg_send(note)
+                    continue
                 msg = upd.get("message") or {}
                 chat = str((msg.get("chat") or {}).get("id") or "")
                 raw = (msg.get("text") or msg.get("caption") or "").strip()

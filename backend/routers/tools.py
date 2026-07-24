@@ -4836,3 +4836,22 @@ async def agent_watch_now(request: Request):
     _owner_only(request)
     import agent_watch
     return await agent_watch.tick()
+
+
+@router.get("/agent/actions", include_in_schema=False)
+async def agent_actions_list(request: Request):
+    """Журнал действий агента: что предложено, применено, отклонено."""
+    _owner_only(request)
+    import agent_actions as aa
+    return {"pending": await asyncio.to_thread(aa.pending),
+            "journal": await asyncio.to_thread(aa.journal)}
+
+
+@router.post("/agent/actions/{aid}", include_in_schema=False)
+async def agent_action_decide(request: Request, aid: str, body: dict):
+    """Подтвердить/отклонить действие с вкладки (owner)."""
+    _owner_only(request)
+    import agent_actions as aa
+    if body.get("apply"):
+        return await aa.apply(aid, who="владелец (дашборд)")
+    return await aa.reject(aid, str(body.get("why") or ""))

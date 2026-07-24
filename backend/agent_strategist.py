@@ -405,6 +405,23 @@ async def _t_fbs(_a: dict) -> str:
                        "note": res["note"], "by_sku": slim}, ensure_ascii=False)
 
 
+async def _t_propose_action(a: dict) -> str:
+    """Предложить действие в кабинете — уходит владельцу на подтверждение."""
+    import agent_actions as aa
+    kind = str(a.get("kind") or "")
+    if kind not in aa._EXEC:
+        return f"неизвестный тип действия; доступны: {', '.join(aa._EXEC)}"
+    payload = a.get("payload") or {}
+    if not isinstance(payload, dict) or not payload:
+        return "нужен payload с параметрами действия"
+    aid = await asyncio.to_thread(
+        aa.propose, kind, str(a.get("title") or kind), payload,
+        str(a.get("reason") or ""))
+    await aa.notify(aid)
+    return (f"заявка {aid} создана и отправлена владельцу на подтверждение. "
+            "Сам ты её не применяешь — дождись решения.")
+
+
 async def _t_memory(_a: dict) -> str:
     import snapshot as _snap
     plan = await asyncio.to_thread(_snap.load, "strategist_plan", None) or {}
@@ -479,6 +496,10 @@ _TOOLS = {
                "(+флаг автодобавления), календарь акций WB на 30 дней (куда зовут, даты, условия)"),
     "fbs_compare": (_t_fbs, "Переход WB на FBS: дельта прямых затрат на штуку и месяц по каждому "
                     "SKU (комиссия/логистика/хранение по официальным тарифам); конверсию и сроки не моделирует"),
+    "propose_action": (_t_propose_action, "Предложить действие в кабинете владельцу на подтверждение. "
+        "kind: minus_phrases (payload: advert_id, nm_id, phrases[]) | set_bid (advert_id, nm_id, bid в рублях за 1000 показов, placement search|recommendations|combined, bid_was) | "
+        "campaign_state (advert_id, action pause|start) | ozon_price (offer_id, price, old_price). "
+        "Обязательно title и reason — коротко, зачем это и на чём основано. Сам НЕ применяешь: решает владелец"),
     "memory": (_t_memory, "Твоя память: текущий стратегический план и задачи (открытые и закрытые) с датами проверки"),
     "save_memory": (_t_save, "Сохранить обновлённый план и задачи. Параметры: plan (текст стратегии), "
                              "new_tasks [{title, kind: goal|task|hypothesis, metric, check_date YYYY-MM-DD, reasoning}], "
@@ -595,8 +616,13 @@ _SYSTEM = """Ты — стратег-директор по маркетплей�
 ИСПОЛЬЗУЙ ВООБЩЕ. Без канцелярита («данный», «осуществляется», «в рамках»),
 без заголовков-штампов «Решение/Основано/Риск». Каждая законченная мысль —
 с новой строки, блоки разделяй пустой строкой, абзац 1-2 предложения.
-Деньгами не распоряжаешься: всё, что меняет цены/ставки/поставки — только
-рекомендация владельцу."""
+ДЕЙСТВИЯ: сам ничего в кабинете не меняешь. Если нужно поменять ставку,
+поставить минус-фразы, остановить сливающую кампанию или изменить цену —
+вызывай propose_action: заявка уйдёт владельцу с кнопками «Применить» и
+«Отклонить». Предлагай только когда цифры на руках и выгода считается;
+одна заявка — одно понятное действие, в reason назови цифру, из которой
+оно следует. Если владелец уже отклонял похожее (см. память, kind=note) —
+не предлагай снова, а спроси, что изменить."""
 
 
 _TOOL_RU = {"unit_economics": "юнитка", "stocks": "остатки", "pnl": "P&L",
@@ -606,6 +632,7 @@ _TOOL_RU = {"unit_economics": "юнитка", "stocks": "остатки", "pnl":
             "ozon_phrases": "фразы Ozon", "funnel": "воронка Ozon",
             "clusters": "кластеры", "pnl_all": "P&L площадок",
             "history": "история продаж",
+            "propose_action": "заявка на действие",
             "competitors": "конкуренты", "trends": "тренды",
             "ozon_search": "поиск Ozon", "repricer": "репрайсер",
             "repricer_propose": "предложения цен", "wb_search": "выдача WB",
