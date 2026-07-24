@@ -4947,3 +4947,11 @@ async def onboarding_scan(request: Request):
     _owner_only(request)
     import onboarding
     return await onboarding.scan()
+
+
+@router.get("/elasticity")
+async def elasticity_get(request: Request, days: int = Query(default=180)):
+    """Как продажи реагировали на изменения цены — по истории кабинета."""
+    _owner_only(request)
+    import elasticity
+    return await elasticity.get(days)
