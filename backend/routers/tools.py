@@ -4930,3 +4930,20 @@ async def money_act(request: Request, body: dict):
         body.get("act_payload") or {}, str(body.get("evidence") or ""))
     await aa.notify(aid)
     return {"id": aid, "status": "pending"}
+
+
+# ══ Подключение кабинета: каталог из API вместо ручного файла ════════════════
+@router.get("/onboarding")
+async def onboarding_status(request: Request):
+    """Готовность кабинета: сколько SKU нашли, чего не хватает."""
+    _owner_only(request)
+    import onboarding
+    return await asyncio.to_thread(onboarding.status)
+
+
+@router.post("/onboarding/scan", include_in_schema=False)
+async def onboarding_scan(request: Request):
+    """Пересобрать каталог из API площадок (owner)."""
+    _owner_only(request)
+    import onboarding
+    return await onboarding.scan()
