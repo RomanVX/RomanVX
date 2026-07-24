@@ -432,15 +432,17 @@ async def _gather_context() -> str:
     return "\n\n".join(parts)
 
 
-_qa_inflight: set = set()   # (thread, вопрос) — защита от дублей из очереди
+_qa_inflight: set = set()   # (chat, thread, вопрос) — защита от дублей из очереди
+_chat_hinted: set = set()   # чаты, которым уже подсказали про подключение
 
 # диалоговая память: тема группы → последние реплики (переживает рестарт)
 _dialogs: dict[str, list] = {}
 _DIALOG_KEEP = 16   # реплик (8 пар вопрос-ответ)
 
 
-def _dialog_key(thread: int | None) -> str:
-    return f"tg_{thread or 'main'}"
+def _dialog_key(thread: int | None, chat: str = "") -> str:
+    base = f"tg_{thread or 'main'}"
+    return f"{base}_c{chat}" if chat else base
 
 
 def _dialog_load() -> None:
@@ -450,9 +452,10 @@ def _dialog_load() -> None:
         _dialogs = _snap.load("agent_dialogs", None) or {}
 
 
-def _dialog_add(thread: int | None, role: str, content: str) -> None:
+def _dialog_add(thread: int | None, role: str, content: str,
+                chat: str = "") -> None:
     import snapshot as _snap
-    key = _dialog_key(thread)
+    key = _dialog_key(thread, chat)
     d = _dialogs.setdefault(key, [])
     d.append({"role": role, "content": content[:2500]})
     del d[:-_DIALOG_KEEP]
@@ -495,7 +498,8 @@ def _is_banter(q: str, has_photo: bool) -> bool:
 
 async def _answer_question(question: str, thread: int | None,
                            use_history: bool = True,
-                           image_b64: str | None = None) -> None:
+                           image_b64: str | None = None,
+                           chat: str = "") -> None:
     """Свободный вопрос к агенту: данные кабинета + история диалога → Claude.
     use_history=False — для ответов на цитаты: история не должна перетягивать
     разговор на прошлую тему. image_b64 — картинка из сообщения (vision)."""
@@ -518,7 +522,7 @@ async def _answer_question(question: str, thread: int | None,
 - Одна цифра допустима, только если она сама по себе панчлайн.
 - В чате есть бот-конкурент Mira — если речь о ней, можно элегантно съязвить.
 Формат Telegram HTML (только <b> и <i>)."""
-            history = list(_dialogs.get(_dialog_key(thread), []))[-4:]
+            history = list(_dialogs.get(_dialog_key(thread, chat), []))[-4:]
             content = ([{"type": "image", "source": {"type": "base64",
                                                      "media_type": "image/jpeg",
                                                      "data": image_b64}},
@@ -530,9 +534,9 @@ async def _answer_question(question: str, thread: int | None,
                 model=_MODEL, max_tokens=350, system=system,
                 messages=history + [{"role": "user", "content": content}])
             answer = msg.content[0].text.strip()
-            await tg_send(answer, thread_id=thread)
-            await asyncio.to_thread(_dialog_add, thread, "user", question)
-            await asyncio.to_thread(_dialog_add, thread, "assistant", answer)
+            await tg_send(answer, chat_id=chat, thread_id=thread)
+            await asyncio.to_thread(_dialog_add, thread, "user", question, chat)
+            await asyncio.to_thread(_dialog_add, thread, "assistant", answer, chat)
             return
         ctx = await _gather_context()
         system = f"""Ты — агент-аналитик селлера маркетплейсов (кабинет Biomed,
@@ -550,7 +554,7 @@ WB/Ozon/ЯМ), общаешься с владельцем и его команд
 предложения. Цифры и выводы — в начале строки, пояснения после.
 
 {KNOWLEDGE}"""
-        history = list(_dialogs.get(_dialog_key(thread), [])) if use_history else []
+        history = list(_dialogs.get(_dialog_key(thread, chat), [])) if use_history else []
         user_text = f"АКТУАЛЬНЫЕ ДАННЫЕ КАБИНЕТА:\n{ctx}\n\nВОПРОС: {question}"
         if image_b64:
             content = [
@@ -572,20 +576,22 @@ WB/Ozon/ЯМ), общаешься с владельцем и его команд
             cost = (u.input_tokens * 5 + u.output_tokens * 25) / 1_000_000
             _log.info("qa usage: in=%d out=%d ≈ $%.3f (%.1f ₽)",
                       u.input_tokens, u.output_tokens, cost, cost * 95)
-        await tg_send(answer, thread_id=thread)
+        await tg_send(answer, chat_id=chat, thread_id=thread)
         # в память кладём вопрос и ответ БЕЗ простыни данных — данные каждый
         # раз свежие, а старые копии только путали бы модель
-        await asyncio.to_thread(_dialog_add, thread, "user", question)
-        await asyncio.to_thread(_dialog_add, thread, "assistant", answer)
+        await asyncio.to_thread(_dialog_add, thread, "user", question, chat)
+        await asyncio.to_thread(_dialog_add, thread, "assistant", answer, chat)
     except Exception as e:
         _log.error("qa failed: %s", e)
         err = str(e)
         if "credit balance" in err:
             await tg_send("💳 Закончился баланс Anthropic API — владельцу нужно "
                           "пополнить его в console.anthropic.com → Billing. "
-                          "После пополнения отвечу сразу.", thread_id=thread)
+                          "После пополнения отвечу сразу.",
+                          chat_id=chat, thread_id=thread)
         else:
-            await tg_send(f"Не смог ответить: {err[:200]}", thread_id=thread)
+            await tg_send(f"Не смог ответить: {err[:200]}",
+                          chat_id=chat, thread_id=thread)
 
 
 async def _review_with_retry(thread: int | None) -> None:
@@ -737,11 +743,28 @@ async def bot_loop() -> None:
                 raw = (msg.get("text") or msg.get("caption") or "").strip()
                 text = raw.lower()
                 thread = msg.get("message_thread_id")
-                if chat != TG_CHAT_ID or not raw:
+                if not raw:
                     continue
+                is_main = chat == TG_CHAT_ID
+                if not is_main:
+                    # белый список побочных чатов (личка/другие группы)
+                    _allowed = {str(c) for c in
+                                (await asyncio.to_thread(
+                                    _snap.load, "agent_chats", None) or [])}
+                    if chat not in _allowed:
+                        _priv = not chat.startswith("-")
+                        if (_priv or (me and f"@{me}" in text)) \
+                                and chat not in _chat_hinted:
+                            _chat_hinted.add(chat)
+                            await tg_send(
+                                f"Этот чат не подключён к агенту. ID чата: <b>{chat}</b>.\n"
+                                f"Владелец подключает командой «доступ {chat}» в основном чате.",
+                                chat_id=chat)
+                        continue
                 # стоп-слово: прервать сессию стратега и замолчать до «старт»
                 low = raw.strip().lower().rstrip('!.')
-                if low in ("стоп", "stop") or low.startswith(("стоп ", "stop ")):
+                if is_main and (low in ("стоп", "stop")
+                                or low.startswith(("стоп ", "stop "))):
                     import agent_strategist as _st
                     _st._cancel = True
                     _paused[0] = True
@@ -749,19 +772,38 @@ async def bot_loop() -> None:
                     await tg_send("Остановился: сессию прерываю, на вопросы "
                                   "не отвечаю. Вернуть: «старт»", thread_id=thread)
                     continue
-                if low in ("старт", "start", "работай"):
+                if is_main and low in ("старт", "start", "работай"):
                     if _paused[0]:
                         _paused[0] = False
                         await asyncio.to_thread(_snap.save, "agent_paused", False)
                         await tg_send("Снова в строю.", thread_id=thread)
                     continue
+                if is_main and len(raw.split()) == 2 and \
+                        low.split()[0] in ("доступ", "закрыть"):
+                    import re as _re2
+                    tgt = raw.split()[1]
+                    if _re2.fullmatch(r"-?\d{5,}", tgt):
+                        chats = [str(c) for c in
+                                 (await asyncio.to_thread(
+                                     _snap.load, "agent_chats", None) or [])]
+                        if low.startswith("доступ"):
+                            if tgt not in chats:
+                                chats.append(tgt)
+                            note = (f"Чат {tgt} подключён. Там отвечаю на любой "
+                                    "текст в личке и на упоминания в группах.")
+                        else:
+                            chats = [c for c in chats if c != tgt]
+                            note = f"Чат {tgt} отключён."
+                        await asyncio.to_thread(_snap.save, "agent_chats", chats)
+                        await tg_send(note, thread_id=thread)
+                        continue
                 # брендовые ассеты дашборда: картинка с подписью «лого»/«фон»
                 # (работает и на паузе; лого слать файлом — сохранится
                 # прозрачность PNG; слова-команды в подписи игнорируем)
                 _akey = next((w.rstrip(':').lstrip('/') for w in text.split()[:3]
                               if w.rstrip(':').lstrip('/')
                               in ("лого", "логотип", "фон")), "")
-                if _akey and (msg.get("photo") or msg.get("document")):
+                if is_main and _akey and (msg.get("photo") or msg.get("document")):
                     doc = msg.get("document") or {}
                     fid, mime = None, "image/jpeg"
                     if str(doc.get("mime_type") or "").startswith("image/"):
@@ -788,14 +830,16 @@ async def bot_loop() -> None:
                             await tg_send("Не смог скачать файл (лимит 4.5 МБ).",
                                           thread_id=thread)
                     continue
-                if _paused[0]:
+                if is_main and _paused[0]:
                     continue
                 # свободный вопрос: упоминание @бота или reply на его сообщение
                 reply_from = ((msg.get("reply_to_message") or {}).get("from") or {})
                 is_mention = me and f"@{me}" in text
                 is_reply = reply_from.get("is_bot") and \
                     (reply_from.get("username") or "").lower() == me
-                if not text.startswith("/") and (is_mention or is_reply):
+                if not text.startswith("/") and \
+                        (is_mention or is_reply
+                         or (not is_main and not chat.startswith("-"))):
                     import re as _re
                     q = _re.sub(f"@{me}", "", raw, flags=_re.IGNORECASE).strip()
                     # реплай на чужое сообщение = контекст вопроса (боты друг
@@ -819,7 +863,7 @@ async def bot_loop() -> None:
                     if q:
                         # дедуп: после простоя очередь может принести один и
                         # тот же вопрос несколько раз — отвечаем один раз
-                        key = (thread, q[:200])
+                        key = (chat, thread, q[:200])
                         if key in _qa_inflight:
                             continue
                         _qa_inflight.add(key)
@@ -830,22 +874,29 @@ async def bot_loop() -> None:
                                 async with httpx.AsyncClient(timeout=10) as c3:
                                     await c3.post(
                                         f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendChatAction",
-                                        json={"chat_id": TG_CHAT_ID, "action": "typing",
+                                        json={"chat_id": chat, "action": "typing",
                                               **({"message_thread_id": thread} if thread else {})})
                             except Exception:
                                 pass
                         else:
-                            await tg_send("Смотрю данные…", thread_id=thread)
-                        async def _run(qq=q, th=thread, k=key, hq=has_quote, ph=photo_id):
+                            await tg_send("Смотрю данные…",
+                                          chat_id=chat, thread_id=thread)
+                        async def _run(qq=q, th=thread, k=key, hq=has_quote,
+                                       ph=photo_id, ch=chat):
                             try:
                                 img = await _tg_get_photo(ph) if ph else None
                                 await _answer_question(qq, th, use_history=not hq,
-                                                       image_b64=img)
+                                                       image_b64=img, chat=ch)
                             finally:
                                 _qa_inflight.discard(k)
                         asyncio.get_event_loop().create_task(_run())
                     continue
                 if not text.startswith("/"):
+                    continue
+                if not is_main:
+                    await tg_send("Команды работают в основном чате. Здесь просто "
+                                  "напиши вопрос текстом — отвечу по данным.",
+                                  chat_id=chat, thread_id=thread)
                     continue
                 cmd = text.split()[0].split("@")[0]
                 if cmd == "/bid":
