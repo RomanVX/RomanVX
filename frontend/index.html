@@ -65,6 +65,7 @@
       <span class="mp-menu-title" onclick="goNav('salesan','navAnalytics')">Аналитика</span>
       <div class="mp-menu-drop">
         <a href="#" onclick="goNav('money','navAnalytics');return false">Где деньги</a>
+        <a href="#" onclick="goNav('result','navAnalytics');return false">Результат</a>
         <div class="mp-drop-sep"></div>
         <a href="#" onclick="goNav('salesan','navAnalytics');return false">Заказы</a>
         <a href="#" id="navFinance" onclick="goNav('finance','navAnalytics');return false">Финансы</a>
@@ -90,6 +91,8 @@
         <a href="#" onclick="goNav('docs','navOps');return false">Документы</a>
         <a href="#" id="tabRepricer" style="display:none" onclick="goNav('repricer','navOps');return false">Репрайсер</a>
         <a href="#" id="tabStrategy" style="display:none" onclick="goNav('strategy','navOps');return false">Стратегия</a>
+        <div class="mp-drop-sep"></div>
+        <a href="#" onclick="goNav('onboard','navOps');return false">Подключение кабинета</a>
       </div>
     </div>
     <div class="mp-menu-item" id="navWB">
@@ -237,6 +240,26 @@
       <div class="text-center text-secondary py-4"><span class="spinner-border"></span></div>
     </div>
   </div><!-- /pane-money -->
+
+  <!-- ── Результат ── -->
+  <div id="pane-result" style="display:none">
+    <div class="d-flex gap-3 mb-3 flex-wrap align-items-center">
+      <h3 class="mb-0 fw-bold">Результат</h3>
+      <span class="text-secondary small">что изменилось с подключения и что мы для этого сделали</span>
+      <button class="mp-refresh ms-auto" onclick="loadResult(true)" title="Обновить"><i class="bi bi-arrow-clockwise"></i></button>
+    </div>
+    <div id="resultWrap"><div class="text-center text-secondary py-4"><span class="spinner-border"></span></div></div>
+  </div><!-- /pane-result -->
+
+  <!-- ── Подключение кабинета ── -->
+  <div id="pane-onboard" style="display:none">
+    <div class="d-flex gap-3 mb-3 flex-wrap align-items-center">
+      <h3 class="mb-0 fw-bold">Подключение кабинета</h3>
+      <span class="text-secondary small">каталог собирается из API площадок — руками ничего писать не нужно</span>
+      <button class="btn btn-info ms-auto" onclick="onboardScan()">Собрать каталог из API</button>
+    </div>
+    <div id="onboardWrap"><div class="text-center text-secondary py-4"><span class="spinner-border"></span></div></div>
+  </div><!-- /pane-onboard -->
 
   <!-- ── Новости площадок ── -->
   <div id="pane-news" style="display:none">
@@ -563,6 +586,6 @@
 
 <script src="vendor/bootstrap.bundle.min.js"></script>
 <script src="vendor/chart.umd.min.js"></script>
-<script src="app.js?v=185"></script>
+<script src="app.js?v=186"></script>
 </body>
 </html>

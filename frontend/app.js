@@ -25,7 +25,7 @@ document.addEventListener('DOMContentLoaded', _initThemeBtn);
 const API = '';
 let charts = {};
 let sortState = {};
-const dirty = { salesan: true, stocks: true, reviews: true, finance: true, unit: true, tools: true, toolsoz: true, docs: true, strategy: true, repricer: true, news: true, money: true };
+const dirty = { salesan: true, stocks: true, reviews: true, finance: true, unit: true, tools: true, toolsoz: true, docs: true, strategy: true, repricer: true, news: true, money: true, result: true, onboard: true };
 let _advertData = [];
 let currentTab = 'finance';
 let prodAllData = [];
@@ -247,7 +247,7 @@ function goNavTool(tab, tool, navId) {
 function switchTab(name, linkEl) {
   document.querySelectorAll('#mainTabs .nav-link').forEach(a => a.classList.remove('active'));
   if (linkEl) linkEl.classList.add('active');
-  ['salesan', 'stocks', 'reviews', 'finance', 'unit', 'tools', 'toolsoz', 'docs', 'strategy', 'repricer', 'news', 'money'].forEach(t => {
+  ['salesan', 'stocks', 'reviews', 'finance', 'unit', 'tools', 'toolsoz', 'docs', 'strategy', 'repricer', 'news', 'money', 'result', 'onboard'].forEach(t => {
     const el = document.getElementById('pane-' + t);
     if (el) el.style.display = t === name ? 'block' : 'none';
   });
@@ -257,7 +257,8 @@ function switchTab(name, linkEl) {
     ({ salesan: loadSalesAnalytics, stocks: loadStocks,
        reviews: loadReviews, finance: loadFinance, tools: loadTools, toolsoz: loadOzTool, docs: loadDocs,
        unit: loadUnitEconomics, strategy: loadStrategy, repricer: loadRepricer,
-       news: loadNews, money: loadMoney })[name]();
+       news: loadNews, money: loadMoney, result: loadResult,
+       onboard: loadOnboard })[name]();
   }
 }
 
@@ -6115,4 +6116,132 @@ function renderMoney() {
     </div>`;
   });
   wrap.innerHTML = html;
+}
+
+
+// ── Результат: динамика к месяцу подключения ────────────────────────────────
+let _resultData = null;
+
+async function loadResult(refresh) {
+  const wrap = document.getElementById('resultWrap');
+  if (!wrap) return;
+  if (refresh) wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border"></span></div>';
+  try {
+    _resultData = await fetchJSON('/api/tools/result', 180000);
+    renderResult();
+  } catch (e) {
+    wrap.innerHTML = `<div class="alert alert-danger">Ошибка: ${esc(e.message)}</div>`;
+  }
+}
+
+async function setBaseline(m) {
+  await fetch('/api/tools/result/baseline', { method: 'POST',
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ month: m }) });
+  loadResult(true);
+}
+
+function _dl(v, unit, invert) {
+  if (v === null || v === undefined) return '<span class="text-muted">—</span>';
+  const good = invert ? v < 0 : v > 0;
+  const col = v === 0 ? 'var(--muted)' : good ? 'var(--pos-strong)' : 'var(--danger)';
+  return `<span style="color:${col};font-weight:700">${v > 0 ? '+' : ''}${fmt(v)}${unit}</span>`;
+}
+
+function renderResult() {
+  const wrap = document.getElementById('resultWrap');
+  if (!wrap || !_resultData) return;
+  if (_resultData.error) {
+    wrap.innerHTML = `<div class="alert alert-warning">${esc(_resultData.error)}</div>`;
+    return;
+  }
+  const d = _resultData.delta || {}, b = _resultData.baseline || {}, c = _resultData.current || {};
+  let html = `<div class="card bg-card p-3 mb-3">
+    <div class="text-secondary small mb-2">С месяца подключения (${esc(_resultData.baseline_month || '')}) по последний (${esc((_resultData.months.slice(-1)[0] || {}).month || '')})</div>
+    <div class="d-flex gap-4 flex-wrap">
+      <div><div class="text-secondary small">Выручка</div>
+        <div style="font-size:1.5rem;font-weight:800">${_dl(d.revenue, ' ₽')}</div>
+        <div class="text-secondary small">${fmtRub(b.revenue)} → ${fmtRub(c.revenue)}${d.revenue_pct !== null ? ` (${d.revenue_pct > 0 ? '+' : ''}${d.revenue_pct}%)` : ''}</div></div>
+      <div><div class="text-secondary small">Валовая прибыль</div>
+        <div style="font-size:1.5rem;font-weight:800">${_dl(d.profit, ' ₽')}</div>
+        <div class="text-secondary small">${fmtRub(b.profit)} → ${fmtRub(c.profit)}</div></div>
+      <div><div class="text-secondary small">Маржа</div>
+        <div style="font-size:1.5rem;font-weight:800">${_dl(d.margin_pp, ' пп')}</div>
+        <div class="text-secondary small">${b.margin_pct ?? '—'}% → ${c.margin_pct ?? '—'}%</div></div>
+      <div><div class="text-secondary small">ДРР</div>
+        <div style="font-size:1.5rem;font-weight:800">${_dl(d.drr_pp, ' пп', true)}</div>
+        <div class="text-secondary small">${b.drr_pct ?? '—'}% → ${c.drr_pct ?? '—'}%</div></div>
+    </div>
+  </div>`;
+
+  html += `<div class="card bg-card mb-3"><div class="card-body p-0"><div class="table-responsive">
+    <table class="table table-sm mb-0 text-nowrap" style="font-size:.85rem"><thead><tr>
+    <th>Месяц</th><th class="text-end">Выручка</th><th class="text-end">Валовая</th>
+    <th class="text-end">Маржа</th><th class="text-end">Реклама</th><th class="text-end">ДРР</th><th></th>
+    </tr></thead><tbody>` +
+    (_resultData.months || []).map(m => `<tr${m.month === _resultData.baseline_month ? ' style="background:var(--brand-soft)"' : ''}>
+      <td><b>${esc(m.month)}</b>${m.month === _resultData.baseline_month ? ' <span class="badge bg-secondary">старт</span>' : ''}</td>
+      <td class="text-end">${fmtRub(m.revenue)}</td>
+      <td class="text-end">${fmtRub(m.profit)}</td>
+      <td class="text-end">${m.margin_pct ?? '—'}%</td>
+      <td class="text-end">${fmtRub(m.ads)}</td>
+      <td class="text-end">${m.drr_pct ?? '—'}%</td>
+      <td class="text-end">${m.month !== _resultData.baseline_month ? `<a href="#" class="small" onclick="setBaseline('${m.month}');return false">сделать стартом</a>` : ''}</td>
+    </tr>`).join('') + `</tbody></table></div></div></div>`;
+
+  const acts = _resultData.actions || [];
+  html += `<div class="card bg-card p-3">
+    <div class="fw-semibold mb-2">Что мы сделали за период (${acts.length})</div>` +
+    (acts.length ? acts.map(a => `<div class="mb-2 pb-2" style="border-bottom:1px solid var(--border)">
+      <span class="text-secondary small">${esc(String(a.when || '').slice(0, 16))}</span>
+      <div>${esc(a.what || '')}</div>
+      ${a.why ? `<div class="small text-secondary">${esc(a.why)}</div>` : ''}
+    </div>`).join('')
+    : '<div class="text-secondary small">Действий пока нет — они появятся, когда начнём применять решения агента.</div>') +
+    `</div>`;
+  wrap.innerHTML = html;
+}
+
+// ── Подключение кабинета ─────────────────────────────────────────────────────
+async function loadOnboard() {
+  const wrap = document.getElementById('onboardWrap');
+  if (!wrap) return;
+  try {
+    const d = await fetchJSON('/api/tools/onboarding', 60000);
+    const ok = d.ready;
+    wrap.innerHTML = `<div class="card bg-card p-3 mb-3">
+      <div class="d-flex gap-4 flex-wrap">
+        <div><div class="text-secondary small">Товаров найдено</div><div style="font-size:1.6rem;font-weight:800">${d.auto_skus || 0}</div></div>
+        <div><div class="text-secondary small">Связано с WB</div><div style="font-size:1.6rem;font-weight:800">${d.with_wb || 0}</div></div>
+        <div><div class="text-secondary small">Связано с Ozon</div><div style="font-size:1.6rem;font-weight:800">${d.with_ozon || 0}</div></div>
+        <div><div class="text-secondary small">Есть себестоимость</div>
+          <div style="font-size:1.6rem;font-weight:800;color:${d.cost_missing ? 'var(--danger)' : 'var(--pos-strong)'}">${d.cost_known || 0} / ${d.auto_skus || 0}</div></div>
+      </div>
+      <div class="mt-2 small ${ok ? 'text-success' : 'text-warning'}">${ok ? 'Кабинет готов к работе.' : 'Кабинет ещё не готов: без себестоимости маржа считается вслепую.'}</div>
+      <div class="text-secondary small mt-1">Последняя сборка: ${esc(d.last_scan || 'ещё не было')}</div>
+    </div>` +
+    (d.cost_missing ? `<div class="card bg-card p-3 mb-3">
+      <div class="fw-semibold mb-2">Нет себестоимости (${d.cost_missing})</div>
+      <div class="small text-secondary">${esc((d.cost_missing_list || []).join(', '))}${d.cost_missing > 30 ? ' и др.' : ''}</div>
+      <div class="small mt-2">Загрузи файл себестоимости — тогда заработают юнитка, «Где деньги» и репрайсер.</div>
+    </div>` : '') +
+    `<div class="card bg-card p-3">
+      <div class="fw-semibold mb-2">Категории товаров (${(d.groups || []).length})</div>
+      <div class="small text-secondary">${esc((d.groups || []).join(' · ')) || '—'}</div>
+    </div>`;
+  } catch (e) {
+    wrap.innerHTML = `<div class="alert alert-danger">Ошибка: ${esc(e.message)}</div>`;
+  }
+}
+
+async function onboardScan() {
+  const wrap = document.getElementById('onboardWrap');
+  wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>Читаю каталоги площадок…</div>';
+  try {
+    const r = await fetch('/api/tools/onboarding/scan', { method: 'POST' });
+    const j = await r.json();
+    if (j.error) { wrap.innerHTML = `<div class="alert alert-warning">${esc(j.error)}</div>`; return; }
+    await loadOnboard();
+  } catch (e) {
+    wrap.innerHTML = `<div class="alert alert-danger">Ошибка: ${esc(e.message)}</div>`;
+  }
 }

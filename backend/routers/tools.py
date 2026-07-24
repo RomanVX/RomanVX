@@ -4955,3 +4955,19 @@ async def elasticity_get(request: Request, days: int = Query(default=180)):
     _owner_only(request)
     import elasticity
     return await elasticity.get(days)
+
+
+@router.get("/result")
+async def result_get(request: Request, months: int = Query(default=12)):
+    """Результат: динамика денег к месяцу подключения + что мы сделали."""
+    _owner_only(request)
+    import result
+    return await result.get(months)
+
+
+@router.post("/result/baseline", include_in_schema=False)
+async def result_baseline(request: Request, body: dict):
+    """Зафиксировать месяц подключения кабинета (owner)."""
+    _owner_only(request)
+    import result
+    return await result.set_baseline(str(body.get("month") or ""))
