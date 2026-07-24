@@ -24,7 +24,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" />
-  <link rel="stylesheet" href="style.css?v=21" />
+  <link rel="stylesheet" href="style.css?v=22" />
 </head>
 <body>
 
@@ -67,8 +67,6 @@
         <a href="#" onclick="goNav('salesan','navAnalytics');return false">Заказы</a>
         <a href="#" id="navFinance" onclick="goNav('finance','navAnalytics');return false">Финансы</a>
         <a href="#" onclick="goNav('unit','navAnalytics');return false">Юнитка</a>
-        <div class="mp-drop-sep"></div>
-        <a href="#" onclick="goNav('news','navAnalytics');return false">Новости площадок</a>
       </div>
     </div>
     <div class="mp-menu-item" id="navWarehouse">
@@ -113,6 +111,14 @@
         <a href="#" onclick="goNavTool('toolsoz','ads','navOzon');return false">Реклама (Performance)</a>
         <a href="#" onclick="goNavTool('toolsoz','phrases','navOzon');return false">Запросы</a>
         <a href="#" onclick="goNavTool('toolsoz','trends','navOzon');return false">Радар трендов</a>
+      </div>
+    </div>
+    <div class="mp-menu-item" id="navNews">
+      <span class="mp-menu-title" onclick="goNav('news','navNews')">Новости<span id="newsBadge" class="mp-badge" style="display:none"></span></span>
+      <div class="mp-menu-drop">
+        <a href="#" onclick="goNav('news','navNews');setNewsImp('');return false">Все новости</a>
+        <a href="#" onclick="goNav('news','navNews');setNewsImp('critical');return false">Только важное</a>
+        <a href="#" onclick="goNav('news','navNews');setNewsImp('important');return false">Стоит учесть</a>
       </div>
     </div>
   </nav>
@@ -543,6 +549,6 @@
 
 <script src="vendor/bootstrap.bundle.min.js"></script>
 <script src="vendor/chart.umd.min.js"></script>
-<script src="app.js?v=183"></script>
+<script src="app.js?v=184"></script>
 </body>
 </html>

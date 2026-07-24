@@ -805,3 +805,19 @@ html[data-theme="light"] .text-info { color: #0369a1 !important; }
 .table-responsive thead tr:nth-child(2) th {
   top: 34px;   /* вторая строка шапки (репрайсер) липнет под первой */
 }
+
+/* Счётчик важных новостей в верхнем меню */
+.mp-badge {
+  display: inline-block;
+  min-width: 18px;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--danger);
+  color: #fff;
+  font-size: .7rem;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+  vertical-align: 1px;
+}

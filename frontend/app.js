@@ -47,6 +47,7 @@ async function loadCabinetInfo() {
     _cab = await (await fetch('/api/cabinet')).json();
   } catch (e) { return; }
   if (_cab.group_order) GROUP_ORDER = _cab.group_order;
+  setTimeout(initNewsBadge, 3000);
   if (_me) applyRole();
   if (_cab.brand_order) BRAND_ORDER = _cab.brand_order;
   if (_cab.subgroups) SUBGROUPS = _cab.subgroups;
@@ -5937,6 +5938,7 @@ async function loadNews(refresh) {
   try {
     _newsData = await fetchJSON(`/api/tools/news?days=${days}${refresh ? '&refresh=1' : ''}`, 180000);
     renderNews();
+    _newsBadge();
   } catch (e) {
     wrap.innerHTML = `<div class="alert alert-danger">Ошибка: ${esc(e.message)}</div>`;
   }
@@ -6007,4 +6009,21 @@ function renderNews() {
     </div>`;
   });
   wrap.innerHTML = html;
+}
+
+
+function _newsBadge() {
+  const el = document.getElementById('newsBadge');
+  if (!el) return;
+  const n = ((_newsData && _newsData.counts) || {}).critical || 0;
+  el.textContent = n;
+  el.style.display = n ? '' : 'none';
+}
+
+// счётчик важного подтягиваем при входе, не открывая вкладку
+async function initNewsBadge() {
+  try {
+    _newsData = await fetchJSON('/api/tools/news?days=14', 30000);
+    _newsBadge();
+  } catch (e) { /* тихо: бейдж не критичен */ }
 }
