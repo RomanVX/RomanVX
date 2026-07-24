@@ -405,6 +405,20 @@ async def _t_fbs(_a: dict) -> str:
                        "note": res["note"], "by_sku": slim}, ensure_ascii=False)
 
 
+async def _t_news(a: dict) -> str:
+    """Новости площадок с разбором влияния на нас."""
+    import news as _news
+    days = int(a.get("days") or 30)
+    items = await asyncio.to_thread(_news.listing, days, "", "")
+    slim = [{"дата": i["published"][:10], "источник": i["source"],
+             "важность": i.get("importance"), "заголовок": i["title"][:150],
+             "нас_касается": (i.get("impact") or "")[:300],
+             "вступает": i.get("effective_date")} for i in items[:40]]
+    up = await asyncio.to_thread(_news.upcoming)
+    return json.dumps({"новости": slim, "скоро_вступает_в_силу": up},
+                      ensure_ascii=False)
+
+
 async def _t_dashboard_catalog(_a: dict) -> str:
     """Каталог всех эндпоинтов дашборда (наш же OpenAPI)."""
     import agent_api
@@ -515,6 +529,7 @@ _TOOLS = {
                "(+флаг автодобавления), календарь акций WB на 30 дней (куда зовут, даты, условия)"),
     "fbs_compare": (_t_fbs, "Переход WB на FBS: дельта прямых затрат на штуку и месяц по каждому "
                     "SKU (комиссия/логистика/хранение по официальным тарифам); конверсию и сроки не моделирует"),
+    "news": (_t_news, "Новости площадок за период (аргумент days) с разбором важности и влияния на нас + календарь вступающих в силу изменений"),
     "dashboard_catalog": (_t_dashboard_catalog, "Каталог ВСЕХ эндпоинтов дашборда с описаниями и параметрами — смотри сюда, если нужных данных нет в готовых инструментах"),
     "dashboard_api": (_t_dashboard_api, "Вызвать любой GET-эндпоинт дашборда напрямую: path (например /api/tools/clusters) и params. Так доступны любые данные проекта, а не только готовые инструменты"),
     "propose_action": (_t_propose_action, "Предложить действие в кабинете владельцу на подтверждение. "
@@ -654,7 +669,7 @@ _TOOL_RU = {"unit_economics": "юнитка", "stocks": "остатки", "pnl":
             "clusters": "кластеры", "pnl_all": "P&L площадок",
             "history": "история продаж",
             "propose_action": "заявка на действие",
-            "dashboard_catalog": "каталог API", "dashboard_api": "данные дашборда",
+            "news": "новости площадок", "dashboard_catalog": "каталог API", "dashboard_api": "данные дашборда",
             "competitors": "конкуренты", "trends": "тренды",
             "ozon_search": "поиск Ozon", "repricer": "репрайсер",
             "repricer_propose": "предложения цен", "wb_search": "выдача WB",
