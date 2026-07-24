@@ -78,6 +78,46 @@ async def _t_adv(_a: dict) -> str:
             + json.dumps(camps, ensure_ascii=False))
 
 
+async def _t_adv_bids(_a: dict) -> str:
+    """Ставки CPM и фразы кампаний WB — кеш вкладки «Ставка CPM»."""
+    from routers import tools as _tools
+    data = await _tools.bid_queries(refresh=False, date_from="", date_to="")
+    rows = data.get("rows") or []
+    if not rows:
+        return "нет данных по ставкам: " + str(data.get("error") or "кеш пуст")
+    agg: dict = {}
+    for r in rows:
+        key = (r.get("campaign"), (r.get("skus") or ["?"])[0])
+        a = agg.setdefault(key, {"bid": r.get("bid"), "views": 0, "clicks": 0,
+                                 "spend": 0.0, "orders": 0, "phrases": []})
+        a["views"] += r.get("views") or 0
+        a["clicks"] += r.get("clicks") or 0
+        a["spend"] += r.get("spend") or 0
+        a["orders"] += r.get("orders") or 0
+        if r.get("bid") and not a["bid"]:
+            a["bid"] = r["bid"]
+        if r.get("phrase"):
+            a["phrases"].append(r)
+    out = []
+    for (camp, sku), a in sorted(agg.items(), key=lambda kv: -kv[1]["spend"]):
+        top = sorted(a["phrases"], key=lambda x: -(x.get("spend") or 0))[:5]
+        minus = sum(1 for p in a["phrases"]
+                    if (p.get("views") or 0) >= 500 and not (p.get("orders") or 0))
+        out.append({
+            "campaign": camp, "sku": sku, "bid_cpm": a["bid"],
+            "views": a["views"], "clicks": a["clicks"],
+            "ctr": round(a["clicks"] / a["views"] * 100, 2) if a["views"] else None,
+            "orders": a["orders"], "spend": round(a["spend"]),
+            "cpm_fact": round(a["spend"] / a["views"] * 1000) if a["views"] else None,
+            "minus_candidates": minus,
+            "top_phrases": [{"q": p.get("phrase"), "views": p.get("views"),
+                             "ctr": p.get("ctr"), "orders": p.get("orders"),
+                             "spend": p.get("spend"), "bid": p.get("bid")}
+                            for p in top]})
+    return ("по кампаниям WB (период 14 дн, ставки текущие): "
+            + json.dumps(out[:25], ensure_ascii=False))
+
+
 async def _t_prices(_a: dict) -> str:
     return (await _ar._prices_context()) or "нет данных"
 
@@ -292,6 +332,7 @@ _TOOLS = {
     "stocks": (_t_stocks, "Остатки по всем маркетплейсам с днями запаса"),
     "pnl": (_t_pnl, "P&L WB по месяцам за 3 месяца: выручка, комиссия, логистика, хранение, реклама, прибыль"),
     "advertising": (_t_adv, "Рекламные кампании WB: расход, выручка, ДРР, вердикты где сливается бюджет"),
+    "adv_bids": (_t_adv_bids, "Ставки CPM по кампаниям и артикулам WB: показы, клики, CTR, CR, факт-CPM, топ-фразы по расходу и кандидаты в минус-фразы"),
     "prices": (_t_prices, "Текущие цены наших товаров и история изменений за 14 дней"),
     "sales_daily": (_t_sales, "Продажи по дням за 14 дней по площадкам + по SKU за 7 дней"),
     "competitors": (_t_competitors, "Срезы выдачи WB по нашим запросам: позиции, цены и прирост отзывов конкурентов"),
@@ -431,7 +472,8 @@ _SYSTEM = """Ты — стратег-директор по маркетплей�
 
 
 _TOOL_RU = {"unit_economics": "юнитка", "stocks": "остатки", "pnl": "P&L",
-            "advertising": "реклама", "prices": "цены", "sales_daily": "продажи",
+            "advertising": "реклама", "adv_bids": "ставки CPM",
+            "prices": "цены", "sales_daily": "продажи",
             "competitors": "конкуренты", "trends": "тренды",
             "ozon_search": "поиск Ozon", "repricer": "репрайсер",
             "repricer_propose": "предложения цен", "wb_search": "выдача WB",
