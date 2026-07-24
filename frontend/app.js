@@ -25,7 +25,7 @@ document.addEventListener('DOMContentLoaded', _initThemeBtn);
 const API = '';
 let charts = {};
 let sortState = {};
-const dirty = { salesan: true, stocks: true, reviews: true, finance: true, unit: true, tools: true, toolsoz: true, docs: true, strategy: true, repricer: true, news: true, money: true, result: true, onboard: true };
+const dirty = { salesan: true, stocks: true, reviews: true, finance: true, unit: true, tools: true, toolsoz: true, docs: true, strategy: true, repricer: true, news: true, money: true, onboard: true };
 let _advertData = [];
 let currentTab = 'finance';
 let prodAllData = [];
@@ -247,7 +247,7 @@ function goNavTool(tab, tool, navId) {
 function switchTab(name, linkEl) {
   document.querySelectorAll('#mainTabs .nav-link').forEach(a => a.classList.remove('active'));
   if (linkEl) linkEl.classList.add('active');
-  ['salesan', 'stocks', 'reviews', 'finance', 'unit', 'tools', 'toolsoz', 'docs', 'strategy', 'repricer', 'news', 'money', 'result', 'onboard'].forEach(t => {
+  ['salesan', 'stocks', 'reviews', 'finance', 'unit', 'tools', 'toolsoz', 'docs', 'strategy', 'repricer', 'news', 'money', 'onboard'].forEach(t => {
     const el = document.getElementById('pane-' + t);
     if (el) el.style.display = t === name ? 'block' : 'none';
   });
@@ -257,8 +257,7 @@ function switchTab(name, linkEl) {
     ({ salesan: loadSalesAnalytics, stocks: loadStocks,
        reviews: loadReviews, finance: loadFinance, tools: loadTools, toolsoz: loadOzTool, docs: loadDocs,
        unit: loadUnitEconomics, strategy: loadStrategy, repricer: loadRepricer,
-       news: loadNews, money: loadMoney, result: loadResult,
-       onboard: loadOnboard })[name]();
+       news: loadNews, money: loadMoney, onboard: loadOnboard })[name]();
   }
 }
 

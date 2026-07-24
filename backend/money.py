@@ -29,21 +29,42 @@ def _f(kind: str, title: str, amount: float, evidence: str, action: str,
             "act_kind": act_kind, "act_payload": act_payload or {}}
 
 
+def _arts(v) -> list[str]:
+    """Артикулы кампании приходят и строками, и объектами — сводим к строкам."""
+    out = []
+    for x in v or []:
+        if isinstance(x, dict):
+            x = x.get("art") or x.get("sku") or x.get("nm") or x.get("nmId")
+        if x:
+            out.append(str(x))
+    return out
+
+
 # ── источники находок ────────────────────────────────────────────────────────
-async def _find_losing_skus() -> list[dict]:
-    """Товары, которые продаются в минус — по ЖИВЫМ ценам, а не по юнитке."""
+# Юнитка тяжёлая (heavy.guard), поэтому собирается ОДИН раз на весь прогон
+# и раздаётся источникам — иначе параллельные вызовы душат друг друга.
+async def _ctx() -> dict:
     from routers import tools as _tools
-    import agent_review as _ar
     import wb_client as _wb
-    data = await asyncio.wait_for(_tools.get_margin(mp="WB"), timeout=60)
-    items = data.get("items") or []
-    if not items:
-        return []
-    live = {}
+    items, live = [], {}
     try:
-        live = await asyncio.wait_for(_wb.get_current_prices(), timeout=25)
+        data = await asyncio.wait_for(_tools.get_margin(mp="WB"), timeout=180)
+        items = data.get("items") or []
+    except Exception as e:
+        _log.warning("ctx margin: %s", str(e)[:150])
+    try:
+        live = await asyncio.wait_for(_wb.get_current_prices(), timeout=30)
     except Exception:
         pass
+    return {"items": items, "live": live}
+
+
+async def _find_losing_skus(ctx: dict) -> list[dict]:
+    """Товары, которые продаются в минус — по ЖИВЫМ ценам, а не по юнитке."""
+    import agent_review as _ar
+    items, live = ctx["items"], ctx["live"]
+    if not items:
+        return []
     out = []
     for b in items:
         sku = str(b.get("sku"))
@@ -63,7 +84,7 @@ async def _find_losing_skus() -> list[dict]:
     return out
 
 
-async def _find_ad_waste() -> list[dict]:
+async def _find_ad_waste(ctx: dict) -> list[dict]:
     """Кампании, где реклама дороже, чем приносит."""
     from routers import tools as _tools
     adv = await asyncio.wait_for(_tools.get_adv(), timeout=60)
@@ -90,13 +111,13 @@ async def _find_ad_waste() -> list[dict]:
             "ad_waste", f"Реклама «{c.get('name') or cid}»: {c.get('verdict_why') or verdict}",
             amount, ev,
             "Снизить ставку ступенью 20-30% или поставить кампанию на паузу",
-            sku=", ".join((c.get("skus") or c.get("arts") or [])[:3]),
+            sku=", ".join(_arts(c.get("skus") or c.get("arts"))[:3]),
             act_kind="campaign_state" if verdict == "waste" else "",
             act_payload={"advert_id": cid, "action": "pause"} if cid and verdict == "waste" else {}))
     return out
 
 
-async def _find_minus_phrases() -> list[dict]:
+async def _find_minus_phrases(ctx: dict) -> list[dict]:
     """Фразы с показами и расходом, но без единого заказа."""
     from routers import tools as _tools
     data = await asyncio.wait_for(
@@ -110,7 +131,7 @@ async def _find_minus_phrases() -> list[dict]:
             continue
         if (r.get("views") or 0) < 300:
             continue
-        key = (r.get("camp_id"), (r.get("skus") or ["?"])[0], r.get("campaign"))
+        key = (r.get("camp_id"), (_arts(r.get("skus")) or ["?"])[0], r.get("campaign"))
         g = by_camp.setdefault(key, {"spend": 0.0, "phrases": []})
         g["spend"] += r.get("spend") or 0
         g["phrases"].append(r.get("phrase"))
@@ -130,22 +151,18 @@ async def _find_minus_phrases() -> list[dict]:
     return out
 
 
-async def _find_oos_losses() -> list[dict]:
+async def _find_oos_losses(ctx: dict) -> list[dict]:
     """Товар в нуле или на исходе — считаем упущенную прибыль в месяц."""
     from routers import dashboard as _dash
-    from routers import tools as _tools
     import agent_review as _ar
-    rows = await asyncio.wait_for(_dash.get_stocks_table(), timeout=60)
+    rows = await asyncio.wait_for(_dash.get_stocks_table(), timeout=90)
     if not rows:
         return []
     margin: dict = {}
-    try:
-        data = await asyncio.wait_for(_tools.get_margin(mp="WB"), timeout=60)
-        for b in data.get("items") or []:
-            m = _ar._margin_math(b)
-            margin[str(b.get("sku"))] = m["profit_unit"]
-    except Exception:
-        pass
+    for b in ctx["items"]:
+        lp = (ctx["live"].get(str(b.get("sku"))) or {}).get("discounted")
+        m = _ar._margin_math({**b, "price0": lp} if lp else b)
+        margin[str(b.get("sku"))] = m["profit_unit"]
     out = []
     for r in rows:
         sku = str(r.get("sku") or r.get("art") or "")
@@ -178,12 +195,9 @@ async def _find_oos_losses() -> list[dict]:
     return out
 
 
-async def _find_no_cogs() -> list[dict]:
+async def _find_no_cogs(ctx: dict) -> list[dict]:
     """Нет себестоимости — значит маржа этого SKU вообще неизвестна."""
-    from routers import tools as _tools
-    data = await asyncio.wait_for(_tools.get_margin(mp="WB"), timeout=60)
-    blind = [str(b.get("sku")) for b in (data.get("items") or [])
-             if not (b.get("cogs") or 0)]
+    blind = [str(b.get("sku")) for b in ctx["items"] if not (b.get("cogs") or 0)]
     if not blind:
         return []
     return [_f("no_cogs", f"Нет себестоимости у {len(blind)} SKU", 0,
@@ -192,7 +206,7 @@ async def _find_no_cogs() -> list[dict]:
                "по этим товарам считаются вслепую")]
 
 
-async def _find_ozon_auto_action() -> list[dict]:
+async def _find_ozon_auto_action(ctx: dict) -> list[dict]:
     """Автоакции Ozon режут цену без спроса."""
     import ozon_client
     prices = await asyncio.wait_for(ozon_client.get_prices(), timeout=40)
@@ -212,14 +226,15 @@ _SOURCES = (_find_losing_skus, _find_ad_waste, _find_minus_phrases,
 
 async def build() -> dict:
     """Собрать все находки. Каждый источник изолирован: упал — не роняет отчёт."""
-    results = await asyncio.gather(*[s() for s in _SOURCES],
+    ctx = await _ctx()
+    results = await asyncio.gather(*[s(ctx) for s in _SOURCES],
                                    return_exceptions=True)
     findings, errors = [], []
     for src, res in zip(_SOURCES, results):
         if isinstance(res, list):
             findings += res
         else:
-            errors.append(f"{src.__name__}: {str(res)[:120]}")
+            errors.append(f"{src.__name__}: {str(res)[:120] or type(res).__name__}")
             _log.warning("%s: %s", src.__name__, str(res)[:200])
     findings.sort(key=lambda f: -f["amount"])
     total = sum(f["amount"] for f in findings)
