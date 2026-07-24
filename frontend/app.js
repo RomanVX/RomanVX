@@ -1742,13 +1742,21 @@ function buildFinanceTotal() {
   monthKeys.forEach(mk => { pct[mk] = revenue[mk] ? Math.round(gross[mk] / revenue[mk] * 100) : 0; });
   rows.push({ key: 'gross_pct', label: '   Маржа %', style: 'pct', formula: 'gross_pct', values: pct });
 
-  // ручные статьи затрат (сгруппированы по названию)
+  // ручные статьи затрат (сгруппированы по названию):
+  // once — на конкретный месяц, monthly — каждый месяц периода mk_from..mk_to
   const items = (_manualCosts && _manualCosts.items) || [];
+  const amtFor = (it, mk) => {
+    if ((it.kind || 'once') === 'monthly')
+      return it.mk_from && mk >= it.mk_from && (!it.mk_to || mk <= it.mk_to) ? it.amount : 0;
+    return it.mk === mk ? it.amount : 0;
+  };
   const byLabel = {};
   items.forEach(it => {
-    if (!monthLabels[it.mk]) return;
-    (byLabel[it.label] = byLabel[it.label] || {})[it.mk] =
-      (byLabel[it.label][it.mk] || 0) + it.amount;
+    monthKeys.forEach(mk => {
+      const a = amtFor(it, mk);
+      if (a) (byLabel[it.label] = byLabel[it.label] || {})[mk] =
+        (byLabel[it.label][mk] || 0) + a;
+    });
   });
   const manualSum = {};
   monthKeys.forEach(mk => { manualSum[mk] = 0; });
@@ -1773,20 +1781,42 @@ function buildFinanceTotal() {
 
 // ── Ручные статьи затрат (Тотал) ──────────────────────────────────────────────
 
-const _manCostMks = new Set();   // выбранные месяцы для новой статьи
-
-function toggleManCostMk(mk, btn) {
-  if (_manCostMks.has(mk)) { _manCostMks.delete(mk); btn.classList.remove('active'); }
-  else { _manCostMks.add(mk); btn.classList.add('active'); }
-}
-
 async function addManualCost() {
   const label = (document.getElementById('manCostLabel')?.value || '').trim();
   const amount = parseFloat(document.getElementById('manCostAmount')?.value || '0');
-  if (!_manCostMks.size || !label || !amount) return;
-  await fetch('/api/finance/manual_costs', {
+  const kind = document.getElementById('manCostKind')?.value || 'monthly';
+  if (!label) { alert('Укажи название статьи'); return; }
+  if (!amount) { alert('Укажи сумму'); return; }
+  const body = { label, amount, kind };
+  if (kind === 'monthly') {
+    body.mk_from = document.getElementById('manCostFrom')?.value || '';
+    body.mk_to = document.getElementById('manCostTo')?.value || '';
+  } else {
+    body.mk = document.getElementById('manCostMk')?.value || '';
+  }
+  const r = await fetch('/api/finance/manual_costs', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ mks: [..._manCostMks], label, amount }),
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    let msg = 'Не сохранилось';
+    try { msg = (await r.json()).detail || msg; } catch (e) { /* ignore */ }
+    alert(msg);
+    return;
+  }
+  _manualCosts = null;
+  _financeData.TOTAL = null;
+  renderFinanceTable();
+}
+
+async function editManualCost(id, cur) {
+  const v = prompt('Новая сумма, ₽:', cur);
+  if (v === null) return;
+  const amount = parseFloat(String(v).replace(/\s/g, '').replace(',', '.'));
+  if (!amount) return;
+  await fetch(`/api/finance/manual_costs/${id}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ amount }),
   });
   _manualCosts = null;
   _financeData.TOTAL = null;
@@ -1940,37 +1970,61 @@ function mpComparePanel() {
 }
 
 function manualCostsPanel(months) {
+  const sortedM = [...months].sort((a, b) => a.key.localeCompare(b.key));
+  const lastKey = sortedM.length ? sortedM[sortedM.length - 1].key : '';
+  const mLabel = mk => (sortedM.find(m => m.key === mk) || {}).label || mk || '';
+  const opts = sel => sortedM.map(m =>
+    `<option value="${m.key}"${m.key === sel ? ' selected' : ''}>${m.label}</option>`).join('');
   const items = ((_manualCosts && _manualCosts.items) || [])
-    .slice().sort((a, b) => b.mk.localeCompare(a.mk) || a.label.localeCompare(b.label));
-  // месяцы — кликабельные чипы, можно выбрать сразу несколько
-  [..._manCostMks].forEach(mk => { if (!months.find(m => m.key === mk)) _manCostMks.delete(mk); });
-  const monthChips = [...months].sort((a, b) => a.key.localeCompare(b.key))
-    .map(m => `<button class="btn btn-sm btn-outline-info ${_manCostMks.has(m.key) ? 'active' : ''}"
-                       onclick="toggleManCostMk('${m.key}', this)">${m.label}</button>`).join('');
-  const mLabel = mk => (months.find(m => m.key === mk) || {}).label || mk;
+    .slice().sort((a, b) =>
+      ((a.kind === 'monthly' ? 0 : 1) - (b.kind === 'monthly' ? 0 : 1))
+      || String(b.mk_from || b.mk || '').localeCompare(String(a.mk_from || a.mk || ''))
+      || a.label.localeCompare(b.label));
   let list = '';
   if (items.length) {
-    list = `<div class="mt-2 d-flex flex-column gap-1">` + items.map(it => `
+    list = `<div class="mt-2 d-flex flex-column gap-1">` + items.map(it => {
+      const monthly = (it.kind || 'once') === 'monthly';
+      const period = monthly
+        ? `ежемес. с ${mLabel(it.mk_from || it.mk)}${it.mk_to ? ` по ${mLabel(it.mk_to)}` : ''}`
+        : mLabel(it.mk);
+      return `
       <div class="d-flex align-items-center gap-2 small">
-        <span class="text-secondary" style="min-width:80px">${mLabel(it.mk)}</span>
+        <span class="text-secondary" style="min-width:170px">${period}</span>
         <span style="min-width:220px">${esc(it.label)}</span>
-        <span style="color:var(--neg)">−${fmtRub(it.amount)}</span>
+        <span style="color:var(--neg)">−${fmtRub(it.amount)}${monthly ? '/мес' : ''}</span>
+        <button class="btn btn-sm btn-outline-secondary py-0 px-1" style="font-size:.7rem;line-height:1.2"
+                onclick="editManualCost(${it.id}, ${it.amount})" title="Изменить сумму">✎</button>
         <button class="btn btn-sm btn-outline-danger py-0 px-1" style="font-size:.7rem;line-height:1.2"
                 onclick="delManualCost(${it.id})" title="Удалить">✕</button>
-      </div>`).join('') + `</div>`;
+      </div>`;
+    }).join('') + `</div>`;
   }
+  const selCls = 'form-select form-select-sm bg-dark text-white border-secondary';
   return `
   <details class="rev-fold mt-3">
     <summary>➕ Ручные статьи затрат <span class="text-secondary small fw-normal">(аренда, зарплаты и т.д. — вычитаются из валовой в «Финансовый итог месяца»)</span></summary>
     <div class="card bg-card mt-2 p-3">
-    <div class="d-flex gap-1 flex-wrap align-items-center mb-2">
-      <span class="text-secondary small me-1">Месяцы (можно несколько):</span>${monthChips}
-    </div>
     <div class="d-flex gap-2 flex-wrap align-items-center">
-      <input id="manCostLabel" class="form-control form-control-sm bg-dark text-white border-secondary" style="width:260px" placeholder="Название (напр. Аренда склада)">
-      <input id="manCostAmount" type="number" min="0" step="100" class="form-control form-control-sm bg-dark text-white border-secondary" style="width:130px" placeholder="Сумма ₽/мес">
+      <select id="manCostKind" class="${selCls}" style="width:135px"
+              onchange="document.getElementById('manCostMonthly').style.display=this.value==='monthly'?'inline-flex':'none';document.getElementById('manCostOnce').style.display=this.value==='once'?'inline-flex':'none'">
+        <option value="monthly">Ежемесячно</option>
+        <option value="once">Разово</option>
+      </select>
+      <input id="manCostLabel" class="form-control form-control-sm bg-dark text-white border-secondary" style="width:240px" placeholder="Название (напр. ЗП)">
+      <input id="manCostAmount" type="number" min="0" step="100" class="form-control form-control-sm bg-dark text-white border-secondary" style="width:130px" placeholder="Сумма ₽">
+      <span id="manCostMonthly" style="display:inline-flex;gap:6px;align-items:center">
+        <span class="text-secondary small">с</span>
+        <select id="manCostFrom" class="${selCls}" style="width:120px">${opts(lastKey)}</select>
+        <span class="text-secondary small">по</span>
+        <select id="manCostTo" class="${selCls}" style="width:125px"><option value="" selected>бессрочно</option>${opts('')}</select>
+      </span>
+      <span id="manCostOnce" style="display:none;gap:6px;align-items:center">
+        <span class="text-secondary small">месяц</span>
+        <select id="manCostMk" class="${selCls}" style="width:120px">${opts(lastKey)}</select>
+      </span>
       <button class="btn btn-sm btn-outline-success" onclick="addManualCost()">Добавить</button>
     </div>
+    <div class="text-secondary small mt-2">Ежемесячная статья попадает во все месяцы периода автоматически — в том числе в будущие. Разовая — только в выбранный месяц.</div>
     ${list}
     </div>
   </details>`;

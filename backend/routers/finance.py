@@ -2543,41 +2543,97 @@ def _manual_costs_init():
               else "id INTEGER PRIMARY KEY AUTOINCREMENT")
     db.execute(f"CREATE TABLE IF NOT EXISTS manual_costs "
                f"({id_col}, mk TEXT, label TEXT, amount REAL)")
+    # ежемесячные статьи: действуют с mk_from по mk_to (пусто = бессрочно)
+    for col in ("kind TEXT", "mk_from TEXT", "mk_to TEXT"):
+        try:
+            db.execute(f"ALTER TABLE manual_costs ADD COLUMN {col}")
+        except Exception:
+            pass
 
 
 @router.get("/manual_costs")
 async def get_manual_costs():
-    """Ручные статьи затрат: {items: [{id, mk, label, amount}]}."""
+    """Ручные статьи затрат: {items: [{id, mk, label, amount, kind,
+    mk_from, mk_to}]}. kind: once — на конкретный месяц (mk),
+    monthly — каждый месяц с mk_from по mk_to (пусто = бессрочно)."""
     import db
     def _load():
         _manual_costs_init()
-        return db.fetchall("SELECT id, mk, label, amount FROM manual_costs ORDER BY mk, id")
+        return db.fetchall("SELECT id, mk, label, amount, kind, mk_from, mk_to "
+                           "FROM manual_costs ORDER BY mk, id")
     rows = await asyncio.to_thread(_load)
-    return {"items": [{"id": r[0], "mk": r[1], "label": r[2], "amount": float(r[3] or 0)}
+    return {"items": [{"id": r[0], "mk": r[1], "label": r[2],
+                       "amount": float(r[3] or 0), "kind": r[4] or "once",
+                       "mk_from": r[5] or "", "mk_to": r[6] or ""}
                       for r in rows]}
+
+
+def _mk_norm(v) -> str:
+    v = str(v or "").strip()
+    return v if len(v) == 7 else ""
 
 
 @router.post("/manual_costs")
 async def add_manual_cost(payload: dict):
-    """Добавить статью на один или несколько месяцев:
-    {mk: '2026-06', ...} или {mks: ['2026-05', '2026-06'], label, amount}."""
-    mks = payload.get("mks") or ([payload.get("mk")] if payload.get("mk") else [])
-    mks = [str(m).strip() for m in mks if m and len(str(m).strip()) == 7]
+    """Разовая статья: {mk|'mks', label, amount}. Ежемесячная:
+    {kind: 'monthly', mk_from, mk_to?, label, amount} — попадает в каждый
+    месяц периода автоматически, mk_to пустой = бессрочно."""
     label = str(payload.get("label") or "").strip()
     try:
         amount = float(payload.get("amount") or 0)
     except (ValueError, TypeError):
         amount = 0.0
-    if not mks or not label or not amount:
-        raise HTTPException(status_code=400, detail="Нужны месяцы (ГГГГ-ММ), название и сумма")
     import db
+    if str(payload.get("kind") or "") == "monthly":
+        mk_from = _mk_norm(payload.get("mk_from"))
+        mk_to = _mk_norm(payload.get("mk_to"))
+        if not label or not amount or not mk_from:
+            raise HTTPException(status_code=400,
+                                detail="Нужны название, сумма и месяц начала")
+        def _save():
+            _manual_costs_init()
+            db.execute("INSERT INTO manual_costs (mk, label, amount, kind, "
+                       "mk_from, mk_to) VALUES (?,?,?,?,?,?)",
+                       (mk_from, label, amount, "monthly", mk_from, mk_to or None))
+        await asyncio.to_thread(_save)
+        return {"ok": True}
+    mks = payload.get("mks") or ([payload.get("mk")] if payload.get("mk") else [])
+    mks = [m for m in (_mk_norm(x) for x in mks) if m]
+    if not mks or not label or not amount:
+        raise HTTPException(status_code=400,
+                            detail="Нужны месяц (ГГГГ-ММ), название и сумма")
+    def _save2():
+        _manual_costs_init()
+        db.executemany("INSERT INTO manual_costs (mk, label, amount, kind) "
+                       "VALUES (?,?,?,?)",
+                       [(mk, label, amount, "once") for mk in mks])
+    await asyncio.to_thread(_save2)
+    return {"ok": True, "added": len(mks)}
+
+
+@router.put("/manual_costs/{cost_id}")
+async def edit_manual_cost(cost_id: int, payload: dict):
+    """Правка статьи: amount, label, mk_from, mk_to (что передано)."""
+    import db
+    sets, vals = [], []
+    if payload.get("amount") is not None:
+        try:
+            sets.append("amount = ?"); vals.append(float(payload["amount"]))
+        except (ValueError, TypeError):
+            pass
+    if str(payload.get("label") or "").strip():
+        sets.append("label = ?"); vals.append(str(payload["label"]).strip())
+    for f in ("mk_from", "mk_to"):
+        if f in payload:
+            sets.append(f"{f} = ?"); vals.append(_mk_norm(payload[f]) or None)
+    if not sets:
+        raise HTTPException(status_code=400, detail="Нечего менять")
     def _save():
         _manual_costs_init()
-        db.executemany("INSERT INTO manual_costs (mk, label, amount) VALUES (?,?,?)",
-                       [(mk, label, amount) for mk in mks])
-        return db.fetchall("SELECT MAX(id) FROM manual_costs")[0][0]
-    new_id = await asyncio.to_thread(_save)
-    return {"id": new_id, "added": len(mks)}
+        db.execute(f"UPDATE manual_costs SET {', '.join(sets)} WHERE id = ?",
+                   tuple(vals) + (cost_id,))
+    await asyncio.to_thread(_save)
+    return {"ok": True}
 
 
 @router.delete("/manual_costs/{cost_id}")
