@@ -4864,3 +4864,33 @@ async def agent_digest_get(request: Request, refresh: bool = Query(default=False
     import agent_digest
     text = await (agent_digest.refresh() if refresh else agent_digest.get())
     return {"digest": text}
+
+
+# ══ Новости площадок ═════════════════════════════════════════════════════════
+@router.get("/news")
+async def news_list(days: int = Query(default=45),
+                    source: str = Query(default=""),
+                    importance: str = Query(default=""),
+                    refresh: bool = Query(default=False)):
+    """Лента новостей площадок с разбором «чем это касается нас»."""
+    import news as _news
+    if refresh:
+        try:
+            await _news.refresh_all()
+        except Exception as e:
+            _log.warning("news refresh: %s", e)
+    items = await asyncio.to_thread(_news.listing, days, source, importance)
+    upcoming = await asyncio.to_thread(_news.upcoming)
+    counts = {"critical": 0, "important": 0, "background": 0}
+    for i in items:
+        counts[i.get("importance") or "background"] = \
+            counts.get(i.get("importance") or "background", 0) + 1
+    return {"items": items, "upcoming": upcoming, "counts": counts}
+
+
+@router.post("/news/refresh", include_in_schema=False)
+async def news_refresh(request: Request):
+    """Принудительно собрать и разобрать новости (owner)."""
+    _owner_only(request)
+    import news as _news
+    return await _news.refresh_all()

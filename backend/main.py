@@ -174,6 +174,35 @@ async def _slot_watcher():
         await asyncio.sleep(420)
 
 
+async def _news_loop():
+    """Новости площадок: сбор и разбор раз в 3 часа, сводка в 10:00 МСК."""
+    import snapshot as _snap
+    import news as _news
+    import agent_review as _agent
+    await asyncio.sleep(900)
+    log = logging.getLogger("news")
+    while True:
+        try:
+            res = await _news.refresh_all()
+            if res.get("added"):
+                log.info("новостей добавлено %s, разобрано %s",
+                         res["added"], res.get("analyzed"))
+        except Exception as e:
+            log.warning("refresh: %s", e)
+        try:
+            now = datetime.utcnow() + timedelta(hours=3)      # МСК
+            today = now.strftime("%Y-%m-%d")
+            last = await asyncio.to_thread(_snap.load, "news_digest_last", "")
+            if now.hour == 10 and last != today:
+                text = await _news.morning_digest()
+                if text:
+                    await _agent.tg_send(text)
+                await asyncio.to_thread(_snap.save, "news_digest_last", today)
+        except Exception as e:
+            log.warning("digest: %s", e)
+        await asyncio.sleep(1800)
+
+
 async def _agent_watch_loop():
     """Сторожа агента: раз в час проверяет и пишет сам, если что-то горит."""
     import agent_watch
@@ -309,13 +338,14 @@ async def lifespan(app: FastAPI):
     task5 = asyncio.create_task(_agent.bot_loop())
     task6 = asyncio.create_task(_competitors_daily())
     task_watch = asyncio.create_task(_agent_watch_loop())
+    task_news = asyncio.create_task(_news_loop())
     task7 = asyncio.create_task(_trends_weekly())
     task8 = asyncio.create_task(_strategist_loop())
     task9 = asyncio.create_task(_bid_history_daily())
     task10 = asyncio.create_task(_slot_watcher())
     yield
     for t in (task, task2, task3, task4, task5, task6, task7, task8, task9,
-              task10, task_watch):
+              task10, task_watch, task_news):
         t.cancel()
 
 

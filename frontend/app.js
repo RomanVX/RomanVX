@@ -25,7 +25,7 @@ document.addEventListener('DOMContentLoaded', _initThemeBtn);
 const API = '';
 let charts = {};
 let sortState = {};
-const dirty = { salesan: true, stocks: true, reviews: true, finance: true, unit: true, tools: true, toolsoz: true, docs: true, strategy: true, repricer: true };
+const dirty = { salesan: true, stocks: true, reviews: true, finance: true, unit: true, tools: true, toolsoz: true, docs: true, strategy: true, repricer: true, news: true };
 let _advertData = [];
 let currentTab = 'finance';
 let prodAllData = [];
@@ -246,7 +246,7 @@ function goNavTool(tab, tool, navId) {
 function switchTab(name, linkEl) {
   document.querySelectorAll('#mainTabs .nav-link').forEach(a => a.classList.remove('active'));
   if (linkEl) linkEl.classList.add('active');
-  ['salesan', 'stocks', 'reviews', 'finance', 'unit', 'tools', 'toolsoz', 'docs', 'strategy', 'repricer'].forEach(t => {
+  ['salesan', 'stocks', 'reviews', 'finance', 'unit', 'tools', 'toolsoz', 'docs', 'strategy', 'repricer', 'news'].forEach(t => {
     const el = document.getElementById('pane-' + t);
     if (el) el.style.display = t === name ? 'block' : 'none';
   });
@@ -255,7 +255,8 @@ function switchTab(name, linkEl) {
     dirty[name] = false;
     ({ salesan: loadSalesAnalytics, stocks: loadStocks,
        reviews: loadReviews, finance: loadFinance, tools: loadTools, toolsoz: loadOzTool, docs: loadDocs,
-       unit: loadUnitEconomics, strategy: loadStrategy, repricer: loadRepricer })[name]();
+       unit: loadUnitEconomics, strategy: loadStrategy, repricer: loadRepricer,
+       news: loadNews })[name]();
   }
 }
 
@@ -5907,4 +5908,103 @@ async function genBatch() {
     alert(`Сгенерировано черновиков: ${d.generated || 0} из ${d.requested || 0} отзывов`);
   } catch (e) { alert('Ошибка: ' + e.message); }
   if (btn) { btn.disabled = false; btn.textContent = '✨ Сгенерировать ответы'; }
+}
+
+
+// ── Новости площадок ─────────────────────────────────────────────────────────
+let _newsData = null, _newsSrc = '', _newsImp = '';
+
+function setNewsSrc(v) {
+  _newsSrc = v;
+  [['newsSrcAll', ''], ['newsSrcWB', 'WB'], ['newsSrcOZON', 'Ozon'], ['newsSrcCab', 'Кабинет']]
+    .forEach(([id, k]) => document.getElementById(id)?.classList.toggle('active', k === v));
+  renderNews();
+}
+
+function setNewsImp(v) {
+  _newsImp = v;
+  [['newsImpAll', ''], ['newsImpCritical', 'critical'], ['newsImpImportant', 'important']]
+    .forEach(([id, k]) => document.getElementById(id)?.classList.toggle('active', k === v));
+  renderNews();
+}
+
+async function loadNews(refresh) {
+  const wrap = document.getElementById('newsWrap');
+  if (!wrap) return;
+  const days = document.getElementById('newsDays')?.value || 45;
+  wrap.innerHTML = `<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>${
+    refresh ? 'Собираю свежие новости и разбираю, чем они нас касаются…' : 'Загрузка…'}</div>`;
+  try {
+    _newsData = await fetchJSON(`/api/tools/news?days=${days}${refresh ? '&refresh=1' : ''}`, 180000);
+    renderNews();
+  } catch (e) {
+    wrap.innerHTML = `<div class="alert alert-danger">Ошибка: ${esc(e.message)}</div>`;
+  }
+}
+
+const _NEWS_BADGE = {
+  critical:   ['Важно', 'danger'],
+  important:  ['Учесть', 'warning'],
+  background: ['К сведению', 'secondary'],
+};
+
+function renderNews() {
+  const wrap = document.getElementById('newsWrap');
+  if (!wrap || !_newsData) return;
+  let items = _newsData.items || [];
+  if (_newsSrc) items = items.filter(i => (i.source || '') === _newsSrc);
+  if (_newsImp) items = items.filter(i => (i.importance || 'background') === _newsImp);
+
+  const c = _newsData.counts || {};
+  const up = _newsData.upcoming || [];
+  let html = '';
+
+  // 1. что горит
+  const hot = (_newsData.items || []).filter(i => i.importance === 'critical').slice(0, 3);
+  if (hot.length) {
+    html += `<div class="card bg-card p-3 mb-3" style="border-left:4px solid var(--danger)">
+      <div class="fw-semibold mb-2">Требует внимания</div>` +
+      hot.map(i => `<div class="mb-2"><span class="text-secondary small">${esc((i.published || '').slice(0, 10))} · ${esc(i.source)}</span>
+        <div class="fw-semibold">${esc(i.title)}</div>
+        ${i.impact ? `<div class="small">${esc(i.impact)}</div>` : ''}</div>`).join('') +
+      `</div>`;
+  }
+
+  // 2. календарь вступления в силу
+  if (up.length) {
+    html += `<div class="card bg-card p-3 mb-3">
+      <div class="fw-semibold mb-2">Календарь изменений</div>
+      <div class="d-flex flex-wrap gap-2">` + up.map(u =>
+        `<div class="px-3 py-2" style="background:var(--surface-2);border-radius:10px;min-width:190px">
+          <div class="fw-semibold small">${esc(u.effective_date)}</div>
+          <div class="small text-secondary">${esc((u.title || '').slice(0, 90))}</div>
+        </div>`).join('') + `</div></div>`;
+  }
+
+  // 3. лента
+  html += `<div class="small text-secondary mb-2">Всего за период: ${(_newsData.items || []).length}
+    · важных ${c.critical || 0} · учесть ${c.important || 0} · фон ${c.background || 0}</div>`;
+  if (!items.length) {
+    html += '<div class="card bg-card p-4 text-center text-secondary">Новостей по фильтру нет</div>';
+  }
+  items.forEach((i, idx) => {
+    const [label, color] = _NEWS_BADGE[i.importance || 'background'] || _NEWS_BADGE.background;
+    const body = (i.body || '').trim();
+    const short = body.length > 320 ? body.slice(0, 320) + '…' : body;
+    html += `<div class="card bg-card p-3 mb-2">
+      <div class="d-flex align-items-center gap-2 flex-wrap mb-1">
+        <span class="badge bg-${color}">${label}</span>
+        <span class="fw-semibold">${esc(i.source)}</span>
+        <span class="text-secondary small">${esc((i.published || '').slice(0, 16).replace('T', ' '))}</span>
+        ${i.effective_date ? `<span class="badge bg-info">вступает ${esc(i.effective_date)}</span>` : ''}
+        ${i.tags ? `<span class="text-secondary small">${esc(i.tags)}</span>` : ''}
+      </div>
+      <div class="fw-semibold mb-1">${esc(i.title)}</div>
+      ${i.impact ? `<div class="p-2 mb-2" style="background:var(--brand-soft);border-radius:8px">
+        <span class="fw-semibold small">Нас касается:</span> <span class="small">${esc(i.impact)}</span></div>` : ''}
+      <div class="small text-secondary" id="newsBody${idx}" style="white-space:pre-wrap">${esc(short)}</div>
+      ${body.length > 320 ? `<a href="#" class="small" onclick="document.getElementById('newsBody${idx}').textContent=${JSON.stringify(body)};this.remove();return false">Читать полностью</a>` : ''}
+    </div>`;
+  });
+  wrap.innerHTML = html;
 }

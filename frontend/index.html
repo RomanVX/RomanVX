@@ -67,6 +67,8 @@
         <a href="#" onclick="goNav('salesan','navAnalytics');return false">Заказы</a>
         <a href="#" id="navFinance" onclick="goNav('finance','navAnalytics');return false">Финансы</a>
         <a href="#" onclick="goNav('unit','navAnalytics');return false">Юнитка</a>
+        <div class="mp-drop-sep"></div>
+        <a href="#" onclick="goNav('news','navAnalytics');return false">Новости площадок</a>
       </div>
     </div>
     <div class="mp-menu-item" id="navWarehouse">
@@ -215,6 +217,35 @@
       </div>
     </div>
   </div>
+
+  <!-- ── Новости площадок ── -->
+  <div id="pane-news" style="display:none">
+    <div class="d-flex gap-3 mb-3 flex-wrap align-items-center">
+      <h3 class="mb-0 fw-bold">Новости</h3>
+      <div class="mp-seg">
+        <span id="newsSrcAll" class="mp-seg-btn active" onclick="setNewsSrc('')">Все</span>
+        <span id="newsSrcWB" class="mp-seg-btn" onclick="setNewsSrc('WB')">Wildberries</span>
+        <span id="newsSrcOZON" class="mp-seg-btn" onclick="setNewsSrc('Ozon')">Ozon</span>
+        <span id="newsSrcCab" class="mp-seg-btn" onclick="setNewsSrc('Кабинет')">Наш кабинет</span>
+      </div>
+      <div class="mp-seg">
+        <span id="newsImpAll" class="mp-seg-btn active" onclick="setNewsImp('')">Всё</span>
+        <span id="newsImpCritical" class="mp-seg-btn" onclick="setNewsImp('critical')">Важное</span>
+        <span id="newsImpImportant" class="mp-seg-btn" onclick="setNewsImp('important')">Учесть</span>
+      </div>
+      <div class="ms-auto d-flex align-items-center gap-2">
+        <select id="newsDays" class="form-select form-select-sm" style="width:130px" onchange="loadNews()">
+          <option value="14">2 недели</option>
+          <option value="45" selected>45 дней</option>
+          <option value="120">4 месяца</option>
+        </select>
+        <button class="mp-refresh" onclick="loadNews(true)" title="Собрать свежие"><i class="bi bi-arrow-clockwise"></i></button>
+      </div>
+    </div>
+    <div id="newsWrap">
+      <div class="text-center text-secondary py-4"><span class="spinner-border"></span></div>
+    </div>
+  </div><!-- /pane-news -->
 
   <!-- ── Остатки ── -->
   <div id="pane-stocks" style="display:none">
@@ -512,6 +543,6 @@
 
 <script src="vendor/bootstrap.bundle.min.js"></script>
 <script src="vendor/chart.umd.min.js"></script>
-<script src="app.js?v=182"></script>
+<script src="app.js?v=183"></script>
 </body>
 </html>
