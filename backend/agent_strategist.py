@@ -532,6 +532,40 @@ async def run_session(trigger: str = "manual", focus: str = "",
                 "усреднения, они ОТСТАЮТ после правок и для текущих цен "
                 "непригодны; клиентская цена WB = цена продавца × коэффициент "
                 "buyer/seller из репрайсера):\n" + _pr[:5000])
+        # экономика, пересчитанная сервером по живой цене — чтобы стратег не
+        # цитировал устаревшие прибыль/маржу из юнитки
+        try:
+            import wb_client as _wb
+            from routers import tools as _tools
+            _live = await _wb.get_current_prices()
+            _mdata = await _tools.get_margin(mp="WB")
+            _rows = []
+            for b in _mdata.get("items") or []:
+                sku = str(b.get("sku"))
+                lp = (_live.get(sku) or {}).get("discounted")
+                old = b.get("price0") or 0
+                if not lp or not old:
+                    continue
+                m = _ar._margin_math({**b, "price0": lp})
+                ratio = (b.get("buyer0") or 0) / old
+                _rows.append({
+                    "sku": sku, "seller_now": lp,
+                    "buyer_now": round(lp * ratio) if ratio else None,
+                    "profit_unit": m["profit_unit"],
+                    "margin_pct": m["margin_pct"],
+                    "be_drr": m["be_drr_pct"],
+                    "seller_avg_unit_econ": old})
+            if _rows:
+                user_msg += (
+                    "\n\nЭКОНОМИКА WB ПО ЖИВЫМ ЦЕНАМ (пересчитана сервером: "
+                    "прибыль на штуку, маржа и безубыточный ДРР при ТЕКУЩЕЙ "
+                    "цене продавца; в разговоре о прибыли/марже/убытке "
+                    "используй ТОЛЬКО эти числа — из unit_economics бери лишь "
+                    "затраты и объёмы; seller_avg_unit_econ показан только "
+                    "чтобы видеть, насколько юнитка отстала): "
+                    + json.dumps(_rows, ensure_ascii=False))
+        except Exception as e:
+            _log.warning("strategist live margin: %s", str(e)[:150])
         # диалоговая память: последние обмены /strategy (переживает рестарт)
         import snapshot as _snap
         dialog = await asyncio.to_thread(_snap.load, "strategist_dialog", None) or []
