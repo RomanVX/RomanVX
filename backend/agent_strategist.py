@@ -929,6 +929,20 @@ _queue_lock = asyncio.Lock()   # сессии по очереди, а не «с�
 _queued = [0]                  # сколько ждёт в очереди (для честного статуса)
 
 
+import re as _re_mod
+
+
+def _strip_numbers(text: str) -> str:
+    """Память диалога хранит тему разговора, а не цифры: старые числа
+    перемешиваются и живут вечно (ДРР 9% из запрещённого расчёта всплывал
+    трижды). Артикулы (AL-01, BMN-0028) не трогаем — там цифра после дефиса."""
+    out = _re_mod.sub(r"(?<![\w-])\d+(?:[ \u00a0]?\d{3})*(?:[.,]\d+)?\s*(?=%|₽|\u20bd|тыс|млн|шт|CPM|пп)",
+                      "[число]", text)
+    out = _re_mod.sub(r"(?<![\w-])\d{2,}(?:[ \u00a0]?\d{3})*(?:[.,]\d+)?(?![\w-])",
+                      "[число]", out)
+    return out
+
+
 async def run_session(trigger: str = "manual", focus: str = "",
                       light: bool = False, status_msg_id: int | None = None,
                       chat: str = "", thread: int | None = None,
@@ -1052,7 +1066,11 @@ async def _run_session_locked(trigger, focus, light, status_msg_id,
                     "be_drr": m["be_drr_pct"],
                     "seller_avg_unit_econ": old})
             if _rows and light:
-                _rows = sorted(_rows, key=lambda r: abs(r["profit_unit"]))[-15:]
+                _fu = (focus or "").upper()
+                _keep = [r for r in _rows if r["sku"].upper() in _fu]
+                _top = sorted(_rows, key=lambda r: abs(r["profit_unit"]))[-15:]
+                _seen = {r["sku"] for r in _keep}
+                _rows = _keep + [r for r in _top if r["sku"] not in _seen]
             if _rows:
                 user_msg += (
                     "\n\nЭКОНОМИКА WB ПО ЖИВЫМ ЦЕНАМ (пересчитана сервером: "
@@ -1069,8 +1087,9 @@ async def _run_session_locked(trigger, focus, light, status_msg_id,
         _dlg_key = f"strategist_dialog{('_c' + chat) if chat else ''}"
         dialog = await asyncio.to_thread(_snap.load, _dlg_key, None) or []
         if dialog and focus:
-            recent = "\n".join(f"- Владелец: {d['q']}\n  Ты ответил: {d['a']}"
-                                for d in dialog[-4:])
+            recent = "\n".join(
+                f"- Владелец: {d['q']}\n  Ты ответил: {_strip_numbers(d['a'])}"
+                for d in dialog[-4:])
             user_msg += ("\n\nНЕДАВНИЙ ДИАЛОГ. Если сейчас пришла короткая "
                          "реплика вроде «прикинь», «давай», «да», «го», "
                          "«дальше» — это СОГЛАСИЕ на то, что ты сам предложил "
