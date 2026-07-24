@@ -6358,6 +6358,22 @@ async function _simRunNow() {
           <td class="text-end">${fmtRub(r.new.profit_month)}</td>
           <td class="text-end" style="color:${col(dl.profit)}">${dl.profit > 0 ? '+' : ''}${fmtRub(dl.profit)}</td></tr>
       </tbody></table></div>
+      ${r.breakdown ? `<div class="mt-2">
+        <div class="fw-semibold small mb-1">Из чего складывается прибыль на штуку</div>
+        <div class="table-responsive"><table class="table table-sm mb-2" style="font-size:.82rem"><thead><tr>
+          <th>Статья</th><th class="text-end">Сейчас</th><th class="text-end">Станет</th></tr></thead><tbody>` +
+          Object.keys(r.breakdown.now).map(k => {
+            const a = r.breakdown.now[k], b = r.breakdown.new[k];
+            const tot = k.startsWith('=');
+            return `<tr${tot ? ' style="font-weight:700;border-top:2px solid var(--border-2)"' : ''}>
+              <td>${esc(k)}${k.indexOf('комиссия') === 0 ? ` <span class="text-secondary">(${r.breakdown.comm_pct}%)</span>` : ''}</td>
+              <td class="text-end"${a < 0 ? ' style="color:var(--danger)"' : ''}>${fmtRub(a)}</td>
+              <td class="text-end"${b < 0 ? ' style="color:var(--danger)"' : ''}>${fmtRub(b)}</td></tr>`;
+          }).join('') + `</tbody></table></div></div>` : ''}
+      ${r.volume_note ? `<div class="small text-warning mb-1">Объём: ${esc(r.volume_note)}</div>` : ''}
+      ${r.volume_source ? `<div class="small text-secondary mb-1">Источник объёма — прогноз юнитки ${r.volume_source.plan ?? '—'},
+        факт 14 дней ${r.volume_source.fact_14d ?? '—'}, факт 7 дней ${r.volume_source.fact_7d ?? '—'} шт/мес;
+        в расчёте использован <b>${r.volume_source.used}</b>.</div>` : ''}
       <div class="small text-secondary">Диапазон прибыли с учётом неопределённости спроса:
         <b>${fmtRub(r.range.profit_low)} … ${fmtRub(r.range.profit_high)}</b> в месяц ·
         доверие ${esc(r.assumptions.confidence)} (наблюдений ${r.assumptions.events})</div>

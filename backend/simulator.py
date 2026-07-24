@@ -48,6 +48,11 @@ async def _elasticity_map() -> dict:
                                         "n": row["events"]}
     vals = sorted(v["e"] for v in per.values())
     glob = vals[len(vals) // 2] if vals else None
+    # нулевая или положительная медиана означает, что наблюдений мало и они
+    # шумные: спрос не может НЕ реагировать на цену. В таком случае честнее
+    # взять консервативное допущение, чем рисовать «цена не влияет».
+    if glob is None or glob > -0.2:
+        glob = None
     return {"per_sku": per, "global": glob}
 
 
@@ -173,9 +178,14 @@ async def simulate(sku: str, price_seller: float | None = None,
 
     pu0 = _unit_profit(raw, p0, it["drr_pct"], it["cogs"])
     pu1 = _unit_profit(raw, p1, d1, c1)
-    # запас неопределённости: разброс эластичности ±50% от оценки
-    q_lo = max(0.0, q0 * (1 + e * 1.5 * dprice / 100))
-    q_hi = max(0.0, q0 * (1 + e * 0.5 * dprice / 100))
+    # запас неопределённости. Если истории мало, честнее показать оба края:
+    # «спрос не заметил» и «спрос упал сильнее цены», а не одну цифру.
+    if it["elasticity_events"] < 2:
+        e_lo, e_hi = -1.5, 0.0
+    else:
+        e_lo, e_hi = e * 1.5, e * 0.5
+    q_lo = max(0.0, q0 * (1 + e_lo * dprice / 100))
+    q_hi = max(0.0, q0 * (1 + e_hi * dprice / 100))
 
     def _pack(price, qty, pu):
         return {"price_seller": round(price),
@@ -186,8 +196,25 @@ async def simulate(sku: str, price_seller: float | None = None,
                 "margin_pct": round(pu / price * 100, 1) if price else None,
                 "profit_month": round(pu * qty)}
 
+    def _costs(price, drr, cogs_v):
+        comm_pct = (raw.get("comm_pct") or 0) + (raw.get("acq_pct") or 0)
+        return {
+            "цена продавца": round(price),
+            "комиссия и эквайринг": -round(price * comm_pct / 100),
+            "логистика": -round(raw.get("logist") or 0),
+            "хранение": -round(raw.get("storage") or 0),
+            "прочее (штрафы, удержания)": -round(raw.get("other") or 0),
+            "себестоимость": -round(cogs_v),
+            "реклама (ДРР)": -round(price * drr / 100),
+            "= прибыль на штуку": round(_unit_profit(raw, price, drr, cogs_v)),
+        }
+
     now, new = _pack(p0, q0, pu0), _pack(p1, q1, pu1)
     return {
+        "breakdown": {"now": _costs(p0, it["drr_pct"], it["cogs"]),
+                      "new": _costs(p1, d1, c1),
+                      "comm_pct": round((raw.get("comm_pct") or 0)
+                                        + (raw.get("acq_pct") or 0), 1)},
         "sku": it["sku"], "name": it["name"],
         "now": now, "new": new,
         "delta": {"revenue": new["revenue_month"] - now["revenue_month"],
