@@ -193,6 +193,51 @@ async def _report_interrupted():
         logging.getLogger("agent").warning("interrupted report: %s", e)
 
 
+async def _damage_autofill():
+    """Пустые склады ущерба заполняются сами из отчётов платного хранения WB.
+
+    Лимит метода — 1 запрос в минуту, поэтому по очереди с паузами.
+    Одноразово: заполненные склады повторно не трогаем."""
+    import damage
+    import agent_review as _agent
+    await asyncio.sleep(240)          # дать серверу прогреться
+    log = logging.getLogger("damage")
+    try:
+        pend = [w for w in (await asyncio.to_thread(damage.summary))["pending"]
+                if w in damage.FIRE_DATES]
+    except Exception as e:
+        log.warning("autofill list: %s", e)
+        return
+    if not pend:
+        return
+    results = []
+    for wh in pend:
+        try:
+            res = await damage.fetch_from_storage(wh)
+        except Exception as e:
+            res = {"error": str(e)[:200]}
+        if res.get("error"):
+            log.warning("autofill %s: %s", wh, res["error"])
+            results.append(f"{wh}: не вышло — {res['error']}")
+        else:
+            log.info("autofill %s: %s SKU, %s шт", wh, res["skus"], res["qty"])
+            results.append(f"{wh}: {res['skus']} SKU, {res['qty']} шт "
+                           f"(срез {res['snap_date']})")
+        await asyncio.sleep(75)       # лимит отчёта хранения: 1 запрос/мин
+    try:
+        d = await asyncio.to_thread(damage.summary)
+        t = d["total"]
+        await _agent.tg_send(
+            "<b>Ущерб от пожаров — заполнил сам из отчётов хранения WB</b>\n\n"
+            + "\n".join(results)
+            + f"\n\nИтого по всем складам: {t['qty']} шт, "
+              f"{t['cost_total']:,} ₽ по себестоимости, "
+              f"{t['retail_total']:,} ₽ по рознице.".replace(",", " ")
+            + "\nДетали и Excel — Склад → Ущерб от пожаров.")
+    except Exception as e:
+        log.warning("autofill notify: %s", e)
+
+
 async def _news_loop():
     """Новости площадок: сбор и разбор раз в 3 часа, сводка в 10:00 МСК."""
     import snapshot as _snap
@@ -363,6 +408,7 @@ async def lifespan(app: FastAPI):
     task6 = asyncio.create_task(_competitors_daily())
     task_watch = asyncio.create_task(_agent_watch_loop())
     task_news = asyncio.create_task(_news_loop())
+    asyncio.create_task(_damage_autofill())
     asyncio.create_task(_report_interrupted())
     task7 = asyncio.create_task(_trends_weekly())
     task8 = asyncio.create_task(_strategist_loop())
