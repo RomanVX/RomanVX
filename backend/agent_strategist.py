@@ -654,7 +654,7 @@ _TOOLS = {
     "advertising": (_t_adv, "Рекламные кампании WB: расход, выручка, ДРР, вердикты где сливается бюджет"),
     "adv_bids": (_t_adv_bids, "Ставки CPM по кампаниям и артикулам WB: показы, клики, CTR, CR, факт-CPM, топ-фразы по расходу и кандидаты в минус-фразы"),
     "adv_daily": (_t_adv_daily, "Реклама ПО ДНЯМ из нашей вечной истории срезов: показы, клики, заказы, расход, CTR, факт-CPM и ставка по каждому дню; аргументы days, advert_id, nm. Используй, когда спрашивают «что менялось по дням» — эти данные ЕСТЬ"),
-    "bid_recommend": (_t_bid_recommend, "Рекомендуемые ставки WB под позиции и минимальные ставки (аргументы advert_id, nm_id): сколько нужно платить за верхние позиции и ниже какой ставки реклама не работает"),
+    "bid_recommend": (_t_bid_recommend, "Рекомендуемые ставки WB под позиции и минимальные ставки. Достаточно передать sku (артикул продавца) — кампанию и nmID найду сам; можно и advert_id с nm_id напрямую. Показывает, сколько платят за верхние позиции по каждой фразе, конкурентную и лидерскую ставку по карточке и минимум, ниже которого показов не будет"),
     "reviews": (_t_reviews, "Отзывы и рейтинг: слабые SKU по рейтингу, свежий негатив с текстом, сколько отзывов без ответа"),
     "ozon_ads": (_t_ozon_ads, "Реклама Ozon (Performance): кампании, расход, ДРР, показы/клики — вторая половина рекламного бюджета"),
     "ozon_phrases": (_t_ozon_phrases, "Поисковые фразы рекламы Ozon: где показы есть, а заказов нет"),
@@ -706,25 +706,64 @@ def _cached_tool_schemas() -> list[dict]:
     return out
 
 
+# Аргументы инструментов. Без записи здесь модель НЕ МОЖЕТ передать параметр:
+# схема с пустыми properties означает «вызывать без аргументов».
+_TOOL_ARGS: dict[str, dict] = {
+    "trends": {"source": {"type": "string",
+                          "description": "my | market | пусто (все)"},
+               "filter": {"type": "string", "description": "подстрока запроса"}},
+    "wb_search": {"query": {"type": "string", "description": "поисковый запрос"}},
+    "repricer_propose": {
+        "items": {"type": "array", "items": {"type": "object"},
+                  "description": "[{art, target, why}]"},
+        "reason": {"type": "string"}},
+    "save_memory": {
+        "plan": {"type": "string"},
+        "new_tasks": {"type": "array", "items": {"type": "object"}},
+        "close_tasks": {"type": "array", "items": {"type": "object"}}},
+    "history": {"days": {"type": "integer",
+                         "description": "период в днях, по умолчанию 90"}},
+    "clusters": {"platform": {"type": "string",
+                              "description": "wb | ozon | both"}},
+    "elasticity": {"days": {"type": "integer",
+                            "description": "глубина истории, по умолчанию 180"}},
+    "simulate": {
+        "sku": {"type": "string", "description": "артикул продавца, например AL-01"},
+        "price": {"type": "number", "description": "новая ЦЕНА ПРОДАВЦА, ₽"},
+        "drr": {"type": "number", "description": "новый ДРР, %"},
+        "cogs": {"type": "number", "description": "новая себестоимость, ₽"},
+        "curve": {"type": "boolean",
+                  "description": "true — кривая прибыли по сетке цен"}},
+    "adv_daily": {
+        "days": {"type": "integer", "description": "период, по умолчанию 14"},
+        "advert_id": {"type": "integer", "description": "ID кампании WB"},
+        "nm": {"type": "string", "description": "артикул WB (nmID)"}},
+    "bid_recommend": {
+        "sku": {"type": "string",
+                "description": "артикул продавца — кампанию и nmID найду сам"},
+        "advert_id": {"type": "integer", "description": "ID кампании WB"},
+        "nm_id": {"type": "integer", "description": "артикул WB (nmID)"}},
+    "news": {"days": {"type": "integer", "description": "период, по умолчанию 30"}},
+    "dashboard_api": {
+        "path": {"type": "string",
+                 "description": "путь GET-эндпоинта, например /api/tools/clusters"},
+        "params": {"type": "object", "description": "query-параметры"}},
+    "propose_action": {
+        "kind": {"type": "string",
+                 "description": "minus_phrases | set_bid | campaign_state | "
+                                "wb_price | ozon_price"},
+        "title": {"type": "string"},
+        "reason": {"type": "string"},
+        "payload": {"type": "object", "description": "параметры действия"}},
+}
+
+
 def _tool_schemas() -> list[dict]:
     out = []
     for name, (_fn, desc) in _TOOLS.items():
-        schema = {"type": "object", "properties": {}}
-        if name == "trends":
-            schema["properties"] = {"source": {"type": "string"},
-                                    "filter": {"type": "string"}}
-        elif name == "wb_search":
-            schema["properties"] = {"query": {"type": "string"}}
-        elif name == "repricer_propose":
-            schema["properties"] = {
-                "items": {"type": "array", "items": {"type": "object"}},
-                "reason": {"type": "string"}}
-        elif name == "save_memory":
-            schema["properties"] = {
-                "plan": {"type": "string"},
-                "new_tasks": {"type": "array", "items": {"type": "object"}},
-                "close_tasks": {"type": "array", "items": {"type": "object"}}}
-        out.append({"name": name, "description": desc, "input_schema": schema})
+        out.append({"name": name, "description": desc,
+                    "input_schema": {"type": "object",
+                                     "properties": _TOOL_ARGS.get(name, {})}})
     return out
 
 
