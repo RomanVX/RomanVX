@@ -4971,3 +4971,35 @@ async def result_baseline(request: Request, body: dict):
     _owner_only(request)
     import result
     return await result.set_baseline(str(body.get("month") or ""))
+
+
+# ══ Симулятор «что если» ═════════════════════════════════════════════════════
+@router.get("/simulate/base")
+async def simulate_base(request: Request, sku: str = Query(default="")):
+    """Текущее состояние SKU для симулятора: цена, объём, затраты, реакция."""
+    _owner_only(request)
+    import simulator
+    return await simulator.base(sku)
+
+
+@router.get("/simulate")
+async def simulate_run(request: Request, sku: str,
+                       price: float = Query(default=0),
+                       drr: float = Query(default=-1),
+                       cogs: float = Query(default=-1)):
+    """Один сценарий: новая цена / ДРР / себестоимость → исход."""
+    _owner_only(request)
+    import simulator
+    return await simulator.simulate(
+        sku, price_seller=price or None,
+        drr_pct=None if drr < 0 else drr,
+        cogs=None if cogs < 0 else cogs)
+
+
+@router.get("/simulate/curve")
+async def simulate_curve(request: Request, sku: str,
+                         drr: float = Query(default=-1)):
+    """Кривая прибыли по цене: где максимум прибыли и где выручки."""
+    _owner_only(request)
+    import simulator
+    return await simulator.curve(sku, drr_pct=None if drr < 0 else drr)

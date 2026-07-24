@@ -178,3 +178,52 @@ def get_summary(date_from=None, date_to=None) -> dict:
         "stored_to": bounds[1],
         "days_stored": len(by_day),
     }
+
+
+# ── История остатков: без неё нельзя отличить «упало из-за цены» от «аута» ──
+def _init_stocks() -> None:
+    db.execute("""CREATE TABLE IF NOT EXISTS stocks_daily (
+        day TEXT, platform TEXT, sku TEXT, qty INTEGER,
+        PRIMARY KEY (day, platform, sku))""")
+
+
+async def snapshot_stocks() -> dict:
+    """Суточный срез остатков по площадкам — копится вечно, как продажи."""
+    from datetime import date
+    _init_stocks()
+    day = date.today().isoformat()
+    rows = []
+    try:
+        from routers import dashboard as _dash
+        for r in await _dash.get_stocks_table() or []:
+            sku = str(r.get("sku") or "").strip()
+            if not sku:
+                continue
+            for pf, key in (("WB", "wb_qty"), ("OZON", "oz_qty"), ("YM", "ym_qty")):
+                q = r.get(key)
+                if q is None:
+                    continue
+                rows.append((day, pf, sku, int(q or 0)))
+    except Exception as e:
+        _log.warning("stocks snapshot: %s", e)
+        return {"saved": 0, "error": str(e)[:200]}
+    for chunk in rows:
+        db.execute(
+            "INSERT INTO stocks_daily (day, platform, sku, qty) VALUES (?,?,?,?) "
+            "ON CONFLICT (day, platform, sku) DO UPDATE SET qty = excluded.qty",
+            chunk)
+    return {"saved": len(rows), "day": day}
+
+
+def stock_days(sku: str = "", days: int = 90) -> list[dict]:
+    """История остатков: когда товар стоял в нуле."""
+    from datetime import date, timedelta
+    _init_stocks()
+    since = (date.today() - timedelta(days=days)).isoformat()
+    where, params = ["day >= ?"], [since]
+    if sku:
+        where.append("sku = ?"); params.append(sku)
+    rows = db.fetchall(
+        "SELECT day, platform, sku, qty FROM stocks_daily WHERE "
+        + " AND ".join(where) + " ORDER BY day", tuple(params))
+    return [dict(zip(["day", "platform", "sku", "qty"], r)) for r in rows]

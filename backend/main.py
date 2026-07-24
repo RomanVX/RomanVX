@@ -209,6 +209,11 @@ async def _agent_watch_loop():
     await asyncio.sleep(600)          # дать серверу прогреться после старта
     while True:
         try:
+            try:      # история остатков: копится вечно, как продажи
+                import sales_history as _sh
+                await _sh.snapshot_stocks()
+            except Exception as e:
+                logging.getLogger("stocks_hist").warning("snapshot: %s", e)
             try:      # снимок кабинета держим свежим для агента
                 import agent_digest
                 await agent_digest.refresh()
