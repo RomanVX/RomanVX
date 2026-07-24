@@ -118,6 +118,82 @@ async def _t_adv_bids(_a: dict) -> str:
             + json.dumps(out[:25], ensure_ascii=False))
 
 
+async def _t_adv_daily(a: dict) -> str:
+    """Дневная динамика рекламы из adv_cluster_daily — вечная история срезов.
+
+    Отвечает на «что менялось по дням»: показы, клики, заказы, расход и
+    ставка по каждому дню, кампании и поисковому кластеру.
+    """
+    from datetime import date, timedelta
+    days = int(a.get("days") or 14)
+    since = (date.today() - timedelta(days=days)).isoformat()
+    camp = str(a.get("campaign") or "")
+    where, params = ["day >= ?"], [since]
+    if a.get("advert_id"):
+        where.append("advert_id = ?"); params.append(int(a["advert_id"]))
+    if a.get("nm"):
+        where.append("nm = ?"); params.append(str(a["nm"]))
+    rows = await asyncio.to_thread(
+        db.fetchall,
+        "SELECT day, advert_id, nm, cluster, views, clicks, orders_cnt, spend, bid "
+        "FROM adv_cluster_daily WHERE " + " AND ".join(where)
+        + " ORDER BY day", tuple(params))
+    if not rows:
+        return ("дневных срезов пока нет за этот период "
+                "(история копится с 13:00 ежедневно)")
+    by_day: dict = {}
+    for d, aid, nm, cl, v, cl_, o, sp, bid in rows:
+        k = str(d)[:10]
+        g = by_day.setdefault(k, {"views": 0, "clicks": 0, "orders": 0,
+                                  "spend": 0.0, "bids": [], "top": {}})
+        g["views"] += int(v or 0)
+        g["clicks"] += int(cl_ or 0)
+        g["orders"] += int(o or 0)
+        g["spend"] += float(sp or 0)
+        if bid:
+            g["bids"].append(float(bid))
+        if cl:
+            t = g["top"].setdefault(str(cl), {"views": 0, "spend": 0.0, "orders": 0})
+            t["views"] += int(v or 0)
+            t["spend"] += float(sp or 0)
+            t["orders"] += int(o or 0)
+    out = []
+    for k in sorted(by_day):
+        g = by_day[k]
+        top = sorted(g["top"].items(), key=lambda kv: -kv[1]["spend"])[:3]
+        out.append({
+            "день": k, "показы": g["views"], "клики": g["clicks"],
+            "заказы": g["orders"], "расход": round(g["spend"]),
+            "ctr": round(g["clicks"] / g["views"] * 100, 2) if g["views"] else None,
+            "cpm_факт": round(g["spend"] / g["views"] * 1000) if g["views"] else None,
+            "ставка_средняя": round(sum(g["bids"]) / len(g["bids"])) if g["bids"] else None,
+            "топ_кластеры": [{"фраза": c, "расход": round(x["spend"]),
+                              "показы": x["views"], "заказы": x["orders"]}
+                             for c, x in top]})
+    return json.dumps({"дней": len(out), "по_дням": out},
+                      ensure_ascii=False, default=str)
+
+
+async def _t_bid_recommend(a: dict) -> str:
+    """Рекомендуемые и минимальные ставки WB — коридор для решения."""
+    import advert_client as ac
+    aid = a.get("advert_id")
+    nm = a.get("nm_id")
+    if not aid or not nm:
+        return ("нужны advert_id и nm_id (артикул WB); их можно взять "
+                "из инструмента adv_bids")
+    rec = await ac.get_bid_recommendations(int(aid), int(nm))
+    mins = await ac.get_min_bids(int(aid), [int(nm)])
+    return json.dumps({
+        "рекомендации": rec,
+        "минимальные_ставки": mins.get(str(nm)) or mins,
+        "как_читать": "reach_max — держать максимальный охват (верхние позиции), "
+                      "reach_medium и reach_min — ниже; competitive и leaders — "
+                      "ставки конкурентной и лидерской зоны по карточке. "
+                      "Ставка ниже минимальной не работает вовсе."},
+        ensure_ascii=False, default=str)
+
+
 async def _t_reviews(_a: dict) -> str:
     """Отзывы и рейтинг: где просел рейтинг и что пишут в негативе."""
     import reviews_client as rc
@@ -541,6 +617,8 @@ _TOOLS = {
     "pnl": (_t_pnl, "P&L WB по месяцам за 3 месяца: выручка, комиссия, логистика, хранение, реклама, прибыль"),
     "advertising": (_t_adv, "Рекламные кампании WB: расход, выручка, ДРР, вердикты где сливается бюджет"),
     "adv_bids": (_t_adv_bids, "Ставки CPM по кампаниям и артикулам WB: показы, клики, CTR, CR, факт-CPM, топ-фразы по расходу и кандидаты в минус-фразы"),
+    "adv_daily": (_t_adv_daily, "Реклама ПО ДНЯМ из нашей вечной истории срезов: показы, клики, заказы, расход, CTR, факт-CPM и ставка по каждому дню; аргументы days, advert_id, nm. Используй, когда спрашивают «что менялось по дням» — эти данные ЕСТЬ"),
+    "bid_recommend": (_t_bid_recommend, "Рекомендуемые ставки WB под позиции и минимальные ставки (аргументы advert_id, nm_id): сколько нужно платить за верхние позиции и ниже какой ставки реклама не работает"),
     "reviews": (_t_reviews, "Отзывы и рейтинг: слабые SKU по рейтингу, свежий негатив с текстом, сколько отзывов без ответа"),
     "ozon_ads": (_t_ozon_ads, "Реклама Ozon (Performance): кампании, расход, ДРР, показы/клики — вторая половина рекламного бюджета"),
     "ozon_phrases": (_t_ozon_phrases, "Поисковые фразы рекламы Ozon: где показы есть, а заказов нет"),
@@ -707,6 +785,11 @@ _SYSTEM = """Ты — стратег-директор по маркетплей�
 ИСПОЛЬЗУЙ ВООБЩЕ. Без канцелярита («данный», «осуществляется», «в рамках»),
 без заголовков-штампов «Решение/Основано/Риск». Каждая законченная мысль —
 с новой строки, блоки разделяй пустой строкой, абзац 1-2 предложения.
+«ДАННЫХ НЕТ» — ПОСЛЕДНЕЕ, ЧТО ТЫ ГОВОРИШЬ. Прежде чем сказать, что чего-то
+нет: динамика рекламы по дням есть в adv_daily (наша вечная история срезов),
+коридор ставок — в bid_recommend, продажи по дням за любой период — в history,
+всё остальное — в dashboard_catalog и dashboard_api. Проверь их, и только
+потом отвечай «нет».
 ДРР ВСЕГДА В ПАРЕ С БЕЗУБЫТОЧНЫМ. Число ДРР само по себе ничего не значит:
 26% может быть нормой при безубыточном 40% и катастрофой при 12%. Никогда
 не пиши «реклама в норме» или «ДРР высокий», не назвав рядом безубыточный
@@ -729,7 +812,8 @@ _SYSTEM = """Ты — стратег-директор по маркетплей�
 _TOOL_RU = {"unit_economics": "юнитка", "stocks": "остатки", "pnl": "P&L",
             "advertising": "реклама", "adv_bids": "ставки CPM",
             "prices": "цены", "sales_daily": "продажи",
-            "reviews": "отзывы", "ozon_ads": "реклама Ozon",
+            "reviews": "отзывы", "adv_daily": "реклама по дням",
+            "bid_recommend": "рекомендуемые ставки", "ozon_ads": "реклама Ozon",
             "ozon_phrases": "фразы Ozon", "funnel": "воронка Ozon",
             "clusters": "кластеры", "pnl_all": "P&L площадок",
             "history": "история продаж",

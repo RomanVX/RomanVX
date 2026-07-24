@@ -518,3 +518,69 @@ def _collect_stats(rows: list, data) -> None:
                          "ctr": st.get("ctr"), "orders": st.get("orders"),
                          "atbs": st.get("atbs"), "cpm": st.get("cpm"),
                          "spend": st.get("spend"), "avg_pos": st.get("avg_pos")})
+
+
+async def get_bid_recommendations(advert_id: int, nm_id: int) -> dict:
+    """Рекомендуемые ставки WB: GET /api/advert/v0/bids/recommendations.
+
+    Схема по docs/wb_api/promotion.yaml: base (конкурентная, лидерская, топ-2)
+    и normQueries[] с тремя уровнями охвата на каждый поисковый кластер.
+    Ставки приходят в копейках."""
+    import httpx
+    async with httpx.AsyncClient(timeout=30) as c:
+        r = await c.get(f"{_BASES[0]}/api/advert/v0/bids/recommendations",
+                        headers=_headers(),
+                        params={"advertId": int(advert_id), "nmId": int(nm_id)})
+    if not r.is_success:
+        _log.warning("bids/recommendations %s: %s", r.status_code, r.text[:200])
+        return {}
+    d = r.json() or {}
+
+    def _rub(node) -> int | None:
+        if not isinstance(node, dict):
+            return None
+        v = node.get("bidKopecks")
+        return round(v / 100) if v else None
+
+    base = d.get("base") or {}
+    return {
+        "advert_id": d.get("advertId"), "nm_id": d.get("nmId"),
+        "competitive": _rub(base.get("competitiveBid")),
+        "leaders": _rub(base.get("leadersBid")),
+        "top2": _rub(base.get("top2")),
+        "queries": [{
+            "query": q.get("normQuery"),
+            "reach_max": _rub(q.get("reachMax")),
+            "reach_max_min": (round(q["reachMax"]["bidKopecksMin"] / 100)
+                              if isinstance(q.get("reachMax"), dict)
+                              and q["reachMax"].get("bidKopecksMin") else None),
+            "reach_medium": _rub(q.get("reachMedium")),
+            "reach_min": _rub(q.get("reachMin")),
+        } for q in (d.get("normQueries") or [])],
+    }
+
+
+async def get_min_bids(advert_id: int, nm_ids: list[int],
+                       placements: list[str] | None = None) -> dict:
+    """Минимальные ставки: POST /api/advert/v1/bids/min (cpm).
+
+    Ниже минимума ставка не работает — обязательный ориентир перед
+    любым снижением. Значения в разменных единицах (0,01 валюты)."""
+    import httpx
+    body = {"advert_id": int(advert_id),
+            "nm_ids": [int(n) for n in nm_ids][:100],
+            "payment_type": "cpm",
+            "placement_types": placements or ["search", "recommendation",
+                                              "combined"]}
+    async with httpx.AsyncClient(timeout=30) as c:
+        r = await c.post(f"{_BASES[0]}/api/advert/v1/bids/min",
+                         headers=_headers(), json=body)
+    if not r.is_success:
+        _log.warning("bids/min %s: %s", r.status_code, r.text[:200])
+        return {}
+    out: dict = {}
+    for row in (r.json() or {}).get("bids") or []:
+        nm = str(row.get("nm_id"))
+        out[nm] = {b.get("type"): round((b.get("value") or 0) / 100)
+                   for b in row.get("bids") or []}
+    return out
