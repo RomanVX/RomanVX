@@ -485,15 +485,33 @@ async def _tg_get_photo(file_id: str) -> str | None:
 
 
 def _is_banter(q: str, has_photo: bool) -> bool:
-    """Разговор/шутка или деловой вопрос? Дело — только если есть предметные
-    слова; всё остальное короткое — трёп, и отвечать надо как в чате."""
-    ql = q.lower()
+    """Разговор/шутка или деловой вопрос? По умолчанию — ДЕЛО: короткие
+    вопросы вроде «что по ozon?» раньше уходили в трёп и отвечались панчлайном
+    без данных. Трёп — только явные признаки: мем-картинка без вопроса,
+    приветствие, реакция-восклицание."""
+    ql = q.lower().strip()
     business = ("цен", "марж", "остат", "дрр", "прибыл", "продаж", "выручк",
                 "реклам", "кампан", "конкурент", "постав", "отзыв", "юнитк",
-                "склад", "темп", "тренд", "экономик", "разбор", "отчет", "отчёт")
+                "склад", "темп", "тренд", "экономик", "разбор", "отчет", "отчёт",
+                "ozon", "озон", "wb", "вб", "вайлдберр", "ям", "маркет",
+                "ставк", "cpm", "ctr", "заказ", "деньг", "бюджет", "комисс",
+                "себес", "акци", "спп", "sku", "артикул", "карточк", "рейтинг",
+                "возврат", "выкуп", "логист", "хранени", "штраф", "слот",
+                "короб", "клиент", "план", "задач", "стратег", "что с ", "по чем")
     if any(w in ql for w in business):
         return False
-    return has_photo or len(ql) < 120
+    # цифра/артикул в тексте — почти всегда предметный разговор
+    if any(ch.isdigit() for ch in ql):
+        return False
+    banter_marks = ("ахах", "хах", "лол", "))", "))", "жиз", "мем", "ору",
+                    "привет", "здоров", "как дела", "спасибо", "красав",
+                    "го ", "давай поржём", "шутк")
+    if any(w in ql for w in banter_marks):
+        return True
+    # картинка без осмысленного вопроса — мем; короткий текст без вопроса тоже
+    if has_photo and len(ql) < 40 and "?" not in ql:
+        return True
+    return len(ql) < 25 and "?" not in ql
 
 
 async def _answer_question(question: str, thread: int | None,
@@ -730,9 +748,9 @@ async def bot_loop() -> None:
             body = r.json()
             if not body.get("ok"):
                 _log.warning("bot getUpdates не ok: %s", str(body)[:200])
-            for upd in (body.get("result") or []):
+            _batch = body.get("result") or []
+            for upd in _batch:
                 offset = upd["update_id"] + 1
-                await asyncio.to_thread(_snap.save, "tg_offset", offset)
                 m0 = upd.get("message") or {}
                 _log.info("bot msg: chat=%s from=%s text=%r",
                           (m0.get("chat") or {}).get("id"),
@@ -766,7 +784,8 @@ async def bot_loop() -> None:
                 if is_main and (low in ("стоп", "stop")
                                 or low.startswith(("стоп ", "stop "))):
                     import agent_strategist as _st
-                    _st._cancel = True
+                    if _st._running:          # иначе флаг убьёт СЛЕДУЮЩУЮ сессию
+                        _st._cancel = True
                     _paused[0] = True
                     await asyncio.to_thread(_snap.save, "agent_paused", True)
                     await tg_send("Остановился: сессию прерываю, на вопросы "
@@ -830,7 +849,7 @@ async def bot_loop() -> None:
                             await tg_send("Не смог скачать файл (лимит 4.5 МБ).",
                                           thread_id=thread)
                     continue
-                if is_main and _paused[0]:
+                if _paused[0]:
                     continue
                 # свободный вопрос: упоминание @бота или reply на его сообщение
                 reply_from = ((msg.get("reply_to_message") or {}).get("from") or {})
@@ -926,7 +945,10 @@ async def bot_loop() -> None:
                                           thread_id=th)
                     asyncio.get_event_loop().create_task(_strun())
                 elif cmd == "/reset":
-                    _dialogs.pop(_dialog_key(thread), None)
+                    await asyncio.to_thread(_dialog_load)
+                    for k in (_dialog_key(thread), _dialog_key(thread, chat)):
+                        _dialogs.pop(k, None)
+                    await asyncio.to_thread(_snap.save, "agent_dialogs", _dialogs)
                     await tg_send("Память диалога очищена.", thread_id=thread)
                 elif cmd in ("/start", "/help"):
                     await tg_send(
@@ -937,6 +959,8 @@ async def bot_loop() -> None:
                         "— отвечу по данным кабинета.\n"
                         "Плюс сам присылаю разбор каждый понедельник в 9:00 МСК.",
                         thread_id=thread)
+            if _batch:      # офсет пишем раз на пачку, а не на сообщение
+                await asyncio.to_thread(_snap.save, "tg_offset", offset)
         except Exception as e:
             _log.warning("agent bot loop: %s", e)
             await asyncio.sleep(10)
