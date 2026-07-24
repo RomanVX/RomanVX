@@ -16,6 +16,8 @@
 import asyncio
 import logging
 
+import db
+
 _log = logging.getLogger("simulator")
 
 _DEFAULT_ELAST = -1.0     # если истории нет: 1% цены → 1% спроса
@@ -49,6 +51,26 @@ async def _elasticity_map() -> dict:
     return {"per_sku": per, "global": glob}
 
 
+def _recent_rate(days: int = 14) -> dict:
+    """Фактический темп продаж за последние дни: {SKU_UPPER: шт/мес}.
+
+    Объём в юнитке — прогноз по 12 неделям, он ОТСТАЁТ, когда темп резко
+    меняется (сняли продвижение, ушли в аут, сезон). Для симулятора это
+    критично: считать эффект цены на несуществующем объёме бессмысленно.
+    """
+    from datetime import date, timedelta
+    since = (date.today() - timedelta(days=days)).isoformat()
+    try:
+        rows = db.fetchall(
+            "SELECT sku, SUM(qty) FROM sales_daily "
+            "WHERE platform = 'WB' AND sale_date >= ? GROUP BY sku", (since,))
+    except Exception as e:
+        _log.warning("recent rate: %s", str(e)[:150])
+        return {}
+    return {str(r[0]).upper(): round(float(r[1] or 0) / days * 30)
+            for r in rows}
+
+
 async def base(sku: str = "") -> dict:
     """Текущее состояние артикулов: цена, объём, затраты, эластичность."""
     from routers import tools as _tools
@@ -64,6 +86,8 @@ async def base(sku: str = "") -> dict:
     except Exception:
         pass
     el = await _elasticity_map()
+    recent = await asyncio.to_thread(_recent_rate, 14)
+    recent7 = await asyncio.to_thread(_recent_rate, 7)
     out = []
     for b in items:
         s = str(b.get("sku") or "")
@@ -72,6 +96,25 @@ async def base(sku: str = "") -> dict:
         lp = (live.get(s) or {}).get("discounted") or b.get("price0") or 0
         m = _ar._margin_math({**b, "price0": lp})
         e = el["per_sku"].get(s.upper())
+        # объём: берём свежий факт, если он сильно разошёлся с прогнозом
+        q_plan = m["qty_month"]
+        q_recent = recent.get(s.upper())
+        q_recent7 = recent7.get(s.upper())
+        q_used, q_note = q_plan, ""
+        if q_recent is not None and q_plan:
+            drift = (q_recent - q_plan) / q_plan * 100
+            if abs(drift) >= 30:
+                q_used = q_recent
+                q_note = (f"объём взят по факту последних 14 дней "
+                          f"({q_recent} шт/мес), прогноз юнитки {q_plan} "
+                          f"устарел на {round(drift)}%")
+        if q_recent7 is not None and q_recent and q_recent:
+            d7 = (q_recent7 - q_recent) / q_recent * 100 if q_recent else 0
+            if d7 <= -30:
+                q_note = ((q_note + "; ") if q_note else "") + \
+                    (f"темп продолжает падать: за 7 дней {q_recent7} шт/мес "
+                     f"против {q_recent} за 14 — эффект цены считать рано, "
+                     "сначала разберись с причиной падения")
         ratio = ((b.get("buyer0") or 0) / (b.get("price0") or 1)) if b.get("price0") else None
         out.append({
             "sku": s, "name": (b.get("name") or "")[:60],
@@ -83,7 +126,9 @@ async def base(sku: str = "") -> dict:
             "storage": round(b.get("storage") or 0),
             "other": round(b.get("other") or 0),
             "drr_pct": m["drr_pct"], "be_drr_pct": m["be_drr_pct"],
-            "qty_month": m["qty_month"],
+            "qty_month": q_used,
+            "qty_plan": q_plan, "qty_recent14": q_recent, "qty_recent7": q_recent7,
+            "qty_note": q_note,
             "profit_unit": m["profit_unit"], "margin_pct": m["margin_pct"],
             "profit_month": m["profit_month"],
             "elasticity": (e or {}).get("e", el["global"] if el["global"] is not None else _DEFAULT_ELAST),
@@ -151,6 +196,11 @@ async def simulate(sku: str, price_seller: float | None = None,
                   "margin_pp": round((new["margin_pct"] or 0) - (now["margin_pct"] or 0), 1)},
         "range": {"profit_low": round(pu1 * min(q_lo, q_hi)),
                   "profit_high": round(pu1 * max(q_lo, q_hi))},
+        "volume_note": it.get("qty_note") or "",
+        "volume_source": {"plan": it.get("qty_plan"),
+                          "fact_14d": it.get("qty_recent14"),
+                          "fact_7d": it.get("qty_recent7"),
+                          "used": it["qty_month"]},
         "assumptions": {
             "elasticity": e, "events": it["elasticity_events"],
             "source": it["elasticity_source"],
@@ -182,6 +232,7 @@ async def curve(sku: str, drr_pct: float | None = None) -> dict:
     best_profit = max(points, key=lambda x: x["profit_month"])
     best_rev = max(points, key=lambda x: x["revenue_month"])
     return {"sku": it["sku"], "name": it["name"], "current_price": p0,
+            "volume_note": it.get("qty_note") or "",
             "points": points,
             "best_profit": best_profit, "best_revenue": best_rev,
             "elasticity": e, "events": it["elasticity_events"],
