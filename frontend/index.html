@@ -64,6 +64,8 @@
     <div class="mp-menu-item active" id="navAnalytics">
       <span class="mp-menu-title" onclick="goNav('salesan','navAnalytics')">Аналитика</span>
       <div class="mp-menu-drop">
+        <a href="#" onclick="goNav('money','navAnalytics');return false">Где деньги</a>
+        <div class="mp-drop-sep"></div>
         <a href="#" onclick="goNav('salesan','navAnalytics');return false">Заказы</a>
         <a href="#" id="navFinance" onclick="goNav('finance','navAnalytics');return false">Финансы</a>
         <a href="#" onclick="goNav('unit','navAnalytics');return false">Юнитка</a>
@@ -223,6 +225,18 @@
       </div>
     </div>
   </div>
+
+  <!-- ── Где деньги ── -->
+  <div id="pane-money" style="display:none">
+    <div class="d-flex gap-3 mb-3 flex-wrap align-items-center">
+      <h3 class="mb-0 fw-bold">Где деньги</h3>
+      <span class="text-secondary small">утечки и упущенная прибыль в рублях за месяц, с готовым действием</span>
+      <button class="mp-refresh ms-auto" onclick="loadMoney(true)" title="Пересчитать"><i class="bi bi-arrow-clockwise"></i></button>
+    </div>
+    <div id="moneyWrap">
+      <div class="text-center text-secondary py-4"><span class="spinner-border"></span></div>
+    </div>
+  </div><!-- /pane-money -->
 
   <!-- ── Новости площадок ── -->
   <div id="pane-news" style="display:none">
@@ -549,6 +563,6 @@
 
 <script src="vendor/bootstrap.bundle.min.js"></script>
 <script src="vendor/chart.umd.min.js"></script>
-<script src="app.js?v=184"></script>
+<script src="app.js?v=185"></script>
 </body>
 </html>

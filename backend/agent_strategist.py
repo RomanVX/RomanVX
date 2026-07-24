@@ -405,6 +405,18 @@ async def _t_fbs(_a: dict) -> str:
                        "note": res["note"], "by_sku": slim}, ensure_ascii=False)
 
 
+async def _t_money(_a: dict) -> str:
+    """Где деньги: посчитанные утечки и упущенное с суммами и действиями."""
+    import money
+    d = await money.get()
+    slim = [{"сумма_в_месяц": f["amount"], "что": f["title"],
+             "факты": f["evidence"][:250], "действие": f["action"][:200],
+             "sku": f.get("sku"), "есть_кнопка": bool(f.get("act_kind"))}
+            for f in (d.get("findings") or [])[:25]]
+    return json.dumps({"итого_в_месяц": d.get("total"), "находки": slim},
+                      ensure_ascii=False)
+
+
 async def _t_news(a: dict) -> str:
     """Новости площадок с разбором влияния на нас."""
     import news as _news
@@ -529,6 +541,7 @@ _TOOLS = {
                "(+флаг автодобавления), календарь акций WB на 30 дней (куда зовут, даты, условия)"),
     "fbs_compare": (_t_fbs, "Переход WB на FBS: дельта прямых затрат на штуку и месяц по каждому "
                     "SKU (комиссия/логистика/хранение по официальным тарифам); конверсию и сроки не моделирует"),
+    "money": (_t_money, "Где деньги: готовый список утечек и упущенной прибыли с суммами в рублях за месяц и действиями — начинай отсюда, когда спрашивают «что делать» или «где теряем»"),
     "news": (_t_news, "Новости площадок за период (аргумент days) с разбором важности и влияния на нас + календарь вступающих в силу изменений"),
     "dashboard_catalog": (_t_dashboard_catalog, "Каталог ВСЕХ эндпоинтов дашборда с описаниями и параметрами — смотри сюда, если нужных данных нет в готовых инструментах"),
     "dashboard_api": (_t_dashboard_api, "Вызвать любой GET-эндпоинт дашборда напрямую: path (например /api/tools/clusters) и params. Так доступны любые данные проекта, а не только готовые инструменты"),
@@ -669,7 +682,7 @@ _TOOL_RU = {"unit_economics": "юнитка", "stocks": "остатки", "pnl":
             "clusters": "кластеры", "pnl_all": "P&L площадок",
             "history": "история продаж",
             "propose_action": "заявка на действие",
-            "news": "новости площадок", "dashboard_catalog": "каталог API", "dashboard_api": "данные дашборда",
+            "money": "где деньги", "news": "новости площадок", "dashboard_catalog": "каталог API", "dashboard_api": "данные дашборда",
             "competitors": "конкуренты", "trends": "тренды",
             "ozon_search": "поиск Ozon", "repricer": "репрайсер",
             "repricer_propose": "предложения цен", "wb_search": "выдача WB",
@@ -731,6 +744,17 @@ async def _run_session_locked(trigger, focus, light, status_msg_id,
         try:
             import agent_digest as _dg
             _snapshot = await _dg.get()
+            try:
+                import money as _mn
+                _mm = await _mn.get()
+                if _mm.get("total"):
+                    _top = "; ".join(f"{f['title']} ({f['amount']} ₽)"
+                                     for f in (_mm.get("findings") or [])[:3])
+                    _snapshot += (f"\nГДЕ ДЕНЬГИ: найдено утечек и упущенного на "
+                                  f"{_mm['total']} ₽/мес. Крупнейшее: {_top}. "
+                                  "Полный список — инструмент money.")
+            except Exception:
+                pass
             if _snapshot:
                 user_msg += ("\n\n" + _snapshot +
                              "\n(Это сводка. За деталями иди в инструменты; "

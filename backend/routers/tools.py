@@ -4906,3 +4906,27 @@ async def news_refresh(request: Request):
     _owner_only(request)
     import news as _news
     return await _news.refresh_all()
+
+
+# ══ Где деньги: находки с суммой и действием ═════════════════════════════════
+@router.get("/money")
+async def money_findings(request: Request, refresh: bool = Query(default=False)):
+    """Список утечек и упущенной прибыли в рублях с готовым действием."""
+    _owner_only(request)
+    import money
+    return await money.get(refresh=refresh)
+
+
+@router.post("/money/act", include_in_schema=False)
+async def money_act(request: Request, body: dict):
+    """Превратить находку в заявку на действие (подтверждение — как обычно)."""
+    _owner_only(request)
+    import agent_actions as aa
+    kind = str(body.get("act_kind") or "")
+    if kind not in aa._EXEC:
+        return {"error": "у этой находки нет автоматического действия"}
+    aid = await asyncio.to_thread(
+        aa.propose, kind, str(body.get("title") or kind),
+        body.get("act_payload") or {}, str(body.get("evidence") or ""))
+    await aa.notify(aid)
+    return {"id": aid, "status": "pending"}

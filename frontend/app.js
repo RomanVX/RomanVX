@@ -25,7 +25,7 @@ document.addEventListener('DOMContentLoaded', _initThemeBtn);
 const API = '';
 let charts = {};
 let sortState = {};
-const dirty = { salesan: true, stocks: true, reviews: true, finance: true, unit: true, tools: true, toolsoz: true, docs: true, strategy: true, repricer: true, news: true };
+const dirty = { salesan: true, stocks: true, reviews: true, finance: true, unit: true, tools: true, toolsoz: true, docs: true, strategy: true, repricer: true, news: true, money: true };
 let _advertData = [];
 let currentTab = 'finance';
 let prodAllData = [];
@@ -247,7 +247,7 @@ function goNavTool(tab, tool, navId) {
 function switchTab(name, linkEl) {
   document.querySelectorAll('#mainTabs .nav-link').forEach(a => a.classList.remove('active'));
   if (linkEl) linkEl.classList.add('active');
-  ['salesan', 'stocks', 'reviews', 'finance', 'unit', 'tools', 'toolsoz', 'docs', 'strategy', 'repricer', 'news'].forEach(t => {
+  ['salesan', 'stocks', 'reviews', 'finance', 'unit', 'tools', 'toolsoz', 'docs', 'strategy', 'repricer', 'news', 'money'].forEach(t => {
     const el = document.getElementById('pane-' + t);
     if (el) el.style.display = t === name ? 'block' : 'none';
   });
@@ -257,7 +257,7 @@ function switchTab(name, linkEl) {
     ({ salesan: loadSalesAnalytics, stocks: loadStocks,
        reviews: loadReviews, finance: loadFinance, tools: loadTools, toolsoz: loadOzTool, docs: loadDocs,
        unit: loadUnitEconomics, strategy: loadStrategy, repricer: loadRepricer,
-       news: loadNews })[name]();
+       news: loadNews, money: loadMoney })[name]();
   }
 }
 
@@ -6026,4 +6026,93 @@ async function initNewsBadge() {
     _newsData = await fetchJSON('/api/tools/news?days=14', 30000);
     _newsBadge();
   } catch (e) { /* тихо: бейдж не критичен */ }
+}
+
+
+// ── Где деньги ───────────────────────────────────────────────────────────────
+let _moneyData = null;
+
+const _MONEY_GROUP = {
+  losing_sku:   ['Продаём в минус', 'danger'],
+  ad_waste:     ['Реклама жжёт бюджет', 'danger'],
+  minus_phrases:['Фразы без заказов', 'warning'],
+  oos:          ['Аут: продажи стоят', 'danger'],
+  oos_soon:     ['Скоро аут', 'warning'],
+  no_cogs:      ['Считаем вслепую', 'secondary'],
+  oz_auto:      ['Риск автоакций Ozon', 'warning'],
+};
+
+async function loadMoney(refresh) {
+  const wrap = document.getElementById('moneyWrap');
+  if (!wrap) return;
+  wrap.innerHTML = `<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>${
+    refresh ? 'Пересчитываю по живым ценам, рекламе и остаткам…' : 'Загрузка…'}</div>`;
+  try {
+    _moneyData = await fetchJSON(`/api/tools/money${refresh ? '?refresh=1' : ''}`, 240000);
+    renderMoney();
+  } catch (e) {
+    wrap.innerHTML = `<div class="alert alert-danger">Ошибка: ${esc(e.message)}</div>`;
+  }
+}
+
+async function moneyAct(idx) {
+  const f = (_moneyData.findings || [])[idx];
+  if (!f || !f.act_kind) return;
+  if (!confirm(`Отправить на подтверждение: ${f.title}?`)) return;
+  try {
+    const r = await fetch('/api/tools/money/act', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ act_kind: f.act_kind, act_payload: f.act_payload,
+                             title: f.title, evidence: f.evidence }) });
+    const j = await r.json();
+    alert(j.error ? `Не вышло: ${j.error}`
+                  : 'Заявка создана — подтверди кнопкой в Telegram.');
+  } catch (e) { alert('Ошибка: ' + e.message); }
+}
+
+function renderMoney() {
+  const wrap = document.getElementById('moneyWrap');
+  if (!wrap || !_moneyData) return;
+  const fs = _moneyData.findings || [];
+  const withMoney = fs.filter(f => f.amount > 0);
+  let html = `<div class="card bg-card p-3 mb-3">
+    <div class="d-flex align-items-baseline gap-3 flex-wrap">
+      <div>
+        <div class="text-secondary small">Нашли утечек и упущенного</div>
+        <div style="font-size:2rem;font-weight:800;color:var(--brand)">${fmtRub(_moneyData.total || 0)} <span style="font-size:1rem;font-weight:600" class="text-secondary">в месяц</span></div>
+      </div>
+      <div class="text-secondary small">${withMoney.length} находок с суммой${fs.length > withMoney.length ? ` · ещё ${fs.length - withMoney.length} без оценки` : ''}
+        <br>обновлено ${esc(_moneyData.built || '')}</div>
+    </div>
+    ${(_moneyData.errors || []).length ? `<div class="small text-warning mt-2">Часть данных не собралась: ${esc(_moneyData.errors.join('; '))}</div>` : ''}
+  </div>`;
+
+  if (!fs.length) {
+    html += '<div class="card bg-card p-4 text-center text-secondary">Утечек не нашёл — либо всё чисто, либо данные ещё собираются.</div>';
+    wrap.innerHTML = html; return;
+  }
+
+  fs.forEach((f, i) => {
+    const [label, color] = _MONEY_GROUP[f.kind] || [f.kind, 'secondary'];
+    html += `<div class="card bg-card p-3 mb-2">
+      <div class="d-flex align-items-start gap-3 flex-wrap">
+        <div style="min-width:130px">
+          <div style="font-size:1.3rem;font-weight:800;${f.amount > 0 ? 'color:var(--danger)' : 'color:var(--muted)'}">
+            ${f.amount > 0 ? fmtRub(f.amount) : '—'}</div>
+          <div class="text-secondary" style="font-size:.7rem">${f.amount > 0 ? 'в месяц' : 'без оценки'}</div>
+        </div>
+        <div class="flex-grow-1" style="min-width:280px">
+          <div class="d-flex align-items-center gap-2 flex-wrap mb-1">
+            <span class="badge bg-${color}">${label}</span>
+            ${f.sku ? `<span class="text-secondary small">${esc(f.sku)}</span>` : ''}
+          </div>
+          <div class="fw-semibold">${esc(f.title)}</div>
+          <div class="small text-secondary mt-1">${esc(f.evidence)}</div>
+          <div class="small mt-1"><b>Что делать:</b> ${esc(f.action)}</div>
+        </div>
+        ${f.act_kind ? `<button class="btn btn-sm btn-info align-self-center" onclick="moneyAct(${i})">Исправить</button>` : ''}
+      </div>
+    </div>`;
+  });
+  wrap.innerHTML = html;
 }
