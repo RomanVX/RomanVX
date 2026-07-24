@@ -774,6 +774,12 @@ async def bot_loop() -> None:
                             key = "asset_bg" if _akey == "фон" else "asset_logo"
                             await asyncio.to_thread(
                                 _snap.save, key, {"mime": mime, "b64": b64})
+                            try:      # сбросить серверный кеш раздачи
+                                from routers import tools as _rt
+                                _rt._asset_mem.pop(
+                                    "bg" if key == "asset_bg" else "logo", None)
+                            except Exception:
+                                pass
                             await tg_send(
                                 ("Фон" if key == "asset_bg" else "Логотип") +
                                 " сохранил. Обнови страницу дашборда — подтянется.",

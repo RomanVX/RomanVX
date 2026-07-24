@@ -591,6 +591,13 @@ body {
   background: var(--surface-2);
 }
 #ordersTable thead th:first-child { z-index: 3; }
+/* вторая строка шапки: «Артикул» тянется rowspan-ом, поэтому first-child там —
+   ₽-ячейка первой недели; липкость/фон первого столбца ей не положены */
+#ordersTable thead tr:nth-child(2) th:first-child {
+  position: static;
+  background: transparent;
+  z-index: auto;
+}
 #ordersTable tr[data-row="mp"]  td:first-child { background: var(--t-mp-row); }
 #ordersTable tr[data-row="grp"] td:first-child { background: var(--t-grp-row); }
 #ordersTable tr[data-row="sku"] td:first-child { background: var(--t-sku-row); }

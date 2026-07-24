@@ -4369,19 +4369,26 @@ async def supply_probe(request: Request, q: str = ""):
 
 
 # ══ Брендовые ассеты (логотип/фон) — загружаются через TG-бота ═══════════════
+_asset_mem: dict[str, tuple] = {}   # name → (bytes, mime); сброс — рестартом
+
+
 @router.get("/asset/{name}", include_in_schema=False)
 async def asset_get(name: str):
-    """Публично (нужно на экране логина): логотип и фон из kv_cache."""
+    """Публично (нужно на экране логина): логотип и фон из kv_cache.
+    Кеш в памяти + сутки в браузере, чтобы не мигал фолбэк."""
     if name not in ("logo", "bg"):
         raise HTTPException(404)
-    import snapshot as _snap
-    v = await asyncio.to_thread(_snap.load, f"asset_{name}", None)
-    if not v or not isinstance(v, dict) or not v.get("b64"):
-        raise HTTPException(404)
     from fastapi.responses import Response
-    return Response(base64.b64decode(v["b64"]),
-                    media_type=v.get("mime") or "image/jpeg",
-                    headers={"Cache-Control": "public, max-age=1800"})
+    if name not in _asset_mem:
+        import snapshot as _snap
+        v = await asyncio.to_thread(_snap.load, f"asset_{name}", None)
+        if not v or not isinstance(v, dict) or not v.get("b64"):
+            raise HTTPException(404)
+        _asset_mem[name] = (base64.b64decode(v["b64"]),
+                            v.get("mime") or "image/jpeg")
+    data, mime = _asset_mem[name]
+    return Response(data, media_type=mime,
+                    headers={"Cache-Control": "public, max-age=86400"})
 
 
 # ══ Короба (грузоместа) заявок Ozon из файла производства ════════════════════
