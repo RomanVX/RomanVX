@@ -552,6 +552,56 @@ body {
 #pane-tools .mp-selector-bloc,
 #pane-toolsoz .mp-selector-bloc { display: none; }
 
+/* ══ Сегментированные переключатели (Заказы: площадки и режим) ══ */
+.mp-seg {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 11px;
+}
+.mp-seg-btn {
+  padding: 6px 15px;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: .88rem;
+  color: var(--ink-2);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  transition: background .15s, color .15s;
+}
+.mp-seg-btn:hover { color: var(--ink); }
+.mp-seg-btn.active {
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 1px 6px rgba(0, 0, 0, .12);
+}
+.mp-ai-link {
+  color: var(--brand);
+  font-weight: 700;
+  font-size: .92rem;
+  cursor: pointer;
+  padding: 6px 10px;
+  border-radius: 8px;
+}
+.mp-ai-link:hover { background: var(--brand-soft); }
+.mp-refresh {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  border: none;
+  background: var(--brand);
+  color: #fff;
+  font-size: 1.05rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background .15s;
+}
+.mp-refresh:hover { background: var(--brand-dark); }
+
 /* ══ Переключатели площадок ══ */
 .mp-selector-bloc {
   display: flex;

@@ -160,14 +160,15 @@ def get_summary(date_from=None, date_to=None) -> dict:
                    for r in plat_rows}
 
     day_rows = db.fetchall(
-        f"SELECT sale_date, platform, SUM(revenue) FROM sales_daily WHERE {cond} "
-        "GROUP BY sale_date, platform ORDER BY sale_date",
+        f"SELECT sale_date, platform, SUM(revenue), SUM(qty) FROM sales_daily "
+        f"WHERE {cond} GROUP BY sale_date, platform ORDER BY sale_date",
         tuple(params),
     )
     by_day: dict = {}
-    for d, platform, rev in day_rows:
+    for d, platform, rev, qty in day_rows:
         row = by_day.setdefault(d, {"date": d})
         row[platform.lower()] = round(float(rev or 0), 2)
+        row[platform.lower() + "_qty"] = int(qty or 0)
 
     bounds = db.fetchone("SELECT MIN(sale_date), MAX(sale_date) FROM sales_daily") or (None, None)
     return {

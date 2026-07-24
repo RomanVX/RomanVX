@@ -1008,10 +1008,79 @@ function setOrdersMp(mp) {
   renderOrdersTable();
 }
 
+// ── Режим Заказов: По дням / Неделя / Месяц ─────────────────────────────────
+let _ordersMode = 'week';
+
+function setOrdersMode(mode) {
+  _ordersMode = mode;
+  [['ordModeDays', 'days'], ['ordModeWeek', 'week'], ['ordModeMonth', 'month']]
+    .forEach(([id, m]) => document.getElementById(id)?.classList.toggle('active', m === mode));
+  const week = document.getElementById('ordersWeekCard');
+  const month = document.getElementById('ordersMonthlyWrap');
+  const days = document.getElementById('ordersDailyWrap');
+  if (week) week.style.display = mode === 'week' ? '' : 'none';
+  if (month) month.style.display = mode === 'month' ? '' : 'none';
+  if (days) days.style.display = mode === 'days' ? '' : 'none';
+  if (mode === 'month') renderOrdersMonthly();
+  if (mode === 'days') loadOrdersDaily();
+}
+
+let _dailyData = null;
+
+async function loadOrdersDaily(refresh) {
+  const wrap = document.getElementById('ordersDailyWrap');
+  if (!wrap) return;
+  if (!_dailyData || refresh) {
+    wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border"></span></div>';
+    const from = new Date(Date.now() - 30 * 86400e3).toISOString().slice(0, 10);
+    try {
+      _dailyData = await fetchJSON(`/api/dashboard/sales_history?date_from=${from}`, 60000);
+    } catch (e) {
+      wrap.innerHTML = `<div class="alert alert-danger">Ошибка: ${esc(e.message)}</div>`;
+      return;
+    }
+  }
+  renderOrdersDaily();
+}
+
+function renderOrdersDaily() {
+  const wrap = document.getElementById('ordersDailyWrap');
+  if (!wrap || !_dailyData) return;
+  const daily = (_dailyData.daily || []).slice(-30).reverse();   // свежие сверху
+  const MPs = [['wb', 'WB', '#c026d3'], ['ozon', 'Ozon', '#3b82f6'], ['ym', 'ЯМ', '#b45309']];
+  let html = `<div class="card border-0 bg-card"><div class="card-body p-0"><div class="table-responsive" style="max-height:70vh">
+    <table class="table table-sm align-middle mb-0 text-nowrap" style="font-size:.85rem"><thead><tr>
+    <th>Дата</th>` +
+    MPs.map(([, l, c]) => `<th class="text-end" colspan="2" style="color:${c}">${l}</th>`).join('') +
+    `<th class="text-end" colspan="2">Итого</th></tr>
+    <tr><th></th>` + Array(4).fill('<th class="text-end text-secondary" style="font-size:.72rem">₽</th><th class="text-end text-secondary" style="font-size:.72rem">шт</th>').join('') +
+    `</tr></thead><tbody>`;
+  const DOW = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
+  daily.forEach(d => {
+    const dt = new Date(d.date + 'T00:00:00');
+    let trub = 0, tqty = 0;
+    let cells = '';
+    MPs.forEach(([k]) => {
+      const r = d[k] || 0, q = d[k + '_qty'] || 0;
+      trub += r; tqty += q;
+      cells += `<td class="text-end">${r ? fmtRub(r) : '<span class="text-muted">—</span>'}</td>` +
+               `<td class="text-end text-secondary">${q || ''}</td>`;
+    });
+    const wknd = dt.getDay() === 0 || dt.getDay() === 6;
+    html += `<tr${wknd ? ' style="background:var(--brand-soft)"' : ''}>
+      <td>${d.date.slice(8, 10)}.${d.date.slice(5, 7)} <span class="text-secondary small">${DOW[dt.getDay()]}</span></td>
+      ${cells}<td class="text-end fw-semibold">${fmtRub(trub)}</td><td class="text-end fw-semibold">${tqty}</td></tr>`;
+  });
+  html += '</tbody></table></div></div></div>';
+  wrap.innerHTML = html;
+}
+
 async function reloadOrders() {
   await fetch(`${API}/api/dashboard/weekly_orders/invalidate`, { method: 'POST' }).catch(() => {});
   _ordersData = null;
   await loadOrders();
+  if (_ordersMode === 'month') renderOrdersMonthly();
+  if (_ordersMode === 'days') loadOrdersDaily(true);
 }
 
 async function loadOrders() {

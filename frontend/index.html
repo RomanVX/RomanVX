@@ -24,7 +24,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" />
-  <link rel="stylesheet" href="style.css?v=20" />
+  <link rel="stylesheet" href="style.css?v=21" />
 </head>
 <body>
 
@@ -139,37 +139,33 @@
 
   <!-- ── Заказы ── -->
   <div id="pane-salesan" style="display:none">
-    <!-- MP selector blocs -->
-    <div class="d-flex gap-2 mb-3 flex-wrap align-items-center">
-      <div id="ordMpWB"   class="mp-selector-bloc active" style="--mp-color:#c026d3" onclick="setOrdersMp('WB')">
-        <span class="mp-selector-dot" style="background:#c026d3"></span>WB
+    <div class="d-flex gap-3 mb-3 flex-wrap align-items-center">
+      <h3 class="mb-0 fw-bold">Заказы</h3>
+      <div class="mp-seg">
+        <span id="ordMpWB" class="mp-seg-btn active" onclick="setOrdersMp('WB')">Wildberries</span>
+        <span id="ordMpOZON" class="mp-seg-btn" onclick="setOrdersMp('OZON')">Ozon</span>
+        <span id="ordMpYM" class="mp-seg-btn" onclick="setOrdersMp('YM')">YM</span>
+        <span id="ordMpTOTAL" class="mp-seg-btn" onclick="setOrdersMp('TOTAL')">Общий</span>
       </div>
-      <div id="ordMpOZON" class="mp-selector-bloc" style="--mp-color:#3b82f6" onclick="setOrdersMp('OZON')">
-        <span class="mp-selector-dot" style="background:#3b82f6"></span>Ozon
+      <span id="salesAnalysisBtn" class="mp-ai-link" onclick="loadSalesAnalysis()">AI Анализ</span>
+      <div class="ms-auto d-flex align-items-center gap-2">
+        <div class="mp-seg">
+          <span id="ordModeDays" class="mp-seg-btn" onclick="setOrdersMode('days')">По дням</span>
+          <span id="ordModeWeek" class="mp-seg-btn active" onclick="setOrdersMode('week')">Неделя</span>
+          <span id="ordModeMonth" class="mp-seg-btn" onclick="setOrdersMode('month')">Месяц</span>
+        </div>
+        <button class="mp-refresh" onclick="reloadOrders()" title="Обновить"><i class="bi bi-arrow-clockwise"></i></button>
       </div>
-      <div id="ordMpYM"   class="mp-selector-bloc" style="--mp-color:#b45309" onclick="setOrdersMp('YM')">
-        <span class="mp-selector-dot" style="background:#b45309"></span>ЯМ
-      </div>
-      <div id="ordMpTOTAL" class="mp-selector-bloc" style="--mp-color:#059669" onclick="setOrdersMp('TOTAL')">
-        <span class="mp-selector-dot" style="background:#059669"></span>Тотал
-      </div>
-      <button id="salesAnalysisBtn" class="btn btn-sm btn-outline-warning" onclick="loadSalesAnalysis()">
-        ✨ Анализ продаж
-      </button>
-      <button id="ordCompactBtn" class="btn btn-sm btn-outline-info ms-auto" onclick="toggleOrdersCompact()">
-        <i class="bi bi-arrows-angle-contract"></i> Текущая + прошлая
-      </button>
-      <button class="btn btn-sm btn-outline-secondary" onclick="reloadOrders()" title="Обновить">
-        <i class="bi bi-arrow-clockwise"></i> Обновить
-      </button>
     </div>
-    <div class="card border-0 bg-card mb-3">
+    <div class="card border-0 bg-card mb-3" id="ordersWeekCard">
       <div class="card-body p-0">
         <div class="table-responsive" id="ordersTableWrap">
           <table class="table table-sm align-middle mb-0 text-nowrap" id="ordersTable"></table>
         </div>
       </div>
     </div>
+    <div id="ordersMonthlyWrap" style="display:none"></div>
+    <div id="ordersDailyWrap" style="display:none"></div>
 
   </div><!-- /pane-salesan -->
 
@@ -516,6 +512,6 @@
 
 <script src="vendor/bootstrap.bundle.min.js"></script>
 <script src="vendor/chart.umd.min.js"></script>
-<script src="app.js?v=181"></script>
+<script src="app.js?v=182"></script>
 </body>
 </html>
