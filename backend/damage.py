@@ -78,6 +78,19 @@ def _seed_if_empty() -> None:
     except Exception as e:
         _log.warning("seed: %s", e)
         return
+    from config import CABINET
+    if CABINET != "biomed":
+        # сид — расчёт кабинета Biomed; в схему другого кабинета он попадать
+        # не должен. Вычищаем, если успел просочиться (id совпадают с сидом),
+        # дальше склады заполнит автоподтяжка ЕГО собственными отчётами.
+        seed_ids = [f"{r['wh']}|{r['sku']}|{i}" for i, r in enumerate(rows)]
+        marks = ",".join("?" * len(seed_ids))
+        try:
+            db.execute(f"DELETE FROM damage WHERE id IN ({marks})",
+                       tuple(seed_ids))
+        except Exception as e:
+            _log.warning("seed cleanup: %s", e)
+        return
     seeded = {r["wh"] for r in rows}
     marks = ",".join("?" * len(seeded))
     have = db.fetchone(
