@@ -1095,6 +1095,18 @@ def _tariff_watch(comm_by_nm: dict) -> None:
                 "date": datetime.utcnow().strftime("%Y-%m-%d"),
                 "changes": changes})
             _log.info("WB тарифы изменились: %s", changes)
+            try:      # изменение комиссии — это новость с деньгами внутри
+                import news as _news
+                _news.add_internal(
+                    "wb_comm_" + datetime.utcnow().strftime("%Y%m%d"),
+                    "WB: изменилась комиссия по нашим категориям",
+                    "\n".join(f"{c['subject']}: {c['old']}% → {c['new']}%"
+                               for c in changes[:15]) +
+                    "\n\nКомиссия входит в юнитку напрямую — цены и целевые "
+                    "маржи по этим категориям надо пересчитать.",
+                    source="WB")
+            except Exception as e:
+                _log.warning("tariff → news: %s", e)
     _snap.save("wb_tariffs_seen", cur)
 
 

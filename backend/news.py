@@ -86,6 +86,62 @@ def add_internal(key: str, title: str, body: str, source: str = "Кабинет"
     return True
 
 
+async def detect_ozon() -> int:
+    """Ozon не отдаёт новости порталом — ловим его изменения сами:
+    новые акции с датами автодобавления, сдвиг тарифов коробов."""
+    import snapshot as _snap
+    import ozon_client
+    added = 0
+    # 1) акции: появилась новая — это и есть «новость Ozon» с деньгами внутри
+    try:
+        acts = await ozon_client.get_actions()
+        seen = set(await asyncio.to_thread(_snap.load, "news_oz_actions", None) or [])
+        for a in acts:
+            aid = str(a.get("id"))
+            if not aid or aid in seen:
+                continue
+            seen.add(aid)
+            auto = (a.get("auto_add_dates") or [])
+            body = (f"{a.get('description') or ''}\n\n"
+                    f"Период: {str(a.get('date_start'))[:10]} — "
+                    f"{str(a.get('date_end'))[:10]}. "
+                    f"Подходит наших товаров: {int(a.get('potential_products_count') or 0)}, "
+                    f"уже участвует: {int(a.get('participating_products_count') or 0)}.")
+            if auto:
+                body += (f"\nАвтодобавление товаров: "
+                         f"{', '.join(str(d)[:10] for d in auto[:3])} — "
+                         "если не хотим, товары нужно исключить заранее.")
+            if add_internal(f"oz_act_{aid}",
+                            f"Ozon: акция «{a.get('title')}»", body,
+                            source="Ozon",
+                            effective=str(a.get("date_start") or "")[:10]):
+                added += 1
+        await asyncio.to_thread(_snap.save, "news_oz_actions", sorted(seen)[-400:])
+    except Exception as e:
+        _log.warning("ozon actions: %s", str(e)[:200])
+    # 2) автоакции: Ozon включил автодобавление у товара — тихий срез маржи
+    try:
+        prices = await ozon_client.get_prices()
+        on = sorted(a for a, p in (prices or {}).items()
+                    if p.get("auto_action_enabled") or p.get("auto_action"))
+        prev = set(await asyncio.to_thread(_snap.load, "news_oz_auto", None) or [])
+        new_on = [a for a in on if a not in prev]
+        if new_on and prev:      # первый прогон только запоминает состояние
+            key = datetime.utcnow().strftime("%Y%m%d%H")
+            if add_internal(
+                    f"oz_auto_{key}",
+                    "Ozon: включилось автодобавление в акции",
+                    "Появилось автодобавление у SKU: " + ", ".join(new_on[:15]) +
+                    ".\nOzon может сам опустить цену — проверь, что маржа "
+                    "выдержит, или исключи товары из автодобавления.",
+                    source="Ozon"):
+                added += 1
+        await asyncio.to_thread(_snap.save, "news_oz_auto", on)
+    except Exception as e:
+        _log.warning("ozon auto-action: %s", str(e)[:200])
+    return added
+
+
 # ── разбор влияния ───────────────────────────────────────────────────────────
 async def _our_context() -> str:
     """Кто мы: категории, площадки, чувствительные места — для оценки влияния."""
@@ -224,7 +280,8 @@ async def morning_digest(hours: int = 26) -> str:
 
 
 async def refresh_all() -> dict:
-    """Полный цикл: собрать → разобрать. Зовётся планировщиком."""
+    """Полный цикл: собрать WB + изменения Ozon → разобрать влияние."""
     added = await fetch_wb()
+    added += await detect_ozon()
     analyzed = await analyze_new()
     return {"added": added, "analyzed": analyzed}

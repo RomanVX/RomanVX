@@ -723,3 +723,14 @@ async def download_label_file(url_or_guid: str) -> bytes:
     r = await _http().get(url, headers=_headers())
     r.raise_for_status()
     return r.content
+
+
+async def get_actions() -> list[dict]:
+    """Акции Ozon: список с датами, автодобавлением и числом наших товаров."""
+    if not OZON_CLIENT_ID or not OZON_API_KEY:
+        return []
+    r = await _http().get(f"{_BASE}/v1/actions", headers=_headers())
+    if not r.is_success:
+        _log.warning("ozon actions %s: %s", r.status_code, r.text[:200])
+        return []
+    return (r.json() or {}).get("result") or []
