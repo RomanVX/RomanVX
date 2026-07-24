@@ -284,6 +284,19 @@ async def get_stocks() -> list[dict]:
         offset += LIMIT
         await asyncio.sleep(21)  # rate limit 3 req/мин
 
+    # сгоревшие склады: WB ещё показывает этот товар в остатках, но его
+    # физически нет — выкидываем, чтобы дни запаса и поставки были честными
+    try:
+        import damage as _dmg
+        before = len(items)
+        items = [it for it in items
+                 if not _dmg.is_burned(it.get("warehouseName", ""))]
+        if before != len(items):
+            _log.info("WB stocks: скрыто %d строк сгоревших складов",
+                      before - len(items))
+    except Exception as _e:
+        _log.warning("burned filter: %s", _e)
+
     # если часть nmId не резолвится в артикул (новые товары) — доучиваем
     # связки из карточек товаров (Content API: nmID + vendorCode для ВСЕХ
     # товаров, даже без продаж), затем из заказов за 30 дней

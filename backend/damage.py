@@ -371,3 +371,18 @@ def clear(warehouse: str) -> dict:
     _init()
     db.execute("DELETE FROM damage WHERE warehouse = ?", (warehouse,))
     return {"cleared": warehouse}
+
+
+def burned_names() -> tuple:
+    """Имена сгоревших складов — для фильтрации живых остатков.
+
+    ТОЛЬКО точные имена, без городских синонимов: «спб» скрыл бы и живую
+    Уткину Заводь. «СПБ Шушары» ловится по слову «шушары»."""
+    return tuple(sorted(w.lower() for w in FIRE_DATES))
+
+
+def is_burned(warehouse_name: str) -> bool:
+    w = str(warehouse_name or "").lower()
+    if not w:
+        return False
+    return any(b in w for b in burned_names())
