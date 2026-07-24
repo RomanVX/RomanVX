@@ -5003,3 +5003,81 @@ async def simulate_curve(request: Request, sku: str,
     _owner_only(request)
     import simulator
     return await simulator.curve(sku, drr_pct=None if drr < 0 else drr)
+
+
+# ══ Ущерб от пожаров на складах ══════════════════════════════════════════════
+@router.get("/damage")
+async def damage_get(request: Request):
+    """Ущерб по складам: штуки, себестоимость, розница, что ещё не посчитано."""
+    _owner_only(request)
+    import damage
+    return await asyncio.to_thread(damage.summary)
+
+
+@router.post("/damage/upload", include_in_schema=False)
+async def damage_upload(request: Request, warehouse: str = Query(...),
+                        file: UploadFile = File(...)):
+    """Догрузить остатки по складу (выгрузка WB или свой файл)."""
+    _owner_only(request)
+    import damage
+    return await damage.upload(warehouse, await file.read())
+
+
+@router.post("/damage/clear", include_in_schema=False)
+async def damage_clear(request: Request, body: dict):
+    _owner_only(request)
+    import damage
+    return await asyncio.to_thread(damage.clear, str(body.get("warehouse") or ""))
+
+
+@router.get("/damage/export", include_in_schema=False)
+async def damage_export(request: Request):
+    """Выгрузка расчёта в Excel — для претензии в поддержку WB."""
+    _owner_only(request)
+    import io as _io
+    from urllib.parse import quote
+    import openpyxl
+    from openpyxl.styles import Font
+    from fastapi.responses import StreamingResponse
+    import damage
+    d = await asyncio.to_thread(damage.summary)
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Свод"
+    ws.append(["Расчёт ущерба от пожаров на складах WB"])
+    ws["A1"].font = Font(bold=True, size=13)
+    ws.append([])
+    ws.append(["Склад", "Позиций", "Штук", "Ущерб по себестоимости, ₽",
+               "Стоимость по рознице, ₽", "Примечание"])
+    for c in ws[3]:
+        c.font = Font(bold=True)
+    for w in d["warehouses"]:
+        ws.append([w["warehouse"], w["skus"], w["qty"], w["cost_total"],
+                   w["retail_total"], w.get("note") or ""])
+    t = d["total"]
+    ws.append(["ИТОГО", t["skus"], t["qty"], t["cost_total"], t["retail_total"], ""])
+    for c in ws[ws.max_row]:
+        c.font = Font(bold=True)
+    for col, width in zip("ABCDEF", (26, 10, 10, 26, 26, 70)):
+        ws.column_dimensions[col].width = width
+
+    det = wb.create_sheet("Детализация")
+    det.append(["Склад", "Артикул", "nmID", "Название", "Штук",
+                "Себестоимость, ₽", "Ущерб по себес, ₽",
+                "Розница, ₽", "По рознице, ₽"])
+    for c in det[1]:
+        c.font = Font(bold=True)
+    for r in d["rows"]:
+        det.append([r["warehouse"], r["sku"], r["nm"], r["name"], r["qty"],
+                    r["cost"], r["cost_total"], r["retail"], r["retail_total"]])
+    for col, width in zip("ABCDEFGHI", (18, 14, 14, 30, 9, 16, 18, 12, 16)):
+        det.column_dimensions[col].width = width
+
+    buf = _io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    fname = quote("Ущерб_склады_WB.xlsx")
+    return StreamingResponse(
+        buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition":
+                 f"attachment; filename=damage.xlsx; filename*=UTF-8''{fname}"})

@@ -25,7 +25,7 @@ document.addEventListener('DOMContentLoaded', _initThemeBtn);
 const API = '';
 let charts = {};
 let sortState = {};
-const dirty = { salesan: true, stocks: true, reviews: true, finance: true, unit: true, tools: true, toolsoz: true, docs: true, strategy: true, repricer: true, news: true, money: true, onboard: true, sim: true, actions: true };
+const dirty = { salesan: true, stocks: true, reviews: true, finance: true, unit: true, tools: true, toolsoz: true, docs: true, strategy: true, repricer: true, news: true, money: true, onboard: true, sim: true, actions: true, damage: true };
 let _advertData = [];
 let currentTab = 'finance';
 let prodAllData = [];
@@ -247,7 +247,7 @@ function goNavTool(tab, tool, navId) {
 function switchTab(name, linkEl) {
   document.querySelectorAll('#mainTabs .nav-link').forEach(a => a.classList.remove('active'));
   if (linkEl) linkEl.classList.add('active');
-  ['salesan', 'stocks', 'reviews', 'finance', 'unit', 'tools', 'toolsoz', 'docs', 'strategy', 'repricer', 'news', 'money', 'onboard', 'sim', 'actions'].forEach(t => {
+  ['salesan', 'stocks', 'reviews', 'finance', 'unit', 'tools', 'toolsoz', 'docs', 'strategy', 'repricer', 'news', 'money', 'onboard', 'sim', 'actions', 'damage'].forEach(t => {
     const el = document.getElementById('pane-' + t);
     if (el) el.style.display = t === name ? 'block' : 'none';
   });
@@ -258,7 +258,7 @@ function switchTab(name, linkEl) {
        reviews: loadReviews, finance: loadFinance, tools: loadTools, toolsoz: loadOzTool, docs: loadDocs,
        unit: loadUnitEconomics, strategy: loadStrategy, repricer: loadRepricer,
        news: loadNews, money: loadMoney, onboard: loadOnboard,
-       sim: loadSim, actions: loadActions })[name]();
+       sim: loadSim, actions: loadActions, damage: loadDamage })[name]();
   }
 }
 
@@ -6486,4 +6486,102 @@ async function actDecide(id, apply) {
     else if (j.status === 'failed') alert('Площадка отказала: ' + (j.result || ''));
     loadActions();
   } catch (e) { alert('Ошибка: ' + e.message); }
+}
+
+
+// ── Ущерб от пожаров на складах ──────────────────────────────────────────────
+let _damageData = null;
+
+async function loadDamage() {
+  const wrap = document.getElementById('damageWrap');
+  if (!wrap) return;
+  wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border"></span></div>';
+  try {
+    _damageData = await fetchJSON('/api/tools/damage', 60000);
+    renderDamage();
+  } catch (e) {
+    wrap.innerHTML = `<div class="alert alert-danger">Ошибка: ${esc(e.message)}</div>`;
+  }
+}
+
+async function damageUpload(input, wh) {
+  const f = input.files[0];
+  if (!f) return;
+  const fd = new FormData();
+  fd.append('file', f);
+  try {
+    const r = await fetch(`/api/tools/damage/upload?warehouse=${encodeURIComponent(wh)}`,
+                          { method: 'POST', body: fd });
+    const j = await r.json();
+    if (j.error) alert(j.error); else loadDamage();
+  } catch (e) { alert('Ошибка: ' + e.message); }
+  input.value = '';
+}
+
+function renderDamage() {
+  const wrap = document.getElementById('damageWrap');
+  if (!wrap || !_damageData) return;
+  const d = _damageData, t = d.total || {};
+  let html = `<div class="card bg-card p-3 mb-3">
+    <div class="d-flex gap-4 flex-wrap align-items-end">
+      <div>
+        <div class="text-secondary small">Сгорело по себестоимости</div>
+        <div style="font-size:2rem;font-weight:800;color:var(--danger)">${fmtRub(t.cost_total || 0)}</div>
+      </div>
+      <div>
+        <div class="text-secondary small">По цене реализации</div>
+        <div style="font-size:1.4rem;font-weight:700">${fmtRub(t.retail_total || 0)}</div>
+      </div>
+      <div>
+        <div class="text-secondary small">Товара</div>
+        <div style="font-size:1.4rem;font-weight:700">${fmt(t.qty || 0)} шт · ${t.skus || 0} SKU</div>
+      </div>
+    </div>
+    ${(d.pending || []).length ? `<div class="small text-warning mt-2">
+      Ещё не посчитаны: ${esc(d.pending.join(', '))} — загрузи по ним остатки в таблице ниже.</div>` : ''}
+    ${(d.missing_cost || []).length ? `<div class="small text-warning mt-1">
+      Нет себестоимости: ${esc(d.missing_cost.slice(0, 12).join(', '))} — эти позиции считаются с нулём.</div>` : ''}
+  </div>`;
+
+  html += `<div class="card bg-card mb-3"><div class="card-body p-0"><div class="table-responsive">
+    <table class="table table-sm align-middle mb-0" style="font-size:.87rem"><thead><tr>
+      <th>Склад</th><th class="text-end">SKU</th><th class="text-end">Штук</th>
+      <th class="text-end">По себестоимости</th><th class="text-end">По рознице</th>
+      <th>Основание</th><th></th></tr></thead><tbody>` +
+    (d.warehouses || []).map(w => `<tr${w.qty ? '' : ' class="text-secondary"'}>
+      <td class="fw-semibold">${esc(w.warehouse)}</td>
+      <td class="text-end">${w.skus || '—'}</td>
+      <td class="text-end">${w.qty ? fmt(w.qty) : '—'}</td>
+      <td class="text-end fw-semibold"${w.cost_total ? ' style="color:var(--danger)"' : ''}>${w.cost_total ? fmtRub(w.cost_total) : '—'}</td>
+      <td class="text-end">${w.retail_total ? fmtRub(w.retail_total) : '—'}</td>
+      <td class="small text-secondary">${esc(w.note || '')}</td>
+      <td><label class="btn btn-sm btn-outline-info py-0 mb-0">Загрузить остатки
+        <input type="file" accept=".xlsx" style="display:none" onchange="damageUpload(this,'${esc(w.warehouse)}')"></label></td>
+    </tr>`).join('') +
+    `<tr style="font-weight:800;border-top:2px solid var(--border-2)">
+      <td>ИТОГО</td><td class="text-end">${t.skus || 0}</td><td class="text-end">${fmt(t.qty || 0)}</td>
+      <td class="text-end" style="color:var(--danger)">${fmtRub(t.cost_total || 0)}</td>
+      <td class="text-end">${fmtRub(t.retail_total || 0)}</td><td colspan="2"></td></tr>
+    </tbody></table></div></div></div>`;
+
+  const rows = d.rows || [];
+  html += `<div class="card bg-card"><div class="card-body p-0">
+    <div class="p-3 pb-2 fw-semibold">Детализация по товарам (${rows.length})</div>
+    <div class="table-responsive" style="max-height:60vh">
+    <table class="table table-sm align-middle mb-0" style="font-size:.83rem"><thead><tr>
+      <th>Склад</th><th>Артикул</th><th>Название</th><th class="text-end">Штук</th>
+      <th class="text-end">Себес, ₽</th><th class="text-end">Ущерб, ₽</th>
+      <th class="text-end">Розница, ₽</th><th class="text-end">По рознице, ₽</th>
+    </tr></thead><tbody>` +
+    rows.map(r => `<tr>
+      <td class="text-secondary">${esc(r.warehouse)}</td>
+      <td class="fw-semibold">${esc(r.sku)}</td>
+      <td>${esc(r.name || '')}</td>
+      <td class="text-end">${r.qty}</td>
+      <td class="text-end">${r.cost ? fmt(r.cost) : '<span class="text-warning">—</span>'}</td>
+      <td class="text-end fw-semibold">${fmtRub(r.cost_total)}</td>
+      <td class="text-end text-secondary">${r.retail ? fmt(r.retail) : '—'}</td>
+      <td class="text-end text-secondary">${r.retail_total ? fmtRub(r.retail_total) : '—'}</td>
+    </tr>`).join('') + `</tbody></table></div></div></div>`;
+  wrap.innerHTML = html;
 }

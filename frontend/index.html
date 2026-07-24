@@ -82,6 +82,8 @@
         <div class="mp-drop-sep"></div>
         <a href="#" onclick="goNavTool('toolsoz','clusters','navWarehouse');return false">Ozon: остатки по кластерам</a>
         <a href="#" onclick="goNavTool('toolsoz','slots','navWarehouse');return false">Ozon: поставки — слоты и короба</a>
+        <div class="mp-drop-sep"></div>
+        <a href="#" onclick="goNav('damage','navWarehouse');return false">Ущерб от пожаров</a>
       </div>
     </div>
     <div class="mp-menu-item" id="navOps">
@@ -241,6 +243,19 @@
       <div class="text-center text-secondary py-4"><span class="spinner-border"></span></div>
     </div>
   </div><!-- /pane-money -->
+
+  <!-- ── Ущерб от пожаров ── -->
+  <div id="pane-damage" style="display:none">
+    <div class="d-flex gap-3 mb-3 flex-wrap align-items-center">
+      <h3 class="mb-0 fw-bold">Ущерб от пожаров</h3>
+      <span class="text-secondary small">сгоревший товар по себестоимости, склады WB</span>
+      <div class="ms-auto d-flex align-items-center gap-2">
+        <a class="btn btn-sm btn-outline-success" href="/api/tools/damage/export">Выгрузить в Excel</a>
+        <button class="mp-refresh" onclick="loadDamage()" title="Обновить"><i class="bi bi-arrow-clockwise"></i></button>
+      </div>
+    </div>
+    <div id="damageWrap"><div class="text-center text-secondary py-4"><span class="spinner-border"></span></div></div>
+  </div><!-- /pane-damage -->
 
   <!-- ── Симулятор «что если» ── -->
   <div id="pane-sim" style="display:none">
@@ -597,6 +612,6 @@
 
 <script src="vendor/bootstrap.bundle.min.js"></script>
 <script src="vendor/chart.umd.min.js"></script>
-<script src="app.js?v=189"></script>
+<script src="app.js?v=190"></script>
 </body>
 </html>
