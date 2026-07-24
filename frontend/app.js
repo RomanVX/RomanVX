@@ -6558,7 +6558,9 @@ function renderDamage() {
         ${w.control_qty !== undefined ? (w.matches
           ? '<div class="text-success">сходится с исходным расчётом</div>'
           : `<div class="text-danger">РАСХОЖДЕНИЕ: в исходнике ${fmt(w.control_qty)} шт / ${fmtRub(w.control_cost)}</div>`) : ''}</td>
-      <td><label class="btn btn-sm btn-outline-info py-0 mb-0">Загрузить остатки
+      <td class="text-nowrap">
+        ${!w.qty ? `<button class="btn btn-sm btn-info py-0 me-1" onclick="damageFetch('${esc(w.warehouse)}')">Подтянуть из WB</button>` : ''}
+        <label class="btn btn-sm btn-outline-info py-0 mb-0">Файлом
         <input type="file" accept=".xlsx" style="display:none" onchange="damageUpload(this,'${esc(w.warehouse)}')"></label></td>
     </tr>`).join('') +
     `<tr style="font-weight:800;border-top:2px solid var(--border-2)">
@@ -6588,4 +6590,21 @@ function renderDamage() {
       <td class="text-end text-secondary">${r.retail_total ? fmtRub(r.retail_total) : '—'}</td>
     </tr>`).join('') + `</tbody></table></div></div></div>`;
   wrap.innerHTML = html;
+}
+
+
+async function damageFetch(wh) {
+  const wrap = document.getElementById('damageWrap');
+  wrap.innerHTML = `<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>
+    Запрашиваю у WB отчёт хранения по складу «${esc(wh)}» — сборка отчёта занимает до пары минут…</div>`;
+  try {
+    const r = await fetch('/api/tools/damage/fetch', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ warehouse: wh }) });
+    const j = await r.json();
+    if (j.error) {
+      alert(j.error + (j.warehouses_in_report ? '\n\nСклады в отчёте: ' + j.warehouses_in_report.join(', ') : ''));
+    }
+    loadDamage();
+  } catch (e) { alert('Ошибка: ' + e.message); loadDamage(); }
 }

@@ -5081,3 +5081,13 @@ async def damage_export(request: Request):
         buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition":
                  f"attachment; filename=damage.xlsx; filename*=UTF-8''{fname}"})
+
+
+@router.post("/damage/fetch", include_in_schema=False)
+async def damage_fetch(request: Request, body: dict):
+    """Подтянуть остатки склада из отчёта платного хранения WB (owner).
+    Дата среза — день до пожара, можно передать свою (body.date)."""
+    _owner_only(request)
+    import damage
+    return await damage.fetch_from_storage(
+        str(body.get("warehouse") or ""), str(body.get("date") or ""))

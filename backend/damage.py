@@ -26,6 +26,11 @@ _SEED = os.path.join(os.path.dirname(__file__), "data", "damage_seed.json")
 # Склады, по которым ведём учёт. Порядок = порядок вывода на экране.
 WAREHOUSES = ["Шушары", "Электросталь", "Котовск", "Краснодар", "Невинномысск"]
 
+# дата пожара → срез остатков берём за предыдущий день
+FIRE_DATES = {"Краснодар": "2026-07-22", "Невинномысск": "2026-07-22",
+              "Шушары": "2026-07-24",
+              "Электросталь": "2026-07-18", "Котовск": "2026-07-18"}
+
 _NOTES = {
     "Электросталь": "Остатки на 17.07 + принятая поставка 580 шт. "
                     "Возвращённое WB в кабинет НЕ вычитаем — физически "
@@ -158,6 +163,95 @@ def summary() -> dict:
         "missing_cost": sorted(set(no_cost)),
         "pending": [w["warehouse"] for w in warehouses if not w["qty"]],
     }
+
+
+async def fetch_from_storage(warehouse: str, snap_date: str = "") -> dict:
+    """Остатки склада на дату из отчёта платного хранения WB → в расчёт.
+
+    Тот же метод, которым считали Электросталь и Котовск: строки отчёта
+    date × warehouse × nmId с barcodesCount (штук на хранении). Берём срез
+    за день до пожара, себестоимость и розницу — из своих справочников.
+    """
+    import wb_client
+    _init()
+    if not snap_date:
+        fire = FIRE_DATES.get(warehouse)
+        if not fire:
+            return {"error": f"не знаю дату пожара склада {warehouse} — "
+                             "передай дату среза явно"}
+        d = datetime.strptime(fire, "%Y-%m-%d") - timedelta(days=1)
+        snap_date = d.strftime("%Y-%m-%d")
+    rows_raw = await wb_client.get_paid_storage(snap_date, snap_date)
+    if not rows_raw:
+        return {"error": f"отчёт хранения за {snap_date} пуст или не собрался "
+                         "(лимит WB — 1 запрос в минуту, попробуй ещё раз)"}
+    # какие склады вообще есть в отчёте — пригодится, если имя не совпало
+    seen_wh = sorted({str(r.get("warehouse") or "") for r in rows_raw} - {""})
+    want = warehouse.lower()
+    match = [w for w in seen_wh if want in w.lower() or w.lower() in want]
+    if not match:
+        return {"error": f"склад «{warehouse}» не найден в отчёте за {snap_date}",
+                "warehouses_in_report": seen_wh}
+    # агрегируем: nmId → штук (строк может быть несколько на баркоды)
+    agg: dict = {}
+    for r in rows_raw:
+        if str(r.get("warehouse") or "") not in match:
+            continue
+        nm = str(r.get("nmId") or "")
+        if not nm:
+            continue
+        g = agg.setdefault(nm, {"qty": 0,
+                                "vendor": str(r.get("vendorCode") or "")})
+        g["qty"] += int(r.get("barcodesCount") or 0)
+    if not agg:
+        return {"error": f"по складам {match} нет строк с товаром"}
+
+    try:
+        import cost_store
+        costs = cost_store.get_costs() or {}
+    except Exception:
+        costs = {}
+    retail_map: dict = {}
+    try:      # розница — живые цены WB (до СПП)
+        live = await asyncio.wait_for(wb_client.get_current_prices(), timeout=30)
+        retail_map = {k.upper(): (v or {}).get("discounted") or 0
+                      for k, v in (live or {}).items()}
+    except Exception:
+        pass
+    try:
+        import catalog as _cat
+        nm_to_art = {str(k): v for k, v in
+                     getattr(_cat, "WB_ID_TO_ART", {}).items()}
+    except Exception:
+        nm_to_art = {}
+
+    db.execute("DELETE FROM damage WHERE warehouse = ?", (warehouse,))
+    now = _msk()
+    note = (f"Остатки из отчёта платного хранения, срез {snap_date} "
+            f"(пожар {FIRE_DATES.get(warehouse, '—')}). "
+            f"Склады отчёта: {', '.join(match)}.")
+    added, qty_total = 0, 0
+    for nm, g in agg.items():
+        art = nm_to_art.get(nm) or g["vendor"] or nm
+        try:
+            import catalog as _cat2
+            art = _cat2.canon(art)
+        except Exception:
+            pass
+        cost = float(costs.get(art) or costs.get(str(art).upper()) or 0)
+        retail = float(retail_map.get(str(art).upper()) or 0)
+        db.execute(
+            "INSERT INTO damage (id, warehouse, sku, nm, name, qty, cost, "
+            "retail, source, note, updated) VALUES (?,?,?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT (id) DO UPDATE SET qty=excluded.qty, "
+            "cost=excluded.cost, retail=excluded.retail, updated=excluded.updated",
+            (f"{warehouse}|{art}|{nm}", warehouse, str(art), nm, "",
+             g["qty"], cost, retail, f"хранение {snap_date}", note, now))
+        added += 1
+        qty_total += g["qty"]
+    return {"warehouse": warehouse, "snap_date": snap_date,
+            "skus": added, "qty": qty_total,
+            "wb_warehouses": match}
 
 
 async def upload(warehouse: str, raw: bytes) -> dict:
