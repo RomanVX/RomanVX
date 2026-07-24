@@ -180,6 +180,11 @@ async def _agent_watch_loop():
     await asyncio.sleep(600)          # дать серверу прогреться после старта
     while True:
         try:
+            try:      # снимок кабинета держим свежим для агента
+                import agent_digest
+                await agent_digest.refresh()
+            except Exception as e:
+                logging.getLogger("agent_digest").warning("refresh: %s", e)
             res = await agent_watch.tick()
             if res.get("sent"):
                 logging.getLogger("agent_watch").info("отправлено тревог: %s",

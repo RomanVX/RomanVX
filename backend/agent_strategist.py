@@ -405,6 +405,25 @@ async def _t_fbs(_a: dict) -> str:
                        "note": res["note"], "by_sku": slim}, ensure_ascii=False)
 
 
+async def _t_dashboard_catalog(_a: dict) -> str:
+    """Каталог всех эндпоинтов дашборда (наш же OpenAPI)."""
+    import agent_api
+    cat = await asyncio.to_thread(agent_api.catalog)
+    return json.dumps(cat, ensure_ascii=False)
+
+
+async def _t_dashboard_api(a: dict) -> str:
+    """Прямой вызов любого GET дашборда: данных больше, чем обёрток."""
+    import agent_api
+    path = str(a.get("path") or "")
+    if not path:
+        return "нужен path, например /api/tools/clusters"
+    params = a.get("params") or {}
+    if not isinstance(params, dict):
+        params = {}
+    return (await agent_api.call(path, params))[:_TOOL_TRIM]
+
+
 async def _t_propose_action(a: dict) -> str:
     """Предложить действие в кабинете — уходит владельцу на подтверждение."""
     import agent_actions as aa
@@ -496,6 +515,8 @@ _TOOLS = {
                "(+флаг автодобавления), календарь акций WB на 30 дней (куда зовут, даты, условия)"),
     "fbs_compare": (_t_fbs, "Переход WB на FBS: дельта прямых затрат на штуку и месяц по каждому "
                     "SKU (комиссия/логистика/хранение по официальным тарифам); конверсию и сроки не моделирует"),
+    "dashboard_catalog": (_t_dashboard_catalog, "Каталог ВСЕХ эндпоинтов дашборда с описаниями и параметрами — смотри сюда, если нужных данных нет в готовых инструментах"),
+    "dashboard_api": (_t_dashboard_api, "Вызвать любой GET-эндпоинт дашборда напрямую: path (например /api/tools/clusters) и params. Так доступны любые данные проекта, а не только готовые инструменты"),
     "propose_action": (_t_propose_action, "Предложить действие в кабинете владельцу на подтверждение. "
         "kind: minus_phrases (payload: advert_id, nm_id, phrases[]) | set_bid (advert_id, nm_id, bid в рублях за 1000 показов, placement search|recommendations|combined, bid_was) | "
         "campaign_state (advert_id, action pause|start) | ozon_price (offer_id, price, old_price). "
@@ -633,6 +654,7 @@ _TOOL_RU = {"unit_economics": "юнитка", "stocks": "остатки", "pnl":
             "clusters": "кластеры", "pnl_all": "P&L площадок",
             "history": "история продаж",
             "propose_action": "заявка на действие",
+            "dashboard_catalog": "каталог API", "dashboard_api": "данные дашборда",
             "competitors": "конкуренты", "trends": "тренды",
             "ozon_search": "поиск Ozon", "repricer": "репрайсер",
             "repricer_propose": "предложения цен", "wb_search": "выдача WB",
@@ -689,6 +711,18 @@ async def _run_session_locked(trigger, focus, light, status_msg_id,
         else:
             user_msg += ("\nПроведи регулярную стратегическую сессию: память → "
                          "данные → план/факт → решения → обнови память → отчёт.")
+        # снимок кабинета: общая картина до первого вопроса, чтобы агент не
+        # гадал вслепую, какой инструмент дёрнуть
+        try:
+            import agent_digest as _dg
+            _snapshot = await _dg.get()
+            if _snapshot:
+                user_msg += ("\n\n" + _snapshot +
+                             "\n(Это сводка. За деталями иди в инструменты; "
+                             "если нужных данных нет — dashboard_catalog и "
+                             "dashboard_api дают доступ ко всему дашборду.)")
+        except Exception as _e:
+            _log.warning("digest: %s", str(_e)[:150])
         # живые цены — ВСЕГДА в контексте: юнитка усредняет за окно и врёт
         # про «сейчас», из-за этого стратег уже давал советы по старым ценам
         try:

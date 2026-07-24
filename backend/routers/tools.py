@@ -4855,3 +4855,12 @@ async def agent_action_decide(request: Request, aid: str, body: dict):
     if body.get("apply"):
         return await aa.apply(aid, who="владелец (дашборд)")
     return await aa.reject(aid, str(body.get("why") or ""))
+
+
+@router.get("/agent/digest", include_in_schema=False)
+async def agent_digest_get(request: Request, refresh: bool = Query(default=False)):
+    """Снимок кабинета, который агент видит в каждой сессии (owner)."""
+    _owner_only(request)
+    import agent_digest
+    text = await (agent_digest.refresh() if refresh else agent_digest.get())
+    return {"digest": text}
