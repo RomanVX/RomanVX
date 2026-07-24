@@ -139,7 +139,51 @@ async def _do_ozon_price(p: dict) -> tuple[dict, dict]:
     return before, res
 
 
+async def _do_wb_price(p: dict) -> tuple[dict, dict]:
+    """POST /api/v2/upload/task — цена и скидка WB (discounts-prices-api).
+
+    Схема по docs/wb_api/items.yaml: {"data": [{"nmID", "price", "discount"}]}.
+    Цена целая; если новая со скидкой втрое ниже старой — уйдёт в карантин.
+    """
+    import httpx
+    import wb_client
+    nm = p.get("nm_id")
+    if not nm:            # из симулятора приходит артикул — находим nmID
+        art = str(p.get("sku") or "")
+        try:
+            import catalog as _cat
+            nm = next((k for k, v in _cat.WB_ID_TO_ART.items()
+                       if str(v).upper() == art.upper()), None)
+        except Exception:
+            nm = None
+        if not nm:
+            try:
+                import onboarding
+                nm = (onboarding.load().get(art) or {}).get("wb_id")
+            except Exception:
+                nm = None
+        if not nm:
+            raise RuntimeError(f"не нашёл nmID для артикула {art}")
+    nm = int(nm)
+    good: dict = {"nmID": nm}
+    if p.get("price") is not None:
+        good["price"] = int(round(float(p["price"])))
+    if p.get("discount") is not None:
+        good["discount"] = int(round(float(p["discount"])))
+    before = {"price_was": p.get("price_was"), "discount_was": p.get("discount_was")}
+    async with httpx.AsyncClient(timeout=40) as c:
+        r = await c.post(f"{wb_client.PRICES_BASE}/api/v2/upload/task",
+                         headers=wb_client._headers(), json={"data": [good]})
+    if not r.is_success:
+        raise RuntimeError(f"WB {r.status_code}: {r.text[:250]}")
+    try:
+        return before, r.json()
+    except Exception:
+        return before, {"ok": True}
+
+
 _EXEC = {
+    "wb_price": (_do_wb_price, "цена WB"),
     "minus_phrases": (_do_minus_phrases, "минус-фразы WB"),
     "set_bid": (_do_set_bid, "ставка WB"),
     "campaign_state": (_do_campaign_state, "пауза/запуск кампании WB"),

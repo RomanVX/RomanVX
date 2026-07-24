@@ -65,6 +65,7 @@
       <span class="mp-menu-title" onclick="goNav('salesan','navAnalytics')">Аналитика</span>
       <div class="mp-menu-drop">
         <a href="#" onclick="goNav('money','navAnalytics');return false">Где деньги</a>
+        <a href="#" onclick="goNav('sim','navAnalytics');return false">Симулятор «что если»</a>
         <div class="mp-drop-sep"></div>
         <a href="#" onclick="goNav('salesan','navAnalytics');return false">Заказы</a>
         <a href="#" id="navFinance" onclick="goNav('finance','navAnalytics');return false">Финансы</a>
@@ -91,6 +92,7 @@
         <a href="#" id="tabRepricer" style="display:none" onclick="goNav('repricer','navOps');return false">Репрайсер</a>
         <a href="#" id="tabStrategy" style="display:none" onclick="goNav('strategy','navOps');return false">Стратегия</a>
         <div class="mp-drop-sep"></div>
+        <a href="#" onclick="goNav('actions','navOps');return false">Управление и решения</a>
         <a href="#" onclick="goNav('onboard','navOps');return false">Подключение кабинета</a>
       </div>
     </div>
@@ -239,6 +241,26 @@
       <div class="text-center text-secondary py-4"><span class="spinner-border"></span></div>
     </div>
   </div><!-- /pane-money -->
+
+  <!-- ── Симулятор «что если» ── -->
+  <div id="pane-sim" style="display:none">
+    <div class="d-flex gap-3 mb-3 flex-wrap align-items-center">
+      <h3 class="mb-0 fw-bold">Симулятор «что если»</h3>
+      <select id="simSku" class="form-select form-select-sm" style="width:230px" onchange="simPick()"></select>
+      <span class="text-secondary small">меняешь параметры — видишь объём, выручку и прибыль</span>
+    </div>
+    <div id="simWrap"><div class="text-center text-secondary py-4"><span class="spinner-border"></span></div></div>
+  </div><!-- /pane-sim -->
+
+  <!-- ── Управление и решения ── -->
+  <div id="pane-actions" style="display:none">
+    <div class="d-flex gap-3 mb-3 flex-wrap align-items-center">
+      <h3 class="mb-0 fw-bold">Управление и решения</h3>
+      <span class="text-secondary small">всё, что меняет кабинет, проходит через твоё подтверждение</span>
+      <button class="mp-refresh ms-auto" onclick="loadActions()" title="Обновить"><i class="bi bi-arrow-clockwise"></i></button>
+    </div>
+    <div id="actionsWrap"><div class="text-center text-secondary py-4"><span class="spinner-border"></span></div></div>
+  </div><!-- /pane-actions -->
 
   <!-- ── Подключение кабинета ── -->
   <div id="pane-onboard" style="display:none">
@@ -575,6 +597,6 @@
 
 <script src="vendor/bootstrap.bundle.min.js"></script>
 <script src="vendor/chart.umd.min.js"></script>
-<script src="app.js?v=187"></script>
+<script src="app.js?v=188"></script>
 </body>
 </html>

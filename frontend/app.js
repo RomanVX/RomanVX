@@ -25,7 +25,7 @@ document.addEventListener('DOMContentLoaded', _initThemeBtn);
 const API = '';
 let charts = {};
 let sortState = {};
-const dirty = { salesan: true, stocks: true, reviews: true, finance: true, unit: true, tools: true, toolsoz: true, docs: true, strategy: true, repricer: true, news: true, money: true, onboard: true };
+const dirty = { salesan: true, stocks: true, reviews: true, finance: true, unit: true, tools: true, toolsoz: true, docs: true, strategy: true, repricer: true, news: true, money: true, onboard: true, sim: true, actions: true };
 let _advertData = [];
 let currentTab = 'finance';
 let prodAllData = [];
@@ -247,7 +247,7 @@ function goNavTool(tab, tool, navId) {
 function switchTab(name, linkEl) {
   document.querySelectorAll('#mainTabs .nav-link').forEach(a => a.classList.remove('active'));
   if (linkEl) linkEl.classList.add('active');
-  ['salesan', 'stocks', 'reviews', 'finance', 'unit', 'tools', 'toolsoz', 'docs', 'strategy', 'repricer', 'news', 'money', 'onboard'].forEach(t => {
+  ['salesan', 'stocks', 'reviews', 'finance', 'unit', 'tools', 'toolsoz', 'docs', 'strategy', 'repricer', 'news', 'money', 'onboard', 'sim', 'actions'].forEach(t => {
     const el = document.getElementById('pane-' + t);
     if (el) el.style.display = t === name ? 'block' : 'none';
   });
@@ -257,7 +257,8 @@ function switchTab(name, linkEl) {
     ({ salesan: loadSalesAnalytics, stocks: loadStocks,
        reviews: loadReviews, finance: loadFinance, tools: loadTools, toolsoz: loadOzTool, docs: loadDocs,
        unit: loadUnitEconomics, strategy: loadStrategy, repricer: loadRepricer,
-       news: loadNews, money: loadMoney, onboard: loadOnboard })[name]();
+       news: loadNews, money: loadMoney, onboard: loadOnboard,
+       sim: loadSim, actions: loadActions })[name]();
   }
 }
 
@@ -6243,4 +6244,230 @@ async function onboardScan() {
   } catch (e) {
     wrap.innerHTML = `<div class="alert alert-danger">Ошибка: ${esc(e.message)}</div>`;
   }
+}
+
+
+// ── Симулятор «что если» ─────────────────────────────────────────────────────
+let _simBase = null, _simSku = '', _simCurve = null;
+
+async function loadSim() {
+  const wrap = document.getElementById('simWrap');
+  if (!wrap) return;
+  if (!_simBase) {
+    wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>Собираю юнитку и историю реакции спроса…</div>';
+    try {
+      _simBase = await fetchJSON('/api/tools/simulate/base', 180000);
+    } catch (e) {
+      wrap.innerHTML = `<div class="alert alert-danger">Ошибка: ${esc(e.message)}</div>`; return;
+    }
+  }
+  if (_simBase.error) { wrap.innerHTML = `<div class="alert alert-warning">${esc(_simBase.error)}</div>`; return; }
+  const sel = document.getElementById('simSku');
+  if (sel && !sel.options.length) {
+    sel.innerHTML = (_simBase.items || []).map(i =>
+      `<option value="${esc(i.sku)}">${esc(i.sku)} — ${esc((i.name || '').slice(0, 30))}</option>`).join('');
+  }
+  _simSku = _simSku || (sel && sel.value) || ((_simBase.items || [])[0] || {}).sku;
+  renderSim();
+}
+
+function _simItem() {
+  return (_simBase.items || []).find(i => i.sku === _simSku) || (_simBase.items || [])[0];
+}
+
+function simPick() {
+  _simSku = document.getElementById('simSku').value;
+  _simCurve = null;
+  renderSim();
+}
+
+function renderSim() {
+  const wrap = document.getElementById('simWrap');
+  const it = _simItem();
+  if (!wrap || !it) return;
+  const conf = it.elasticity_events >= 5 ? ['высокая', 'success']
+             : it.elasticity_events >= 2 ? ['средняя', 'warning'] : ['низкая', 'danger'];
+  wrap.innerHTML = `
+  <div class="card bg-card p-3 mb-3">
+    <div class="d-flex gap-4 flex-wrap align-items-end">
+      <div>
+        <label class="text-secondary small d-block">Цена продавца, ₽</label>
+        <input id="simPrice" type="number" class="form-control form-control-sm" style="width:130px"
+               value="${it.price_seller}" oninput="simRun()">
+        <div class="text-secondary" style="font-size:.72rem">сейчас ${it.price_seller} ₽${it.price_buyer ? ` · покупателю ~${it.price_buyer} ₽` : ''}</div>
+      </div>
+      <div>
+        <label class="text-secondary small d-block">ДРР, %</label>
+        <input id="simDrr" type="number" step="0.5" class="form-control form-control-sm" style="width:110px"
+               value="${it.drr_pct}" oninput="simRun()">
+        <div class="text-secondary" style="font-size:.72rem">безубыточный ${it.be_drr_pct}%</div>
+      </div>
+      <div>
+        <label class="text-secondary small d-block">Себестоимость, ₽</label>
+        <input id="simCogs" type="number" class="form-control form-control-sm" style="width:120px"
+               value="${it.cogs}" oninput="simRun()">
+      </div>
+      <div class="ms-auto small">
+        <div>Реакция спроса: <b>${it.elasticity}</b> <span class="text-secondary">(на 1% цены)</span></div>
+        <div class="text-secondary">источник: ${esc(it.elasticity_source)} · наблюдений ${it.elasticity_events}
+          · доверие <span class="text-${conf[1]}">${conf[0]}</span></div>
+      </div>
+    </div>
+  </div>
+  <div id="simOut"><div class="text-secondary small">Меняй параметры — расчёт появится здесь.</div></div>
+  <div class="card bg-card p-3 mt-3">
+    <div class="d-flex align-items-center gap-2 mb-2">
+      <div class="fw-semibold">Кривая прибыли по цене</div>
+      <button class="btn btn-sm btn-outline-info ms-auto" onclick="simLoadCurve()">Построить</button>
+    </div>
+    <div id="simCurveWrap" class="text-secondary small">Покажет, при какой цене прибыль максимальна.</div>
+  </div>`;
+  simRun();
+}
+
+let _simTimer = null;
+function simRun() {
+  clearTimeout(_simTimer);
+  _simTimer = setTimeout(_simRunNow, 400);
+}
+
+async function _simRunNow() {
+  const out = document.getElementById('simOut');
+  if (!out) return;
+  const p = document.getElementById('simPrice').value;
+  const d = document.getElementById('simDrr').value;
+  const c = document.getElementById('simCogs').value;
+  try {
+    const r = await fetchJSON(`/api/tools/simulate?sku=${encodeURIComponent(_simSku)}&price=${p}&drr=${d}&cogs=${c}`, 120000);
+    if (r.error) { out.innerHTML = `<div class="alert alert-warning">${esc(r.error)}</div>`; return; }
+    const dl = r.delta || {};
+    const col = v => v > 0 ? 'var(--pos-strong)' : v < 0 ? 'var(--danger)' : 'var(--muted)';
+    out.innerHTML = `<div class="card bg-card p-3">
+      <div class="table-responsive"><table class="table table-sm mb-2" style="font-size:.88rem"><thead><tr>
+        <th></th><th class="text-end">Сейчас</th><th class="text-end">Станет</th><th class="text-end">Разница</th></tr></thead><tbody>
+        <tr><td>Цена продавца</td><td class="text-end">${fmtRub(r.now.price_seller)}</td><td class="text-end">${fmtRub(r.new.price_seller)}</td><td></td></tr>
+        ${r.now.price_buyer ? `<tr><td>Цена для покупателя</td><td class="text-end">${fmtRub(r.now.price_buyer)}</td><td class="text-end">${fmtRub(r.new.price_buyer)}</td><td></td></tr>` : ''}
+        <tr><td>Объём, шт/мес</td><td class="text-end">${r.now.qty_month}</td><td class="text-end">${r.new.qty_month}</td>
+          <td class="text-end" style="color:${col(dl.qty)}">${dl.qty > 0 ? '+' : ''}${dl.qty}</td></tr>
+        <tr><td>Выручка/мес</td><td class="text-end">${fmtRub(r.now.revenue_month)}</td><td class="text-end">${fmtRub(r.new.revenue_month)}</td>
+          <td class="text-end" style="color:${col(dl.revenue)}">${dl.revenue > 0 ? '+' : ''}${fmtRub(dl.revenue)}</td></tr>
+        <tr><td>Прибыль на штуку</td><td class="text-end">${fmtRub(r.now.profit_unit)}</td><td class="text-end">${fmtRub(r.new.profit_unit)}</td><td></td></tr>
+        <tr><td>Маржа</td><td class="text-end">${r.now.margin_pct}%</td><td class="text-end">${r.new.margin_pct}%</td>
+          <td class="text-end" style="color:${col(dl.margin_pp)}">${dl.margin_pp > 0 ? '+' : ''}${dl.margin_pp} пп</td></tr>
+        <tr style="font-weight:700"><td>Прибыль/мес</td><td class="text-end">${fmtRub(r.now.profit_month)}</td>
+          <td class="text-end">${fmtRub(r.new.profit_month)}</td>
+          <td class="text-end" style="color:${col(dl.profit)}">${dl.profit > 0 ? '+' : ''}${fmtRub(dl.profit)}</td></tr>
+      </tbody></table></div>
+      <div class="small text-secondary">Диапазон прибыли с учётом неопределённости спроса:
+        <b>${fmtRub(r.range.profit_low)} … ${fmtRub(r.range.profit_high)}</b> в месяц ·
+        доверие ${esc(r.assumptions.confidence)} (наблюдений ${r.assumptions.events})</div>
+      <div class="mt-2">
+        <button class="btn btn-sm btn-info" onclick="simApply(${r.new.price_seller})">Применить эту цену на WB</button>
+        <span class="text-secondary small ms-2">создаст заявку — подтвердишь в разделе «Управление» или в Telegram</span>
+      </div>
+    </div>`;
+  } catch (e) {
+    out.innerHTML = `<div class="alert alert-danger">Ошибка: ${esc(e.message)}</div>`;
+  }
+}
+
+async function simLoadCurve() {
+  const w = document.getElementById('simCurveWrap');
+  w.innerHTML = '<span class="spinner-border spinner-border-sm"></span> считаю…';
+  try {
+    const r = await fetchJSON(`/api/tools/simulate/curve?sku=${encodeURIComponent(_simSku)}`, 120000);
+    if (r.error) { w.innerHTML = esc(r.error); return; }
+    const max = Math.max(...r.points.map(p => Math.abs(p.profit_month))) || 1;
+    w.innerHTML = (r.warning ? `<div class="small text-warning mb-2">${esc(r.warning)}</div>` : '') +
+      `<div class="table-responsive"><table class="table table-sm mb-2" style="font-size:.82rem"><thead><tr>
+      <th>Изм. цены</th><th class="text-end">Цена</th><th class="text-end">Покупателю</th><th class="text-end">Объём</th>
+      <th class="text-end">Выручка</th><th class="text-end">Прибыль/мес</th><th style="width:170px"></th></tr></thead><tbody>` +
+      r.points.map(p => {
+        const best = p.step_pct === r.best_profit.step_pct;
+        const w2 = Math.round(Math.abs(p.profit_month) / max * 100);
+        return `<tr${best ? ' style="background:var(--brand-soft);font-weight:700"' : ''}>
+          <td>${p.step_pct > 0 ? '+' : ''}${p.step_pct}%${best ? ' ★' : ''}${p.step_pct === 0 ? ' (сейчас)' : ''}</td>
+          <td class="text-end">${fmtRub(p.price_seller)}</td>
+          <td class="text-end">${p.price_buyer ? fmtRub(p.price_buyer) : '—'}</td>
+          <td class="text-end">${p.qty_month}</td>
+          <td class="text-end">${fmtRub(p.revenue_month)}</td>
+          <td class="text-end">${fmtRub(p.profit_month)}</td>
+          <td><div style="height:10px;width:${w2}%;background:${p.profit_month >= 0 ? 'var(--brand)' : 'var(--danger)'};border-radius:5px"></div></td>
+        </tr>`;
+      }).join('') + `</tbody></table></div>
+      <div class="small">Максимум прибыли при цене <b>${fmtRub(r.best_profit.price_seller)}</b>
+        (${r.best_profit.step_pct > 0 ? '+' : ''}${r.best_profit.step_pct}%) — ${fmtRub(r.best_profit.profit_month)}/мес.
+        Максимум выручки при <b>${fmtRub(r.best_revenue.price_seller)}</b>.</div>`;
+  } catch (e) { w.innerHTML = `<span class="text-danger">${esc(e.message)}</span>`; }
+}
+
+async function simApply(price) {
+  const it = _simItem();
+  if (!confirm(`Поставить цену продавца ${price} ₽ на WB для ${it.sku}?\nСоздам заявку — изменение произойдёт только после подтверждения.`)) return;
+  try {
+    const r = await fetch('/api/tools/money/act', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ act_kind: 'wb_price',
+        act_payload: { sku: it.sku, price: price, price_was: it.price_seller },
+        title: `${it.sku}: цена продавца ${it.price_seller} → ${price} ₽`,
+        evidence: 'из симулятора «что если»' }) });
+    const j = await r.json();
+    alert(j.error ? `Не вышло: ${j.error}` : 'Заявка создана — подтверди в «Управление и решения».');
+  } catch (e) { alert('Ошибка: ' + e.message); }
+}
+
+// ── Управление и решения ─────────────────────────────────────────────────────
+async function loadActions() {
+  const wrap = document.getElementById('actionsWrap');
+  if (!wrap) return;
+  try {
+    const d = await fetchJSON('/api/tools/agent/actions', 60000);
+    const pend = d.pending || [], jr = d.journal || [];
+    let html = `<div class="card bg-card p-3 mb-3">
+      <div class="fw-semibold mb-2">Ждут решения (${pend.length})</div>` +
+      (pend.length ? pend.map(a => `<div class="p-2 mb-2" style="background:var(--surface-2);border-radius:10px">
+        <div class="d-flex align-items-start gap-2 flex-wrap">
+          <div class="flex-grow-1">
+            <div class="fw-semibold">${esc(a.title)}</div>
+            <div class="small text-secondary">${esc(a.reason || '')}</div>
+            <div class="small text-secondary mt-1">${esc(a.created)} · ${esc(a.kind)}
+              <code style="font-size:.72rem">${esc(JSON.stringify(a.payload).slice(0, 120))}</code></div>
+          </div>
+          <div class="d-flex gap-1">
+            <button class="btn btn-sm btn-info" onclick="actDecide('${a.id}',true)">Применить</button>
+            <button class="btn btn-sm btn-outline-secondary" onclick="actDecide('${a.id}',false)">Отклонить</button>
+          </div>
+        </div></div>`).join('')
+      : '<div class="text-secondary small">Ничего не ждёт — агент предложит, когда найдёт что улучшить.</div>') +
+      `</div>`;
+    html += `<div class="card bg-card p-3"><div class="fw-semibold mb-2">Журнал (${jr.length})</div>` +
+      (jr.length ? `<div class="table-responsive"><table class="table table-sm mb-0" style="font-size:.83rem"><thead><tr>
+        <th>Когда</th><th>Что</th><th>Статус</th><th>Результат</th></tr></thead><tbody>` +
+        jr.map(a => `<tr>
+          <td class="text-secondary">${esc((a.applied || a.created || '').slice(0, 16))}</td>
+          <td>${esc(a.title)}</td>
+          <td>${a.status === 'done' ? '<span class="text-success">применено</span>'
+              : a.status === 'rejected' ? '<span class="text-secondary">отклонено</span>'
+              : a.status === 'failed' ? '<span class="text-danger">ошибка</span>' : esc(a.status)}</td>
+          <td class="text-secondary small">${esc((a.result || '').slice(0, 90))}</td></tr>`).join('') +
+        `</tbody></table></div>`
+      : '<div class="text-secondary small">Пока пусто.</div>') + `</div>`;
+    wrap.innerHTML = html;
+  } catch (e) {
+    wrap.innerHTML = `<div class="alert alert-danger">Ошибка: ${esc(e.message)}</div>`;
+  }
+}
+
+async function actDecide(id, apply) {
+  if (apply && !confirm('Применить это изменение в кабинете?')) return;
+  const why = apply ? '' : (prompt('Почему отклоняем? (агент запомнит)') || '');
+  try {
+    const r = await fetch(`/api/tools/agent/actions/${id}`, { method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ apply: !!apply, why }) });
+    const j = await r.json();
+    if (j.error) alert('Не вышло: ' + j.error);
+    else if (j.status === 'failed') alert('Площадка отказала: ' + (j.result || ''));
+    loadActions();
+  } catch (e) { alert('Ошибка: ' + e.message); }
 }
