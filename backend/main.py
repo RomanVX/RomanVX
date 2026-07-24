@@ -174,6 +174,25 @@ async def _slot_watcher():
         await asyncio.sleep(420)
 
 
+async def _report_interrupted():
+    """Сессия агента, оборванная деплоем, оставляет статус «взялся за вопрос»
+    навсегда. При старте честно закрываем такие висяки."""
+    import snapshot as _snap
+    import agent_review as _agent
+    await asyncio.sleep(25)
+    try:
+        st = await asyncio.to_thread(_snap.load, "agent_inflight", None)
+        if not st:
+            return
+        await asyncio.to_thread(_snap.save, "agent_inflight", None)
+        await _agent.tg_edit(st.get("msg_id"),
+                             "Сессия прервалась (перезапуск сервера). "
+                             "Повтори вопрос — отвечу.",
+                             chat_id=st.get("chat") or "")
+    except Exception as e:
+        logging.getLogger("agent").warning("interrupted report: %s", e)
+
+
 async def _news_loop():
     """Новости площадок: сбор и разбор раз в 3 часа, сводка в 10:00 МСК."""
     import snapshot as _snap
@@ -344,6 +363,7 @@ async def lifespan(app: FastAPI):
     task6 = asyncio.create_task(_competitors_daily())
     task_watch = asyncio.create_task(_agent_watch_loop())
     task_news = asyncio.create_task(_news_loop())
+    asyncio.create_task(_report_interrupted())
     task7 = asyncio.create_task(_trends_weekly())
     task8 = asyncio.create_task(_strategist_loop())
     task9 = asyncio.create_task(_bid_history_daily())

@@ -19,6 +19,7 @@ _log = logging.getLogger("strategist")
 _MODEL = "claude-opus-4-8"
 _MAX_STEPS = 18          # предохранитель цикла
 _TOOL_TRIM = 7000        # символов на результат инструмента
+_TOOL_TIMEOUT = 150      # секунд на один инструмент: дальше — без него
 
 _running = False         # одна сессия за раз (512 МБ и здравый смысл)
 _cancel = False          # стоп-слово из TG: прервать текущую сессию
@@ -859,6 +860,13 @@ async def _run_session_locked(trigger, focus, light, status_msg_id,
                               chat, thread, image_b64) -> dict:
     global _running
     _running = True
+    import snapshot as _snap0
+    if status_msg_id:
+        try:      # метка живой сессии: если её убьёт деплой — закроем при старте
+            await asyncio.to_thread(_snap0.save, "agent_inflight",
+                                    {"msg_id": status_msg_id, "chat": chat})
+        except Exception:
+            pass
     try:
         import anthropic
         client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
@@ -1050,11 +1058,40 @@ async def _run_session_locked(trigger, focus, light, status_msg_id,
 
             async def _run_tool(b):
                 fn = _TOOLS.get(b.name, (None, ""))[0]
-                try:
-                    return await fn(b.input or {}) if fn else f"неизвестный инструмент {b.name}"
+                if not fn:
+                    return f"неизвестный инструмент {b.name}"
+                try:      # один медленный инструмент не должен вешать сессию
+                    return await asyncio.wait_for(fn(b.input or {}),
+                                                  timeout=_TOOL_TIMEOUT)
+                except asyncio.TimeoutError:
+                    return (f"инструмент {b.name} не ответил за "
+                            f"{_TOOL_TIMEOUT} секунд — данные недоступны, "
+                            "продолжай без них и скажи об этом в ответе")
                 except Exception as e:
                     return f"ошибка инструмента: {str(e)[:300]}"
-            outs = await asyncio.gather(*[_run_tool(b) for b in blocks])
+
+            _busy = " → ".join(_TOOL_RU.get(b.name, b.name) for b in blocks)
+
+            async def _heartbeat(step=_step, busy=_busy):
+                """Пока инструменты работают — статус живёт, а не «висит»."""
+                while True:
+                    await asyncio.sleep(20)
+                    if not status_msg_id:
+                        continue
+                    el = int(asyncio.get_event_loop().time() - started)
+                    try:
+                        await _ar.tg_edit(
+                            status_msg_id, chat_id=chat,
+                            text=(f"Агент работает\nШаг {step + 1} · "
+                                  f"{el // 60}:{el % 60:02d} · "
+                                  f"собираю данные: {busy}…"))
+                    except Exception:
+                        pass
+            _hb = asyncio.get_event_loop().create_task(_heartbeat())
+            try:
+                outs = await asyncio.gather(*[_run_tool(b) for b in blocks])
+            finally:
+                _hb.cancel()
             results = [{"type": "tool_result", "tool_use_id": b.id,
                         "content": str(o)[:_TOOL_TRIM]}
                        for b, o in zip(blocks, outs)]
@@ -1070,6 +1107,10 @@ async def _run_session_locked(trigger, focus, light, status_msg_id,
         return {"error": str(e)[:300]}
     finally:
         _running = False
+        try:
+            await asyncio.to_thread(_snap0.save, "agent_inflight", None)
+        except Exception:
+            pass
 
 
 def due_tasks() -> list[dict]:
