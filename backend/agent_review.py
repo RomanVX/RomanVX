@@ -83,11 +83,13 @@ OZON: Performance-реклама отдельным кабинетом, числ
 видны — оговаривать; не советовать резких движений без проверки на 3-5 днях."""
 
 
-async def tg_send_id(text: str, thread_id: int | None = None) -> int | None:
+async def tg_send_id(text: str, thread_id: int | None = None,
+                     chat_id: str = "") -> int | None:
     """Как tg_send, но возвращает message_id (для последующего edit)."""
     if not TG_BOT_TOKEN:
         return None
-    body = {"chat_id": TG_CHAT_ID, "text": text[:3900], "parse_mode": "HTML"}
+    body = {"chat_id": chat_id or TG_CHAT_ID, "text": text[:3900],
+            "parse_mode": "HTML"}
     if thread_id:
         body["message_thread_id"] = thread_id
     async with httpx.AsyncClient(timeout=30) as c:
@@ -99,13 +101,14 @@ async def tg_send_id(text: str, thread_id: int | None = None) -> int | None:
         return None
 
 
-async def tg_edit(message_id: int, text: str) -> None:
+async def tg_edit(message_id: int, text: str, chat_id: str = "") -> None:
     if not TG_BOT_TOKEN or not message_id:
         return
     try:
         async with httpx.AsyncClient(timeout=15) as c:
             await c.post(f"https://api.telegram.org/bot{TG_BOT_TOKEN}/editMessageText",
-                         json={"chat_id": TG_CHAT_ID, "message_id": message_id,
+                         json={"chat_id": chat_id or TG_CHAT_ID,
+                               "message_id": message_id,
                                "text": text[:3900], "parse_mode": "HTML"})
     except Exception:
         pass
@@ -703,7 +706,7 @@ async def bot_loop() -> None:
                          json={"commands": [
                              {"command": "stocks", "description": "Остатки по площадкам"},
                              {"command": "review", "description": "Разбор кабинета"},
-                             {"command": "strategy", "description": "Стратег: сессия или вопрос после команды"},
+                             {"command": "strategy", "description": "Глубокий разбор с планом (можно с вопросом)"},
                              {"command": "bid", "description": "Ставка CPM: /bid АРТИКУЛ CTR% [CR%] [ДРР%]"},
                              {"command": "reset", "description": "Очистить память диалога"},
                              {"command": "help", "description": "Справка"},
@@ -897,15 +900,34 @@ async def bot_loop() -> None:
                                               **({"message_thread_id": thread} if thread else {})})
                             except Exception:
                                 pass
+                            status_id = None
                         else:
-                            await tg_send("Смотрю данные…",
-                                          chat_id=chat, thread_id=thread)
+                            status_id = await tg_send_id(
+                                "Агент взялся за вопрос…",
+                                thread_id=thread, chat_id=chat)
+
                         async def _run(qq=q, th=thread, k=key, hq=has_quote,
-                                       ph=photo_id, ch=chat):
+                                       ph=photo_id, ch=chat, sid=status_id,
+                                       bant=_is_banter(q, bool(photo_id))):
                             try:
                                 img = await _tg_get_photo(ph) if ph else None
-                                await _answer_question(qq, th, use_history=not hq,
-                                                       image_b64=img, chat=ch)
+                                if bant:
+                                    # трёп — дёшево, без данных и инструментов
+                                    await _answer_question(qq, th, use_history=not hq,
+                                                           image_b64=img, chat=ch)
+                                    return
+                                # дело — единый агент с инструментами и памятью
+                                import agent_strategist as _st
+                                deep = any(w in qq.lower() for w in (
+                                    "разберись", "разбери", "стратег", "сессию",
+                                    "план", "подумай", "глубок", "полный разбор"))
+                                res = await _st.run_session(
+                                    trigger="вопрос в Telegram", focus=qq,
+                                    light=not deep, status_msg_id=sid,
+                                    chat=ch, thread=th, image_b64=img)
+                                if res.get("error"):
+                                    await tg_send(f"Не смог ответить: {res['error']}",
+                                                  chat_id=ch, thread_id=th)
                             finally:
                                 _qa_inflight.discard(k)
                         asyncio.get_event_loop().create_task(_run())
@@ -930,19 +952,20 @@ async def bot_loop() -> None:
                     asyncio.get_event_loop().create_task(_review_with_retry(thread))
                 elif cmd == "/strategy":
                     focus_q = raw.split(None, 1)[1].strip() if len(raw.split(None, 1)) > 1 else ""
-                    status_id = await tg_send_id("Стратег сел за данные — "
+                    status_id = await tg_send_id("Агент взялся за задачу — "
                                   + ("разберу вопрос и вернусь с ответом…" if focus_q
                                      else "отчёт будет через несколько минут…"),
-                                  thread_id=thread)
+                                  thread_id=thread, chat_id=chat)
                     import agent_strategist as _st
 
-                    async def _strun(th=thread, fq=focus_q, sid=status_id):
+                    async def _strun(th=thread, fq=focus_q, sid=status_id, ch=chat):
                         res = await _st.run_session(
                             trigger="команда /strategy в Telegram",
-                            focus=fq, light=bool(fq), status_msg_id=sid)
+                            focus=fq, light=bool(fq), status_msg_id=sid,
+                            chat=ch, thread=th)
                         if res.get("error"):
                             await tg_send(f"Сессия не удалась: {res['error']}",
-                                          thread_id=th)
+                                          chat_id=ch, thread_id=th)
                     asyncio.get_event_loop().create_task(_strun())
                 elif cmd == "/reset":
                     await asyncio.to_thread(_dialog_load)
@@ -952,12 +975,17 @@ async def bot_loop() -> None:
                     await tg_send("Память диалога очищена.", thread_id=thread)
                 elif cmd in ("/start", "/help"):
                     await tg_send(
-                        "Команды:\n/stocks — короткий расклад по остаткам (горящие позиции)\n"
-                        "/review — полный разбор кабинета от агента\n"
+                        "Просто напиши вопрос — отвечу по данным кабинета, сам решу, "
+                        "какие данные поднять.\n"
+                        "Скажи «разберись» или «подумай» — включу глубокий разбор "
+                        "с планом и памятью.\n\n"
+                        "Команды-ярлыки:\n"
+                        "/stocks — горящие остатки\n"
+                        "/review — полный разбор кабинета\n"
+                        "/bid — калькулятор ставки CPM\n"
                         "/reset — очистить память диалога\n\n"
-                        f"Или просто спроси меня через упоминание: <i>@{me} что с маржой геля?</i> "
-                        "— отвечу по данным кабинета.\n"
-                        "Плюс сам присылаю разбор каждый понедельник в 9:00 МСК.",
+                        "«стоп» — прервать работу, «старт» — вернуть.\n"
+                        "Сам присылаю разбор по понедельникам в 9:00 МСК.",
                         thread_id=thread)
             if _batch:      # офсет пишем раз на пачку, а не на сообщение
                 await asyncio.to_thread(_snap.save, "tg_offset", offset)

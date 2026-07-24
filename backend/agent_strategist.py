@@ -481,17 +481,37 @@ _TOOL_RU = {"unit_economics": "юнитка", "stocks": "остатки", "pnl":
             "save_memory": "запись памяти"}
 
 
+_queue_lock = asyncio.Lock()   # сессии по очереди, а не «сессия уже идёт»
+_queued = [0]                  # сколько ждёт в очереди (для честного статуса)
+
+
 async def run_session(trigger: str = "manual", focus: str = "",
-                      light: bool = False, status_msg_id: int | None = None) -> dict:
-    """Стратегическая сессия: цикл с инструментами → отчёт/ответ в TG.
+                      light: bool = False, status_msg_id: int | None = None,
+                      chat: str = "", thread: int | None = None,
+                      image_b64: str | None = None) -> dict:
+    """Единая сессия агента: цикл с инструментами → ответ в чат, откуда спросили.
 
     light=True — быстрый режим для вопросов: минимум инструментов, память
-    по необходимости, без обязательного save_memory."""
+    по необходимости, без обязательного save_memory.
+    chat/thread — куда отвечать (по умолчанию основной чат).
+    Параллельные запросы не отбиваются, а ждут очереди."""
     global _running
     if not ANTHROPIC_API_KEY:
         return {"error": "нет ANTHROPIC_API_KEY"}
-    if _running:
-        return {"error": "сессия уже идёт"}
+    if _running and status_msg_id:
+        await _ar.tg_edit(status_msg_id, chat_id=chat, text=
+                          f"Агент занят другой задачей — ты {_queued[0] + 1}-й "
+                          "в очереди, начну сразу как освобожусь…")
+    _queued[0] += 1
+    async with _queue_lock:
+        _queued[0] -= 1
+        return await _run_session_locked(trigger, focus, light, status_msg_id,
+                                         chat, thread, image_b64)
+
+
+async def _run_session_locked(trigger, focus, light, status_msg_id,
+                              chat, thread, image_b64) -> dict:
+    global _running
     _running = True
     try:
         import anthropic
@@ -568,14 +588,22 @@ async def run_session(trigger: str = "manual", focus: str = "",
             _log.warning("strategist live margin: %s", str(e)[:150])
         # диалоговая память: последние обмены /strategy (переживает рестарт)
         import snapshot as _snap
-        dialog = await asyncio.to_thread(_snap.load, "strategist_dialog", None) or []
+        _dlg_key = f"strategist_dialog{('_c' + chat) if chat else ''}"
+        dialog = await asyncio.to_thread(_snap.load, _dlg_key, None) or []
         if dialog and focus:
             recent = "\n".join(f"- Владелец: {d['q']}\n  Ты ответил: {d['a']}"
                                 for d in dialog[-4:])
             user_msg += ("\n\nНЕДАВНИЙ ДИАЛОГ (короткие реплики владельца — "
                          "обычно уточнение к нему; «это озон» после записи факта "
                          "= поправь тот факт, а не новое исследование):\n" + recent)
-        messages = [{"role": "user", "content": user_msg}]
+        if image_b64:
+            messages = [{"role": "user", "content": [
+                {"type": "image", "source": {"type": "base64",
+                                             "media_type": "image/jpeg",
+                                             "data": image_b64}},
+                {"type": "text", "text": user_msg}]}]
+        else:
+            messages = [{"role": "user", "content": user_msg}]
         tools_used, saved = [], False
         started = asyncio.get_event_loop().time()
         for _step in range(_MAX_STEPS):
@@ -584,7 +612,8 @@ async def run_session(trigger: str = "manual", focus: str = "",
                 _cancel = False
                 _log.info("strategist: остановлен стоп-словом")
                 if status_msg_id:
-                    await _ar.tg_edit(status_msg_id, "Остановлен стоп-словом.")
+                    await _ar.tg_edit(status_msg_id, "Остановлен стоп-словом.",
+                                      chat_id=chat)
                 return {"ok": True, "stopped": True}
             if asyncio.get_event_loop().time() - started > 1500:
                 raise TimeoutError("сессия дольше 25 минут — прервана")
@@ -593,7 +622,9 @@ async def run_session(trigger: str = "manual", focus: str = "",
                 async with _hx.AsyncClient(timeout=8) as _c:
                     await _c.post(
                         f"https://api.telegram.org/bot{_ar.TG_BOT_TOKEN}/sendChatAction",
-                        json={"chat_id": _ar.TG_CHAT_ID, "action": "typing"})
+                        json={"chat_id": chat or _ar.TG_CHAT_ID,
+                              "action": "typing",
+                              **({"message_thread_id": thread} if thread else {})})
             except Exception:
                 pass
             _log.info("strategist: шаг %d, инструменты: %s", _step + 1,
@@ -609,16 +640,16 @@ async def run_session(trigger: str = "manual", focus: str = "",
                 if status_msg_id:
                     _secs = int(asyncio.get_event_loop().time() - started)
                     await _ar.tg_edit(
-                        status_msg_id,
+                        status_msg_id, chat_id=chat, text=
                         f"Готово  {'▰' * 10} 100% · "
                         f"{_secs // 60}:{_secs % 60:02d}")
                 if report:
                     for i in range(0, len(report), 3900):
-                        await _ar.tg_send(report[i:i + 3900])
+                        await _ar.tg_send(report[i:i + 3900],
+                                          chat_id=chat, thread_id=thread)
                     if focus:
                         dialog.append({"q": focus[:300], "a": report[:500]})
-                        await asyncio.to_thread(_snap.save, "strategist_dialog",
-                                                dialog[-8:])
+                        await asyncio.to_thread(_snap.save, _dlg_key, dialog[-8:])
                 _log.info("strategist: сессия ок, шагов %d, инструменты: %s",
                           _step + 1, ",".join(tools_used))
                 return {"ok": True, "steps": _step + 1, "tools": tools_used,
@@ -638,8 +669,8 @@ async def run_session(trigger: str = "manual", focus: str = "",
                 bar = "▰" * round(pct / 10) + "▱" * (10 - round(pct / 10))
                 secs = int(asyncio.get_event_loop().time() - started)
                 await _ar.tg_edit(
-                    status_msg_id,
-                    f"Стратег работает  {bar} ~{pct}%\n"
+                    status_msg_id, chat_id=chat, text=
+                    f"Агент работает  {bar} ~{pct}%\n"
                     f"Шаг {_step + 1} · {secs // 60}:{secs % 60:02d} · "
                     f"смотрю: {names}…")
 
@@ -658,7 +689,8 @@ async def run_session(trigger: str = "manual", focus: str = "",
     except Exception as e:
         _log.error("strategist: %s", e)
         try:
-            await _ar.tg_send(f"Стратег упал: {str(e)[:200]}")
+            await _ar.tg_send(f"Агент упал: {str(e)[:200]}",
+                              chat_id=chat, thread_id=thread)
         except Exception:
             pass
         return {"error": str(e)[:300]}
