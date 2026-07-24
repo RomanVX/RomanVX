@@ -74,7 +74,9 @@ async def _t_adv(_a: dict) -> str:
               "drr": c.get("drr"), "orders": c.get("orders"),
               "verdict": c.get("verdict"), "skus": c.get("skus") or c.get("arts")}
              for c in (adv.get("campaigns") or [])]
-    return (f"итого: расход {adv.get('total_spend')} ₽, выручка {adv.get('total_revenue')} ₽, "
+    return ("ЕДИНСТВЕННЫЙ ИСТОЧНИК ДРР по кампаниям (окно 28 дней, выручка "
+            "атрибутирована самим WB). "
+            f"итого: расход {adv.get('total_spend')} ₽, выручка {adv.get('total_revenue')} ₽, "
             f"ДРР {adv.get('total_drr')}%, слив {adv.get('waste')} ₽ за {adv.get('days')} дн. "
             + json.dumps(camps, ensure_ascii=False))
 
@@ -115,7 +117,10 @@ async def _t_adv_bids(_a: dict) -> str:
                              "ctr": p.get("ctr"), "orders": p.get("orders"),
                              "spend": p.get("spend"), "bid": p.get("bid")}
                             for p in top]})
-    return ("по кампаниям WB (период 14 дн, ставки текущие): "
+    return ("по кампаниям WB (период 14 дн, ставки текущие). ВАЖНО: spend и "
+            "orders здесь — только по ВИДИМЫМ поисковым кластерам, это НЕ весь "
+            "бюджет и НЕ вся выручка кампании. Считать из этих чисел ДРР "
+            "ЗАПРЕЩЕНО — ДРР берётся только из инструмента advertising. "
             + json.dumps(out[:25], ensure_ascii=False))
 
 
@@ -178,13 +183,43 @@ async def _t_adv_daily(a: dict) -> str:
 async def _t_bid_recommend(a: dict) -> str:
     """Рекомендуемые и минимальные ставки WB — коридор для решения."""
     import advert_client as ac
-    aid = a.get("advert_id")
-    nm = a.get("nm_id")
+    aid, nm = a.get("advert_id"), a.get("nm_id")
+    sku = str(a.get("sku") or "").strip()
+    # по артикулу продавца сами находим nmID и активную кампанию
+    if sku and not nm:
+        try:
+            import catalog as _cat
+            nm = next((k for k, v in _cat.WB_ID_TO_ART.items()
+                       if str(v).upper() == sku.upper()), None)
+        except Exception:
+            nm = None
+        if not nm:
+            try:
+                import onboarding
+                nm = (onboarding.load().get(sku) or {}).get("wb_id")
+            except Exception:
+                nm = None
+    if nm and not aid:
+        try:
+            from routers import tools as _tools
+            d = await _tools.bid_queries(refresh=False, date_from="", date_to="")
+            for r in d.get("rows") or []:
+                arts = [str(x).upper() for x in (r.get("skus") or [])]
+                if sku.upper() in arts or str(nm) in arts:
+                    aid = r.get("camp_id")
+                    break
+        except Exception:
+            pass
     if not aid or not nm:
-        return ("нужны advert_id и nm_id (артикул WB); их можно взять "
-                "из инструмента adv_bids")
+        return ("не нашёл кампанию или артикул WB: передай advert_id и nm_id "
+                "(их видно в adv_bids) либо sku")
     rec = await ac.get_bid_recommendations(int(aid), int(nm))
     mins = await ac.get_min_bids(int(aid), [int(nm)])
+    if not rec and not mins:
+        return (f"WB не отдал рекомендации по кампании {aid} и артикулу {nm} — "
+                "обычно так бывает у выключенных кампаний: рекомендации "
+                "считаются только для активных. Скажи это владельцу прямо, "
+                "не подставляй вместо них текущие ставки.")
     return json.dumps({
         "рекомендации": rec,
         "минимальные_ставки": mins.get(str(nm)) or mins,
@@ -800,6 +835,15 @@ _SYSTEM = """Ты — стратег-директор по маркетплей�
 коридор ставок — в bid_recommend, продажи по дням за любой период — в history,
 всё остальное — в dashboard_catalog и dashboard_api. Проверь их, и только
 потом отвечай «нет».
+ПРОТИВОРЕЧИЯ В ДАННЫХ. Один и тот же показатель у разных инструментов может
+отличаться — окна разные (14 против 28 дней), охват разный (кластеры против
+всей кампании), атрибуция разная. Если новое число расходится с тем, что ты
+сказал минуту назад, НЕЛЬЗЯ молча поменять вывод на противоположный.
+Назови оба числа, объясни, почему они разные, и скажи, какое считаешь верным
+и почему. ДРР по кампаниям берётся ТОЛЬКО из advertising; из кластерной
+статистики (adv_bids) ДРР не считается — там частичный расход.
+Менять вывод можно и нужно, когда появился новый ФАКТ (как с падением
+трафика AL-01) — но тогда прямо скажи, что именно изменило картину.
 ДРР ВСЕГДА В ПАРЕ С БЕЗУБЫТОЧНЫМ. Число ДРР само по себе ничего не значит:
 26% может быть нормой при безубыточном 40% и катастрофой при 12%. Никогда
 не пиши «реклама в норме» или «ДРР высокий», не назвав рядом безубыточный
