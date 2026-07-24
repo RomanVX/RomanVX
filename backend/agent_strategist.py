@@ -549,6 +549,8 @@ async def run_session(trigger: str = "manual", focus: str = "",
             if _cancel:
                 _cancel = False
                 _log.info("strategist: остановлен стоп-словом")
+                if status_msg_id:
+                    await _ar.tg_edit(status_msg_id, "Остановлен стоп-словом.")
                 return {"ok": True, "stopped": True}
             if asyncio.get_event_loop().time() - started > 1500:
                 raise TimeoutError("сессия дольше 25 минут — прервана")
@@ -570,6 +572,12 @@ async def run_session(trigger: str = "manual", focus: str = "",
                                  if getattr(b, "type", "") == "text").strip()
                 if not saved and not light:
                     _log.warning("strategist: сессия без save_memory")
+                if status_msg_id:
+                    _secs = int(asyncio.get_event_loop().time() - started)
+                    await _ar.tg_edit(
+                        status_msg_id,
+                        f"Готово  {'▰' * 10} 100% · "
+                        f"{_secs // 60}:{_secs % 60:02d}")
                 if report:
                     for i in range(0, len(report), 3900):
                         await _ar.tg_send(report[i:i + 3900])
@@ -589,8 +597,17 @@ async def run_session(trigger: str = "manual", focus: str = "",
                     saved = True
             if status_msg_id and blocks:
                 names = " → ".join(_TOOL_RU.get(n, n) for n in tools_used[-8:])
-                await _ar.tg_edit(status_msg_id,
-                                  f"Стратег работает. Смотрю: {names}…")
+                # шкала: ожидаемо ~3 шага в быстром режиме, ~10 в полном;
+                # 95% — потолок, пока ответ не готов
+                exp = 3 if light else 10
+                pct = min(95, int((_step + 1) / exp * 100))
+                bar = "▰" * round(pct / 10) + "▱" * (10 - round(pct / 10))
+                secs = int(asyncio.get_event_loop().time() - started)
+                await _ar.tg_edit(
+                    status_msg_id,
+                    f"Стратег работает  {bar} ~{pct}%\n"
+                    f"Шаг {_step + 1} · {secs // 60}:{secs % 60:02d} · "
+                    f"смотрю: {names}…")
 
             async def _run_tool(b):
                 fn = _TOOLS.get(b.name, (None, ""))[0]
