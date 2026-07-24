@@ -197,33 +197,40 @@ async def _damage_autofill():
     """Пустые склады ущерба заполняются сами из отчётов платного хранения WB.
 
     Лимит метода — 1 запрос в минуту, поэтому по очереди с паузами.
-    Одноразово: заполненные склады повторно не трогаем."""
+    Заполненные склады повторно не трогаем; если отчёт не собрался с первого
+    раза (у WB это бывает) — повторяем каждые полчаса, пока не соберём."""
     import damage
     import agent_review as _agent
     await asyncio.sleep(240)          # дать серверу прогреться
     log = logging.getLogger("damage")
-    try:
-        pend = [w for w in (await asyncio.to_thread(damage.summary))["pending"]
-                if w in damage.FIRE_DATES]
-    except Exception as e:
-        log.warning("autofill list: %s", e)
-        return
-    if not pend:
-        return
     results = []
-    for wh in pend:
+    for attempt in range(12):         # ~6 часов попыток максимум
+        if attempt:
+            await asyncio.sleep(1800)
         try:
-            res = await damage.fetch_from_storage(wh)
+            pend = [w for w in
+                    (await asyncio.to_thread(damage.summary))["pending"]
+                    if w in damage.FIRE_DATES]
         except Exception as e:
-            res = {"error": str(e)[:200]}
-        if res.get("error"):
-            log.warning("autofill %s: %s", wh, res["error"])
-            results.append(f"{wh}: не вышло — {res['error']}")
-        else:
-            log.info("autofill %s: %s SKU, %s шт", wh, res["skus"], res["qty"])
-            results.append(f"{wh}: {res['skus']} SKU, {res['qty']} шт "
-                           f"(срез {res['snap_date']})")
-        await asyncio.sleep(75)       # лимит отчёта хранения: 1 запрос/мин
+            log.warning("autofill list: %s", e)
+            continue
+        if not pend:
+            break
+        for wh in pend:
+            try:
+                res = await damage.fetch_from_storage(wh)
+            except Exception as e:
+                res = {"error": str(e)[:200]}
+            if res.get("error"):
+                log.warning("autofill %s: %s", wh, res["error"])
+            else:
+                log.info("autofill %s: %s SKU, %s шт",
+                         wh, res["skus"], res["qty"])
+                results.append(f"{wh}: {res['skus']} SKU, {res['qty']} шт "
+                               f"(срез {res['snap_date']})")
+            await asyncio.sleep(75)   # лимит отчёта хранения: 1 запрос/мин
+    if not results:
+        return
     try:
         d = await asyncio.to_thread(damage.summary)
         t = d["total"]

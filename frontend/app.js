@@ -6538,7 +6538,7 @@ function renderDamage() {
       </div>
     </div>
     ${(d.pending || []).length ? `<div class="small text-warning mt-2">
-      Ещё не посчитаны: ${esc(d.pending.join(', '))} — загрузи по ним остатки в таблице ниже.</div>` : ''}
+      Ещё не посчитаны: ${esc(d.pending.join(', '))} — сервер подтянет их сам из отчётов хранения WB (проверяет каждые полчаса).</div>` : ''}
     ${(d.missing_cost || []).length ? `<div class="small text-warning mt-1">
       Нет себестоимости: ${esc(d.missing_cost.slice(0, 12).join(', '))} — эти позиции считаются с нулём.</div>` : ''}
   </div>`;
@@ -6554,12 +6554,11 @@ function renderDamage() {
       <td class="text-end">${w.qty ? fmt(w.qty) : '—'}</td>
       <td class="text-end fw-semibold"${w.cost_total ? ' style="color:var(--danger)"' : ''}>${w.cost_total ? fmtRub(w.cost_total) : '—'}</td>
       <td class="text-end">${w.retail_total ? fmtRub(w.retail_total) : '—'}</td>
-      <td class="small text-secondary">${esc(w.note || '')}
+      <td class="small text-secondary">${w.qty ? esc(w.note || '') : 'подтянется автоматически из отчётов хранения WB'}
         ${w.control_qty !== undefined ? (w.matches
           ? '<div class="text-success">сходится с исходным расчётом</div>'
           : `<div class="text-danger">РАСХОЖДЕНИЕ: в исходнике ${fmt(w.control_qty)} шт / ${fmtRub(w.control_cost)}</div>`) : ''}</td>
       <td class="text-nowrap">
-        ${!w.qty ? `<button class="btn btn-sm btn-info py-0 me-1" onclick="damageFetch('${esc(w.warehouse)}')">Подтянуть из WB</button>` : ''}
         <label class="btn btn-sm btn-outline-info py-0 mb-0">Файлом
         <input type="file" accept=".xlsx" style="display:none" onchange="damageUpload(this,'${esc(w.warehouse)}')"></label></td>
     </tr>`).join('') +

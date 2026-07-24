@@ -159,9 +159,13 @@ def summary() -> dict:
     warehouses = sorted(by_wh.values(),
                         key=lambda x: order.get(x["warehouse"], 99))
     no_cost = [r["sku"] for r in all_rows if not r.get("cost")]
-    # контроль: сходится ли с исходными расчётами по файлам WB
+    # контроль: сходится ли с исходными расчётами по файлам WB.
+    # Сид — расчёт кабинета Biomed, в других кабинетах сверять не с чем.
     control = {}
     try:
+        from config import CABINET
+        if CABINET != "biomed":
+            raise StopIteration
         for r in json.load(open(_SEED, encoding="utf-8")):
             c = control.setdefault(r["wh"], {"qty": 0, "cost_total": 0})
             c["qty"] += int(r["qty"])
