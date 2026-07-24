@@ -662,6 +662,15 @@ _TOOLS = {
 }
 
 
+def _cached_tool_schemas() -> list[dict]:
+    """Схемы инструментов с точкой кеширования на последней — так весь
+    блок tools считается один раз, а дальше читается из кеша впятеро дешевле."""
+    out = _tool_schemas()
+    if out:
+        out[-1] = {**out[-1], "cache_control": {"type": "ephemeral"}}
+    return out
+
+
 def _tool_schemas() -> list[dict]:
     out = []
     for name, (_fn, desc) in _TOOLS.items():
@@ -900,6 +909,8 @@ async def _run_session_locked(trigger, focus, light, status_msg_id,
                                   "Полный список — инструмент money.")
             except Exception:
                 pass
+            if _snapshot and light and len(_snapshot) > 2500:
+                _snapshot = _snapshot[:2500] + "\n… (полностью — инструментами)"
             if _snapshot:
                 user_msg += ("\n\n" + _snapshot +
                              "\n(Это сводка. За деталями иди в инструменты; "
@@ -952,6 +963,8 @@ async def _run_session_locked(trigger, focus, light, status_msg_id,
                     "margin_pct": m["margin_pct"],
                     "be_drr": m["be_drr_pct"],
                     "seller_avg_unit_econ": old})
+            if _rows and light:
+                _rows = sorted(_rows, key=lambda r: abs(r["profit_unit"]))[-15:]
             if _rows:
                 user_msg += (
                     "\n\nЭКОНОМИКА WB ПО ЖИВЫМ ЦЕНАМ (пересчитана сервером: "
@@ -1012,8 +1025,24 @@ async def _run_session_locked(trigger, focus, light, status_msg_id,
             _log.info("strategist: шаг %d, инструменты: %s", _step + 1,
                       ",".join(tools_used[-4:]) or "—")
             msg = await client.messages.create(
-                model=_MODEL, max_tokens=700 if light else 2500, system=_SYSTEM,
-                tools=_tool_schemas(), messages=messages)
+                model=_MODEL, max_tokens=700 if light else 2500,
+                # промпт-кеш: system и схемы инструментов не меняются между
+                # шагами цикла, поэтому оплачиваем их один раз, а не 8 раз
+                system=[{"type": "text", "text": _SYSTEM,
+                         "cache_control": {"type": "ephemeral"}}],
+                tools=_cached_tool_schemas(), messages=messages)
+            _u = getattr(msg, "usage", None)
+            if _u:
+                _cost = ((getattr(_u, "input_tokens", 0) * 5
+                          + getattr(_u, "cache_creation_input_tokens", 0) * 6.25
+                          + getattr(_u, "cache_read_input_tokens", 0) * 0.5
+                          + getattr(_u, "output_tokens", 0) * 25) / 1_000_000)
+                _log.info("strategist шаг %d: in=%s cache_w=%s cache_r=%s out=%s "
+                          "≈ $%.4f", _step + 1,
+                          getattr(_u, "input_tokens", 0),
+                          getattr(_u, "cache_creation_input_tokens", 0),
+                          getattr(_u, "cache_read_input_tokens", 0),
+                          getattr(_u, "output_tokens", 0), _cost)
             if msg.stop_reason != "tool_use":
                 report = "".join(b.text for b in msg.content
                                  if getattr(b, "type", "") == "text").strip()

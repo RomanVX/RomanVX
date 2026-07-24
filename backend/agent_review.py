@@ -23,6 +23,7 @@ _log = logging.getLogger("agent_review")
 TG_BOT_TOKEN = os.getenv("TG_BOT_TOKEN", "").strip()
 TG_CHAT_ID = os.getenv("TG_CHAT_ID", "").strip()
 _MODEL = "claude-opus-4-8"
+_MODEL_CHEAP = "claude-haiku-4-5"   # трёп, классификация — Opus тут избыточен
 
 
 def configured() -> bool:
@@ -563,7 +564,7 @@ async def _answer_question(question: str, thread: int | None,
             import anthropic
             client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
             msg = await client.messages.create(
-                model=_MODEL, max_tokens=350, system=system,
+                model=_MODEL_CHEAP, max_tokens=350, system=system,
                 messages=history + [{"role": "user", "content": content}])
             answer = msg.content[0].text.strip()
             await tg_send(answer, chat_id=chat, thread_id=thread)

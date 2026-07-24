@@ -19,7 +19,7 @@ import db
 from config import ANTHROPIC_API_KEY
 
 _log = logging.getLogger("news")
-_MODEL = "claude-opus-4-8"
+_MODEL = "claude-haiku-4-5"   # классификация новостей: Opus не нужен
 _COMMON = "https://common-api.wildberries.ru"
 
 
