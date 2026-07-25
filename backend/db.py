@@ -130,6 +130,34 @@ def executemany(sql: str, seq):
         con.commit()
 
 
+def ensure_serial(table: str, col: str = "id"):
+    """Чинит автоинкремент после переноса БД (Neon → Render): migrate_db.py
+    копировал SERIAL-колонки как голый integer — без default и sequence,
+    поэтому любой INSERT без явного id падал на NOT NULL. Доращиваем
+    sequence + default и выравниваем счётчик по MAX(id)."""
+    if not IS_PG:
+        return
+    try:
+        row = fetchone(
+            "SELECT column_default FROM information_schema.columns "
+            "WHERE table_name = ? AND column_name = ? "
+            "AND table_schema = COALESCE(NULLIF(?, ''), 'public')",
+            (table, col, DB_SCHEMA))
+        if row and row[0]:      # default уже есть — только выровнять счётчик
+            execute(f"SELECT setval(pg_get_serial_sequence('{table}', '{col}'), "
+                    f"COALESCE((SELECT MAX({col}) FROM {table}), 0) + 1, false)")
+            return
+        seq = f"{table}_{col}_seq"
+        execute(f"CREATE SEQUENCE IF NOT EXISTS {seq}")
+        execute(f"ALTER TABLE {table} ALTER COLUMN {col} SET DEFAULT nextval('{seq}')")
+        execute(f"ALTER SEQUENCE {seq} OWNED BY {table}.{col}")
+        execute(f"SELECT setval('{seq}', "
+                f"COALESCE((SELECT MAX({col}) FROM {table}), 0) + 1, false)")
+        _log.info("ensure_serial: %s.%s — добавлен автоинкремент", table, col)
+    except Exception as e:
+        _log.warning("ensure_serial %s: %s", table, e)
+
+
 def fetchall(sql: str, params=()) -> list:
     with _conn() as con:
         cur = con.cursor()
