@@ -1799,9 +1799,11 @@ async function addManualCost() {
     body: JSON.stringify(body),
   });
   if (!r.ok) {
-    let msg = 'Не сохранилось';
-    try { msg = (await r.json()).detail || msg; } catch (e) { /* ignore */ }
-    alert(msg);
+    let msg = '';
+    try { msg = (await r.json()).detail || ''; } catch (e) { /* not json */ }
+    alert(msg || (r.status >= 502
+      ? 'Сервер перезапускается (деплой) — подожди минуту и попробуй ещё раз'
+      : `Не сохранилось (HTTP ${r.status})`));
     return;
   }
   _manualCosts = null;
