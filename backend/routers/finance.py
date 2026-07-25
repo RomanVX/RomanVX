@@ -2549,6 +2549,14 @@ def _manual_costs_init():
             db.execute(f"ALTER TABLE manual_costs ADD COLUMN {col}")
         except Exception:
             pass
+    if db.IS_PG:
+        # после переезда БД (Neon → Render) строки скопированы со своими id,
+        # а sequence остался на 1 — каждый INSERT падал на duplicate key
+        try:
+            db.execute("SELECT setval(pg_get_serial_sequence('manual_costs', 'id'), "
+                       "COALESCE((SELECT MAX(id) FROM manual_costs), 0) + 1, false)")
+        except Exception:
+            pass
 
 
 @router.get("/manual_costs")

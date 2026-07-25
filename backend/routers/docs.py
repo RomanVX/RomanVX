@@ -29,6 +29,13 @@ def _init_tables():
                "CREATE TABLE IF NOT EXISTS docs_manual ("
                "id SERIAL PRIMARY KEY, doc_type TEXT, number TEXT, "
                "title TEXT, valid_to TEXT, skus TEXT, note TEXT)")
+    if db.IS_PG:
+        # sequence после переезда БД мог отстать от скопированных id
+        try:
+            db.execute("SELECT setval(pg_get_serial_sequence('docs_manual', 'id'), "
+                       "COALESCE((SELECT MAX(id) FROM docs_manual), 0) + 1, false)")
+        except Exception:
+            pass
 
 
 def _expiry_status(valid_to: str) -> str:
