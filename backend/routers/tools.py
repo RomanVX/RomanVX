@@ -2873,6 +2873,132 @@ async def export_ozon_clusters():
         headers={"Content-Disposition": 'attachment; filename="ozon_clusters.xlsx"'})
 
 
+@router.get("/supply/export")
+async def export_supply_plan():
+    """План поставки одним файлом: свод остатков по всем площадкам на артикул
+    + кластерные рекомендации WB и Ozon (что и куда везти).
+
+    WB-остатки уже очищены от сгоревших складов (фильтр в wb_client), так что
+    покрытие и «к заказу» считаются по живому стоку."""
+    import io
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+    from fastapi.responses import StreamingResponse
+    import catalog as _cat
+
+    wb_data = await get_clusters(refresh=False)
+    oz_data = await get_ozon_clusters(refresh=False)
+    ym_stocks: dict = {}
+    try:
+        import ym_client
+        ym_stocks = await ym_client.get_stocks() or {}
+    except Exception:
+        pass
+
+    # ── свод на артикул: остаток и скорость по каждой площадке ──
+    # у WB/Ozon SKU лежат в кластерах двумя списками (что везти + остальное)
+    def _sku_agg(items):
+        agg: dict = {}
+        for it in items:
+            for s in (it.get("skus") or []) + (it.get("other_skus") or []):
+                sku = s.get("sku") or ""
+                if not sku:
+                    continue
+                g = agg.setdefault(sku, {"stock": 0, "spd": 0.0, "need": 0,
+                                         "name": s.get("name") or ""})
+                g["stock"] += int(s.get("stock") or 0)
+                g["spd"] += float(s.get("demand_spd") or s.get("ads") or 0)
+                g["need"] += int(s.get("need") or 0)
+        return agg
+
+    wb_sku = _sku_agg(wb_data.get("items") or [])
+    oz_sku = _sku_agg(oz_data.get("items") or [])
+    all_skus = sorted(set(wb_sku) | set(oz_sku)
+                      | {_cat.canon(k) for k in ym_stocks})
+
+    book = openpyxl.Workbook()
+    F = {"wb": PatternFill("solid", fgColor="c026d3"),
+         "oz": PatternFill("solid", fgColor="3b82f6"),
+         "sum": PatternFill("solid", fgColor="17a06a")}
+
+    def _hdr(ws, fill):
+        for c in ws[1]:
+            c.font = Font(bold=True, color="FFFFFF")
+            c.fill = fill
+            c.alignment = Alignment(vertical="center", wrap_text=True)
+
+    ws = book.active
+    ws.title = "Свод по площадкам"
+    ws.append(["Артикул", "Название",
+               "WB остаток", "WB прод/день", "WB покрытие, дн", "WB к заказу",
+               "Ozon остаток", "Ozon прод/день", "Ozon покрытие, дн", "Ozon к заказу",
+               "ЯМ остаток", "Остаток ВСЕГО", "К производству/закупке"])
+    _hdr(ws, F["sum"])
+    for sku in all_skus:
+        w = wb_sku.get(sku) or {}
+        o = oz_sku.get(sku) or {}
+        ym_q = 0
+        for k, v in ym_stocks.items():
+            if _cat.canon(k) == sku:
+                ym_q += int(v or 0)
+        name = w.get("name") or o.get("name") or _cat.lookup(sku).get("name", "")
+        w_cov = round(w["stock"] / w["spd"], 1) if w.get("spd") else None
+        o_cov = round(o["stock"] / o["spd"], 1) if o.get("spd") else None
+        total_stock = (w.get("stock") or 0) + (o.get("stock") or 0) + ym_q
+        total_need = (w.get("need") or 0) + (o.get("need") or 0)
+        ws.append([sku, name,
+                   w.get("stock") or 0, round(w.get("spd") or 0, 2), w_cov,
+                   w.get("need") or 0,
+                   o.get("stock") or 0, round(o.get("spd") or 0, 2), o_cov,
+                   o.get("need") or 0,
+                   ym_q, total_stock, total_need])
+    for i, wd in enumerate([14, 34, 11, 12, 13, 11, 11, 12, 13, 11, 10, 13, 16], 1):
+        ws.column_dimensions[get_column_letter(i)].width = wd
+    ws.freeze_panes = "A2"
+
+    # ── кластерные листы: куда именно везти ──
+    ST = {"urgent": "СРОЧНО", "warn": "мало", "ok": "ок", "over": "избыток",
+          "no_sales": "нет продаж"}
+
+    def _cluster_sheet(title, items, fill, spd_key="demand_spd", cov_key="coverage"):
+        s1 = book.create_sheet(title)
+        s1.append(["Кластер", "Продаж/день", "Остаток, шт", "Покрытие, дн",
+                   "К заказу, шт", "Статус"])
+        _hdr(s1, fill)
+        for it in items:
+            s1.append([it.get("cluster"), it.get("spd"), it.get("stock"),
+                       it.get("coverage"), it.get("need"),
+                       ST.get(it.get("status"), it.get("status"))])
+        for i, wd in enumerate([30, 13, 13, 13, 12, 12], 1):
+            s1.column_dimensions[get_column_letter(i)].width = wd
+        s1.freeze_panes = "A2"
+        s2 = book.create_sheet(title + " — везти")
+        s2.append(["Кластер", "Артикул", "Название", "Спрос/день",
+                   "Здесь, шт", "Покрытие, дн", "Везти, шт"])
+        _hdr(s2, fill)
+        for it in items:
+            for s in it.get("skus") or []:
+                s2.append([it.get("cluster"), s.get("sku"), s.get("name"),
+                           s.get(spd_key) or s.get("ads"), s.get("stock"),
+                           s.get(cov_key) or s.get("idc"), s.get("need")])
+        for i, wd in enumerate([28, 14, 34, 12, 11, 13, 11], 1):
+            s2.column_dimensions[get_column_letter(i)].width = wd
+        s2.freeze_panes = "A2"
+
+    _cluster_sheet("WB кластеры", wb_data.get("items") or [], F["wb"])
+    _cluster_sheet("Ozon кластеры", oz_data.get("items") or [], F["oz"],
+                   spd_key="ads", cov_key="idc")
+
+    buf = io.BytesIO()
+    book.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="supply_plan.xlsx"'})
+
+
 @router.get("/ozon/stocks_probe", include_in_schema=False)
 async def ozon_stocks_probe():
     """Диагностика: реальная структура ответа Ozon по остаткам с кластерами.
