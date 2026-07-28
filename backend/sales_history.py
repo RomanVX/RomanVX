@@ -101,6 +101,33 @@ def persist_wb(sales: list[dict]):
         _log.warning("persist_wb failed: %s", e)
 
 
+def persist_wb_orders(orders: list[dict]):
+    """WB заказы (без отмен) → platform WB_ORDERS: то, что видит селлер
+    в виджете «Заказы» ЛК. Поток WB (продажи) не трогаем — на нём живут
+    прогнозы и юнитка."""
+    try:
+        agg: dict = {}
+        for o in orders or []:
+            if o.get("isCancel"):
+                continue
+            d = (o.get("date") or "")[:10]
+            if not d:
+                continue
+            raw = o.get("nmId") or o.get("supplierArticle") or ""
+            sku = cat.resolve_wb(raw) if raw else ""
+            rev = float(o.get("priceWithDisc") or o.get("totalPrice") or 0)
+            a = agg.setdefault((d, sku), [0, 0.0])
+            a[0] += 1
+            a[1] += rev
+        _upsert(agg, "WB_ORDERS")
+    except Exception as e:
+        _log.warning("persist_wb_orders failed: %s", e)
+
+
+def persist_wb_orders_bg(orders: list[dict]):
+    _schedule(asyncio.to_thread(persist_wb_orders, orders))
+
+
 def persist_detail(rows: list[dict], platform: str):
     """Ozon/YM детальные строки: [{date, offer_id/shop_sku/sku, qty, revenue}]."""
     try:

@@ -965,7 +965,7 @@ async def get_weekly_orders():
                     return i
             return None
 
-        # ── WB: из кеша orders (все заказы включая отмены; cancel трекается отдельно) ──
+        # ── WB: из кеша orders (суммы без отмен — как ЛК; отмены отдельно) ──
         wb_by_sku: dict = {}   # sku → {rub, qty, cancel_rub, cancel_qty, name}
         wb_total_rub        = [0.0] * n
         wb_total_qty        = [0]   * n
@@ -985,15 +985,18 @@ async def get_weekly_orders():
                 if sku not in wb_by_sku:
                     wb_by_sku[sku] = {"rub": [0.0]*n, "qty": [0]*n,
                                       "cancel_rub": [0.0]*n, "cancel_qty": [0]*n, "name": name}
-                wb_by_sku[sku]["rub"][idx] += price
-                wb_by_sku[sku]["qty"][idx] += 1
-                wb_total_rub[idx] += price
-                wb_total_qty[idx] += 1
+                # суммы и штуки — БЕЗ отмен (как виджет «Заказы» в ЛК WB);
+                # отмены копятся отдельно для «% выкупа»
                 if is_cancel:
                     wb_by_sku[sku]["cancel_rub"][idx] += price
                     wb_by_sku[sku]["cancel_qty"][idx] += 1
                     wb_total_cancel_rub[idx] += price
                     wb_total_cancel_qty[idx] += 1
+                else:
+                    wb_by_sku[sku]["rub"][idx] += price
+                    wb_by_sku[sku]["qty"][idx] += 1
+                    wb_total_rub[idx] += price
+                    wb_total_qty[idx] += 1
         except Exception as e:
             import logging; logging.getLogger(__name__).warning("weekly_orders WB: %s", e)
 
@@ -1140,8 +1143,17 @@ async def get_orders_matrix(period: str = Query(default="day")):
 
     blocks = {p: {"by": {}, "rub": [0.0] * n, "qty": [0] * n}
               for p in ("WB", "OZON", "YM")}
+    # WB: основным потоком идут заказы без отмен (WB_ORDERS — как ЛК);
+    # для колонок старше их окна фолбэк — продажи (поток WB)
+    wb_sales_fb = {"by": {}, "rub": [0.0] * n, "qty": [0] * n}
     for r in rows:
-        b = blocks.get(str(r.get("platform") or "").upper())
+        plat = str(r.get("platform") or "").upper()
+        if plat == "WB_ORDERS":
+            b = blocks["WB"]
+        elif plat == "WB":
+            b = wb_sales_fb
+        else:
+            b = blocks.get(plat)
         i = idx(r.get("date"))
         if not b or i is None:
             continue
@@ -1150,6 +1162,15 @@ async def get_orders_matrix(period: str = Query(default="day")):
         rev, qty = float(r.get("revenue") or 0), int(r.get("qty") or 0)
         s["rub"][i] += rev; s["qty"][i] += qty
         b["rub"][i] += rev; b["qty"][i] += qty
+    wbb = blocks["WB"]
+    for i in range(n):
+        if wbb["qty"][i] == 0 and wb_sales_fb["qty"][i] > 0:
+            wbb["rub"][i] = wb_sales_fb["rub"][i]
+            wbb["qty"][i] = wb_sales_fb["qty"][i]
+            for sku, s in wb_sales_fb["by"].items():
+                if s["qty"][i] or s["rub"][i]:
+                    t = wbb["by"].setdefault(sku, {"rub": [0.0] * n, "qty": [0] * n})
+                    t["rub"][i] = s["rub"][i]; t["qty"][i] = s["qty"][i]
 
     def clean(by):
         out = []

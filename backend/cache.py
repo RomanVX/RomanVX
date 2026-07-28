@@ -107,6 +107,7 @@ async def _refresh() -> None:
         try:
             import sales_history
             sales_history.persist_wb_bg(sales)
+            sales_history.persist_wb_orders_bg(orders)
         except Exception as exc:
             _log.warning("sales_history persist (WB) failed: %s", exc)
         try:

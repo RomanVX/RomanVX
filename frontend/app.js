@@ -1450,7 +1450,9 @@ function _ordersTableHTML() {
     vis.forEach(i => {
       const v    = bRub[i];
       const prev = i > 0 ? bRub[i - 1] : 0;
-      const pct  = hasCancel && v > 0 ? Math.round((v - bCancelRub[i]) / v * 100) : null;
+      // суммы в таблице уже БЕЗ отмен — % выкупа считаем от (заказы + отмены)
+      const pct  = hasCancel && (v + bCancelRub[i]) > 0
+        ? Math.round(v / (v + bCancelRub[i]) * 100) : null;
       const dynHtml   = v ? _dynArrow(v, prev) : '';
       const buyoutHtml = pct !== null
         ? `<div style="font-size:0.6rem;color:var(--pos-strong);line-height:1.2;margin-top:1px">✓${pct}% выкуп</div>`
