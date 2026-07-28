@@ -1059,6 +1059,19 @@ function renderOrdersDaily() {
     <tr><th></th>` + Array(4).fill('<th class="text-end text-secondary" style="font-size:.72rem">₽</th><th class="text-end text-secondary" style="font-size:.72rem">шт</th>').join('') +
     `</tr></thead><tbody>`;
   const DOW = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
+  // итог за период — строкой в стиле недельной таблицы
+  const tot = { rub: 0, qty: 0 };
+  const mpTot = {};
+  daily.forEach(d => MPs.forEach(([k]) => {
+    const r = d[k] || 0, q = d[k + '_qty'] || 0;
+    (mpTot[k] = mpTot[k] || { r: 0, q: 0 }).r += r; mpTot[k].q += q;
+    tot.rub += r; tot.qty += q;
+  }));
+  html += `<tr style="background:var(--t-mp-row);font-weight:700">
+    <td>Итого ${daily.length} дн.</td>` +
+    MPs.map(([k]) => `<td class="text-end">${fmtRub((mpTot[k] || {}).r || 0)}</td>` +
+                     `<td class="text-end text-secondary">${(mpTot[k] || {}).q || 0}</td>`).join('') +
+    `<td class="text-end">${fmtRub(tot.rub)}</td><td class="text-end">${tot.qty}</td></tr>`;
   daily.forEach(d => {
     const dt = new Date(d.date + 'T00:00:00');
     let trub = 0, tqty = 0;

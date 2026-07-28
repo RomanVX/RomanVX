@@ -644,9 +644,10 @@ body {
 /* вторая строка шапки: «Артикул» тянется rowspan-ом, поэтому first-child там —
    ₽-ячейка первой недели; липкость/фон первого столбца ей не положены */
 #ordersTable thead tr:nth-child(2) th:first-child {
-  position: static;
-  background: transparent;
-  z-index: auto;
+  position: sticky;
+  left: auto;          /* липнет только по вертикали, как вся шапка */
+  background: var(--t-sticky);   /* фон шапки, а не «дыра» в карточку */
+  z-index: 3;
 }
 #ordersTable tr[data-row="mp"]  td:first-child { background: var(--t-mp-row); }
 #ordersTable tr[data-row="grp"] td:first-child { background: var(--t-grp-row); }
