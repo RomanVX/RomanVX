@@ -1237,12 +1237,29 @@ async def _run_session_locked(trigger, focus, light, status_msg_id,
         return {"error": f"превышен лимит шагов ({_MAX_STEPS})"}
     except Exception as e:
         _log.error("strategist: %s", e)
+        msg = str(e)
+        billing = ("credit balance is too low" in msg
+                   or "billing" in msg.lower())
         try:
-            await _ar.tg_send(f"Агент упал: {str(e)[:200]}",
-                              chat_id=chat, thread_id=thread)
+            if billing:
+                # фоновые циклы дёргают агента каждый час — об исчерпанном
+                # балансе достаточно одного сообщения в сутки, не спамим
+                today = (datetime.utcnow() + timedelta(hours=3)).strftime("%Y-%m-%d")
+                sent = await asyncio.to_thread(_snap0.load, "billing_alerted", None)
+                if sent != today:
+                    await asyncio.to_thread(_snap0.save, "billing_alerted", today)
+                    await _ar.tg_send(
+                        "⚠️ Баланс Anthropic API исчерпан — я не могу отвечать "
+                        "и фоновые проверки стоят. Пополни: "
+                        "console.anthropic.com → Plans & Billing. "
+                        "Больше не буду напоминать до завтра.",
+                        chat_id=chat, thread_id=thread)
+            else:
+                await _ar.tg_send(f"Агент упал: {msg[:200]}",
+                                  chat_id=chat, thread_id=thread)
         except Exception:
             pass
-        return {"error": str(e)[:300]}
+        return {"error": msg[:300]}
     finally:
         _running = False
         try:
