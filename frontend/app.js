@@ -1011,8 +1011,9 @@ function setOrdersMp(mp) {
   renderOrdersTable();
 }
 
-// ── Режим Заказов: По дням / Неделя / Месяц ─────────────────────────────────
+// ── Режим Заказов: День / Неделя / Месяц — одна и та же таблица ─────────────
 let _ordersMode = 'week';
+let _ordersDataBy = { days: null, month: null };   // данные orders_matrix
 
 function setOrdersMode(mode) {
   _ordersMode = mode;
@@ -1021,11 +1022,25 @@ function setOrdersMode(mode) {
   const week = document.getElementById('ordersWeekCard');
   const month = document.getElementById('ordersMonthlyWrap');
   const days = document.getElementById('ordersDailyWrap');
-  if (week) week.style.display = mode === 'week' ? '' : 'none';
-  if (month) month.style.display = mode === 'month' ? '' : 'none';
-  if (days) days.style.display = mode === 'days' ? '' : 'none';
-  if (mode === 'month') renderOrdersMonthly();
-  if (mode === 'days') loadOrdersDaily();
+  if (week) week.style.display = '';
+  if (month) month.style.display = 'none';
+  if (days) days.style.display = 'none';
+  if (mode === 'week' || _ordersDataBy[mode]) renderOrdersTable();
+  else loadOrdersMatrix(mode);
+}
+
+async function loadOrdersMatrix(mode, refresh) {
+  const tbl = document.getElementById('ordersTable');
+  if ((!_ordersDataBy[mode] || refresh) && tbl)
+    tbl.innerHTML = '<tr><td class="text-center text-secondary py-4"><span class="spinner-border spinner-border-sm"></span> Загрузка…</td></tr>';
+  try {
+    const period = mode === 'days' ? 'day' : 'month';
+    _ordersDataBy[mode] = await fetchJSON('/api/dashboard/orders_matrix?period=' + period, 60000);
+  } catch (e) {
+    if (tbl) tbl.innerHTML = `<tr><td class="text-danger py-3">Ошибка: ${esc(e.message)}</td></tr>`;
+    return;
+  }
+  if (_ordersMode === mode) renderOrdersTable();
 }
 
 let _dailyData = null;
@@ -1094,9 +1109,9 @@ function renderOrdersDaily() {
 async function reloadOrders() {
   await fetch(`${API}/api/dashboard/weekly_orders/invalidate`, { method: 'POST' }).catch(() => {});
   _ordersData = null;
-  await loadOrders();
-  if (_ordersMode === 'month') renderOrdersMonthly();
-  if (_ordersMode === 'days') loadOrdersDaily(true);
+  _ordersDataBy = { days: null, month: null };
+  if (_ordersMode === 'week') await loadOrders();
+  else { loadOrders(); await loadOrdersMatrix(_ordersMode, true); }
 }
 
 async function loadOrders() {
@@ -1328,7 +1343,7 @@ function _groupColor(g) {
 
 // разбивка выбранной площадки по группам (как в остатках)
 function _ordersGrouped() {
-  const d = _ordersData;
+  const d = _ordersMode === 'week' ? _ordersData : _ordersDataBy[_ordersMode];
   if (!d) return null;
   const mp = _ordersMp;
   const weeks = d.weeks;

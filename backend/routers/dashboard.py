@@ -1080,7 +1080,94 @@ async def get_weekly_orders():
 async def invalidate_weekly_orders():
     global _wo_cache, _wo_cache_ts
     _wo_cache = {}; _wo_cache_ts = 0.0
+    _om_cache.clear()
     return {"status": "ok"}
+
+
+_om_cache: dict = {}      # period → (ts, result)
+_OM_TTL = 600
+
+
+@router.get("/orders_matrix")
+async def get_orders_matrix(period: str = Query(default="day")):
+    """Заказы той же матрицей, что weekly_orders, но по дням (14) или
+    месяцам (6). Источник — вечная sales_daily, поэтому месяцы не упираются
+    в 90-дневное окно WB API. Отмен в sales_daily нет — пилюли выкупа
+    показываются только в недельном виде."""
+    period = period if period in ("day", "month") else "day"
+    cached = _om_cache.get(period)
+    if cached and _wtime.monotonic() - cached[0] < _OM_TTL:
+        return cached[1]
+
+    from datetime import date as _date
+    import calendar as _cal
+    import catalog as _cat
+    today = (datetime.utcnow() + timedelta(hours=3)).date()
+    if period == "day":
+        days = [today - timedelta(days=i) for i in range(13, -1, -1)]
+        DOW = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
+        labels = [f"{d.strftime('%d.%m')} {DOW[d.weekday()]}" for d in days]
+        d_from, d_to = days[0], days[-1]
+        pos = {d.strftime("%Y-%m-%d"): i for i, d in enumerate(days)}
+        idx = lambda ds: pos.get((ds or "")[:10])
+    else:
+        y, m = today.year, today.month
+        firsts = []
+        for _ in range(6):
+            firsts.append(_date(y, m, 1))
+            m -= 1
+            if m == 0:
+                y, m = y - 1, 12
+        firsts.reverse()
+        MON = ["Янв", "Фев", "Мар", "Апр", "Май", "Июн",
+               "Июл", "Авг", "Сен", "Окт", "Ноя", "Дек"]
+        labels = [f"{MON[f.month - 1]} {f.year}" for f in firsts]
+        d_from = firsts[0]
+        d_to = _date(firsts[-1].year, firsts[-1].month,
+                     _cal.monthrange(firsts[-1].year, firsts[-1].month)[1])
+        pos = {(f.year, f.month): i for i, f in enumerate(firsts)}
+        def idx(ds):
+            try:
+                d = datetime.strptime((ds or "")[:10], "%Y-%m-%d")
+            except ValueError:
+                return None
+            return pos.get((d.year, d.month))
+
+    n = len(labels)
+    rows = await asyncio.to_thread(
+        sales_history.get_history,
+        d_from.strftime("%Y-%m-%d"), d_to.strftime("%Y-%m-%d"))
+
+    blocks = {p: {"by": {}, "rub": [0.0] * n, "qty": [0] * n}
+              for p in ("WB", "OZON", "YM")}
+    for r in rows:
+        b = blocks.get(str(r.get("platform") or "").upper())
+        i = idx(r.get("date"))
+        if not b or i is None:
+            continue
+        sku = r.get("sku") or ""
+        s = b["by"].setdefault(sku, {"rub": [0.0] * n, "qty": [0] * n})
+        rev, qty = float(r.get("revenue") or 0), int(r.get("qty") or 0)
+        s["rub"][i] += rev; s["qty"][i] += qty
+        b["rub"][i] += rev; b["qty"][i] += qty
+
+    def clean(by):
+        out = []
+        for sku, d in by.items():
+            cat = _cat.CATALOG.get(sku) or {}
+            out.append({"sku": sku, "name": cat.get("name") or sku,
+                        "brand": cat.get("brand", ""), "group": cat.get("group", ""),
+                        "rub": [round(v, 2) for v in d["rub"]], "qty": d["qty"]})
+        out.sort(key=lambda x: sum(x["rub"]), reverse=True)
+        return out
+
+    result = {"weeks": labels, "period": period}
+    for p in ("WB", "OZON", "YM"):
+        result[p] = {"total_rub": [round(v, 2) for v in blocks[p]["rub"]],
+                     "total_qty": blocks[p]["qty"],
+                     "skus": clean(blocks[p]["by"])}
+    _om_cache[period] = (_wtime.monotonic(), result)
+    return result
 
 
 @router.get("/ozon_debug", include_in_schema=False)
