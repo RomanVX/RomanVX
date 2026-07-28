@@ -1427,6 +1427,9 @@ function _ordersTableHTML() {
     const bRub       = Array(n).fill(0);
     const bQty       = Array(n).fill(0);
     const bCancelRub = Array(n).fill(0);
+    // % выкупа показываем только там, где отмены реально трекаются
+    // (недельный WB); в День/Месяц данных об отменах нет — «100%» было бы враньём
+    const hasCancel = _ordersMode === 'week' && grpSkus.some(s => s.cancel_rub);
     grpSkus.forEach(s => {
       s.rub.forEach((v, i) => { bRub[i] += v; });
       s.qty.forEach((v, i) => { bQty[i] += v; });
@@ -1447,7 +1450,7 @@ function _ordersTableHTML() {
     vis.forEach(i => {
       const v    = bRub[i];
       const prev = i > 0 ? bRub[i - 1] : 0;
-      const pct  = v > 0 ? Math.round((v - bCancelRub[i]) / v * 100) : null;
+      const pct  = hasCancel && v > 0 ? Math.round((v - bCancelRub[i]) / v * 100) : null;
       const dynHtml   = v ? _dynArrow(v, prev) : '';
       const buyoutHtml = pct !== null
         ? `<div style="font-size:0.6rem;color:var(--pos-strong);line-height:1.2;margin-top:1px">✓${pct}% выкуп</div>`
