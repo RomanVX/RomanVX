@@ -165,7 +165,8 @@ async def generate_reply(review: dict, platform="WB") -> str:
     resp = await _get_client().messages.create(
         model=MODEL_DRAFT,
         max_tokens=600,
-        thinking={"type": "adaptive"},
+        # без thinking: Sonnet 4.6 не принимает adaptive, а для короткого
+        # ответа на отзыв рассуждения и не нужны
         # батч в 20 черновиков шлёт один и тот же system 20 раз подряд —
         # кешируем, платим за него один раз
         system=[{"type": "text", "text": system,

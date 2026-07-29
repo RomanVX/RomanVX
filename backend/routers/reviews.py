@@ -144,7 +144,11 @@ async def make_draft(id: str = Query(...)):
     review = rc.get_review(id)
     if not review:
         return {"error": "Отзыв не найден"}
-    draft = await review_ai.generate_reply(review, platform=review["platform"])
+    try:
+        draft = await review_ai.generate_reply(review, platform=review["platform"])
+    except Exception as e:      # ошибка API — понятным текстом, а не 500
+        _log.warning("draft: %s", e)
+        return {"error": f"Генерация не удалась: {str(e)[:200]}"}
     if not draft:
         return {"error": "Не удалось сгенерировать (проверьте ANTHROPIC_API_KEY)"}
     rc.save_draft(id, draft, status="pending")
@@ -160,7 +164,11 @@ async def make_drafts(platform: str = Query("all"), limit: int = Query(20)):
         todo += rc.get_unanswered(platform=p, limit=limit)
     made = 0
     for review in todo[:limit]:
-        draft = await review_ai.generate_reply(review, platform=review["platform"])
+        try:
+            draft = await review_ai.generate_reply(review, platform=review["platform"])
+        except Exception as e:
+            _log.warning("draft-batch: %s", e)
+            break
         if draft:
             rc.save_draft(review["id"], draft, status="pending")
             made += 1
