@@ -5768,9 +5768,22 @@ function renderReviewsFeed() {
   let filtered = platform === 'all' ? _allReviews : _allReviews.filter(r => r.platform === platform);
   if (onlyText) filtered = filtered.filter(r => r.text);
   if (_reviewsArtSel.size) filtered = filtered.filter(r => _reviewsArtSel.has(r.sku || ''));
+  // вкладки Неотвеченные / Отвеченные: отвеченные не путаются под ногами
+  const isAns = r => !!r.answer || ((_drafts[r.id] || {}).status === 'approved');
+  const nAns = filtered.filter(isAns).length;
+  const tabAns = document.getElementById('revTabAns');
+  if (tabAns) tabAns.textContent = `Отвеченные${nAns ? ` (${nAns})` : ''}`;
+  const tabUn = document.getElementById('revTabUn');
+  if (tabUn) tabUn.textContent = `Неотвеченные${filtered.length - nAns ? ` (${filtered.length - nAns})` : ''}`;
+  if (_revTab === 'un') filtered = filtered.filter(r => !isAns(r));
+  else if (_revTab === 'ans') filtered = filtered.filter(isAns);
   window._reviewsFiltered = filtered;
 
-  if (!filtered.length) { el.innerHTML = '<p class="text-secondary mt-3">Нет отзывов</p>'; return; }
+  if (!filtered.length) {
+    el.innerHTML = `<p class="text-secondary mt-3">${_revTab === 'un'
+      ? 'Неотвеченных отзывов нет — всё разобрано 🎉' : 'Нет отзывов'}</p>`;
+    return;
+  }
 
   const stars = n => '<span class="text-warning">' + '★'.repeat(n) + '</span><span class="text-secondary">' + '☆'.repeat(5 - n) + '</span>';
   const badge = p => {
@@ -5899,6 +5912,16 @@ function wbPhotoUrl(nm) {
 }
 
 const ANSWERED_MARK = '✓ Отвечено на платформе';
+
+// вкладка ленты отзывов: un — неотвеченные (по умолчанию), ans, all
+let _revTab = 'un';
+
+function setRevTab(v) {
+  _revTab = v;
+  [['revTabUn', 'un'], ['revTabAns', 'ans'], ['revTabAll', 'all']]
+    .forEach(([id, k]) => document.getElementById(id)?.classList.toggle('active', k === v));
+  renderReviewsFeed();
+}
 
 function replyBlock(r) {
   // Уже ответили на платформе

@@ -417,6 +417,11 @@
 
     <div class="d-flex align-items-center gap-3 mb-2">
       <h6 class="mb-0">Отзывы</h6>
+      <div class="mp-seg">
+        <span id="revTabUn" class="mp-seg-btn active" onclick="setRevTab('un')">Неотвеченные</span>
+        <span id="revTabAns" class="mp-seg-btn" onclick="setRevTab('ans')">Отвеченные</span>
+        <span id="revTabAll" class="mp-seg-btn" onclick="setRevTab('all')">Все</span>
+      </div>
       <select id="reviewsPlatform" class="form-select form-select-sm w-auto bg-dark text-white border-secondary" onchange="renderReviewsFeed()">
         <option value="all">Все платформы</option>
         <option value="Ozon">Ozon</option>
@@ -625,6 +630,6 @@
 
 <script src="vendor/bootstrap.bundle.min.js"></script>
 <script src="vendor/chart.umd.min.js"></script>
-<script src="app.js?v=201"></script>
+<script src="app.js?v=202"></script>
 </body>
 </html>
