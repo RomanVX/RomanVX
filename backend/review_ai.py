@@ -83,6 +83,37 @@ async def analyze_style(platform="WB", sample=300) -> dict:
     return guide
 
 
+# ─── ПРАВИЛА КОМАНДЫ (редактируются с фронта, «так не пиши — пиши так») ──────
+
+def _rules_init():
+    import db
+    id_col = ("id SERIAL PRIMARY KEY" if db.IS_PG
+              else "id INTEGER PRIMARY KEY AUTOINCREMENT")
+    db.execute(f"CREATE TABLE IF NOT EXISTS review_rules "
+               f"({id_col}, rule TEXT, added TEXT)")
+
+
+def get_rules() -> list[dict]:
+    import db
+    _rules_init()
+    return [{"id": r[0], "rule": r[1], "added": r[2]}
+            for r in db.fetchall("SELECT id, rule, added FROM review_rules ORDER BY id")]
+
+
+def add_rule(text: str) -> None:
+    import db
+    from datetime import datetime
+    _rules_init()
+    db.execute("INSERT INTO review_rules (rule, added) VALUES (?, ?)",
+               (text.strip(), datetime.utcnow().strftime("%Y-%m-%d")))
+
+
+def delete_rule(rule_id: int) -> None:
+    import db
+    _rules_init()
+    db.execute("DELETE FROM review_rules WHERE id = ?", (rule_id,))
+
+
 # ─── REPLY GENERATION ─────────────────────────────────────────────────────────
 
 def _build_system(platform: str, n_examples=12) -> str:
@@ -97,8 +128,21 @@ def _build_system(platform: str, n_examples=12) -> str:
         "Пиши ровно в том же стиле, тоне и длине, что и в примерах ниже — "
         "это реальные ответы нашей команды. Не выдумывай факты о товаре, "
         "будь тёплым и человечным, без шаблонной канцелярщины. "
+        "НИКОГДА не пересказывай покупателю его же отзыв: не повторяй его "
+        "формулировки и списки свойств («лёгкая, не жирная, быстро "
+        "впитывается» → так писать нельзя). Реагируй по сути, как живой "
+        "человек: коротко про приятное, конкретно про замечание. Один смайл "
+        "максимум, без «Отдельное спасибо за…» и прочих чопорных оборотов. "
         "Верни ТОЛЬКО текст ответа, без кавычек и пояснений."
     )
+    rules = []
+    try:
+        rules = get_rules()
+    except Exception as e:
+        _log.warning("review rules load: %s", e)
+    if rules:
+        base += ("\n\nПРАВИЛА КОМАНДЫ — обязательны и важнее примеров:\n"
+                 + "\n".join(f"- {r['rule']}" for r in rules))
     if examples:
         base += f"\n\nПРИМЕРЫ НАШИХ ОТВЕТОВ:\n\n{examples}"
     return base

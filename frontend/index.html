@@ -446,6 +446,17 @@
         </button>
       </div>
     </div>
+    <details class="rev-fold mb-3" ontoggle="if(this.open)loadReplyRules()">
+      <summary>🎛 Правила для ИИ-ответов <span class="text-secondary small fw-normal">— «так не пиши, пиши так»: действуют на все новые черновики</span></summary>
+      <div class="card bg-card mt-2 p-3">
+        <div class="d-flex gap-2 flex-wrap">
+          <input id="replyRuleInput" class="form-control form-control-sm bg-dark text-white border-secondary" style="min-width:340px;flex:1"
+                 placeholder="Напр.: не повторяй слова покупателя из отзыва; не пиши «Отдельное спасибо»">
+          <button class="btn btn-sm btn-outline-success" onclick="addReplyRule()">Добавить правило</button>
+        </div>
+        <div id="replyRulesList" class="mt-2 small text-secondary">Загрузка…</div>
+      </div>
+    </details>
     <div id="reviewsFeed"></div>
   </div><!-- /pane-reviews -->
 
@@ -614,6 +625,6 @@
 
 <script src="vendor/bootstrap.bundle.min.js"></script>
 <script src="vendor/chart.umd.min.js"></script>
-<script src="app.js?v=200"></script>
+<script src="app.js?v=201"></script>
 </body>
 </html>

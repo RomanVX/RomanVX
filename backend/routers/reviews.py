@@ -30,6 +30,27 @@ async def get_reviews_data(
     }
 
 
+@router.get("/rules")
+async def get_reply_rules():
+    """Правила стиля ИИ-ответов («так не пиши — пиши так»), редактируются с фронта."""
+    return {"rules": await asyncio.to_thread(review_ai.get_rules)}
+
+
+@router.post("/rules")
+async def add_reply_rule(body: dict = Body(...)):
+    text = str((body or {}).get("text") or "").strip()
+    if not text:
+        return {"error": "Пустое правило"}
+    await asyncio.to_thread(review_ai.add_rule, text)
+    return {"rules": await asyncio.to_thread(review_ai.get_rules)}
+
+
+@router.delete("/rules/{rule_id}")
+async def delete_reply_rule(rule_id: int):
+    await asyncio.to_thread(review_ai.delete_rule, rule_id)
+    return {"rules": await asyncio.to_thread(review_ai.get_rules)}
+
+
 @router.get("/export")
 async def export_reviews(
     platform: str = Query("all"),

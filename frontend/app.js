@@ -5995,6 +5995,50 @@ async function declineDraft(id) {
   renderReviewsFeed();
 }
 
+// ── Правила стиля ИИ-ответов на отзывы ───────────────────────────────────────
+function _renderReplyRules(rules) {
+  const box = document.getElementById('replyRulesList');
+  if (!box) return;
+  if (!(rules || []).length) {
+    box.innerHTML = '<span class="text-secondary">Правил пока нет. Увидел плохой оборот в черновике — добавь правило, и все следующие ответы будут его учитывать.</span>';
+    return;
+  }
+  box.innerHTML = rules.map(r => `
+    <div class="d-flex align-items-start gap-2 mb-1">
+      <span class="text-secondary" style="min-width:74px">${esc(r.added || '')}</span>
+      <span style="flex:1;color:var(--ink)">${esc(r.rule)}</span>
+      <button class="btn btn-sm btn-outline-danger py-0 px-1" style="font-size:.7rem;line-height:1.2"
+              onclick="delReplyRule(${r.id})" title="Удалить">✕</button>
+    </div>`).join('');
+}
+
+async function loadReplyRules() {
+  try {
+    const d = await fetchJSON('/api/reviews/rules');
+    _renderReplyRules(d.rules);
+  } catch (e) {
+    const box = document.getElementById('replyRulesList');
+    if (box) box.innerHTML = `<span class="text-danger">Ошибка: ${esc(e.message)}</span>`;
+  }
+}
+
+async function addReplyRule() {
+  const inp = document.getElementById('replyRuleInput');
+  const text = (inp?.value || '').trim();
+  if (!text) return;
+  const r = await fetch('/api/reviews/rules', { method: 'POST',
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) });
+  const d = await r.json();
+  if (d.error) { alert(d.error); return; }
+  if (inp) inp.value = '';
+  _renderReplyRules(d.rules);
+}
+
+async function delReplyRule(id) {
+  const r = await fetch(`/api/reviews/rules/${id}`, { method: 'DELETE' });
+  _renderReplyRules((await r.json()).rules);
+}
+
 async function genBatch() {
   const btn = document.getElementById('genBatchBtn');
   const platform = document.getElementById('batchPlatform')?.value || 'all';
