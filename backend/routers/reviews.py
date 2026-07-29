@@ -184,6 +184,16 @@ async def approve_draft(
     if publish:
         published, msg = await rc.post_answer(id, text)
         if not published:
+            low = (msg or "").lower()
+            # отзыв скрыт/удалён площадкой (Ozon 404 GetReviewByUUID и т.п.) —
+            # ответить на него нельзя никогда, убираем из очереди
+            if "content not found" in low or "getreviewbyuuid" in low \
+                    or "review not found" in low:
+                rc.set_draft_status(id, "gone")
+                return {"id": id, "status": "gone", "published": False,
+                        "gone": True,
+                        "error": "Отзыв уже скрыт или удалён площадкой — "
+                                 "ответить на него нельзя. Убрал из очереди."}
             return {"id": id, "status": "pending", "published": False, "error": msg}
     rc.save_draft(id, text, status="approved")
     return {"id": id, "status": "approved", "published": published, "message": msg}

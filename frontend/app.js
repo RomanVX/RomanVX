@@ -5769,7 +5769,8 @@ function renderReviewsFeed() {
   if (onlyText) filtered = filtered.filter(r => r.text);
   if (_reviewsArtSel.size) filtered = filtered.filter(r => _reviewsArtSel.has(r.sku || ''));
   // вкладки Неотвеченные / Отвеченные: отвеченные не путаются под ногами
-  const isAns = r => !!r.answer || ((_drafts[r.id] || {}).status === 'approved');
+  const isAns = r => !!r.answer
+    || ['approved', 'gone'].includes((_drafts[r.id] || {}).status);
   const nAns = filtered.filter(isAns).length;
   const tabAns = document.getElementById('revTabAns');
   if (tabAns) tabAns.textContent = `Отвеченные${nAns ? ` (${nAns})` : ''}`;
@@ -5954,6 +5955,11 @@ function replyBlock(r) {
       <button class="btn btn-sm btn-outline-info py-0 ms-2" onclick="genDraft('${r.id}')">✨ Сгенерировать заново</button>
     </div>`;
   }
+  if (d.status === 'gone') {
+    return `<div class="mt-2 ps-2 border-start border-secondary">
+      <div class="text-secondary small">🚫 Отзыв скрыт или удалён площадкой — ответить нельзя</div>
+    </div>`;
+  }
   // pending — редактируемый черновик
   const ta = `draft_${cssId(r.id)}`;
   const platIcon = { WB: '🟣', Ozon: '🔵', YM: '🟡' }[r.platform] || '📤';
@@ -6003,6 +6009,7 @@ async function approveDraft(id) {
       body: JSON.stringify({ text }),
     });
     const d = await res.json();
+    if (d.gone) { _drafts[id].status = 'gone'; renderReviewsFeed(); alert(d.error); return; }
     if (d.error) { alert('Не опубликовано: ' + d.error); return; }
     _drafts[id].draft = text;
     _drafts[id].status = 'approved';
