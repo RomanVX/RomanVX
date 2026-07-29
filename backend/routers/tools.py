@@ -4591,6 +4591,7 @@ async def supply_boxes_upload(request: Request, file: UploadFile = File(...)):
     c_exp = col("срок")
     c_wave = col("волна")
     c_new = col("новый")
+    c_date = col("дата")
     if -1 in (c_art, c_bar, c_cl, c_qty, c_box):
         return {"error": f"Не хватает колонок (артикул/штрихкод/кластер/шт/короб), заголовок: {hdr}"}
 
@@ -4612,14 +4613,21 @@ async def supply_boxes_upload(request: Request, file: UploadFile = File(...)):
                                                  and r[c_new]) else src
         wave = ""
         if c_wave >= 0 and c_wave < len(r) and r[c_wave]:
-            m = re.search(r"\d+", str(r[c_wave]))
-            wave = m.group(0) if m else str(r[c_wave]).strip()
+            # волны бывают с буквой («Волна 3а») — цифру с суффиксом целиком,
+            # иначе «3» и «3а» слипнутся в одну волну
+            m = re.search(r"(\d+\s*[а-яёa-z]?)", str(r[c_wave]).lower())
+            wave = m.group(1).replace(" ", "") if m else str(r[c_wave]).strip()
         exp = None
         if c_exp >= 0 and c_exp < len(r) and hasattr(r[c_exp], "strftime"):
             exp = r[c_exp].strftime("%Y-%m-%dT00:00:00Z")
+        sup_date = ""
+        if c_date >= 0 and c_date < len(r) and r[c_date]:
+            v = r[c_date]
+            sup_date = v.strftime("%d.%m") if hasattr(v, "strftime") \
+                else str(v).strip()[:10]
         key = f"{src}|{box_no}"
         b = boxes.setdefault(key, {"src": src, "box": box_no, "target": target,
-                                   "wave": wave, "items": []})
+                                   "wave": wave, "date": sup_date, "items": []})
         if b["target"] != target or b["wave"] != wave:
             conflicts.append(f"{src} короб {box_no}: разные кластер/волна в строках")
         b["items"].append({"offer_id": art, "barcode": str(r[c_bar] or "").strip(),
@@ -4629,11 +4637,16 @@ async def supply_boxes_upload(request: Request, file: UploadFile = File(...)):
         return {"error": "Не разобрал ни одного короба — проверь файл"}
     await asyncio.to_thread(_snap.save, "supply_boxes_plan", plan)
     waves: dict[str, int] = {}
+    wave_dates: dict[str, str] = {}
     for b in plan:
-        waves[b["wave"] or "?"] = waves.get(b["wave"] or "?", 0) + 1
+        w = b["wave"] or "?"
+        waves[w] = waves.get(w, 0) + 1
+        if b.get("date") and not wave_dates.get(w):
+            wave_dates[w] = b["date"]
     return {"boxes": len(plan), "items": sum(len(b["items"]) for b in plan),
             "qty": sum(i["quantity"] for b in plan for i in b["items"]),
             "waves": dict(sorted(waves.items())),
+            "wave_dates": wave_dates,
             "clusters": sorted({b["target"] for b in plan}),
             "conflicts": sorted(set(conflicts))[:10]}
 

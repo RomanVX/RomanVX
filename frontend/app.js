@@ -3173,13 +3173,20 @@ function renderSlots() {
       <h6 class="mb-0">Короба из файла производства</h6>
       <input type="file" id="slotBoxFile" accept=".xlsx" class="form-control form-control-sm" style="width:250px"
         onchange="slotsBoxUpload(this)">
-      ${_slotsHasWaves() ? `<label class="small text-secondary mb-0">Волна:</label>
-      <select id="slotWave" class="form-select form-select-sm" style="width:80px">
-        ${[1, 2, 3, 4, 5, 6].map(w => `<option value="${w}" ${String(w) === _slotWaveSel ? 'selected' : ''}>${w}</option>`).join('')}
-      </select>` : '<span class="small text-secondary">файл без волн — берём все короба</span>'}
+      ${_slotsHasWaves() ? (() => {
+        const keys = _slotsBoxes
+          ? Object.keys(_slotsBoxes.waves || {}).filter(k => k !== '?')
+              .sort((a, b) => String(a).localeCompare(String(b), 'ru', { numeric: true }))
+          : ['1', '2', '3', '4', '5', '6'];
+        const dates = (_slotsBoxes && _slotsBoxes.wave_dates) || {};
+        return `<label class="small text-secondary mb-0">Волна:</label>
+      <select id="slotWave" class="form-select form-select-sm" style="width:110px">
+        ${keys.map(w => `<option value="${w}" ${String(w) === _slotWaveSel ? 'selected' : ''}>${w}${dates[w] ? ' · ' + dates[w] : ''}</option>`).join('')}
+      </select>`;
+      })() : '<span class="small text-secondary">файл без волн — берём все короба</span>'}
     </div>
     <div id="slotBoxInfo" class="small mt-2">${_slotsBoxes ? `Файл разобран: <b>${_slotsBoxes.boxes} коробов</b>,
-      ${_slotsBoxes.qty} шт${_slotsHasWaves() ? ` · волны: ${esc(Object.entries(_slotsBoxes.waves || {}).map(([w, n]) => `${w} — ${n} кор.`).join(', '))}` : ''}
+      ${_slotsBoxes.qty} шт${_slotsHasWaves() ? ` · волны: ${esc(Object.entries(_slotsBoxes.waves || {}).map(([w, n]) => `${w} — ${n} кор.${(_slotsBoxes.wave_dates || {})[w] ? ' (' + _slotsBoxes.wave_dates[w] + ')' : ''}`).join(', '))}` : ''}
       ${(_slotsBoxes.conflicts || []).length ? `<span class="text-danger d-block">Конфликты: ${esc(_slotsBoxes.conflicts.join('; '))}</span>` : ''}`
       : '<span class="text-secondary">Загрузи файл с листом «отгрузка OZON» (короб → кластер, волна — если есть) — дальше «Сверка» и «Залить короба» у нужной заявки, этикетки скачаются архивом по кластерам.</span>'}</div>
   </div>`;
