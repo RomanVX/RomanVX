@@ -9,9 +9,9 @@ import reviews_client as rc
 
 _log = logging.getLogger(__name__)
 MODEL = "claude-opus-4-8"
-# черновики ответов на отзывы: короткий текст, человек всё равно правит —
-# Sonnet здесь неотличим от Opus, а стоит вдвое-втрое дешевле
-MODEL_DRAFT = "claude-sonnet-4-6"
+# черновики ответов на отзывы: пробовали Sonnet ради экономии — команда
+# забраковала («нейрослоп»), вернули Opus. Экономию даёт кеш system-промта
+MODEL_DRAFT = "claude-opus-4-8"
 
 _client: AsyncAnthropic | None = None
 
@@ -165,8 +165,7 @@ async def generate_reply(review: dict, platform="WB") -> str:
     resp = await _get_client().messages.create(
         model=MODEL_DRAFT,
         max_tokens=600,
-        # без thinking: Sonnet 4.6 не принимает adaptive, а для короткого
-        # ответа на отзыв рассуждения и не нужны
+        thinking={"type": "adaptive"},
         # батч в 20 черновиков шлёт один и тот же system 20 раз подряд —
         # кешируем, платим за него один раз
         system=[{"type": "text", "text": system,
