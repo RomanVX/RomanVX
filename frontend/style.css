@@ -498,7 +498,7 @@ body {
   justify-content: center;
   gap: 14px;
   cursor: pointer;
-  transition: all .25s;
+  transition: transform .25s, border-color .25s, box-shadow .25s;
   padding: 16px;
   color: #1c1c1c;
   font-weight: 600;
@@ -570,9 +570,25 @@ body {
   cursor: pointer;
   user-select: none;
   white-space: nowrap;
-  transition: background .15s, color .15s;
+  transition: background .15s, color .15s, scale .12s;
 }
 .mp-seg-btn:hover { color: var(--ink); }
+.mp-seg-btn:active { scale: .96; }
+
+/* ── Полировка по UI-скиллам (better-ui / typography / accessibility) ── */
+/* табличные цифры: числа в колонках выравниваются по разрядам и не пляшут */
+.table, .mp-badge { font-variant-numeric: tabular-nums; }
+/* тактильный отклик кнопок: лёгкое сжатие на нажатии (ровно 0.96) */
+.btn {
+  transition: color .15s, background-color .15s, border-color .15s,
+              box-shadow .15s, scale .12s;
+}
+.btn:active, .mp-refresh:active, .mp-selector-bloc:active { scale: .96; }
+/* видимый фокус с клавиатуры — только для focus-visible, мышь не трогает */
+:where(button, a, input, select, textarea, summary):focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
 .mp-seg-btn.active {
   background: var(--surface);
   color: var(--ink);
