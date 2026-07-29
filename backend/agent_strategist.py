@@ -1137,14 +1137,19 @@ async def _run_session_locked(trigger, focus, light, status_msg_id,
             user_msg += (f"\n\nВОПРОС ВЛАДЕЛЬЦА: {focus}\n"
                          "Отвечай именно на него. Из снимка и контекста выше "
                          "бери только то, что относится к вопросу.")
+        # cache_control на стартовом сообщении: снимок+цены+экономика — самый
+        # тяжёлый кусок промта (~10к токенов), без кеша он оплачивался заново
+        # на КАЖДОМ шаге сессии и съедал основную часть стоимости
+        _first_text = {"type": "text", "text": user_msg,
+                       "cache_control": {"type": "ephemeral"}}
         if image_b64:
             messages = [{"role": "user", "content": [
                 {"type": "image", "source": {"type": "base64",
                                              "media_type": "image/jpeg",
                                              "data": image_b64}},
-                {"type": "text", "text": user_msg}]}]
+                _first_text]}]
         else:
-            messages = [{"role": "user", "content": user_msg}]
+            messages = [{"role": "user", "content": [_first_text]}]
         tools_used, saved = [], False
         started = asyncio.get_event_loop().time()
         for _step in range(_MAX_STEPS):

@@ -9,6 +9,9 @@ import reviews_client as rc
 
 _log = logging.getLogger(__name__)
 MODEL = "claude-opus-4-8"
+# черновики ответов на отзывы: короткий текст, человек всё равно правит —
+# Sonnet здесь неотличим от Opus, а стоит вдвое-втрое дешевле
+MODEL_DRAFT = "claude-sonnet-4-6"
 
 _client: AsyncAnthropic | None = None
 
@@ -160,10 +163,13 @@ async def generate_reply(review: dict, platform="WB") -> str:
         "Напиши ответ от лица продавца."
     )
     resp = await _get_client().messages.create(
-        model=MODEL,
+        model=MODEL_DRAFT,
         max_tokens=600,
         thinking={"type": "adaptive"},
-        system=system,
+        # батч в 20 черновиков шлёт один и тот же system 20 раз подряд —
+        # кешируем, платим за него один раз
+        system=[{"type": "text", "text": system,
+                 "cache_control": {"type": "ephemeral"}}],
         messages=[{"role": "user", "content": user}],
     )
     return "".join(b.text for b in resp.content if b.type == "text").strip()
