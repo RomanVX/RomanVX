@@ -519,7 +519,10 @@ def _is_banter(q: str, has_photo: bool) -> bool:
             "оформи", "запусти", "дальше", "продолжай", "продолжи", "жду",
             "ага", "угу", "плюс", "хорошо", "договорились", "погнали",
             "действуй", "вперёд", "вперед", "начинай", "поехали", "нужно",
-            "надо", "хочу", "интересно")
+            "надо", "хочу", "интересно",
+            # просьбы углубиться/пояснить — это работа, а не трёп
+            "подробнее", "подробней", "поясни", "объясни", "объяснись",
+            "уточни", "раскрой", "почему", "непонятно", "не понял")
     head = ql.strip(" .!,)(").split()
     if head and (head[0] in cont or ql.strip(" .!,") in cont):
         return False
@@ -957,9 +960,13 @@ async def bot_loop() -> None:
                                     return
                                 # дело — единый агент с инструментами и памятью
                                 import agent_strategist as _st
-                                deep = any(w in qq.lower() for w in (
+                                deep = (any(w in qq.lower() for w in (
                                     "разберись", "разбери", "стратег", "сессию",
-                                    "план", "подумай", "глубок", "полный разбор"))
+                                    "план", "подумай", "глубок", "полный разбор",
+                                    "почему", "сравни", "что изменилось",
+                                    "динамик", "за месяц", "по дням",
+                                    "проанализируй", "оцен"))
+                                    or len(qq) > 200)
                                 res = await _st.run_session(
                                     trigger="вопрос в Telegram", focus=qq,
                                     light=not deep, status_msg_id=sid,
@@ -1011,6 +1018,15 @@ async def bot_loop() -> None:
                     for k in (_dialog_key(thread), _dialog_key(thread, chat)):
                         _dialogs.pop(k, None)
                     await asyncio.to_thread(_snap.save, "agent_dialogs", _dialogs)
+                    # диалог стратега живёт отдельными ключами (chat/thread) —
+                    # чистим все варианты, иначе /reset сбрасывал не всё
+                    _t = f"_t{thread}" if thread else ""
+                    _c = f"_c{chat}" if chat else ""
+                    for sk in {f"strategist_dialog{_t}{_c}",
+                               f"strategist_dialog{_c}",
+                               f"strategist_dialog{_t}",
+                               "strategist_dialog"}:
+                        await asyncio.to_thread(_snap.save, sk, [])
                     await tg_send("Память диалога очищена.", thread_id=thread)
                 elif cmd in ("/start", "/help"):
                     await tg_send(
