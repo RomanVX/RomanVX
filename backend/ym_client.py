@@ -57,53 +57,6 @@ async def _get(path: str, params: dict) -> dict:
     return r.json()
 
 
-async def _try_stats_orders_post(date_from: str, date_to: str) -> dict[str, int]:
-    """POST /campaigns/{id}/stats/orders — lightweight stats endpoint."""
-    try:
-        data = await _post(
-            f"/v2/campaigns/{YM_CAMPAIGN_ID}/stats/orders",
-            {"dateFrom": date_from, "dateTo": date_to, "groupBy": "DAY"},
-        )
-        totals: dict[str, int] = {}
-        for order in (data.get("result") or {}).get("orders") or []:
-            if (order.get("status") or "") == "CANCELLED":
-                continue
-            for item in order.get("items") or []:
-                oid = item.get("shopSku") or item.get("offerId") or ""
-                qty = item.get("count") or item.get("initialCount") or 0
-                if oid and qty:
-                    totals[oid] = totals.get(oid, 0) + qty
-        _log.info("[YM] POST stats/orders → %d articles", len(totals))
-        return totals
-    except Exception as e:
-        _log.warning("[YM] POST stats/orders failed: %s", e)
-        return {}
-
-
-async def _try_campaign_orders_stats(date_from: str, date_to: str) -> dict[str, int]:
-    """GET /campaigns/{id}/orders/stats — order statistics by period."""
-    try:
-        # NB: отдельного GET orders/stats в v2 нет — используем тот же POST stats/orders
-        data = await _post(
-            f"/v2/campaigns/{YM_CAMPAIGN_ID}/stats/orders",
-            {"dateFrom": date_from, "dateTo": date_to, "groupBy": "DAY"},
-        )
-        totals: dict[str, int] = {}
-        for order in (data.get("result") or {}).get("orders") or []:
-            if (order.get("status") or "") == "CANCELLED":
-                continue
-            for item in order.get("items") or []:
-                oid = item.get("shopSku") or item.get("offerId") or ""
-                qty = item.get("count") or item.get("initialCount") or 0
-                if oid and qty:
-                    totals[oid] = totals.get(oid, 0) + qty
-        _log.info("[YM] campaign/orders/stats → %d articles", len(totals))
-        return totals
-    except Exception as e:
-        _log.warning("[YM] campaign/orders/stats failed: %s", e)
-        return {}
-
-
 async def _try_business_orders_post(date_from: str, date_to: str) -> dict[str, int]:
     """POST /businesses/{id}/orders — paginated, cached so rate limit OK."""
     try:
@@ -351,13 +304,19 @@ async def get_sales_28d() -> dict[str, float]:
             date_from = dt_from.strftime("%Y-%m-%d")
             date_to   = dt_to.strftime("%Y-%m-%d")
 
+            # stats/orders — ПОСТРАНИЧНЫЙ (по умолчанию ~20 заказов на страницу):
+            # без пагинации всё сверх первой страницы терялось и скорость
+            # продаж занижалась в разы. get_orders_stats листает до конца.
             totals: dict[str, int] = {}
-
-            # Try POST /campaigns/{id}/stats/orders (cheapest on rate limit)
-            totals = await _try_stats_orders_post(date_from, date_to)
-            if not totals:
-                # Try GET /campaigns/{id}/orders/stats
-                totals = await _try_campaign_orders_stats(date_from, date_to)
+            for order in await get_orders_stats(date_from, date_to):
+                if (order.get("status") or "") == "CANCELLED":
+                    continue
+                for item in order.get("items") or []:
+                    oid = item.get("shopSku") or item.get("offerId") or ""
+                    qty = item.get("count") or item.get("initialCount") or 0
+                    if oid and qty:
+                        oid = SKU_ALIASES.get(oid, oid)
+                        totals[oid] = totals.get(oid, 0) + qty
             if not totals:
                 # Fallback: POST /businesses/{id}/orders paginated
                 totals = await _try_business_orders_post(date_from, date_to)
