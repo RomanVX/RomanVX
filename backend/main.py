@@ -245,6 +245,32 @@ async def _damage_autofill():
         log.warning("autofill notify: %s", e)
 
 
+async def _funnel_daily():
+    """Воронка WB (nm-report): раз в сутки дособираем последние 7 дней в
+    вечную таблицу. Первый прогон — глубже (28 дн), чтобы сразу было с чем
+    сравнивать."""
+    import config
+    import wb_funnel
+    if config.USE_MOCK:
+        return
+    await asyncio.sleep(420)
+    log = logging.getLogger("wb_funnel")
+    first = True
+    while True:
+        try:
+            have = await asyncio.to_thread(
+                lambda: (wb_funnel.summary(14) or {}).get("history"))
+            res = await wb_funnel.fetch(28 if (first and not have) else 7)
+            if res.get("error"):
+                log.warning("daily: %s", res["error"])
+            else:
+                log.info("daily: %s", res)
+        except Exception as e:
+            log.warning("daily: %s", str(e)[:200])
+        first = False
+        await asyncio.sleep(24 * 3600)
+
+
 async def _news_loop():
     """Новости площадок: сбор и разбор раз в 3 часа, сводка в 10:00 МСК."""
     import snapshot as _snap
@@ -420,6 +446,7 @@ async def lifespan(app: FastAPI):
     task7 = asyncio.create_task(_trends_weekly())
     task8 = asyncio.create_task(_strategist_loop())
     task9 = asyncio.create_task(_bid_history_daily())
+    asyncio.create_task(_funnel_daily())
     task10 = asyncio.create_task(_slot_watcher())
     yield
     for t in (task, task2, task3, task4, task5, task6, task7, task8, task9,

@@ -104,6 +104,7 @@
       <span class="mp-menu-title" onclick="goNavTool('tools','prod','navWB')">Wildberries</span>
       <div class="mp-menu-drop">
         <a href="#" onclick="goNavTool('tools','prod','navWB');return false">Продуктолог</a>
+        <a href="#" onclick="goNavTool('tools','wbfunnel','navWB');return false">Воронка продаж</a>
         <a href="#" onclick="goNavTool('tools','adv','navWB');return false">Реклама</a>
         <a href="#" onclick="goNavTool('tools','margin','navWB');return false">Калькулятор маржи</a>
         <a href="#" onclick="goNavTool('tools','bid','navWB');return false">Ставка CPM</a>
@@ -552,6 +553,9 @@
       <div id="toolBid" class="mp-selector-bloc" style="--mp-color:#fb7185" onclick="setTool('bid')">
         <span class="mp-selector-dot" style="background:#fb7185"></span>Ставка CPM
       </div>
+      <div id="toolWbfunnel" class="mp-selector-bloc" style="--mp-color:#c026d3" onclick="setTool('wbfunnel')">
+        <span class="mp-selector-dot" style="background:#c026d3"></span>Воронка
+      </div>
       <span id="toolHint" class="text-secondary small">Анализ отзывов WB по каждому артикулу</span>
       <button class="btn btn-sm btn-outline-secondary ms-auto" onclick="reloadTool()">
         <i class="bi bi-arrow-clockwise"></i> Обновить
@@ -630,6 +634,6 @@
 
 <script src="vendor/bootstrap.bundle.min.js"></script>
 <script src="vendor/chart.umd.min.js"></script>
-<script src="app.js?v=203"></script>
+<script src="app.js?v=204"></script>
 </body>
 </html>

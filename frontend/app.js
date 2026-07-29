@@ -2920,12 +2920,13 @@ const _TOOL_HINTS = {
   competitors: 'Суточные срезы выдачи WB по вашим запросам: позиции, цены и демпинг конкурентов (сбор через домашний агент)',
   whstocks: 'Остатки WB по складам и сколько денег заморожено в стоке (по себестоимости)',
   bid: 'Максимальная ставка за 1000 показов из юнитки: вводишь CTR запроса и конверсию карточки — видишь потолок ставки при нулевой марже и при целевом ДРР',
+  wbfunnel: 'Воронка WB по каждому артикулу: переходы в карточку → корзина → заказ → выкуп, конверсии и сравнение с прошлым периодом',
 };
 
 function setTool(t) {
   if (_toolActive === t) return;
   _toolActive = t;
-  ['Prod', 'Clusters', 'Adv', 'Niche', 'Nichecalc', 'Visuals', 'Margin', 'Competitors', 'Whstocks', 'Bid'].forEach(k => {
+  ['Prod', 'Clusters', 'Adv', 'Niche', 'Nichecalc', 'Visuals', 'Margin', 'Competitors', 'Whstocks', 'Bid', 'Wbfunnel'].forEach(k => {
     document.getElementById('tool' + k)?.classList.toggle('active', k.toLowerCase() === t);
   });
   const hint = document.getElementById('toolHint');
@@ -2938,14 +2939,74 @@ function reloadTool() {
      adv: () => loadAdv(true), niche: () => loadDemand(true),
      nichecalc: () => renderNicheForm(), visuals: () => renderVisualsForm(),
      margin: () => loadMargin(true), competitors: () => loadCompetitors(true),
-     whstocks: () => loadWhStocks(true) })[_toolActive]();
+     whstocks: () => loadWhStocks(true),
+     wbfunnel: () => loadWbFunnel(true) })[_toolActive]();
 }
 function loadTools() {
   ({ prod: loadProductolog, clusters: loadClusters, adv: loadAdv,
      niche: loadDemand, nichecalc: renderNicheForm,
      visuals: renderVisualsForm, margin: loadMargin,
      competitors: loadCompetitors, whstocks: loadWhStocks,
-     bid: loadBidCalc })[_toolActive]();
+     bid: loadBidCalc, wbfunnel: loadWbFunnel })[_toolActive]();
+}
+
+// ── Воронка WB (nm-report) ───────────────────────────────────────────────────
+let _wbFunnel = null;
+
+async function loadWbFunnel(refresh) {
+  const wrap = document.getElementById('toolsWrap');
+  if (!wrap || _toolActive !== 'wbfunnel') return;
+  if (_wbFunnel && !refresh) { renderWbFunnel(); return; }
+  wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>Загружаю воронку…</div>';
+  try {
+    _wbFunnel = await fetchJSON('/api/tools/wb_funnel?days=14' + (refresh ? '&refresh=1' : ''), 60000);
+    renderWbFunnel();
+    if (_wbFunnel.building) {
+      setTimeout(() => { if (_toolActive === 'wbfunnel') { _wbFunnel = null; loadWbFunnel(); } }, 45000);
+    }
+  } catch (e) {
+    wrap.innerHTML = `<div class="alert alert-danger mt-2">Ошибка: ${esc(e.message)}</div>`;
+  }
+}
+
+function renderWbFunnel() {
+  const wrap = document.getElementById('toolsWrap');
+  if (!wrap || !_wbFunnel) return;
+  const d = _wbFunnel;
+  if (d.message && !(d.items || []).length) {
+    wrap.innerHTML = `<div class="alert alert-info mt-3">${esc(d.message)}</div>`;
+    return;
+  }
+  const dyn = (cur, prev) => {
+    if (prev == null || cur == null || !prev) return '';
+    const p = Math.round((cur - prev) / prev * 100);
+    if (!p) return '';
+    return `<span class="small" style="color:${p > 0 ? 'var(--pos)' : 'var(--neg)'}">${p > 0 ? '▲' : '▼'}${Math.abs(p)}%</span>`;
+  };
+  const cr = (v, warn, bad) => v == null ? '—'
+    : `<span style="color:${v < bad ? 'var(--neg)' : v < warn ? '#b45309' : 'var(--pos)'};font-weight:600">${v}%</span>`;
+  let html = `<div class="small text-secondary mb-2 mt-2">Период: ${esc(d.period || '')} против предыдущих ${d.days} дней.
+    Конверсии: <b>в корзину</b> из карточки (норма 8-12%), <b>в заказ</b> из корзины (норма 25-35%).
+    ${d.building ? ' · <span class="text-info">⏳ идёт досбор свежих данных…</span>' : ''}</div>
+  <div class="card bg-card"><div class="card-body p-0"><div class="table-responsive" style="max-height:72vh">
+  <table class="table table-sm align-middle mb-0 text-nowrap" style="font-size:.85rem"><thead><tr>
+    <th>Артикул</th><th class="text-end">Переходы в карточку</th><th class="text-end">Корзина</th>
+    <th class="text-end">CR в корзину</th><th class="text-end">Заказы</th><th class="text-end">CR в заказ</th>
+    <th class="text-end">Заказы, ₽</th><th class="text-end">Выкупы</th><th class="text-end">Отложили</th>
+  </tr></thead><tbody>` +
+    (d.items || []).map(it => `<tr>
+      <td class="fw-semibold">${esc(it.sku)}${it.sku !== it.nm ? ` <span class="text-secondary small">${esc(it.nm)}</span>` : ''}</td>
+      <td class="text-end">${fmt(it.opens)} ${dyn(it.opens, it.prev_opens)}</td>
+      <td class="text-end">${fmt(it.carts)}</td>
+      <td class="text-end">${cr(it.cr_cart, 8, 5)} ${it.prev_cr_cart != null ? `<span class="text-secondary small">(${it.prev_cr_cart})</span>` : ''}</td>
+      <td class="text-end">${fmt(it.orders)} ${dyn(it.orders, it.prev_orders)}</td>
+      <td class="text-end">${cr(it.cr_order, 25, 15)} ${it.prev_cr_order != null ? `<span class="text-secondary small">(${it.prev_cr_order})</span>` : ''}</td>
+      <td class="text-end">${fmtRub(it.orders_rub)}</td>
+      <td class="text-end text-secondary">${fmt(it.buyouts)}</td>
+      <td class="text-end text-secondary">${it.wishlist || ''}</td>
+    </tr>`).join('') + `</tbody></table></div></div></div>
+  <div class="small text-secondary mt-2">История копится в нашей базе с первого сбора — со временем период сравнения не ограничен. Красный CR в корзину — проблема фото/цены в карточке; красный CR в заказ — проблема цены/доставки/отзывов.</div>`;
+  wrap.innerHTML = html;
 }
 
 // ── Остатки по складам + стоимость стока ──────────────────────────────────────

@@ -2873,6 +2873,37 @@ async def export_ozon_clusters():
         headers={"Content-Disposition": 'attachment; filename="ozon_clusters.xlsx"'})
 
 
+_funnel_task = None
+
+
+@router.get("/wb_funnel")
+async def get_wb_funnel(days: int = Query(default=14),
+                        sku: str = Query(default=""),
+                        refresh: bool = Query(default=False)):
+    """Воронка WB по SKU (nm-report): переходы → корзина → заказ → выкуп.
+    Данные копятся в вечной таблице; сбор отчёта у WB занимает до 8 минут."""
+    import wb_funnel
+    global _funnel_task
+    data = await asyncio.to_thread(wb_funnel.summary, days, sku)
+    empty = not data.get("items")
+    if (refresh or empty) and (_funnel_task is None or _funnel_task.done()):
+        _funnel_task = asyncio.get_event_loop().create_task(wb_funnel.fetch(28))
+    if empty:
+        return {"building": True,
+                "message": "⏳ Запросил воронку у WB — отчёт генерируется до "
+                           "8 минут, страница обновится сама"}
+    data["building"] = bool(_funnel_task and not _funnel_task.done())
+    return data
+
+
+@router.get("/wb_funnel/daily")
+async def get_wb_funnel_daily(sku: str = Query(...),
+                              days: int = Query(default=28)):
+    import wb_funnel
+    return {"sku": sku,
+            "daily": await asyncio.to_thread(wb_funnel.daily, sku, days)}
+
+
 @router.get("/supply/export")
 async def export_supply_plan():
     """План поставки одним файлом: свод остатков по всем площадкам на артикул

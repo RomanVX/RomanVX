@@ -324,6 +324,21 @@ async def _t_pnl_all(_a: dict) -> str:
     return json.dumps(out, ensure_ascii=False, default=str)
 
 
+async def _t_funnel_wb(a: dict) -> str:
+    """Воронка WB из вечной таблицы wb_funnel (nm-report)."""
+    import wb_funnel
+    sku = str(a.get("sku") or "").strip()
+    days = int(a.get("days") or 14)
+    if sku and a.get("by_day"):
+        rows = await asyncio.to_thread(wb_funnel.daily, sku, days)
+        return json.dumps({"sku": sku, "daily": rows}, ensure_ascii=False)
+    d = await asyncio.to_thread(wb_funnel.summary, days, sku)
+    if not d.get("items"):
+        return ("Воронка WB ещё не собрана (первый сбор идёт до 8 минут после "
+                "деплоя). Скажи владельцу, что данные появятся, и не выдумывай.")
+    return json.dumps(d, ensure_ascii=False)
+
+
 async def _t_history(a: dict) -> str:
     """Вечная история продаж из БД: любой период, а не только 14 дней."""
     import sales_history as sh
@@ -659,6 +674,7 @@ _TOOLS = {
     "ozon_ads": (_t_ozon_ads, "Реклама Ozon (Performance): кампании, расход, ДРР, показы/клики — вторая половина рекламного бюджета"),
     "ozon_phrases": (_t_ozon_phrases, "Поисковые фразы рекламы Ozon: где показы есть, а заказов нет"),
     "funnel": (_t_funnel, "Воронка Ozon по SKU: показы → карточка → корзина → заказ; где теряем продажи"),
+    "funnel_wb": (_t_funnel_wb, "Воронка WB по SKU: переходы в карточку → корзина → заказ → выкуп, конверсии и сравнение с прошлым периодом (вечная история nm-report). Аргументы: sku, days, by_day"),
     "clusters": (_t_clusters, "Остатки по кластерам WB и Ozon: где физически кончается товар (аргумент platform: wb|ozon|both)"),
     "pnl_all": (_t_pnl_all, "P&L всех трёх площадок за 3 месяца (WB, Ozon, ЯМ) — инструмент pnl показывает только WB"),
     "history": (_t_history, "Вечная история продаж из БД за любой период (аргумент days, по умолчанию 90) — не ограничена 14 днями и 90 днями API"),
@@ -738,6 +754,11 @@ _TOOL_ARGS: dict[str, dict] = {
         "days": {"type": "integer", "description": "период, по умолчанию 14"},
         "advert_id": {"type": "integer", "description": "ID кампании WB"},
         "nm": {"type": "string", "description": "артикул WB (nmID)"}},
+    "funnel_wb": {
+        "sku": {"type": "string", "description": "артикул продавца или nmID (пусто = все)"},
+        "days": {"type": "integer", "description": "период, по умолчанию 14"},
+        "by_day": {"type": "boolean",
+                   "description": "true + sku — динамика по дням"}},
     "bid_recommend": {
         "sku": {"type": "string",
                 "description": "артикул продавца — кампанию и nmID найду сам"},
