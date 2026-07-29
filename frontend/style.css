@@ -142,7 +142,7 @@ body {
     var(--bg);
   color: var(--ink);
   font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
-  font-feature-settings: 'tnum' 1;   /* табличные цифры — колонки не пляшут */
+  font-variant-numeric: tabular-nums;   /* табличные цифры — колонки не пляшут */
   letter-spacing: .01em;
 }
 
@@ -576,6 +576,25 @@ body {
 .mp-seg-btn:active { scale: .96; }
 
 /* ── Полировка по UI-скиллам (better-ui / typography / accessibility) ── */
+/* сегменты и пункты меню теперь настоящие <button> (клавиатура/скринридер);
+   :where — нулевая специфичность, чтобы не перебивать стили классов */
+:where(button.mp-seg-btn, button.mp-menu-title, button.mp-ai-link) {
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: inherit;
+}
+/* выпадающие меню открываются и с клавиатуры (Tab), не только по hover */
+.mp-menu-item:focus-within .mp-menu-drop { display: block; }
+/* жёлтое Bootstrap (#ffc107) нечитаемо на белом — в светлой теме токен --warn */
+html[data-theme="light"] .text-warning { color: var(--warn) !important; }
+.badge.bg-warning { color: #212529 !important; }
+/* приглушённый текст Bootstrap в тёмной теме (контраст 3.7:1 → токен) */
+:root:not([data-theme="light"]) .text-secondary { color: var(--ink-2) !important; }
+/* пилюля «% выкупа»: было 9.6px зелёным на сером (~2.8:1) — нечитаемо */
+.buyout-pill { font-size: .72rem; line-height: 1.2; margin-top: 1px; color: #4ade80; }
+html[data-theme="light"] .buyout-pill { color: #15803d; }
 /* табличные цифры: числа в колонках выравниваются по разрядам и не пляшут */
 .table, .mp-badge { font-variant-numeric: tabular-nums; }
 /* тактильный отклик кнопок: лёгкое сжатие на нажатии (ровно 0.96) */

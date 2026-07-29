@@ -24,7 +24,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" />
-  <link rel="stylesheet" href="style.css?v=24" />
+  <link rel="stylesheet" href="style.css?v=25" />
 </head>
 <body>
 
@@ -62,7 +62,7 @@
     <span id="cabBrandName" class="d-none"></span>
     <nav class="mp-menu" id="mainMenu">
     <div class="mp-menu-item active" id="navAnalytics">
-      <span class="mp-menu-title" onclick="goNav('salesan','navAnalytics')">Аналитика</span>
+      <button type="button" class="mp-menu-title" onclick="goNav('salesan','navAnalytics')">Аналитика</button>
       <div class="mp-menu-drop">
         <a href="#" onclick="goNav('money','navAnalytics');return false">Где деньги</a>
         <a href="#" onclick="goNav('sim','navAnalytics');return false">Симулятор «что если»</a>
@@ -73,7 +73,7 @@
       </div>
     </div>
     <div class="mp-menu-item" id="navWarehouse">
-      <span class="mp-menu-title" onclick="goNav('stocks','navWarehouse')">Склад</span>
+      <button type="button" class="mp-menu-title" onclick="goNav('stocks','navWarehouse')">Склад</button>
       <div class="mp-menu-drop">
         <a href="#" onclick="goNav('stocks','navWarehouse');return false">Остатки</a>
         <div class="mp-drop-sep"></div>
@@ -89,7 +89,7 @@
       </div>
     </div>
     <div class="mp-menu-item" id="navOps">
-      <span class="mp-menu-title" onclick="goNav('reviews','navOps')">Операционка</span>
+      <button type="button" class="mp-menu-title" onclick="goNav('reviews','navOps')">Операционка</button>
       <div class="mp-menu-drop">
         <a href="#" onclick="goNav('reviews','navOps');return false">Отзывы</a>
         <a href="#" onclick="goNav('docs','navOps');return false">Документы</a>
@@ -101,7 +101,7 @@
       </div>
     </div>
     <div class="mp-menu-item" id="navWB">
-      <span class="mp-menu-title" onclick="goNavTool('tools','prod','navWB')">Wildberries</span>
+      <button type="button" class="mp-menu-title" onclick="goNavTool('tools','prod','navWB')">Wildberries</button>
       <div class="mp-menu-drop">
         <a href="#" onclick="goNavTool('tools','prod','navWB');return false">Продуктолог</a>
         <a href="#" onclick="goNavTool('tools','wbfunnel','navWB');return false">Воронка продаж</a>
@@ -116,7 +116,7 @@
       </div>
     </div>
     <div class="mp-menu-item" id="navOzon">
-      <span class="mp-menu-title" onclick="goNavTool('toolsoz','funnel','navOzon')">Ozon</span>
+      <button type="button" class="mp-menu-title" onclick="goNavTool('toolsoz','funnel','navOzon')">Ozon</button>
       <div class="mp-menu-drop">
         <a href="#" onclick="goNavTool('toolsoz','funnel','navOzon');return false">Воронка продаж</a>
         <a href="#" onclick="goNavTool('toolsoz','ads','navOzon');return false">Реклама (Performance)</a>
@@ -125,7 +125,7 @@
       </div>
     </div>
     <div class="mp-menu-item" id="navNews">
-      <span class="mp-menu-title" onclick="goNav('news','navNews')">Новости<span id="newsBadge" class="mp-badge" style="display:none"></span></span>
+      <button type="button" class="mp-menu-title" onclick="goNav('news','navNews')">Новости<span id="newsBadge" class="mp-badge" style="display:none"></span></button>
       <div class="mp-menu-drop">
         <a href="#" onclick="goNav('news','navNews');setNewsImp('');return false">Все новости</a>
         <a href="#" onclick="goNav('news','navNews');setNewsImp('critical');return false">Только важное</a>
@@ -139,7 +139,7 @@
       <i class="bi bi-sun"></i>
     </button>
     <div class="mp-menu-item mp-acc">
-      <span class="mp-menu-title" id="accCabName">Biomed Nutrition <i class="bi bi-chevron-down small"></i></span>
+      <button type="button" class="mp-menu-title" id="accCabName">Biomed Nutrition <i class="bi bi-chevron-down small"></i></button>
       <div class="mp-menu-drop mp-drop-right">
         <a href="#" onclick="loadAll();return false">Обновить данные</a>
         <a href="#" id="changeCabBtn" onclick="changeCabinet();return false">Сменить кабинет</a>
@@ -161,17 +161,17 @@
     <div class="d-flex gap-3 mb-3 flex-wrap align-items-center">
       <h3 class="mb-0 fw-bold">Заказы</h3>
       <div class="mp-seg">
-        <span id="ordMpWB" class="mp-seg-btn active" onclick="setOrdersMp('WB')">Wildberries</span>
-        <span id="ordMpOZON" class="mp-seg-btn" onclick="setOrdersMp('OZON')">Ozon</span>
-        <span id="ordMpYM" class="mp-seg-btn" onclick="setOrdersMp('YM')">YM</span>
-        <span id="ordMpTOTAL" class="mp-seg-btn" onclick="setOrdersMp('TOTAL')">Общий</span>
+        <button type="button" id="ordMpWB" class="mp-seg-btn active" onclick="setOrdersMp('WB')">Wildberries</button>
+        <button type="button" id="ordMpOZON" class="mp-seg-btn" onclick="setOrdersMp('OZON')">Ozon</button>
+        <button type="button" id="ordMpYM" class="mp-seg-btn" onclick="setOrdersMp('YM')">YM</button>
+        <button type="button" id="ordMpTOTAL" class="mp-seg-btn" onclick="setOrdersMp('TOTAL')">Общий</button>
       </div>
-      <span id="salesAnalysisBtn" class="mp-ai-link" onclick="loadSalesAnalysis()">AI Анализ</span>
+      <button type="button" id="salesAnalysisBtn" class="mp-ai-link" onclick="loadSalesAnalysis()">AI Анализ</button>
       <div class="ms-auto d-flex align-items-center gap-2">
         <div class="mp-seg">
-          <span id="ordModeDays" class="mp-seg-btn" onclick="setOrdersMode('days')">День</span>
-          <span id="ordModeWeek" class="mp-seg-btn active" onclick="setOrdersMode('week')">Неделя</span>
-          <span id="ordModeMonth" class="mp-seg-btn" onclick="setOrdersMode('month')">Месяц</span>
+          <button type="button" id="ordModeDays" class="mp-seg-btn" onclick="setOrdersMode('days')">День</button>
+          <button type="button" id="ordModeWeek" class="mp-seg-btn active" onclick="setOrdersMode('week')">Неделя</button>
+          <button type="button" id="ordModeMonth" class="mp-seg-btn" onclick="setOrdersMode('month')">Месяц</button>
         </div>
         <button class="mp-refresh" onclick="reloadOrders()" title="Обновить"><i class="bi bi-arrow-clockwise"></i></button>
       </div>
@@ -295,15 +295,15 @@
     <div class="d-flex gap-3 mb-3 flex-wrap align-items-center">
       <h3 class="mb-0 fw-bold">Новости</h3>
       <div class="mp-seg">
-        <span id="newsSrcAll" class="mp-seg-btn active" onclick="setNewsSrc('')">Все</span>
-        <span id="newsSrcWB" class="mp-seg-btn" onclick="setNewsSrc('WB')">Wildberries</span>
-        <span id="newsSrcOZON" class="mp-seg-btn" onclick="setNewsSrc('Ozon')">Ozon</span>
-        <span id="newsSrcCab" class="mp-seg-btn" onclick="setNewsSrc('Кабинет')">Наш кабинет</span>
+        <button type="button" id="newsSrcAll" class="mp-seg-btn active" onclick="setNewsSrc('')">Все</button>
+        <button type="button" id="newsSrcWB" class="mp-seg-btn" onclick="setNewsSrc('WB')">Wildberries</button>
+        <button type="button" id="newsSrcOZON" class="mp-seg-btn" onclick="setNewsSrc('Ozon')">Ozon</button>
+        <button type="button" id="newsSrcCab" class="mp-seg-btn" onclick="setNewsSrc('Кабинет')">Наш кабинет</button>
       </div>
       <div class="mp-seg">
-        <span id="newsImpAll" class="mp-seg-btn active" onclick="setNewsImp('')">Всё</span>
-        <span id="newsImpCritical" class="mp-seg-btn" onclick="setNewsImp('critical')">Важное</span>
-        <span id="newsImpImportant" class="mp-seg-btn" onclick="setNewsImp('important')">Учесть</span>
+        <button type="button" id="newsImpAll" class="mp-seg-btn active" onclick="setNewsImp('')">Всё</button>
+        <button type="button" id="newsImpCritical" class="mp-seg-btn" onclick="setNewsImp('critical')">Важное</button>
+        <button type="button" id="newsImpImportant" class="mp-seg-btn" onclick="setNewsImp('important')">Учесть</button>
       </div>
       <div class="ms-auto d-flex align-items-center gap-2">
         <select id="newsDays" class="form-select form-select-sm" style="width:130px" onchange="loadNews()">
@@ -416,12 +416,12 @@
       <div id="ratingsTable" class="mt-2"></div>
     </details>
 
-    <div class="d-flex align-items-center gap-3 mb-2">
+    <div class="d-flex align-items-center gap-3 mb-2 flex-wrap">
       <h6 class="mb-0">Отзывы</h6>
       <div class="mp-seg">
-        <span id="revTabUn" class="mp-seg-btn active" onclick="setRevTab('un')">Неотвеченные</span>
-        <span id="revTabAns" class="mp-seg-btn" onclick="setRevTab('ans')">Отвеченные</span>
-        <span id="revTabAll" class="mp-seg-btn" onclick="setRevTab('all')">Все</span>
+        <button type="button" id="revTabUn" class="mp-seg-btn active" onclick="setRevTab('un')">Неотвеченные</button>
+        <button type="button" id="revTabAns" class="mp-seg-btn" onclick="setRevTab('ans')">Отвеченные</button>
+        <button type="button" id="revTabAll" class="mp-seg-btn" onclick="setRevTab('all')">Все</button>
       </div>
       <select id="reviewsPlatform" class="form-select form-select-sm w-auto bg-dark text-white border-secondary" onchange="renderReviewsFeed()">
         <option value="all">Все платформы</option>
@@ -634,6 +634,6 @@
 
 <script src="vendor/bootstrap.bundle.min.js"></script>
 <script src="vendor/chart.umd.min.js"></script>
-<script src="app.js?v=204"></script>
+<script src="app.js?v=205"></script>
 </body>
 </html>

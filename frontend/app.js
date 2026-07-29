@@ -545,7 +545,10 @@ function renderStocksTable() {
     const active = _stocksSortCol === c;
     const arrow  = active ? (_stocksSortAsc ? ' ↑' : ' ↓') : '';
     const t      = tip ? ` title="${tip}"` : '';
-    return `<th style="cursor:pointer;white-space:nowrap"${t} onclick="_stocksSort('${c}')">${label}${arrow}</th>`;
+    const aria   = active ? (_stocksSortAsc ? 'ascending' : 'descending') : 'none';
+    return `<th style="cursor:pointer;white-space:nowrap"${t} tabindex="0" role="button" aria-sort="${aria}"
+      onclick="_stocksSort('${c}')"
+      onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();_stocksSort('${c}')}">${label}${arrow}</th>`;
   }
 
   function cell(qty, perDay, days) {
@@ -567,9 +570,9 @@ function renderStocksTable() {
       ${thSort('supplierArticle','Артикул')}
       ${thSort('name','Название')}
       ${thSort('brand','Бренд')}
-      <th class="text-center" colspan="3" style="background:#a21caf;color:white;border-left:2px solid var(--sep)">WB</th>
-      <th class="text-center" colspan="3" style="background:#1d4ed8;color:white;border-left:2px solid var(--sep)">OZON</th>
-      <th class="text-center" colspan="3" style="background:#854d0e;color:white;border-left:2px solid var(--sep)">YM</th>
+      <th class="text-center" colspan="3" style="background:var(--mp-wb);color:white;border-left:2px solid var(--sep)">WB</th>
+      <th class="text-center" colspan="3" style="background:var(--mp-ozon);color:white;border-left:2px solid var(--sep)">OZON</th>
+      <th class="text-center" colspan="3" style="background:var(--mp-ym);color:white;border-left:2px solid var(--sep)">YM</th>
     </tr>
     <tr class="small" style="background:var(--surface-2);color:var(--muted)">
       <th></th><th></th><th></th>
@@ -1304,7 +1307,10 @@ function toggleGrpRows(grpId) {
   const arr  = document.getElementById('arr-' + grpId);
   const expanded = arr && arr.textContent === '▼';
   rows.forEach(r => { r.style.display = expanded ? 'none' : ''; });
-  if (arr) arr.textContent = expanded ? '▶' : '▼';
+  if (arr) {
+    arr.textContent = expanded ? '▶' : '▼';
+    arr.closest('tr')?.setAttribute('aria-expanded', String(!expanded));
+  }
 }
 
 function toggleOrdersCompact() {
@@ -1440,7 +1446,9 @@ function _ordersTableHTML() {
     const GRP_BG = 'background:var(--chip-bg);color:var(--chip-ink);';
 
     // Строка-заголовок группы со стрелкой сворачивания
-    tbody += `<tr data-row="grp" style="border-top:2px solid var(--sep-strong);cursor:pointer" onclick="toggleGrpRows('${grpId}')">`;
+    tbody += `<tr data-row="grp" style="border-top:2px solid var(--sep-strong);cursor:pointer" tabindex="0" role="button" aria-expanded="false"
+      onclick="toggleGrpRows('${grpId}')"
+      onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleGrpRows('${grpId}')}">`;
     tbody += `<td class="fw-semibold ps-2" style="${GRP_BG}padding:6px 8px">`
            + `<span id="arr-${grpId}" style="display:inline-block;width:14px;font-size:0.8rem;color:var(--muted)">▶</span>`
            + `<span class="me-1" style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${_groupColor(grp)}"></span>`
@@ -1455,7 +1463,7 @@ function _ordersTableHTML() {
         ? Math.round(v / (v + bCancelRub[i]) * 100) : null;
       const dynHtml   = v ? _dynArrow(v, prev) : '';
       const buyoutHtml = pct !== null
-        ? `<div style="font-size:0.6rem;color:var(--pos-strong);line-height:1.2;margin-top:1px">✓${pct}% выкуп</div>`
+        ? `<div class="buyout-pill">✓${pct}% выкуп</div>`
         : '';
       const cellVal = v
         ? `${fmtRub(v)}${dynHtml}${buyoutHtml}`
@@ -1468,7 +1476,7 @@ function _ordersTableHTML() {
     // строки SKU — по умолчанию скрыты
     grpSkus.forEach(s => {
       tbody += `<tr data-row="sku" data-grp="${grpId}" style="display:none;background:var(--t-sku-row)">`;
-      tbody += `<td class="ps-4 small" style="max-width:260px;overflow:hidden;text-overflow:ellipsis">`
+      tbody += `<td class="ps-4 small" style="max-width:260px;overflow:hidden;text-overflow:ellipsis" title="${esc(s.name || s.sku)}">`
              + `<span class="badge me-1" style="background:${col}22;color:${col};font-size:10px">${s.sku}</span>`
              + `<span class="text-muted">${s.name || s.sku}</span></td>`;
       vis.forEach(i => {
@@ -1499,7 +1507,7 @@ function _ordersTableHTML() {
         .filter(x => x.p > 0)
         .sort((a, b) => b.p - a.p);
       const pctHTML = pctItems.map(({ gi, p }) =>
-        `<div style="white-space:nowrap;font-size:0.68rem;color:var(--ink-2);line-height:1.35">`
+        `<div style="white-space:nowrap;font-size:0.72rem;color:var(--ink-2);line-height:1.35">`
         + `<span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${colors[gi]};margin-right:4px"></span>${p}%</div>`
       ).join('');
       tfoot += `<td colspan="2" style="background:var(--t-legend);padding:6px 4px;${_WEEK_SEP}">`
@@ -2089,7 +2097,7 @@ function renderFinanceTable() {
     }
     return;
   }
-  if (d.error)   { wrap.innerHTML = `<div class="alert alert-danger mt-3">Ошибка: ${d.error}</div>`; return; }
+  if (d.error)   { wrap.innerHTML = `<div class="alert alert-danger mt-3">Не удалось загрузить P&L: ${esc(d.error)}<br><span class="small">Нажми «Обновить» или повтори через минуту.</span></div>`; return; }
 
   // WB: пока точный (детальный) отчёт не собран — не показываем приблизительные
   // недельные цифры вовсе: либо правильные данные, либо экран загрузки
@@ -5843,7 +5851,7 @@ function renderReviewsFeed() {
 
   if (!filtered.length) {
     el.innerHTML = `<p class="text-secondary mt-3">${_revTab === 'un'
-      ? 'Неотвеченных отзывов нет — всё разобрано 🎉' : 'Нет отзывов'}</p>`;
+      ? 'Неотвеченных отзывов нет — всё разобрано 🎉' : 'Отзывов по выбранным фильтрам нет — сбрось фильтр площадки или артикулов.'}</p>`;
     return;
   }
 
@@ -6013,7 +6021,7 @@ function replyBlock(r) {
   if (d.status === 'declined') {
     return `<div class="mt-2">
       <span class="text-danger small">✕ Отклонено.</span>
-      <button class="btn btn-sm btn-outline-info py-0 ms-2" onclick="genDraft('${r.id}')">✨ Сгенерировать заново</button>
+      <button class="btn btn-sm btn-outline-info py-0 ms-2" onclick="genDraft('${r.id}')">↻ Сгенерировать заново</button>
     </div>`;
   }
   if (d.status === 'gone') {
@@ -6031,7 +6039,7 @@ function replyBlock(r) {
     <div class="d-flex gap-2">
       <button class="btn btn-sm btn-success py-0" onclick="approveDraft('${r.id}')">✓ Одобрить ${platIcon}</button>
       <button class="btn btn-sm btn-outline-danger py-0" onclick="declineDraft('${r.id}')">✕ Отклонить</button>
-      <button class="btn btn-sm btn-outline-secondary py-0" onclick="genDraft('${r.id}')">↻ Перегенерировать</button>
+      <button class="btn btn-sm btn-outline-secondary py-0" onclick="genDraft('${r.id}')">↻ Сгенерировать заново</button>
     </div>
   </div>`;
 }
