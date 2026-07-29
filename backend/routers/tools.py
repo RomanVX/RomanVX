@@ -2890,11 +2890,23 @@ async def export_supply_plan():
     wb_data = await get_clusters(refresh=False)
     oz_data = await get_ozon_clusters(refresh=False)
     ym_stocks: dict = {}
+    ym_sales: dict = {}
     try:
         import ym_client
         ym_stocks = await ym_client.get_stocks() or {}
+        ym_sales = await ym_client.get_sales_28d() or {}
     except Exception:
         pass
+    _YM_TARGET = 30
+    # ЯМ: один склад, кластеров нет — свод на артикул (остаток/скорость/везти)
+    ym_sku: dict = {}
+    for src, field in ((ym_stocks, "stock"), (ym_sales, "spd")):
+        for k, v in src.items():
+            g = ym_sku.setdefault(_cat.canon(k), {"stock": 0, "spd": 0.0})
+            g[field] += int(v or 0) if field == "stock" else float(v or 0)
+    for g in ym_sku.values():
+        g["need"] = max(0, round(_YM_TARGET * g["spd"] - g["stock"])) \
+            if g["spd"] > 0 else 0
 
     # ── свод на артикул: остаток и скорость по каждой площадке ──
     # у WB/Ozon SKU лежат в кластерах двумя списками (что везти + остальное)
@@ -2914,12 +2926,12 @@ async def export_supply_plan():
 
     wb_sku = _sku_agg(wb_data.get("items") or [])
     oz_sku = _sku_agg(oz_data.get("items") or [])
-    all_skus = sorted(set(wb_sku) | set(oz_sku)
-                      | {_cat.canon(k) for k in ym_stocks})
+    all_skus = sorted(set(wb_sku) | set(oz_sku) | set(ym_sku))
 
     book = openpyxl.Workbook()
     F = {"wb": PatternFill("solid", fgColor="c026d3"),
          "oz": PatternFill("solid", fgColor="3b82f6"),
+         "ym": PatternFill("solid", fgColor="b45309"),
          "sum": PatternFill("solid", fgColor="17a06a")}
 
     def _hdr(ws, fill):
@@ -2933,27 +2945,28 @@ async def export_supply_plan():
     ws.append(["Артикул", "Название",
                "WB остаток", "WB прод/день", "WB покрытие, дн", "WB к заказу",
                "Ozon остаток", "Ozon прод/день", "Ozon покрытие, дн", "Ozon к заказу",
-               "ЯМ остаток", "Остаток ВСЕГО", "К производству/закупке"])
+               "ЯМ остаток", "ЯМ прод/день", "ЯМ покрытие, дн", "ЯМ к заказу",
+               "Остаток ВСЕГО", "К производству/закупке"])
     _hdr(ws, F["sum"])
     for sku in all_skus:
         w = wb_sku.get(sku) or {}
         o = oz_sku.get(sku) or {}
-        ym_q = 0
-        for k, v in ym_stocks.items():
-            if _cat.canon(k) == sku:
-                ym_q += int(v or 0)
+        y = ym_sku.get(sku) or {}
         name = w.get("name") or o.get("name") or _cat.lookup(sku).get("name", "")
         w_cov = round(w["stock"] / w["spd"], 1) if w.get("spd") else None
         o_cov = round(o["stock"] / o["spd"], 1) if o.get("spd") else None
-        total_stock = (w.get("stock") or 0) + (o.get("stock") or 0) + ym_q
-        total_need = (w.get("need") or 0) + (o.get("need") or 0)
+        y_cov = round(y["stock"] / y["spd"], 1) if y.get("spd") else None
+        total_stock = (w.get("stock") or 0) + (o.get("stock") or 0) + (y.get("stock") or 0)
+        total_need = (w.get("need") or 0) + (o.get("need") or 0) + (y.get("need") or 0)
         ws.append([sku, name,
                    w.get("stock") or 0, round(w.get("spd") or 0, 2), w_cov,
                    w.get("need") or 0,
                    o.get("stock") or 0, round(o.get("spd") or 0, 2), o_cov,
                    o.get("need") or 0,
-                   ym_q, total_stock, total_need])
-    for i, wd in enumerate([14, 34, 11, 12, 13, 11, 11, 12, 13, 11, 10, 13, 16], 1):
+                   y.get("stock") or 0, round(y.get("spd") or 0, 2), y_cov,
+                   y.get("need") or 0,
+                   total_stock, total_need])
+    for i, wd in enumerate([14, 34, 11, 12, 13, 11, 11, 12, 13, 11, 10, 12, 13, 11, 13, 16], 1):
         ws.column_dimensions[get_column_letter(i)].width = wd
     ws.freeze_panes = "A2"
 
@@ -2989,6 +3002,21 @@ async def export_supply_plan():
     _cluster_sheet("WB кластеры", wb_data.get("items") or [], F["wb"])
     _cluster_sheet("Ozon кластеры", oz_data.get("items") or [], F["oz"],
                    spd_key="ads", cov_key="idc")
+
+    # ЯМ — один склад, поэтому просто «что везти» по артикулам
+    sy = book.create_sheet("ЯМ — везти")
+    sy.append(["Артикул", "Название", "Продаж/день", "Остаток, шт",
+               "Покрытие, дн", "Везти, шт"])
+    _hdr(sy, F["ym"])
+    for sku, y in sorted(ym_sku.items(), key=lambda kv: -kv[1]["need"]):
+        if not (y["need"] or y["stock"] or y["spd"]):
+            continue
+        cov = round(y["stock"] / y["spd"], 1) if y["spd"] > 0 else "∞"
+        sy.append([sku, _cat.lookup(sku).get("name", ""),
+                   round(y["spd"], 2), y["stock"], cov, y["need"]])
+    for i, wd in enumerate([14, 34, 12, 12, 13, 11], 1):
+        sy.column_dimensions[get_column_letter(i)].width = wd
+    sy.freeze_panes = "A2"
 
     buf = io.BytesIO()
     book.save(buf)
