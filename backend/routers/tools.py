@@ -2892,6 +2892,108 @@ async def export_ozon_clusters():
         headers={"Content-Disposition": 'attachment; filename="ozon_clusters.xlsx"'})
 
 
+@router.get("/timeline")
+async def get_timeline(days: int = Query(default=60, ge=14, le=365),
+                       sku: str = Query(default=""),
+                       platform: str = Query(default="all")):
+    """Действия на графике: дневная выручка и маржа (оценка по юнитке) +
+    события — применённые действия агента и изменения цен."""
+    import sales_history as _sh
+    import snapshot as _snap
+    d_from = ((datetime.utcnow() + timedelta(hours=3))
+              - timedelta(days=days)).strftime("%Y-%m-%d")
+
+    def _load():
+        rows = _sh.get_history(d_from, None, None)
+        # WB: заказы (WB_ORDERS) вместо продаж — реакция на действие видна
+        # в день события, а не через неделю выкупов
+        has_orders = any(r["platform"] == "WB_ORDERS" for r in rows)
+        plat_ok = {
+            "wb": {"WB_ORDERS"} if has_orders else {"WB"},
+            "ozon": {"Ozon"}, "ym": {"YM"},
+        }.get(platform.lower(),
+              ({"WB_ORDERS", "Ozon", "YM"} if has_orders
+               else {"WB", "Ozon", "YM"}))
+        # прибыль на штуку из снапшотов юнитки (без тяжёлой пересборки)
+        punit: dict = {}
+        for mp_key, snap_key in (("WB", "margin_snap_WB"),
+                                 ("Ozon", "margin_snap_OZON"),
+                                 ("YM", "margin_snap_YM")):
+            m = _snap.load(snap_key, None) or {}
+            for it in m.get("items") or []:
+                base_p = it.get("price0") or 0
+                cost = ((it.get("comm_pct") or 0) + (it.get("acq_pct") or 0)) / 100 * base_p \
+                    + (it.get("logist") or 0) + (it.get("storage") or 0) \
+                    + (it.get("other") or 0) + (it.get("advert") or 0) \
+                    + (it.get("cogs") or 0)
+                if base_p:
+                    k_m = 1 - cost / base_p
+                    punit[(mp_key, str(it.get("sku")).upper())] = k_m
+                    if it.get("nmId"):      # строки с несмапленным артикулом
+                        punit[(mp_key, str(it["nmId"]).upper())] = k_m
+        daily: dict = {}
+        want = sku.strip().upper()
+        for r in rows:
+            p = r["platform"]
+            if p not in plat_ok:
+                continue
+            if want and str(r["sku"]).upper() != want:
+                continue
+            d = daily.setdefault(r["date"], {"revenue": 0.0, "profit": 0.0})
+            rev = float(r["revenue"] or 0)
+            d["revenue"] += rev
+            mp_key = "WB" if p in ("WB", "WB_ORDERS") else p
+            k = punit.get((mp_key, str(r["sku"]).upper()))
+            if k is not None:
+                d["profit"] += rev * k
+        out = [{"dt": k,
+                "revenue": round(v["revenue"]),
+                "profit": round(v["profit"]),
+                "margin_pct": round(v["profit"] / v["revenue"] * 100, 1)
+                if v["revenue"] else None}
+               for k, v in sorted(daily.items())]
+
+        events = []
+        # применённые действия агента/владельца
+        try:
+            import agent_actions as _aa
+            _aa._init()
+            for r in db.fetchall(
+                    "SELECT applied, kind, title FROM agent_actions "
+                    "WHERE status = 'applied' AND applied >= ?", (d_from,)):
+                if want and want not in str(r[2]).upper():
+                    continue
+                events.append({"dt": str(r[0])[:10], "kind": r[1],
+                               "title": r[2], "src": "действие"})
+        except Exception:
+            pass
+        # изменения цен из ежедневных слепков (порог 3%, чтобы не шуметь)
+        try:
+            prev: dict = {}
+            for day, s, price in db.fetchall(
+                    "SELECT day, sku, discounted FROM price_history "
+                    "WHERE day >= ? ORDER BY day", (d_from,)):
+                s_up = str(s).upper()
+                if want and s_up != want:
+                    continue
+                p0 = prev.get(s_up)
+                if p0 and price and abs(price - p0) / p0 >= 0.03:
+                    events.append({"dt": day, "kind": "price",
+                                   "title": f"{s}: цена {round(p0)} → {round(price)} ₽",
+                                   "src": "цена"})
+                if price:
+                    prev[s_up] = price
+        except Exception:
+            pass
+        events.sort(key=lambda e: e["dt"])
+        return {"daily": out, "events": events[-120:], "days": days,
+                "sku": sku, "platform": platform,
+                "note": ("Маржа — оценка: выручка дня × маржинальность SKU из "
+                         "юнитки (затраты усреднены за окно). Точная маржа "
+                         "считается в P&L по неделям.")}
+    return await asyncio.to_thread(_load)
+
+
 @router.get("/price_optimal")
 async def get_price_optimal(max_step: int = Query(default=15, ge=5, le=30)):
     """Оптимальное ценообразование: рекомендованная цена и эффект ₽/мес

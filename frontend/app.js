@@ -25,7 +25,7 @@ document.addEventListener('DOMContentLoaded', _initThemeBtn);
 const API = '';
 let charts = {};
 let sortState = {};
-const dirty = { salesan: true, stocks: true, reviews: true, finance: true, unit: true, tools: true, toolsoz: true, docs: true, strategy: true, repricer: true, news: true, money: true, onboard: true, sim: true, actions: true, damage: true };
+const dirty = { salesan: true, stocks: true, reviews: true, finance: true, unit: true, tools: true, toolsoz: true, docs: true, strategy: true, repricer: true, news: true, money: true, onboard: true, sim: true, actions: true, damage: true, timeline: true };
 let _advertData = [];
 let currentTab = 'finance';
 let prodAllData = [];
@@ -247,7 +247,7 @@ function goNavTool(tab, tool, navId) {
 function switchTab(name, linkEl) {
   document.querySelectorAll('#mainTabs .nav-link').forEach(a => a.classList.remove('active'));
   if (linkEl) linkEl.classList.add('active');
-  ['salesan', 'stocks', 'reviews', 'finance', 'unit', 'tools', 'toolsoz', 'docs', 'strategy', 'repricer', 'news', 'money', 'onboard', 'sim', 'actions', 'damage'].forEach(t => {
+  ['salesan', 'stocks', 'reviews', 'finance', 'unit', 'tools', 'toolsoz', 'docs', 'strategy', 'repricer', 'news', 'money', 'onboard', 'sim', 'actions', 'damage', 'timeline'].forEach(t => {
     const el = document.getElementById('pane-' + t);
     if (el) el.style.display = t === name ? 'block' : 'none';
   });
@@ -258,7 +258,8 @@ function switchTab(name, linkEl) {
        reviews: loadReviews, finance: loadFinance, tools: loadTools, toolsoz: loadOzTool, docs: loadDocs,
        unit: loadUnitEconomics, strategy: loadStrategy, repricer: loadRepricer,
        news: loadNews, money: loadMoney, onboard: loadOnboard,
-       sim: loadSim, actions: loadActions, damage: loadDamage })[name]();
+       sim: loadSim, actions: loadActions, damage: loadDamage,
+       timeline: loadTimeline })[name]();
   }
 }
 
@@ -6739,6 +6740,127 @@ async function simApply(price) {
     const j = await r.json();
     alert(j.error ? `Не вышло: ${j.error}` : 'Заявка создана — подтверди в «Управление и решения».');
   } catch (e) { alert('Ошибка: ' + e.message); }
+}
+
+// ── Действия на графике ──────────────────────────────────────────────────────
+let _tlPlat = 'all', _tlData = null;
+
+function setTlPlat(p) {
+  _tlPlat = p;
+  [['tlAll', 'all'], ['tlWb', 'wb'], ['tlOzon', 'ozon'], ['tlYm', 'ym']]
+    .forEach(([id, k]) => document.getElementById(id)?.classList.toggle('active', k === p));
+  loadTimeline(true);
+}
+
+async function loadTimeline(refresh) {
+  const wrap = document.getElementById('timelineWrap');
+  if (!wrap) return;
+  if (_tlData && !refresh) { renderTimeline(); return; }
+  wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>Собираю историю…</div>';
+  const sku = document.getElementById('tlSku')?.value || '';
+  const days = document.getElementById('tlDays')?.value || 60;
+  try {
+    _tlData = await fetchJSON(`/api/tools/timeline?days=${days}&platform=${_tlPlat}&sku=${encodeURIComponent(sku)}`, 90000);
+    renderTimeline();
+  } catch (e) {
+    wrap.innerHTML = `<div class="alert alert-danger">Не собралось: ${esc(e.message)}
+      <button class="btn btn-sm btn-outline-secondary py-0 ms-2" onclick="loadTimeline(true)">Повторить</button></div>`;
+  }
+}
+
+function _tlFillSkuSelect() {
+  const sel = document.getElementById('tlSku');
+  if (!sel || sel.options.length > 1) return;
+  const skus = new Set();
+  ((_simBase && _simBase.items) || []).forEach(i => skus.add(i.sku));
+  Object.keys(window.CATALOG || {}).forEach(s => skus.add(s));
+  [...skus].sort().forEach(s => {
+    const o = document.createElement('option');
+    o.value = s; o.textContent = s;
+    sel.appendChild(o);
+  });
+}
+
+function renderTimeline() {
+  const wrap = document.getElementById('timelineWrap');
+  if (!wrap || !_tlData) return;
+  _tlFillSkuSelect();
+  const d = _tlData;
+  if (!(d.daily || []).length) {
+    wrap.innerHTML = '<div class="alert alert-info">По выбранным фильтрам данных нет — попробуй другой период или площадку.</div>';
+    return;
+  }
+  const evByDay = {};
+  (d.events || []).forEach(e => (evByDay[e.dt] = evByDay[e.dt] || []).push(e));
+  wrap.innerHTML = `
+    <div class="card bg-card p-3 mb-3">
+      <div style="height:380px"><canvas id="tlChart"></canvas></div>
+      <div class="small text-secondary mt-2">${esc(d.note || '')}</div>
+    </div>
+    ${(d.events || []).length ? `<div class="card bg-card p-3">
+      <div class="fw-semibold mb-2">События за период (${d.events.length})</div>
+      <div class="small" style="max-height:30vh;overflow:auto">` +
+      d.events.slice().reverse().map(e => `
+        <div class="d-flex gap-2 mb-1">
+          <span class="text-secondary" style="min-width:82px">${esc(e.dt)}</span>
+          <span class="badge ${e.src === 'цена' ? 'bg-warning text-dark' : 'bg-info text-dark'}">${esc(e.src)}</span>
+          <span>${esc(e.title)}</span>
+        </div>`).join('') + `</div></div>` : '<div class="text-secondary small">Событий (действий агента, смен цен) за период не зафиксировано.</div>'}`;
+
+  try { charts.tl && charts.tl.destroy(); } catch (e) { /* ok */ }
+  const labels = d.daily.map(x => x.dt.slice(5));
+  const evIdx = d.daily.map(x => evByDay[x.dt] ? x : null);
+  // вертикальные пунктиры в дни событий
+  const evPlugin = {
+    id: 'tlEvents',
+    afterDatasetsDraw(chart) {
+      const { ctx, chartArea, scales } = chart;
+      d.daily.forEach((x, i) => {
+        if (!evByDay[x.dt]) return;
+        const px = scales.x.getPixelForValue(i);
+        ctx.save();
+        ctx.strokeStyle = 'rgba(250, 204, 21, .55)';
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.moveTo(px, chartArea.top);
+        ctx.lineTo(px, chartArea.bottom);
+        ctx.stroke();
+        ctx.restore();
+      });
+    },
+  };
+  charts.tl = new Chart(document.getElementById('tlChart').getContext('2d'), {
+    type: 'line',
+    plugins: [evPlugin],
+    data: { labels, datasets: [
+      { label: 'Выручка, ₽/день', data: d.daily.map(x => x.revenue),
+        borderColor: CHART_C.line1 || '#17a06a', backgroundColor: 'transparent',
+        borderWidth: 2, pointRadius: 0, tension: .25, yAxisID: 'y' },
+      { label: 'Маржа, %', data: d.daily.map(x => x.margin_pct),
+        borderColor: '#3b82f6', backgroundColor: 'transparent',
+        borderWidth: 2, pointRadius: 0, tension: .25, yAxisID: 'y2' },
+      { label: 'События', data: evIdx.map(x => x ? x.revenue : null),
+        pointStyle: 'circle', pointRadius: 5, pointHoverRadius: 7,
+        pointBackgroundColor: '#facc15', pointBorderColor: '#a16207',
+        borderColor: 'transparent', showLine: false, yAxisID: 'y' },
+    ] },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { labels: { color: CHART_C.tick } },
+        tooltip: { callbacks: { afterBody: items => {
+          const dt = d.daily[items[0].dataIndex]?.dt;
+          return (evByDay[dt] || []).map(e => '⚡ ' + e.title);
+        } } },
+      },
+      scales: {
+        x: { ticks: { color: CHART_C.tick2, maxTicksLimit: 14 }, grid: { color: CHART_C.grid } },
+        y: { position: 'left', ticks: { color: CHART_C.tick2 }, grid: { color: CHART_C.grid } },
+        y2: { position: 'right', ticks: { color: '#3b82f6', callback: v => v + '%' }, grid: { display: false } },
+      },
+    },
+  });
 }
 
 // ── Управление и решения ─────────────────────────────────────────────────────

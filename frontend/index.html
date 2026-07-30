@@ -96,6 +96,7 @@
         <a href="#" id="tabRepricer" style="display:none" onclick="goNav('repricer','navOps');return false">Репрайсер</a>
         <a href="#" id="tabStrategy" style="display:none" onclick="goNav('strategy','navOps');return false">Стратегия</a>
         <div class="mp-drop-sep"></div>
+        <a href="#" onclick="goNav('timeline','navOps');return false">Действия на графике</a>
         <a href="#" onclick="goNav('actions','navOps');return false">Управление и решения</a>
         <a href="#" onclick="goNav('onboard','navOps');return false">Подключение кабинета</a>
       </div>
@@ -273,6 +274,30 @@
     </details>
     <div id="simWrap"><div class="text-center text-secondary py-4"><span class="spinner-border"></span></div></div>
   </div><!-- /pane-sim -->
+
+  <!-- ── Действия на графике ── -->
+  <div id="pane-timeline" style="display:none">
+    <div class="d-flex gap-3 mb-3 flex-wrap align-items-center">
+      <h3 class="mb-0 fw-bold">Действия на графике</h3>
+      <div class="mp-seg">
+        <button type="button" id="tlAll" class="mp-seg-btn active" onclick="setTlPlat('all')">Все</button>
+        <button type="button" id="tlWb" class="mp-seg-btn" onclick="setTlPlat('wb')">WB</button>
+        <button type="button" id="tlOzon" class="mp-seg-btn" onclick="setTlPlat('ozon')">Ozon</button>
+        <button type="button" id="tlYm" class="mp-seg-btn" onclick="setTlPlat('ym')">YM</button>
+      </div>
+      <select id="tlSku" class="form-select form-select-sm" style="width:200px" onchange="loadTimeline(true)">
+        <option value="">Все артикулы</option>
+      </select>
+      <select id="tlDays" class="form-select form-select-sm" style="width:110px" onchange="loadTimeline(true)">
+        <option value="30">30 дней</option>
+        <option value="60" selected>60 дней</option>
+        <option value="90">90 дней</option>
+      </select>
+      <span class="text-secondary small">жёлтые метки — действия и смены цен; смотри, что было с выручкой и маржой после</span>
+      <button class="mp-refresh ms-auto" onclick="loadTimeline(true)" title="Обновить"><i class="bi bi-arrow-clockwise"></i></button>
+    </div>
+    <div id="timelineWrap"><div class="text-center text-secondary py-4"><span class="spinner-border"></span></div></div>
+  </div><!-- /pane-timeline -->
 
   <!-- ── Управление и решения ── -->
   <div id="pane-actions" style="display:none">
@@ -638,6 +663,6 @@
 
 <script src="vendor/bootstrap.bundle.min.js"></script>
 <script src="vendor/chart.umd.min.js"></script>
-<script src="app.js?v=207"></script>
+<script src="app.js?v=208"></script>
 </body>
 </html>
