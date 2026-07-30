@@ -2873,6 +2873,15 @@ async def export_ozon_clusters():
         headers={"Content-Disposition": 'attachment; filename="ozon_clusters.xlsx"'})
 
 
+@router.get("/price_optimal")
+async def get_price_optimal(max_step: int = Query(default=15, ge=5, le=30)):
+    """Оптимальное ценообразование: рекомендованная цена и эффект ₽/мес
+    по каждому SKU (кривая прибыли × эластичность из своей истории)."""
+    import simulator
+    import heavy
+    return await heavy.guard(simulator.optimal(max_step))
+
+
 _funnel_task = None
 
 

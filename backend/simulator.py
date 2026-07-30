@@ -267,3 +267,75 @@ async def curve(sku: str, drr_pct: float | None = None) -> dict:
             "warning": ("Мало наблюдений по этому SKU — кривая построена на "
                         "общей реакции кабинета, считай её ориентиром, "
                         "а не законом.") if it["elasticity_events"] < 2 else ""}
+
+
+async def optimal(max_step: int = 15) -> dict:
+    """Оптимальное ценообразование по всем SKU: максимум месячной прибыли
+    на кривой цен в коридоре ±max_step% от текущей закреплённой цены.
+
+    Рекомендация выдаётся только когда выигрыш ощутим (≥1000 ₽/мес или ≥5%)
+    — двигать цену ради копеек вреднее, чем не двигать. Уверенность зависит
+    от числа собственных ценовых экспериментов SKU (эластичность)."""
+    b = await base()
+    if b.get("error"):
+        return b
+    items, total_gain = [], 0
+    for it in b["items"]:
+        p0, q0, e = it["price_seller"], it["qty_month"], it["elasticity"]
+        if not p0:
+            continue
+        d = it["drr_pct"]
+        pts = []
+        for step in _GRID:
+            if abs(step) > max_step:
+                continue
+            p = p0 * (1 + step / 100)
+            q = max(0.0, (q0 or 0) * (1 + e * step / 100))
+            pu = _unit_profit(it["_raw"], p, d, it["cogs"])
+            pts.append({"step": step, "price": round(p), "qty": round(q),
+                        "profit": round(pu * q), "unit": round(pu)})
+        cur = next(x for x in pts if x["step"] == 0)
+        best = max(pts, key=lambda x: x["profit"])
+        delta = best["profit"] - cur["profit"]
+        recommend = (best["step"] != 0
+                     and (delta >= max(1000, abs(cur["profit"]) * 0.05)
+                          or (cur["unit"] < 0 <= best["unit"])))
+        row = {
+            "sku": it["sku"], "name": it["name"],
+            "price_now": p0,
+            "buyer_now": it["price_buyer"],
+            "profit_now": cur["profit"], "margin_now": it["margin_pct"],
+            "price_opt": best["price"] if recommend else p0,
+            "buyer_opt": (round(best["price"] * it["buyer_ratio"])
+                          if recommend and it["buyer_ratio"] else it["price_buyer"]),
+            "step_pct": best["step"] if recommend else 0,
+            "profit_opt": best["profit"] if recommend else cur["profit"],
+            "delta_month": delta if recommend else 0,
+            "qty_now": q0, "qty_opt": best["qty"] if recommend else q0,
+            "elasticity": e, "elasticity_source": it["elasticity_source"],
+            "confidence": _confidence(it["elasticity_events"]),
+            "note": it.get("qty_note") or "",
+            "verdict": ("поднять цену" if recommend and best["step"] > 0 else
+                        "снизить цену" if recommend else
+                        "цена оптимальна в коридоре ±%d%%" % max_step),
+        }
+        if recommend:
+            total_gain += delta
+        items.append(row)
+    items.sort(key=lambda r: -r["delta_month"])
+    return {
+        "items": items, "max_step": max_step,
+        "total_gain_month": round(total_gain),
+        "method": ("максимум прибыли на кривой цена×объём; объём реагирует "
+                   "по эластичности из НАШИХ прошлых изменений цен; ДРР и "
+                   "затраты — текущие из юнитки; коридор ±%d%% от "
+                   "закреплённой цены" % max_step),
+        "caveats": [
+            "Эластичность с уверенностью «низкая» — допущение, не факт: такие "
+            "рекомендации проверять экспериментом (одно изменение за раз, "
+            "замер через 7-14 дней).",
+            "Если у SKU падает темп продаж (см. note) — сначала причина "
+            "падения, потом цена.",
+            "Смена цены меняет проходимость акций — см. правила кабинета.",
+        ],
+    }

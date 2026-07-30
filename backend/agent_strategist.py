@@ -370,6 +370,14 @@ async def _t_save_rule(a: dict) -> str:
     return f"правило #{n} сохранено, теперь оно в каждой сессии"
 
 
+async def _t_price_optimal(a: dict) -> str:
+    """Оптимизатор цен: кривая прибыли × эластичность по каждому SKU."""
+    import simulator
+    import heavy
+    d = await heavy.guard(simulator.optimal(int(a.get("max_step") or 15)))
+    return json.dumps(d, ensure_ascii=False)
+
+
 async def _t_funnel_wb(a: dict) -> str:
     """Воронка WB из вечной таблицы wb_funnel (nm-report)."""
     import wb_funnel
@@ -722,6 +730,7 @@ _TOOLS = {
     "funnel": (_t_funnel, "Воронка Ozon по SKU: показы → карточка → корзина → заказ; где теряем продажи"),
     "funnel_wb": (_t_funnel_wb, "Воронка WB по SKU: переходы в карточку → корзина → заказ → выкуп, конверсии и сравнение с прошлым периодом (вечная история nm-report). Аргументы: sku, days, by_day"),
     "save_rule": (_t_save_rule, "Сохранить ПРАВИЛО КАБИНЕТА — тонкость устройства бизнеса, которую сообщил владелец (как работают цены, акции, поставки). Используй, когда владелец объясняет или поправляет, как у него что-то устроено. Аргумент: text"),
+    "price_optimal": (_t_price_optimal, "Оптимальное ценообразование по всем SKU WB: рекомендованная цена, эффект ₽/мес, уверенность (эластичность из нашей истории цен). Используй на вопросы «какие цены ставить / оптимизируй цены». Аргумент: max_step (коридор %, по умолчанию 15)"),
     "clusters": (_t_clusters, "Остатки по кластерам WB и Ozon: где физически кончается товар (аргумент platform: wb|ozon|both)"),
     "pnl_all": (_t_pnl_all, "P&L всех трёх площадок за 3 месяца (WB, Ozon, ЯМ) — инструмент pnl показывает только WB"),
     "history": (_t_history, "Вечная история продаж из БД за любой период (аргумент days, по умолчанию 90) — не ограничена 14 днями и 90 днями API"),
@@ -809,6 +818,9 @@ _TOOL_ARGS: dict[str, dict] = {
     "save_rule": {
         "text": {"type": "string",
                  "description": "формулировка правила от владельца, кратко и точно"}},
+    "price_optimal": {
+        "max_step": {"type": "integer",
+                     "description": "коридор изменения цены в %, по умолчанию 15"}},
     "bid_recommend": {
         "sku": {"type": "string",
                 "description": "артикул продавца — кампанию и nmID найду сам"},
