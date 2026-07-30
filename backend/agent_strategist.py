@@ -324,6 +324,52 @@ async def _t_pnl_all(_a: dict) -> str:
     return json.dumps(out, ensure_ascii=False, default=str)
 
 
+def owner_rules() -> list[dict]:
+    """«Конституция кабинета»: тонкости от владельца, обязательные для всех
+    сессий и автопилота. Хранится в kv, добавляется из Telegram
+    («правило: …») или инструментом save_rule."""
+    import snapshot as _sn
+    rules = _sn.load("owner_rules", None)
+    if rules is None:
+        # стартовые тонкости, продиктованные владельцем 30.07.2026
+        rules = [{"text": t, "added": "2026-07-30"} for t in (
+            "Цены закреплены и на WB, и на Ozon — сами по себе они никуда не "
+            "«улетают» и в акции автоматически не попадают.",
+            "В акции заходим только когда ТЕКУЩАЯ закреплённая цена уже "
+            "проходит условия акции — цену под акцию не снижаем.",
+        )]
+        _sn.save("owner_rules", rules)
+    return rules or []
+
+
+def owner_rules_block() -> str:
+    rules = owner_rules()
+    if not rules:
+        return ""
+    return ("\n\nПРАВИЛА КАБИНЕТА ОТ ВЛАДЕЛЬЦА — это факты о том, как устроен "
+            "ИМЕННО ЭТОТ бизнес; они важнее твоих общих представлений о "
+            "маркетплейсах. Противоречишь правилу — ты ошибаешься:\n"
+            + "\n".join(f"- {r['text']}" for r in rules))
+
+
+def add_owner_rule(text: str) -> int:
+    import snapshot as _sn
+    rules = owner_rules()
+    rules.append({"text": text.strip(),
+                  "added": (datetime.utcnow() + timedelta(hours=3)).strftime("%Y-%m-%d")})
+    _sn.save("owner_rules", rules[-60:])
+    return len(rules)
+
+
+async def _t_save_rule(a: dict) -> str:
+    """Сохранить тонкость кабинета, услышанную от владельца."""
+    text = str(a.get("text") or "").strip()
+    if not text:
+        return "пустое правило"
+    n = await asyncio.to_thread(add_owner_rule, text)
+    return f"правило #{n} сохранено, теперь оно в каждой сессии"
+
+
 async def _t_funnel_wb(a: dict) -> str:
     """Воронка WB из вечной таблицы wb_funnel (nm-report)."""
     import wb_funnel
@@ -675,6 +721,7 @@ _TOOLS = {
     "ozon_phrases": (_t_ozon_phrases, "Поисковые фразы рекламы Ozon: где показы есть, а заказов нет"),
     "funnel": (_t_funnel, "Воронка Ozon по SKU: показы → карточка → корзина → заказ; где теряем продажи"),
     "funnel_wb": (_t_funnel_wb, "Воронка WB по SKU: переходы в карточку → корзина → заказ → выкуп, конверсии и сравнение с прошлым периодом (вечная история nm-report). Аргументы: sku, days, by_day"),
+    "save_rule": (_t_save_rule, "Сохранить ПРАВИЛО КАБИНЕТА — тонкость устройства бизнеса, которую сообщил владелец (как работают цены, акции, поставки). Используй, когда владелец объясняет или поправляет, как у него что-то устроено. Аргумент: text"),
     "clusters": (_t_clusters, "Остатки по кластерам WB и Ozon: где физически кончается товар (аргумент platform: wb|ozon|both)"),
     "pnl_all": (_t_pnl_all, "P&L всех трёх площадок за 3 месяца (WB, Ozon, ЯМ) — инструмент pnl показывает только WB"),
     "history": (_t_history, "Вечная история продаж из БД за любой период (аргумент days, по умолчанию 90) — не ограничена 14 днями и 90 днями API"),
@@ -759,6 +806,9 @@ _TOOL_ARGS: dict[str, dict] = {
         "days": {"type": "integer", "description": "период, по умолчанию 14"},
         "by_day": {"type": "boolean",
                    "description": "true + sku — динамика по дням"}},
+    "save_rule": {
+        "text": {"type": "string",
+                 "description": "формулировка правила от владельца, кратко и точно"}},
     "bid_recommend": {
         "sku": {"type": "string",
                 "description": "артикул продавца — кампанию и nmID найду сам"},
@@ -1019,6 +1069,10 @@ async def _run_session_locked(trigger, focus, light, status_msg_id,
         client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
         today = (datetime.utcnow() + timedelta(hours=3)).strftime("%Y-%m-%d %H:%M (%A)")
         user_msg = f"Сейчас {today} МСК. Триггер сессии: {trigger}."
+        try:
+            user_msg += owner_rules_block()
+        except Exception:
+            pass
         if light and focus:
             user_msg += ("\nБЫСТРЫЙ РЕЖИМ — вопрос владельца в КОНЦЕ сообщения.\n"
                          "Ответь именно на этот вопрос. Обычно хватает 1-3 "

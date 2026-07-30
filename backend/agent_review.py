@@ -924,6 +924,18 @@ async def bot_loop() -> None:
                              f"нужны. НЕ подменяй ответ общим разбором экономики кабинета.")
                     if not q and photo_id:
                         q = "Прокомментируй картинку."
+                    # «правило: …» — тонкость кабинета в постоянную память,
+                    # без запуска сессии
+                    if q and q.lower().startswith(("правило:", "правило ")):
+                        _rt = q.split(":", 1)[-1].strip() if ":" in q \
+                            else q.split(" ", 1)[-1].strip()
+                        if _rt:
+                            import agent_strategist as _sr
+                            n = await asyncio.to_thread(_sr.add_owner_rule, _rt)
+                            await tg_send(f"Правило #{n} сохранил — теперь оно "
+                                          "в каждой моей сессии. Список: /rules",
+                                          chat_id=chat, thread_id=thread)
+                            continue
                     if q:
                         # дедуп: после простоя очередь может принести один и
                         # тот же вопрос несколько раз — отвечаем один раз
@@ -1013,6 +1025,16 @@ async def bot_loop() -> None:
                             await tg_send(f"Сессия не удалась: {res['error']}",
                                           chat_id=ch, thread_id=th)
                     asyncio.get_event_loop().create_task(_strun())
+                elif cmd == "/rules":
+                    import agent_strategist as _sr
+                    _rl = _sr.owner_rules()
+                    await tg_send(
+                        ("<b>Правила кабинета</b>\n\n" +
+                         "\n".join(f"{i+1}. {r['text']}" for i, r in enumerate(_rl))
+                         if _rl else
+                         "Правил пока нет. Напиши «правило: …» — сохраню, и оно "
+                         "будет в каждой моей сессии."),
+                        chat_id=chat, thread_id=thread)
                 elif cmd == "/reset":
                     await asyncio.to_thread(_dialog_load)
                     for k in (_dialog_key(thread), _dialog_key(thread, chat)):
