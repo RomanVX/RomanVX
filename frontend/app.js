@@ -6663,12 +6663,20 @@ async function loadPriceOpt(refresh) {
   const wrap = document.getElementById('priceOptWrap');
   if (!wrap) return;
   if (_priceOpt && !refresh) { renderPriceOpt(); return; }
-  wrap.innerHTML = '<div class="text-center text-secondary py-3"><span class="spinner-border spinner-border-sm me-2"></span>Считаю кривые прибыли по всем артикулам…</div>';
+  wrap.innerHTML = `<div class="text-center text-secondary py-3"><span class="spinner-border spinner-border-sm me-2"></span>
+    Считаю кривые прибыли по всем артикулам… После рестарта сервера первая сборка занимает 3–5 минут
+    (юнитка строится из детального отчёта WB) — страница обновится сама.</div>`;
   try {
-    _priceOpt = await fetchJSON('/api/tools/price_optimal', 240000);
+    _priceOpt = await fetchJSON('/api/tools/price_optimal', 300000);
+    if (_priceOpt.error && /собира/i.test(_priceOpt.error)) {
+      // юнитка ещё строится — тихо перепробуем через 30 секунд
+      setTimeout(() => loadPriceOpt(true), 30000);
+      return;
+    }
     renderPriceOpt();
   } catch (e) {
-    wrap.innerHTML = `<div class="alert alert-danger">Ошибка: ${esc(e.message)}</div>`;
+    wrap.innerHTML = `<div class="alert alert-danger">Не посчиталось: ${esc(e.message)}
+      <button class="btn btn-sm btn-outline-secondary py-0 ms-2" onclick="loadPriceOpt(true)">Повторить</button></div>`;
   }
 }
 
