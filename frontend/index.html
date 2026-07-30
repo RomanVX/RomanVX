@@ -267,6 +267,10 @@
       <select id="simSku" class="form-select form-select-sm" style="width:230px" onchange="simPick()"></select>
       <span class="text-secondary small">меняешь параметры — видишь объём, выручку и прибыль</span>
     </div>
+    <details class="rev-fold mb-3" ontoggle="if(this.open)loadPriceOpt()">
+      <summary>🎯 Оптимальные цены по кабинету <span class="text-secondary small fw-normal">— рекомендованная цена и эффект ₽/мес по каждому артикулу</span></summary>
+      <div id="priceOptWrap" class="mt-2"><div class="text-center text-secondary py-3"><span class="spinner-border spinner-border-sm"></span></div></div>
+    </details>
     <div id="simWrap"><div class="text-center text-secondary py-4"><span class="spinner-border"></span></div></div>
   </div><!-- /pane-sim -->
 
@@ -634,6 +638,6 @@
 
 <script src="vendor/bootstrap.bundle.min.js"></script>
 <script src="vendor/chart.umd.min.js"></script>
-<script src="app.js?v=205"></script>
+<script src="app.js?v=206"></script>
 </body>
 </html>

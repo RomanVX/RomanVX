@@ -6656,6 +6656,68 @@ async function simLoadCurve() {
   } catch (e) { w.innerHTML = `<span class="text-danger">${esc(e.message)}</span>`; }
 }
 
+// ── Оптимальные цены по кабинету ─────────────────────────────────────────────
+let _priceOpt = null;
+
+async function loadPriceOpt(refresh) {
+  const wrap = document.getElementById('priceOptWrap');
+  if (!wrap) return;
+  if (_priceOpt && !refresh) { renderPriceOpt(); return; }
+  wrap.innerHTML = '<div class="text-center text-secondary py-3"><span class="spinner-border spinner-border-sm me-2"></span>Считаю кривые прибыли по всем артикулам…</div>';
+  try {
+    _priceOpt = await fetchJSON('/api/tools/price_optimal', 240000);
+    renderPriceOpt();
+  } catch (e) {
+    wrap.innerHTML = `<div class="alert alert-danger">Ошибка: ${esc(e.message)}</div>`;
+  }
+}
+
+function renderPriceOpt() {
+  const wrap = document.getElementById('priceOptWrap');
+  if (!wrap || !_priceOpt) return;
+  const d = _priceOpt;
+  if (d.error) { wrap.innerHTML = `<div class="alert alert-warning">${esc(d.error)}</div>`; return; }
+  const CONF = { 'высокая': 'var(--pos)', 'средняя': '#b45309', 'низкая': 'var(--neg)' };
+  wrap.innerHTML = `
+    <div class="small text-secondary mb-2">Потенциал кабинета: <b style="color:var(--pos)">+${fmtRub(d.total_gain_month || 0)}/мес</b>
+      · коридор ±${d.max_step}% от закреплённой цены · «уверенность» = сколько своих ценовых экспериментов у SKU.
+      <span class="text-warning">Рекомендации с низкой уверенностью проверяй экспериментом, а не пачкой.</span>
+      <button class="btn btn-sm btn-outline-secondary py-0 ms-2" onclick="loadPriceOpt(true)">↻ Пересчитать</button></div>
+    <div class="card bg-card"><div class="card-body p-0"><div class="table-responsive" style="max-height:60vh">
+    <table class="table table-sm align-middle mb-0 text-nowrap" style="font-size:.85rem"><thead><tr>
+      <th>Артикул</th><th class="text-end">Цена сейчас</th><th class="text-end">Рекомендация</th>
+      <th class="text-end">Покупателю</th><th class="text-end">Прибыль/мес сейчас</th>
+      <th class="text-end">Эффект, ₽/мес</th><th>Уверенность</th><th>Вердикт</th><th></th>
+    </tr></thead><tbody>` +
+    (d.items || []).map(it => `<tr${it.note ? ` title="${esc(it.note)}"` : ''}>
+      <td class="fw-semibold">${esc(it.sku)}${it.note ? ' <span title="' + esc(it.note) + '">⚠️</span>' : ''}</td>
+      <td class="text-end">${fmtRub(it.price_now)}</td>
+      <td class="text-end fw-semibold">${it.step_pct ? `${fmtRub(it.price_opt)} <span class="small" style="color:${it.step_pct > 0 ? 'var(--pos)' : 'var(--neg)'}">(${it.step_pct > 0 ? '+' : ''}${it.step_pct}%)</span>` : '—'}</td>
+      <td class="text-end text-secondary">${it.step_pct && it.buyer_opt ? '~' + fmtRub(it.buyer_opt) : ''}</td>
+      <td class="text-end">${fmtRub(it.profit_now)}</td>
+      <td class="text-end fw-semibold" style="color:${it.delta_month > 0 ? 'var(--pos)' : 'var(--muted)'}">${it.delta_month ? '+' + fmtRub(it.delta_month) : '—'}</td>
+      <td><span style="color:${CONF[it.confidence] || 'var(--ink-2)'}">${esc(it.confidence)}</span>
+        <span class="text-secondary small">(${esc(it.elasticity_source)})</span></td>
+      <td class="small">${esc(it.verdict)}</td>
+      <td>${it.step_pct ? `<button class="btn btn-sm btn-outline-info py-0" onclick="priceOptApply('${esc(it.sku)}', ${it.price_opt}, ${it.price_now})">Заявка</button>` : ''}</td>
+    </tr>`).join('') + `</tbody></table></div></div></div>
+    <div class="small text-secondary mt-2">${esc(d.method || '')}</div>`;
+}
+
+async function priceOptApply(sku, price, was) {
+  if (!confirm(`Заявка на цену продавца ${price} ₽ для ${sku} (сейчас ${was} ₽)?\nИзменение произойдёт только после подтверждения в «Управлении».`)) return;
+  try {
+    const r = await fetch('/api/tools/money/act', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ act_kind: 'wb_price',
+        act_payload: { sku, price, price_was: was },
+        title: `${sku}: цена продавца ${was} → ${price} ₽`,
+        evidence: 'из оптимизатора цен (максимум кривой прибыли)' }) });
+    const j = await r.json();
+    alert(j.error ? `Не вышло: ${j.error}` : 'Заявка создана — подтверди в «Управление и решения».');
+  } catch (e) { alert('Ошибка: ' + e.message); }
+}
+
 async function simApply(price) {
   const it = _simItem();
   if (!confirm(`Поставить цену продавца ${price} ₽ на WB для ${it.sku}?\nСоздам заявку — изменение произойдёт только после подтверждения.`)) return;
