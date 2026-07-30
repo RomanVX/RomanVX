@@ -1197,6 +1197,14 @@ async def get_margin(mp: str = Query(default="WB")):
     цены/маржи. По каждому SKU: цена (средняя), % комиссии/эквайринга,
     логистика/хранение/продвижение/себес на штуку."""
     from routers import finance as _fin
+    import snapshot as _snap
+
+    def _stale():
+        """Пока юнитка собирается после рестарта — отдаём последний снапшот
+        из БД: симулятор/оптимизатор/агент работают сразу, свежие данные
+        подтянутся при следующем запросе."""
+        return _snap.load(f"margin_snap_{mp}", None)
+
     try:
         if mp == "OZON":
             data = await _fin.get_ozon_unit(months=6)
@@ -1205,10 +1213,16 @@ async def get_margin(mp: str = Query(default="WB")):
         else:
             data = await _fin.get_wb_unit(months=6)
     except Exception as e:
+        snap = await asyncio.to_thread(_stale)
+        if snap:
+            return {**snap, "stale": True}
         return {"items": [], "error": str(e)[:200]}
 
     skus = data.get("skus", [])
     if not skus:
+        snap = await asyncio.to_thread(_stale)
+        if snap:
+            return {**snap, "stale": True}
         return {"items": [], "message": data.get("message") or "Нет данных юнитки"}
 
     # официальные тарифы комиссии WB по категориям (nmId → pct/subject)
@@ -1299,9 +1313,14 @@ async def get_margin(mp: str = Query(default="WB")):
             "cogs": round(r.get("unitCost") or sper("cogs")),  # себестоимость
         })
     items.sort(key=lambda x: -x["qty"])
-    return {"items": items, "mp": mp,
-            "window_recent": _mk_label(W_RECENT), "window_smooth": _mk_label(W_SMOOTH),
-            "fetched_at": datetime.utcnow().strftime("%d.%m.%Y %H:%M UTC")}
+    result = {"items": items, "mp": mp,
+              "window_recent": _mk_label(W_RECENT), "window_smooth": _mk_label(W_SMOOTH),
+              "fetched_at": datetime.utcnow().strftime("%d.%m.%Y %H:%M UTC")}
+    try:      # снапшот собранной юнитки: после рестарта отдаётся мгновенно
+        await asyncio.to_thread(_snap.save, f"margin_snap_{mp}", result)
+    except Exception:
+        pass
+    return result
 
 
 @router.post("/margin/export")
