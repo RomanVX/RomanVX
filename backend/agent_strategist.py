@@ -371,10 +371,10 @@ async def _t_save_rule(a: dict) -> str:
 
 
 async def _t_price_optimal(a: dict) -> str:
-    """Оптимизатор цен: кривая прибыли × эластичность по каждому SKU."""
+    """Оптимизатор цен: кривая прибыли × эластичность по каждому SKU.
+    Без heavy.guard — внутренние сборки guard-ятся сами (иначе дедлок)."""
     import simulator
-    import heavy
-    d = await heavy.guard(simulator.optimal(int(a.get("max_step") or 15)))
+    d = await simulator.optimal(int(a.get("max_step") or 15))
     return json.dumps(d, ensure_ascii=False)
 
 

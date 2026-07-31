@@ -2997,10 +2997,11 @@ async def get_timeline(days: int = Query(default=60, ge=14, le=365),
 @router.get("/price_optimal")
 async def get_price_optimal(max_step: int = Query(default=15, ge=5, le=30)):
     """Оптимальное ценообразование: рекомендованная цена и эффект ₽/мес
-    по каждому SKU (кривая прибыли × эластичность из своей истории)."""
+    по каждому SKU (кривая прибыли × эластичность из своей истории).
+    БЕЗ heavy.guard: юнитка внутри сама guard-ится — внешняя обёртка
+    устраивала дедлок (слот занят нами, сборка ждёт слот)."""
     import simulator
-    import heavy
-    return await heavy.guard(simulator.optimal(max_step))
+    return await simulator.optimal(max_step)
 
 
 _funnel_task = None
