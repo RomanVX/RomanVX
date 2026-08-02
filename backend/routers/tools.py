@@ -2906,9 +2906,15 @@ async def fbs_overview():
         stocks = await wb_fbs.get_stocks()
     except Exception as e:
         stocks = {"error": str(e)[:150]}
-    try:      # список артикулов кабинета — из карточек content-API
+    try:      # список артикулов кабинета — из карточек content-API + имена
+        import catalog as _cat
         cmap = await wb_fbs.chrt_map()
-        catalog = sorted(v["art"] for v in cmap.values() if v.get("art"))
+        catalog = sorted(
+            ({"sku": v["art"], "nm": v.get("nmID"),
+              "name": _cat.lookup(v["art"]).get("name", ""),
+              "brand": _cat.lookup(v["art"]).get("brand", "")}
+             for v in cmap.values() if v.get("art")),
+            key=lambda x: x["sku"])
     except Exception:
         catalog = []
     return {"orders": orders, "stocks": stocks, "catalog": catalog,

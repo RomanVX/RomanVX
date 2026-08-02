@@ -6769,10 +6769,18 @@ function renderFbs() {
   const news = (d.orders || {}).new || [];
   const recent = (d.orders || {}).recent || [];
 
-  // остатки: карточки кабинета с бэка + текущие FBS-значения
-  const skus = new Set(d.catalog || []);
-  Object.keys(stocks).forEach(s => skus.add(s));
-  const skuList = [...skus].sort();
+  // остатки: карточки кабинета с бэка, сгруппированные как в Остатках
+  const cat = {};
+  (d.catalog || []).forEach(c => { cat[c.sku] = c; });
+  Object.keys(stocks).forEach(s => { if (!cat[s]) cat[s] = { sku: s }; });
+  const byGroup = {};
+  Object.values(cat).forEach(c => {
+    const g = articleGroup({ supplierArticle: c.sku, brand: c.brand || '' });
+    (byGroup[g] = byGroup[g] || []).push(c);
+  });
+  const groupsOrdered = [...GROUP_ORDER.filter(g => byGroup[g]),
+    ...Object.keys(byGroup).filter(g => !GROUP_ORDER.includes(g))];
+  const skuList = Object.keys(cat);
 
   let html = '';
   if (ordErr || stkErr) {
@@ -6798,14 +6806,24 @@ function renderFbs() {
     <div class="small text-secondary mb-2">Впиши количество и нажми «Отправить» — остатки уйдут на WB по официальному API.
       Подсвечены артикулы, у которых на складах WB осталось ≤20 шт — их FBS спасает в первую очередь.</div>
     <div class="table-responsive" style="max-height:55vh"><table class="table table-sm align-middle mb-0" style="font-size:.85rem"><thead><tr>
-      <th>Артикул</th><th class="text-end">FBS сейчас</th><th style="width:120px">Новое кол-во</th></tr></thead><tbody>` +
-    skuList.map(s => {
-      const low = (_fbsLow || new Set()).has(s);
-      return `<tr${low ? ' style="background:rgba(248,113,113,.08)"' : ''}>
-        <td class="fw-semibold">${esc(s)}${low ? ' <span title="на складах WB ≤20 шт">🔥</span>' : ''}</td>
-        <td class="text-end">${stocks[s] != null ? fmt(stocks[s]) : '<span class="text-secondary">—</span>'}</td>
-        <td><input type="number" min="0" class="form-control form-control-sm fbs-qty" data-sku="${esc(s)}"
-                   placeholder="${stocks[s] != null ? stocks[s] : 0}" style="width:110px"></td></tr>`;
+      <th>Артикул</th><th>Название</th><th class="text-secondary">nmID</th>
+      <th class="text-end">FBS сейчас</th><th style="width:120px">Новое кол-во</th></tr></thead><tbody>` +
+    groupsOrdered.map(g => {
+      const rows = byGroup[g].slice().sort((a, b) => a.sku.localeCompare(b.sku));
+      return `<tr style="background:var(--chip-bg)"><td colspan="5" class="fw-semibold" style="color:var(--chip-ink)">
+          <span class="me-1" style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${_groupColor(g)}"></span>
+          ${esc(g)} <span class="small" style="color:var(--muted)">(${rows.length} арт.)</span></td></tr>` +
+        rows.map(c => {
+          const s = c.sku;
+          const low = (_fbsLow || new Set()).has(s);
+          return `<tr${low ? ' style="background:rgba(248,113,113,.08)"' : ''}>
+            <td class="fw-semibold">${esc(s)}${low ? ' <span title="на складах WB ≤20 шт">🔥</span>' : ''}</td>
+            <td class="text-secondary small">${esc(c.name || '')}</td>
+            <td class="text-secondary small">${c.nm || ''}</td>
+            <td class="text-end">${stocks[s] != null ? fmt(stocks[s]) : '<span class="text-secondary">—</span>'}</td>
+            <td><input type="number" min="0" class="form-control form-control-sm fbs-qty" data-sku="${esc(s)}"
+                       placeholder="${stocks[s] != null ? stocks[s] : 0}" style="width:110px"></td></tr>`;
+        }).join('');
     }).join('') + `</tbody></table></div>
     ${skuList.length ? '' : '<div class="alert alert-warning mb-0">Карточки кабинета не загрузились — нажми ↻; если повторится, у токена WB нет категории «Контент».</div>'}
     <div class="mt-2 d-flex gap-2 align-items-center">
