@@ -70,10 +70,19 @@ async def chrt_map(refresh: bool = False) -> dict:
             if not art or not sizes:
                 continue
             s0 = sizes[0]
+            dims = c.get("dimensions") or {}
+            litres = None
+            try:      # габариты в см → литры (для тарифа логистики FBS)
+                l, w, h = (float(dims.get(k) or 0) for k in ("length", "width", "height"))
+                if l and w and h:
+                    litres = round(l * w * h / 1000, 2)
+            except (TypeError, ValueError):
+                pass
             out[art.upper()] = {
                 "art": art, "nmID": c.get("nmID"),
                 "chrtId": s0.get("chrtID"),
-                "barcode": (s0.get("skus") or [""])[0]}
+                "barcode": (s0.get("skus") or [""])[0],
+                "litres": litres}
         cur = data.get("cursor") or {}
         if (cur.get("total") or 0) < cursor.get("limit", 100) or not cards:
             break

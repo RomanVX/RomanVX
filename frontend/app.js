@@ -4841,6 +4841,32 @@ function recalcMarginRow(sku) {
       : '<span class="text-secondary small">—</span>');
   });
   row.style.background = c.profit < 0 ? 'rgba(248,113,113,.07)' : 'var(--t-row)';
+
+  // FBS-подстрока: та же цена/себес/ДРР, но комиссия kgvpMarketplace,
+  // логистика по литражу × тариф Чехова, хранение 0
+  if (b.fbs) {
+    const frow = document.querySelector(`tr[data-mskufbs="${CSS.escape(sku)}"]`);
+    const line = frow && frow.querySelector('.mg-fbsline');
+    if (line) {
+      const price = _marginPrice[sku] != null ? _marginPrice[sku] : b.price0;
+      const cogs = _marginCost[sku] != null ? _marginCost[sku] : b.cogs;
+      const drr = _marginAdvOn ? (_marginDrr[sku] != null ? _marginDrr[sku] : _marginDrr0(b)) : 0;
+      if (b.fbs.logist == null) {
+        line.innerHTML = `комиссия ${b.fbs.comm_pct}% · <span class="text-warning">логистика неизвестна — заполни габариты карточки в ЛК</span>`;
+      } else {
+        const profit = price * (1 - (b.fbs.comm_pct + (b.acq_pct || 0) + drr) / 100)
+          - (b.fbs.logist + cogs + (b.other || 0));
+        const margin = price ? profit / price * 100 : 0;
+        const delta = profit - c.profit;
+        const pc = profit >= 0 ? 'var(--pos)' : 'var(--neg)';
+        const dc = delta >= 0 ? 'var(--pos)' : 'var(--neg)';
+        line.innerHTML = `комиссия ${b.fbs.comm_pct}% · логистика −${fmtRub(b.fbs.logist)} (${b.fbs.litres} л) · хранение 0
+          → прибыль <b style="color:${pc}">${profit < 0 ? '−' : ''}${fmtRub(Math.abs(Math.round(profit)))}</b>/шт
+          · маржа <b>${Math.round(margin)}%</b>
+          · к FBO <b style="color:${dc}">${delta >= 0 ? '+' : '−'}${fmtRub(Math.abs(Math.round(delta)))}</b>`;
+      }
+    }
+  }
 }
 function recalcAllMargin() {
   if (_toolActive !== 'margin' || !_marginData) return;
@@ -4986,6 +5012,11 @@ function renderMargin() {
         <td class="text-end mg-tgt1" style="background:rgba(251,191,36,.04)"></td>
         <td class="text-end mg-tgt2" style="background:rgba(251,191,36,.04)"></td>
       </tr>`;
+      if (b.fbs) {
+        html += `<tr data-mskufbs="${esc(b.sku)}" style="background:var(--t-sku-row)">
+          <td style="position:sticky;left:0;background:var(--t-sticky);padding:2px 12px 4px 26px" class="small text-secondary">↳ FBS Чехов</td>
+          <td colspan="16" class="small mg-fbsline" style="padding:2px 10px;color:var(--ink-2)"></td></tr>`;
+      }
     });
   });
   html += `</tbody></table></div></div></div>`;

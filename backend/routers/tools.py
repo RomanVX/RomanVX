@@ -1068,7 +1068,9 @@ async def _wb_commission_by_nm() -> dict:
     for nm, s in subjects.items():
         t = tariffs.get(int(s.get("subjectID") or 0))
         if t and t.get("fbo") is not None:
-            out[nm] = {"pct": float(t["fbo"]), "subject": t.get("subjectName") or s.get("subjectName", "")}
+            out[nm] = {"pct": float(t["fbo"]),
+                       "fbs_pct": float(t["fbs"]) if t.get("fbs") is not None else None,
+                       "subject": t.get("subjectName") or s.get("subjectName", "")}
     if out:
         _wb_comm_cache, _wb_comm_ts = out, _time.monotonic()
         try:
@@ -1227,6 +1229,24 @@ async def get_margin(mp: str = Query(default="WB")):
 
     # официальные тарифы комиссии WB по категориям (nmId → pct/subject)
     comm_tariff = await _wb_commission_by_nm() if mp == "WB" else {}
+    # FBS: литраж карточек и тариф склада Чехов (правится в kv fbs_tariff)
+    _fbs_litres: dict = {}
+    if mp == "WB":
+        try:
+            import wb_fbs
+            _cm = await wb_fbs.chrt_map()
+            if _cm and not any("litres" in v for v in _cm.values()):
+                _cm = await wb_fbs.chrt_map(refresh=True)
+            _fbs_litres = {k: v.get("litres") for k, v in (_cm or {}).items()}
+        except Exception as e:
+            _log.warning("fbs litres: %s", str(e)[:120])
+    _ft = (await asyncio.to_thread(_snap.load, "fbs_tariff", None)) \
+        or {"base": 89.7, "per": 27.3}
+
+    def _fbs_logist(litres):
+        if not litres:
+            return None
+        return round(_ft["base"] + max(0.0, float(litres) - 1) * _ft["per"])
     # прогнозная модель продаж (Холт по 12 нед истории)
     forecast = await asyncio.to_thread(
         _sales_forecast, {"WB": "WB", "OZON": "Ozon", "YM": "YM"}.get(mp, "WB"))
@@ -1311,6 +1331,14 @@ async def get_margin(mp: str = Query(default="WB")):
             "other": round(max(sper("penalty") + sper("deductions"), 0)),  # сглажено
             "advert": round(max(per("advert"), 0)),        # продвижение на штуку
             "cogs": round(r.get("unitCost") or sper("cogs")),  # себестоимость
+            # FBS-экономика той же карточки: комиссия kgvpMarketplace,
+            # логистика по литражу карточки × тариф склада Чехов, хранение 0
+            "fbs": ({"comm_pct": round(tariff["fbs_pct"], 2),
+                     "litres": _fbs_litres.get(str(r.get("sku") or "").upper()),
+                     "logist": _fbs_logist(_fbs_litres.get(
+                         str(r.get("sku") or "").upper()))}
+                    if mp == "WB" and tariff and tariff.get("fbs_pct") is not None
+                    else None),
         })
     items.sort(key=lambda x: -x["qty"])
     result = {"items": items, "mp": mp,
