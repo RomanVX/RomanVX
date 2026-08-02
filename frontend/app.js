@@ -25,7 +25,7 @@ document.addEventListener('DOMContentLoaded', _initThemeBtn);
 const API = '';
 let charts = {};
 let sortState = {};
-const dirty = { salesan: true, stocks: true, reviews: true, finance: true, unit: true, tools: true, toolsoz: true, docs: true, strategy: true, repricer: true, news: true, money: true, onboard: true, sim: true, actions: true, damage: true, timeline: true };
+const dirty = { salesan: true, stocks: true, reviews: true, finance: true, unit: true, tools: true, toolsoz: true, docs: true, strategy: true, repricer: true, news: true, money: true, onboard: true, sim: true, actions: true, damage: true, timeline: true, fbs: true };
 let _advertData = [];
 let currentTab = 'finance';
 let prodAllData = [];
@@ -247,7 +247,7 @@ function goNavTool(tab, tool, navId) {
 function switchTab(name, linkEl) {
   document.querySelectorAll('#mainTabs .nav-link').forEach(a => a.classList.remove('active'));
   if (linkEl) linkEl.classList.add('active');
-  ['salesan', 'stocks', 'reviews', 'finance', 'unit', 'tools', 'toolsoz', 'docs', 'strategy', 'repricer', 'news', 'money', 'onboard', 'sim', 'actions', 'damage', 'timeline'].forEach(t => {
+  ['salesan', 'stocks', 'reviews', 'finance', 'unit', 'tools', 'toolsoz', 'docs', 'strategy', 'repricer', 'news', 'money', 'onboard', 'sim', 'actions', 'damage', 'timeline', 'fbs'].forEach(t => {
     const el = document.getElementById('pane-' + t);
     if (el) el.style.display = t === name ? 'block' : 'none';
   });
@@ -259,7 +259,7 @@ function switchTab(name, linkEl) {
        unit: loadUnitEconomics, strategy: loadStrategy, repricer: loadRepricer,
        news: loadNews, money: loadMoney, onboard: loadOnboard,
        sim: loadSim, actions: loadActions, damage: loadDamage,
-       timeline: loadTimeline })[name]();
+       timeline: loadTimeline, fbs: loadFbs })[name]();
   }
 }
 
@@ -6739,6 +6739,112 @@ async function simApply(price) {
         evidence: 'из симулятора «что если»' }) });
     const j = await r.json();
     alert(j.error ? `Не вышло: ${j.error}` : 'Заявка создана — подтверди в «Управление и решения».');
+  } catch (e) { alert('Ошибка: ' + e.message); }
+}
+
+// ── FBS: склад продавца WB ───────────────────────────────────────────────────
+let _fbsData = null;
+
+async function loadFbs(refresh) {
+  const wrap = document.getElementById('fbsWrap');
+  if (!wrap) return;
+  if (_fbsData && !refresh) { renderFbs(); return; }
+  wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>Опрашиваю WB Marketplace…</div>';
+  try {
+    _fbsData = await fetchJSON('/api/tools/fbs/overview', 90000);
+    renderFbs();
+  } catch (e) {
+    wrap.innerHTML = `<div class="alert alert-danger">Ошибка: ${esc(e.message)}
+      <button class="btn btn-sm btn-outline-secondary py-0 ms-2" onclick="loadFbs(true)">Повторить</button></div>`;
+  }
+}
+
+function renderFbs() {
+  const wrap = document.getElementById('fbsWrap');
+  if (!wrap || !_fbsData) return;
+  const d = _fbsData;
+  const ordErr = (d.orders || {}).error;
+  const stkErr = (d.stocks || {}).error;
+  const stocks = (d.stocks || {}).stocks || {};
+  const news = (d.orders || {}).new || [];
+  const recent = (d.orders || {}).recent || [];
+
+  // остатки: каталог кабинета + текущие FBS-значения
+  const skus = new Set(Object.keys(stocks));
+  ((_simBase && _simBase.items) || []).forEach(i => skus.add(i.sku));
+  Object.keys(window.CATALOG || {}).forEach(s => skus.add(s));
+  const skuList = [...skus].sort();
+
+  let html = '';
+  if (ordErr || stkErr) {
+    html += `<div class="alert alert-warning">${esc(ordErr || stkErr)}
+      <div class="small mt-1">Если ошибка 401/403 — у токена WB нет категории «Маркетплейс»: перевыпусти ключ в ЛК с этой категорией и обнови env.</div></div>`;
+  }
+  html += `<div class="card bg-card p-3 mb-3">
+    <div class="d-flex align-items-center gap-2 mb-2">
+      <span class="fw-semibold">🆕 Новые сборочные задания</span>
+      <span class="mp-badge" style="display:${news.length ? 'inline-block' : 'none'};position:static">${news.length}</span>
+      ${news.length ? `<a class="btn btn-sm btn-outline-info py-0 ms-2" href="/api/tools/fbs/stickers?ids=${news.map(o => o.id).join(',')}">⬇ Стикеры PDF</a>` : ''}
+    </div>` +
+    (news.length ? `<div class="table-responsive"><table class="table table-sm mb-0" style="font-size:.85rem"><thead><tr>
+      <th>Задание</th><th>Создано</th><th>Артикул</th><th class="text-end">Цена, ₽</th><th>Регион</th></tr></thead><tbody>` +
+      news.map(o => `<tr><td class="fw-semibold">${o.id}</td><td>${esc(o.created)}</td>
+        <td>${esc(String(o.sku))}</td><td class="text-end">${fmt(o.price)}</td><td class="text-secondary small">${esc(o.address || '')}</td></tr>`).join('')
+      + '</tbody></table></div>'
+      : '<div class="text-secondary small">Новых заданий нет — как только придёт заказ на FBS, он появится здесь (и сторож напишет в Telegram).</div>')
+    + '</div>';
+
+  html += `<div class="card bg-card p-3 mb-3">
+    <div class="fw-semibold mb-2">📦 Остатки на складе продавца (Чехов, #${d.warehouse_id || '—'})</div>
+    <div class="small text-secondary mb-2">Впиши количество и нажми «Отправить» — остатки уйдут на WB по официальному API.
+      Подсвечены артикулы, у которых на складах WB осталось ≤20 шт — их FBS спасает в первую очередь.</div>
+    <div class="table-responsive" style="max-height:55vh"><table class="table table-sm align-middle mb-0" style="font-size:.85rem"><thead><tr>
+      <th>Артикул</th><th class="text-end">FBS сейчас</th><th style="width:120px">Новое кол-во</th></tr></thead><tbody>` +
+    skuList.map(s => {
+      const low = (_fbsLow || new Set()).has(s);
+      return `<tr${low ? ' style="background:rgba(248,113,113,.08)"' : ''}>
+        <td class="fw-semibold">${esc(s)}${low ? ' <span title="на складах WB ≤20 шт">🔥</span>' : ''}</td>
+        <td class="text-end">${stocks[s] != null ? fmt(stocks[s]) : '<span class="text-secondary">—</span>'}</td>
+        <td><input type="number" min="0" class="form-control form-control-sm fbs-qty" data-sku="${esc(s)}"
+                   placeholder="${stocks[s] != null ? stocks[s] : 0}" style="width:110px"></td></tr>`;
+    }).join('') + `</tbody></table></div>
+    <div class="mt-2 d-flex gap-2 align-items-center">
+      <button class="btn btn-sm btn-success" onclick="fbsSendStocks()">Отправить остатки на WB</button>
+      <span class="text-secondary small">отправляются только заполненные строки</span>
+    </div></div>`;
+
+  if (recent.length) {
+    const ST = { new: 'новое', confirm: 'на сборке', complete: 'в доставке', cancel: 'отменено' };
+    html += `<div class="card bg-card p-3"><div class="fw-semibold mb-2">Задания за 14 дней (${recent.length})</div>
+      <div class="table-responsive" style="max-height:40vh"><table class="table table-sm mb-0" style="font-size:.83rem"><thead><tr>
+      <th>Задание</th><th>Создано</th><th>Артикул</th><th class="text-end">Цена</th><th>Статус</th><th>Статус WB</th></tr></thead><tbody>` +
+      recent.map(o => `<tr><td>${o.id}</td><td>${esc(o.created)}</td><td>${esc(String(o.sku))}</td>
+        <td class="text-end">${fmt(o.price)}</td><td>${esc(ST[o.status] || o.status)}</td>
+        <td class="text-secondary small">${esc(o.wb_status || '')}</td></tr>`).join('') +
+      '</tbody></table></div></div>';
+  }
+  wrap.innerHTML = html;
+}
+
+// артикулы с критичным FBW-остатком (из выгрузки 03.08) — подсветка приоритета
+const _fbsLow = new Set(['AL-02', 'AL-06', 'BMN-0070', 'AL-05', 'BMN-0113',
+  'BMN-0004', 'BMN-0002', 'BMN-0008', 'BMN-0114', 'BMN-0111', 'BMN-0006',
+  'BMN-0055', 'ST-01']);
+
+async function fbsSendStocks() {
+  const items = [...document.querySelectorAll('.fbs-qty')]
+    .filter(i => i.value !== '')
+    .map(i => ({ sku: i.dataset.sku, qty: parseInt(i.value, 10) || 0 }));
+  if (!items.length) { alert('Заполни количество хотя бы по одному артикулу'); return; }
+  if (!confirm(`Отправить остатки на WB по ${items.length} артикулам?`)) return;
+  try {
+    const r = await fetch('/api/tools/fbs/stocks', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items }) });
+    const j = await r.json();
+    if (j.error) { alert('Не вышло: ' + j.error); return; }
+    alert(`Обновлено ${j.updated} артикулов${(j.unknown || []).length ? ', не найдены в карточках: ' + j.unknown.join(', ') : ''}`);
+    loadFbs(true);
   } catch (e) { alert('Ошибка: ' + e.message); }
 }
 

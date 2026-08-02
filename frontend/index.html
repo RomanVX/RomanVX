@@ -76,6 +76,7 @@
       <button type="button" class="mp-menu-title" onclick="goNav('stocks','navWarehouse')">Склад</button>
       <div class="mp-menu-drop">
         <a href="#" onclick="goNav('stocks','navWarehouse');return false">Остатки</a>
+        <a href="#" onclick="goNav('fbs','navWarehouse');return false">FBS — склад Чехов</a>
         <div class="mp-drop-sep"></div>
         <a href="#" onclick="goNavTool('tools','clusters','navWarehouse');return false">WB: остатки по кластерам</a>
         <a href="#" onclick="goNavTool('tools','whstocks','navWarehouse');return false">WB: остатки по складам</a>
@@ -274,6 +275,16 @@
     </details>
     <div id="simWrap"><div class="text-center text-secondary py-4"><span class="spinner-border"></span></div></div>
   </div><!-- /pane-sim -->
+
+  <!-- ── FBS: склад продавца ── -->
+  <div id="pane-fbs" style="display:none">
+    <div class="d-flex gap-3 mb-3 flex-wrap align-items-center">
+      <h3 class="mb-0 fw-bold">FBS — склад Чехов</h3>
+      <span class="text-secondary small">сборочные задания и остатки склада продавца · сдача в СЦ Чехов-2</span>
+      <button class="mp-refresh ms-auto" onclick="loadFbs(true)" title="Обновить"><i class="bi bi-arrow-clockwise"></i></button>
+    </div>
+    <div id="fbsWrap"><div class="text-center text-secondary py-4"><span class="spinner-border"></span></div></div>
+  </div><!-- /pane-fbs -->
 
   <!-- ── Действия на графике ── -->
   <div id="pane-timeline" style="display:none">
@@ -663,6 +674,6 @@
 
 <script src="vendor/bootstrap.bundle.min.js"></script>
 <script src="vendor/chart.umd.min.js"></script>
-<script src="app.js?v=208"></script>
+<script src="app.js?v=209"></script>
 </body>
 </html>

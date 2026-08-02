@@ -14,7 +14,7 @@ import re
 import time as _time
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Body, File, HTTPException, Query, Request, UploadFile
 
 import db
 from config import ANTHROPIC_API_KEY
@@ -2890,6 +2890,62 @@ async def export_ozon_clusters():
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": 'attachment; filename="ozon_clusters.xlsx"'})
+
+
+# ══ FBS WB: сборочные задания и остатки склада продавца ══════════════════════
+
+@router.get("/fbs/overview")
+async def fbs_overview():
+    """Задания FBS (новые + последние со статусами) и текущие остатки склада."""
+    import wb_fbs
+    try:
+        orders = await wb_fbs.orders_overview()
+    except Exception as e:
+        orders = {"error": f"WB Marketplace недоступен: {str(e)[:150]}"}
+    try:
+        stocks = await wb_fbs.get_stocks()
+    except Exception as e:
+        stocks = {"error": str(e)[:150]}
+    return {"orders": orders, "stocks": stocks,
+            "warehouse_id": wb_fbs.warehouse_id()}
+
+
+@router.post("/fbs/stocks")
+async def fbs_set_stocks(request: Request, body: dict = Body(...)):
+    """Выставить FBS-остатки: {items: [{sku, qty}, …]}."""
+    _owner_only(request)
+    import wb_fbs
+    items = (body or {}).get("items") or []
+    if not items:
+        return {"error": "пустой список"}
+    try:
+        return await wb_fbs.set_stocks(items)
+    except Exception as e:
+        return {"error": f"не отправилось: {str(e)[:200]}"}
+
+
+@router.get("/fbs/stickers")
+async def fbs_stickers(ids: str = Query(...)):
+    """PDF со стикерами сборочных заданий (ids через запятую)."""
+    import wb_fbs
+    from fastapi.responses import Response
+    order_ids = [int(x) for x in ids.split(",") if x.strip().isdigit()]
+    pdf = await wb_fbs.stickers(order_ids)
+    if not pdf:
+        raise HTTPException(status_code=502, detail="WB не отдал стикеры")
+    return Response(pdf, media_type="application/pdf", headers={
+        "Content-Disposition": 'attachment; filename="fbs_stickers.pdf"'})
+
+
+@router.post("/fbs/warehouse")
+async def fbs_set_warehouse(request: Request, body: dict = Body(...)):
+    _owner_only(request)
+    import snapshot as _snap
+    wid = int((body or {}).get("id") or 0)
+    if not wid:
+        return {"error": "нужен ID склада"}
+    await asyncio.to_thread(_snap.save, "fbs_warehouse_id", wid)
+    return {"warehouse_id": wid}
 
 
 @router.get("/timeline")
