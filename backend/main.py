@@ -245,6 +245,34 @@ async def _damage_autofill():
         log.warning("autofill notify: %s", e)
 
 
+async def _client_prices_loop():
+    """Клиентские цены (СПП) своих карточек через домашний агент: раз в
+    4 часа в окно 10-22 МСК (ПК владельца включён). Молча пропускает,
+    если агент офлайн."""
+    from routers import tools as _tools
+    import snapshot as _snap
+    await asyncio.sleep(900)
+    log = logging.getLogger("client_prices")
+    while True:
+        now = datetime.utcnow() + timedelta(hours=3)
+        if 10 <= now.hour < 22:
+            stamp = now.strftime("%Y-%m-%d %H")
+            last = await asyncio.to_thread(_snap.load, "client_prices_last", "")
+            if not last or (now - datetime.strptime(last, "%Y-%m-%d %H")
+                            ).total_seconds() >= 4 * 3600 - 60:
+                try:
+                    res = await _tools.refresh_client_prices()
+                    if res.get("error"):
+                        log.info("skip: %s", res["error"][:120])
+                    else:
+                        log.info("обновлено цен: %s", res.get("updated"))
+                        await asyncio.to_thread(_snap.save,
+                                                "client_prices_last", stamp)
+                except Exception as e:
+                    log.warning("loop: %s", str(e)[:150])
+        await asyncio.sleep(1800)
+
+
 async def _funnel_daily():
     """Воронка WB (nm-report): раз в сутки дособираем последние 7 дней в
     вечную таблицу. Первый прогон — глубже (28 дн), чтобы сразу было с чем
@@ -469,6 +497,7 @@ async def lifespan(app: FastAPI):
     task8 = asyncio.create_task(_strategist_loop())
     task9 = asyncio.create_task(_bid_history_daily())
     asyncio.create_task(_funnel_daily())
+    asyncio.create_task(_client_prices_loop())
     task10 = asyncio.create_task(_slot_watcher())
     yield
     for t in (task, task2, task3, task4, task5, task6, task7, task8, task9,

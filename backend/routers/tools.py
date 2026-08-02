@@ -1242,6 +1242,9 @@ async def get_margin(mp: str = Query(default="WB")):
             _log.warning("fbs litres: %s", str(e)[:120])
     _ft = (await asyncio.to_thread(_snap.load, "fbs_tariff", None)) \
         or {"base": 89.7, "per": 27.3}
+    # живые клиентские цены (СПП) — от домашнего агента, если снимались
+    _cp = ((await asyncio.to_thread(_snap.load, "client_prices", None))
+           or {}).get("items") or {}
 
     def _fbs_logist(litres):
         if not litres:
@@ -1333,6 +1336,10 @@ async def get_margin(mp: str = Query(default="WB")):
             "cogs": round(r.get("unitCost") or sper("cogs")),  # себестоимость
             # FBS-экономика той же карточки: комиссия kgvpMarketplace,
             # логистика по литражу карточки × тариф склада Чехов, хранение 0
+            # живая цена покупателя и фактический СПП (снято домашним агентом)
+            "buyer_live": (_cp.get(str(r.get("sku") or "").upper()) or {}).get("client"),
+            "spp_live": (_cp.get(str(r.get("sku") or "").upper()) or {}).get("spp_pct"),
+            "buyer_at": (_cp.get(str(r.get("sku") or "").upper()) or {}).get("at"),
             "fbs": ({"comm_pct": round(tariff["fbs_pct"], 2),
                      "litres": _fbs_litres.get(str(r.get("sku") or "").upper()),
                      "logist": _fbs_logist(_fbs_litres.get(
@@ -1731,6 +1738,95 @@ async def niche_ingest(payload: dict, token: str = ""):
 def _t_mono() -> float:
     import time as _t
     return _t.monotonic()
+
+
+# ══ Клиентские цены своих карточек (СПП) — через домашний агент ══════════════
+# Запрос вида «nmprice:123,456» агент выполняет не поиском, а fetch к
+# card.wb.ru из браузера (жилой IP + куки) и возвращает клиентские цены.
+
+def _client_price_init():
+    db.execute("""CREATE TABLE IF NOT EXISTS client_price_history (
+        day TEXT, sku TEXT, nm TEXT, client REAL, seller REAL,
+        PRIMARY KEY (day, sku))""")
+
+
+async def refresh_client_prices() -> dict:
+    """Снимает клиентские цены всех карточек через домашний агент и пишет
+    историю. СПП = 1 − клиентская/цена продавца (живая)."""
+    import wb_fbs
+    import snapshot as _snap
+    cmap = await wb_fbs.chrt_map()
+    nm_to_art = {str(v["nmID"]): k for k, v in cmap.items() if v.get("nmID")}
+    if not nm_to_art:
+        return {"error": "нет карточек (content-API)"}
+    q = "nmprice:" + ",".join(sorted(nm_to_art))
+    products, _total = await _wb_agent_search(q)
+    if not products:
+        return {"error": _niche_last_err or "агент не вернул цены"}
+    import wb_client
+    try:
+        live = await wb_client.get_current_prices()
+    except Exception:
+        live = {}
+    seller_by_art = {k.upper(): (v or {}).get("discounted") or 0
+                     for k, v in live.items()}
+    today = (datetime.utcnow() + timedelta(hours=3)).strftime("%Y-%m-%d")
+    rows, latest = [], {}
+    for p in products:
+        nm = str(p.get("nm") or "")
+        art = nm_to_art.get(nm)
+        client = float(p.get("client") or p.get("price") or 0)
+        if not art or client <= 0:
+            continue
+        seller = float(seller_by_art.get(art, 0))
+        rows.append((today, art, nm, client, seller))
+        latest[art] = {"client": round(client), "seller": round(seller),
+                       "spp_pct": round((1 - client / seller) * 100, 1)
+                       if seller > 0 else None,
+                       "at": today}
+    if not rows:
+        return {"error": "цены не распознаны"}
+
+    def _save():
+        _client_price_init()
+        db.executemany(
+            "INSERT INTO client_price_history (day, sku, nm, client, seller) "
+            "VALUES (?,?,?,?,?) ON CONFLICT (day, sku) DO UPDATE SET "
+            "client=excluded.client, seller=excluded.seller", rows)
+    await asyncio.to_thread(_save)
+    prev = await asyncio.to_thread(_snap.load, "client_prices", None) or {}
+    await asyncio.to_thread(_snap.save, "client_prices",
+                            {"items": latest, "fetched_at": today})
+    # сторож СПП: заметный сдвиг против прошлого замера — сигнал в Telegram
+    try:
+        moved = []
+        for art, cur in latest.items():
+            old = (prev.get("items") or {}).get(art)
+            if old and cur.get("spp_pct") is not None \
+                    and old.get("spp_pct") is not None \
+                    and abs(cur["spp_pct"] - old["spp_pct"]) >= 3:
+                moved.append(f"{art}: СПП {old['spp_pct']}% → {cur['spp_pct']}% "
+                             f"(клиент {old['client']} → {cur['client']} ₽)")
+        if moved:
+            import agent_review as _ar
+            await _ar.tg_send("<b>⚠️ WB сменил СПП</b>\n" + "\n".join(moved[:12])
+                              + "\nЦены покупателя в Калькуляторе маржи обновлены.")
+    except Exception:
+        pass
+    return {"updated": len(rows), "fetched_at": today}
+
+
+@router.get("/client_prices")
+async def get_client_prices(refresh: bool = Query(default=False)):
+    """Живые клиентские цены (после СПП) своих карточек + фактический СПП."""
+    import snapshot as _snap
+    if refresh:
+        res = await refresh_client_prices()
+        if res.get("error"):
+            return res
+    data = await asyncio.to_thread(_snap.load, "client_prices", None)
+    return data or {"items": {}, "message": "ещё не снимали — нажми Обновить "
+                    "(нужен включённый домашний агент)"}
 
 
 async def _wb_agent_search(query: str) -> tuple[list, int]:

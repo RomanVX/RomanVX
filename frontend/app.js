@@ -4841,7 +4841,19 @@ function recalcMarginRow(sku) {
   set('mg-comm', `<span style="color:var(--neg)">−</span>${fmtRub(Math.round(c.comm + c.acq))}
     <div class="small" style="color:var(--ink-3)">${b.comm_pct}%${b.comm_exact ? '' : '≈'}</div>`);
   set('mg-adv', c.advert > 0 ? `<span style="color:var(--neg)">−</span>${fmtRub(Math.round(c.advert))}` : '<span class="text-secondary">0 ₽</span>');
-  set('mg-buyer', c.buyer != null ? fmtRub(Math.round(c.buyer)) : '<span class="text-secondary">—</span>');
+  // цена покупателя: живой замер с карточки (агент, с фактическим СПП)
+  // в приоритете; при правке цены СПП применяется к новой цене
+  if (b.spp_live != null) {
+    const price = _marginPrice[sku] != null ? _marginPrice[sku] : b.price0;
+    const buyerLive = (b.buyer_live != null && (_marginPrice[sku] == null || _marginPrice[sku] === b.price0))
+      ? b.buyer_live
+      : Math.round(price * (1 - b.spp_live / 100));
+    set('mg-buyer', `${fmtRub(buyerLive)}<div class="small" style="color:var(--ink-3)" title="живой замер с карточки WB, ${esc(b.buyer_at || '')}">СПП ${b.spp_live}%</div>`);
+  } else {
+    set('mg-buyer', c.buyer != null
+      ? `${fmtRub(Math.round(c.buyer))}<div class="small text-secondary" title="оценка по среднему СПП из юнитки — живой замер ещё не снимался">≈ср. СПП</div>`
+      : '<span class="text-secondary">—</span>');
+  }
   set('mg-costs', fmtRub(Math.round(c.comm + c.acq + c.advert + c.fixed)));
   const pclr = c.profit >= 0 ? 'var(--pos)' : 'var(--neg)';
   set('mg-profit', `<span style="color:${pclr};font-weight:700">${c.profit < 0 ? '−' : ''}${fmtRub(Math.abs(Math.round(c.profit)))}</span>`);
@@ -4849,7 +4861,8 @@ function recalcMarginRow(sku) {
   set('mg-margin', `<span style="color:${mclr};font-weight:700">${Math.round(c.margin)}%</span>`);
   set('mg-roi', c.roi != null ? Math.round(c.roi) + '%' : '—');
   set('mg-be', c.breakEven != null ? fmtRub(Math.round(c.breakEven)) : '—');
-  const bk = (b.buyer0 && b.price0 > 0) ? b.buyer0 / b.price0 : null;
+  const bk = b.spp_live != null ? (1 - b.spp_live / 100)
+    : (b.buyer0 && b.price0 > 0) ? b.buyer0 / b.price0 : null;
   c.tgtPrices.forEach((tp, i) => {
     set('mg-tgt' + i, tp != null
       ? `${fmtRub(Math.round(tp))}${bk ? `<div class="small" style="color:var(--gold)">клиент ${fmtRub(Math.round(tp * bk))}</div>` : ''}`

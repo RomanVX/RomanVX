@@ -85,6 +85,30 @@ async def _search(page, query: str, limit: int = 60):
     return items
 
 
+async def _own_prices(page, nm_csv: str):
+    """Клиентские цены своих карточек: fetch к card.wb.ru прямо из браузера
+    (жилой IP + куки анти-бота) — это цена, которую видит покупатель, с СПП."""
+    out = []
+    nms = [n for n in nm_csv.split(",") if n.strip().isdigit()]
+    for i in range(0, len(nms), 100):
+        chunk = ";".join(nms[i:i + 100])
+        url = ("https://card.wb.ru/cards/v2/detail?appType=1&curr=rub"
+               "&dest=-1257786&spp=30&nm=" + chunk)
+        data = await page.evaluate(
+            "(u) => fetch(u, {credentials:'include'}).then(r => r.json())"
+            ".catch(e => ({err: String(e)}))", url)
+        products = ((data or {}).get("data") or {}).get("products") or []
+        for p in products:
+            sizes = p.get("sizes") or []
+            price = ((sizes[0].get("price") or {}) if sizes else {})
+            total = price.get("product") or price.get("total") or 0
+            if p.get("id") and total:
+                out.append({"nm": int(p["id"]),
+                            "client": round(total / 100)})
+        await page.wait_for_timeout(800)
+    return out
+
+
 async def main():
     print(f"WB браузер-агент запущен. Дашборд: {DASHBOARD}")
     print("Держу браузер, опрашиваю очередь. Не закрывай это окно.\n")
@@ -114,11 +138,17 @@ async def main():
                 await asyncio.sleep(POLL_SEC)
                 continue
             for q in queries:
-                print(f"→ собираю выдачу: {q!r}")
                 try:
-                    items = await _search(page, q)
-                    body = {"query": q, "products": items, "total": len(items)}
-                    print(f"   получено {len(items)} товаров")
+                    if q.startswith("nmprice:"):
+                        print("→ снимаю клиентские цены своих карточек")
+                        items = await _own_prices(page, q.split(":", 1)[1])
+                        body = {"query": q, "products": items, "total": len(items)}
+                        print(f"   получено цен: {len(items)}")
+                    else:
+                        print(f"→ собираю выдачу: {q!r}")
+                        items = await _search(page, q)
+                        body = {"query": q, "products": items, "total": len(items)}
+                        print(f"   получено {len(items)} товаров")
                 except Exception as e:
                     body = {"query": q, "error": str(e)[:200]}
                     print("   ошибка:", str(e)[:160])
