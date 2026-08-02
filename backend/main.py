@@ -271,6 +271,16 @@ async def _funnel_daily():
         await asyncio.sleep(24 * 3600)
 
 
+
+async def _agent_is_quiet() -> bool:
+    """Тихий режим (/quiet в TG): фоновые LLM-циклы и алерты выключены."""
+    import snapshot as _snap
+    try:
+        return bool(await asyncio.to_thread(_snap.load, "agent_quiet", False))
+    except Exception:
+        return False
+
+
 async def _news_loop():
     """Новости площадок: сбор и разбор раз в 3 часа, сводка в 10:00 МСК."""
     import snapshot as _snap
@@ -279,6 +289,9 @@ async def _news_loop():
     await asyncio.sleep(900)
     log = logging.getLogger("news")
     while True:
+        if await _agent_is_quiet():
+            await asyncio.sleep(3 * 3600)
+            continue
         try:
             res = await _news.refresh_all()
             if res.get("added"):
@@ -316,6 +329,9 @@ async def _agent_watch_loop():
                 await agent_digest.refresh()
             except Exception as e:
                 logging.getLogger("agent_digest").warning("refresh: %s", e)
+            if await _agent_is_quiet():
+                await asyncio.sleep(3600)
+                continue
             res = await agent_watch.tick()
             if res.get("sent"):
                 logging.getLogger("agent_watch").info("отправлено тревог: %s",
@@ -377,6 +393,9 @@ async def _strategist_loop():
     import snapshot as _snap
     await asyncio.sleep(1200)   # даём прогреться юнитке после рестарта
     while True:
+        if await _agent_is_quiet():
+            await asyncio.sleep(3600)
+            continue
         now = datetime.utcnow() + timedelta(hours=3)
         today = now.strftime("%Y-%m-%d")
         if now.hour >= 10:
@@ -416,6 +435,9 @@ async def _agent_weekly():
         return
     import snapshot as _snap
     while True:
+        if await _agent_is_quiet():
+            await asyncio.sleep(3600)
+            continue
         now = datetime.utcnow() + timedelta(hours=3)
         if now.weekday() == 0 and now.hour == 9:
             wk = now.strftime("%G-W%V")

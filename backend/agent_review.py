@@ -1025,6 +1025,15 @@ async def bot_loop() -> None:
                             await tg_send(f"Сессия не удалась: {res['error']}",
                                           chat_id=ch, thread_id=th)
                     asyncio.get_event_loop().create_task(_strun())
+                elif cmd in ("/quiet", "/loud"):
+                    quiet = cmd == "/quiet"
+                    await asyncio.to_thread(_snap.save, "agent_quiet", quiet)
+                    await tg_send(
+                        "🔕 Тихий режим: фоновые разборы, сводки и алерты "
+                        "выключены — токены не тратятся. На твои вопросы "
+                        "отвечаю как обычно. Вернуть: /loud" if quiet else
+                        "🔔 Фоновые сводки и алерты снова включены.",
+                        chat_id=chat, thread_id=thread)
                 elif cmd == "/rules":
                     import agent_strategist as _sr
                     _rl = _sr.owner_rules()
