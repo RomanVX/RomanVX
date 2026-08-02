@@ -414,6 +414,7 @@ _REPORT_KEEP = frozenset({
     "ppvz_reward", "acquiring_fee",
     "delivery_rub", "delivery_amount", "return_amount",
     "storage_fee", "acceptance", "penalty", "deduction", "additional_payment",
+    "office_name",   # склад отгрузки: «Маркетплейс» = FBS, иначе FBW
 })
 
 _REPORT_PAGE = 5_000  # меньше страница → меньше пиковая память при парсинге

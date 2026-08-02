@@ -235,6 +235,8 @@ def _normalize_stat_rows(stat_rows: list[dict]) -> list[dict]:
             "vendorCode":      _i((r.get("sa_name") or "").strip()),
             "nmId":            r.get("nm_id"),
             "quantity":        qty,
+            # схема продажи: у FBS-строк склад = «Маркетплейс» (склад продавца)
+            "isFbs":           "маркетплейс" in str(r.get("office_name") or "").lower(),
         })
     return out
 
@@ -451,7 +453,9 @@ async def get_wb_pnl(
     sku_data: dict[str, dict] = {}   # sku → mk → {revenue, forPay, qty, cogs, delivery, storage, acceptance, penalty}
 
     _SKU_KEYS = ("revenue", "forPay", "qty", "cogs", "delivery", "storage",
-                 "acceptance", "penalty", "acquiring", "paid")
+                 "acceptance", "penalty", "acquiring", "paid",
+                 # разрез по схеме: та же продажа, но пришедшая с FBS
+                 "fbs_qty", "fbs_revenue", "fbs_forPay", "fbs_delivery")
     comm_now: dict[str, tuple] = {}   # sku → (дата продажи, точный % комиссии WB)
 
     def s_ensure(sku, mk):
@@ -548,6 +552,10 @@ async def get_wb_pnl(
                     sd["paid"]      += sign * abs(_f(row.get("retailAmount")))
                     if uc > 0 and qty > 0:
                         sd["cogs"] += sign * uc * qty
+                    if row.get("isFbs"):
+                        sd["fbs_qty"]     += sign * qty
+                        sd["fbs_revenue"] += sign * base
+                        sd["fbs_forPay"]  += sign * abs(_f(row.get("forPay")))
             # операционные затраты — по дате операции, на любых строках
             if mk < min_mk:
                 continue
@@ -565,6 +573,8 @@ async def get_wb_pnl(
                 sd["storage"]    += _f(row.get("paidStorage"))
                 sd["acceptance"] += _f(row.get("paidAcceptance"))
                 sd["penalty"]    += _f(row.get("penalty"))
+                if row.get("isFbs"):
+                    sd["fbs_delivery"] += _f(row.get("deliveryService"))
 
         # ── Хвост месяца: дни после последней сформированной недели отчёта
         # реализации дополняем ОПЕРАТИВНЫМИ продажами statistics-api (кабинетная
@@ -1020,6 +1030,16 @@ async def get_wb_unit(
                 "gross":      round(gross),
                 "margin":     round(gross / rev * 100) if rev > 0 else 0,
             }
+            if d.get("fbs_qty"):
+                # разрез FBS: прямые статьи схемы (комиссия = выручка−forPay,
+                # логистика — фактические FBS-строки); хранение/реклама общие
+                f_rev = d.get("fbs_revenue", 0.0)
+                row["months"][mk]["fbs"] = {
+                    "qty":        round(d["fbs_qty"]),
+                    "revenue":    round(f_rev),
+                    "commission": round(f_rev - d.get("fbs_forPay", 0.0)),
+                    "delivery":   round(d.get("fbs_delivery", 0.0)),
+                }
         if row["months"]:
             skus_out.append(row)
 

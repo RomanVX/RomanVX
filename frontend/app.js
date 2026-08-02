@@ -2509,7 +2509,14 @@ function _unitCellSum(cells, months) {
   months.forEach(m => {
     const c = cells[m.key];
     if (!c) return;
-    Object.keys(c).forEach(k => { out[k] = (out[k] || 0) + c[k]; });
+    Object.keys(c).forEach(k => {
+      if (k === 'fbs' && c.fbs) {           // разрез по схеме FBS — вложенный
+        out.fbs = out.fbs || {};
+        Object.keys(c.fbs).forEach(f => { out.fbs[f] = (out.fbs[f] || 0) + c.fbs[f]; });
+        return;
+      }
+      if (typeof c[k] === 'number') out[k] = (out[k] || 0) + c[k];
+    });
   });
   if (out.revenue) out.margin = Math.round((out.gross || 0) / out.revenue * 100);
   return out;
@@ -2616,6 +2623,14 @@ function renderUnitMonth() {
       ${COLS.slice(3).map(([k]) => cell(k, G, null)).join('')}</tr>`;
     list.forEach(({ r, c }) => {
       html += `<tr style="background:var(--t-row)">${COLS.map(([k]) => cell(k, c, r)).join('')}</tr>`;
+      if (c.fbs && c.fbs.qty) {
+        const f = c.fbs;
+        const fbo = { qty: (c.qty || 0) - f.qty, rev: (c.revenue || 0) - f.revenue };
+        html += `<tr style="background:var(--t-sku-row)">
+          <td></td><td colspan="${COLS.length - 1}" class="small" style="padding:2px 10px;color:var(--ink-2)">
+          ↳ <b>FBS</b>: ${fmt(f.qty)} шт · выкупы ${fmtRub(f.revenue)} · комиссия −${fmtRub(Math.abs(f.commission || 0))} · логистика −${fmtRub(Math.abs(f.delivery || 0))}
+          <span class="text-secondary">· FBO: ${fmt(Math.max(fbo.qty, 0))} шт / ${fmtRub(Math.max(fbo.rev, 0))} · хранение и реклама общие на карточку</span></td></tr>`;
+      }
     });
   });
 
