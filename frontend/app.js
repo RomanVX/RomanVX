@@ -6769,10 +6769,9 @@ function renderFbs() {
   const news = (d.orders || {}).new || [];
   const recent = (d.orders || {}).recent || [];
 
-  // остатки: каталог кабинета + текущие FBS-значения
-  const skus = new Set(Object.keys(stocks));
-  ((_simBase && _simBase.items) || []).forEach(i => skus.add(i.sku));
-  Object.keys(window.CATALOG || {}).forEach(s => skus.add(s));
+  // остатки: карточки кабинета с бэка + текущие FBS-значения
+  const skus = new Set(d.catalog || []);
+  Object.keys(stocks).forEach(s => skus.add(s));
   const skuList = [...skus].sort();
 
   let html = '';
@@ -6808,6 +6807,7 @@ function renderFbs() {
         <td><input type="number" min="0" class="form-control form-control-sm fbs-qty" data-sku="${esc(s)}"
                    placeholder="${stocks[s] != null ? stocks[s] : 0}" style="width:110px"></td></tr>`;
     }).join('') + `</tbody></table></div>
+    ${skuList.length ? '' : '<div class="alert alert-warning mb-0">Карточки кабинета не загрузились — нажми ↻; если повторится, у токена WB нет категории «Контент».</div>'}
     <div class="mt-2 d-flex gap-2 align-items-center">
       <button class="btn btn-sm btn-success" onclick="fbsSendStocks()">Отправить остатки на WB</button>
       <span class="text-secondary small">отправляются только заполненные строки</span>
