@@ -104,8 +104,10 @@ async def _search(page, query: str, limit: int = 60):
 
 
 async def _own_prices(page, nm_csv: str):
-    """Клиентские цены своих карточек: fetch к card.wb.ru прямо из браузера
-    (жилой IP + куки анти-бота) — это цена, которую видит покупатель, с СПП."""
+    """Клиентские цены своих карточек: card.wb.ru прямо из браузера
+    (жилой IP + куки анти-бота) — это цена, которую видит покупатель, с СПП.
+    Сначала fetch со страницы WB; если пусто (CORS/анти-бот) — открываем
+    URL напрямую как страницу и читаем JSON из тела."""
     out = []
     nms = [n for n in nm_csv.split(",") if n.strip().isdigit()]
     for i in range(0, len(nms), 100):
@@ -116,13 +118,37 @@ async def _own_prices(page, nm_csv: str):
             "(u) => fetch(u, {credentials:'include'}).then(r => r.json())"
             ".catch(e => ({err: String(e)}))", url)
         products = ((data or {}).get("data") or {}).get("products") or []
+        if not products:
+            if data and data.get("err"):
+                print("   fetch не прошёл:", str(data["err"])[:100])
+            # запасной путь: открыть URL как страницу, JSON лежит в <pre>/body
+            try:
+                await page.goto(url, wait_until="domcontentloaded",
+                                timeout=30000)
+                raw = await page.evaluate("() => document.body.innerText")
+                data = json.loads(raw)
+                products = ((data or {}).get("data") or {}).get("products") or []
+            except Exception as e:
+                print("   и напрямую не прошёл:", str(e)[:100])
+            finally:
+                try:
+                    await page.goto("https://www.wildberries.ru/",
+                                    wait_until="domcontentloaded", timeout=30000)
+                except Exception:
+                    pass
         for p in products:
             sizes = p.get("sizes") or []
             price = ((sizes[0].get("price") or {}) if sizes else {})
             total = price.get("product") or price.get("total") or 0
+            if not total:   # новые ответы: цена на верхнем уровне товара
+                total = ((p.get("price") or {}).get("product")
+                         if isinstance(p.get("price"), dict) else 0) or 0
             if p.get("id") and total:
                 out.append({"nm": int(p["id"]),
                             "client": round(total / 100)})
+        if not products:
+            print("   WB вернул 0 товаров на чанк — ответ:",
+                  json.dumps(data, ensure_ascii=False)[:200])
         await page.wait_for_timeout(800)
     return out
 
