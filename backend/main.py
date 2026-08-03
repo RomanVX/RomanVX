@@ -498,6 +498,8 @@ async def lifespan(app: FastAPI):
     task9 = asyncio.create_task(_bid_history_daily())
     asyncio.create_task(_funnel_daily())
     asyncio.create_task(_client_prices_loop())
+    import gist_bridge
+    asyncio.create_task(gist_bridge.loop())
     task10 = asyncio.create_task(_slot_watcher())
     yield
     for t in (task, task2, task3, task4, task5, task6, task7, task8, task9,

@@ -17,7 +17,9 @@
 Оставь окно открытым (или добавь в автозагрузку — см. README).
 """
 import asyncio
+import json
 import os
+import time
 import urllib.parse
 
 import httpx
@@ -25,6 +27,16 @@ from playwright.async_api import async_playwright
 
 DASHBOARD = os.getenv("DASHBOARD_URL", "https://wb-dashboard-6wxf.onrender.com").rstrip("/")
 TOKEN = os.getenv("WB_AGENT_TOKEN", "")
+# Мост через GitHub Gist: провайдер блокирует Render — если заданы эти два
+# env, агент общается с дашбордом через gist (см. инструкцию в чате)
+GIST_ID = os.getenv("GIST_BRIDGE_ID", "").strip()
+GIST_TOKEN = os.getenv("GIST_BRIDGE_TOKEN", "").strip()
+GH_API = "https://api.github.com/gists/"
+
+
+def _gh_hdr():
+    return {"Authorization": f"Bearer {GIST_TOKEN}",
+            "Accept": "application/vnd.github+json"}
 POLL_SEC = 4
 # системный прокси Windows игнорируем: битый прокси (след Tailscale и т.п.)
 # даёт WinError 10060, хотя браузер работает — ходим напрямую
@@ -134,13 +146,23 @@ async def main():
         except Exception:
             pass
 
+        done: dict = {}
         while True:
+            issued = {}
             try:
-                r = _HTTP.get(f"{DASHBOARD}/api/tools/niche/pending",
-                              params={"token": TOKEN})
-                queries = r.json().get("queries") or []
+                if GIST_ID:
+                    g = _HTTP.get(GH_API + GIST_ID, headers=_gh_hdr()).json()
+                    tasks = json.loads(((g.get("files") or {}).get("tasks.json")
+                                        or {}).get("content") or "{}")
+                    issued = tasks.get("issued") or {}
+                    queries = [q for q in tasks.get("queries") or []
+                               if done.get(q) != issued.get(q, "")]
+                else:
+                    r = _HTTP.get(f"{DASHBOARD}/api/tools/niche/pending",
+                                  params={"token": TOKEN})
+                    queries = r.json().get("queries") or []
             except Exception as e:
-                print("нет связи с дашбордом:", str(e)[:120])
+                print("нет связи:", str(e)[:120])
                 await asyncio.sleep(POLL_SEC)
                 continue
             for q in queries:
@@ -159,8 +181,25 @@ async def main():
                     body = {"query": q, "error": str(e)[:200]}
                     print("   ошибка:", str(e)[:160])
                 try:
-                    _HTTP.post(f"{DASHBOARD}/api/tools/niche/ingest",
-                               params={"token": TOKEN}, json=body)
+                    if GIST_ID:
+                        g = _HTTP.get(GH_API + GIST_ID, headers=_gh_hdr()).json()
+                        raw = ((g.get("files") or {}).get("results.json")
+                               or {}).get("content") or "{}"
+                        res = json.loads(raw) if raw.strip() else {}
+                        res.setdefault("results", {})[q] = {
+                            **{k: v for k, v in body.items() if k != "query"},
+                            "ts": str(int(time.time()))}
+                        # держим только последние 6 результатов — gist не пухнет
+                        keys = list(res["results"])
+                        for old in keys[:-6]:
+                            res["results"].pop(old, None)
+                        _HTTP.patch(GH_API + GIST_ID, headers=_gh_hdr(), json={
+                            "files": {"results.json": {"content":
+                                json.dumps(res, ensure_ascii=False)}}})
+                        done[q] = issued.get(q, "")
+                    else:
+                        _HTTP.post(f"{DASHBOARD}/api/tools/niche/ingest",
+                                   params={"token": TOKEN}, json=body)
                 except Exception as e:
                     print("   не отдал результат:", str(e)[:120])
             await asyncio.sleep(POLL_SEC)
