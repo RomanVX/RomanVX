@@ -26,6 +26,9 @@ from playwright.async_api import async_playwright
 DASHBOARD = os.getenv("DASHBOARD_URL", "https://wb-dashboard-6wxf.onrender.com").rstrip("/")
 TOKEN = os.getenv("WB_AGENT_TOKEN", "")
 POLL_SEC = 4
+# системный прокси Windows игнорируем: битый прокси (след Tailscale и т.п.)
+# даёт WinError 10060, хотя браузер работает — ходим напрямую
+_HTTP = httpx.Client(timeout=30, trust_env=False)
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36")
 
@@ -130,8 +133,8 @@ async def main():
 
         while True:
             try:
-                r = httpx.get(f"{DASHBOARD}/api/tools/niche/pending",
-                              params={"token": TOKEN}, timeout=30)
+                r = _HTTP.get(f"{DASHBOARD}/api/tools/niche/pending",
+                              params={"token": TOKEN})
                 queries = r.json().get("queries") or []
             except Exception as e:
                 print("нет связи с дашбордом:", str(e)[:120])
@@ -153,8 +156,8 @@ async def main():
                     body = {"query": q, "error": str(e)[:200]}
                     print("   ошибка:", str(e)[:160])
                 try:
-                    httpx.post(f"{DASHBOARD}/api/tools/niche/ingest",
-                               params={"token": TOKEN}, json=body, timeout=30)
+                    _HTTP.post(f"{DASHBOARD}/api/tools/niche/ingest",
+                               params={"token": TOKEN}, json=body)
                 except Exception as e:
                     print("   не отдал результат:", str(e)[:120])
             await asyncio.sleep(POLL_SEC)
