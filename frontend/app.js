@@ -4798,11 +4798,12 @@ async function marginExport(btn) {
 }
 function toggleMarginAdv(on) { _marginAdvOn = on; renderMargin(); }
 function resetMargin() { _marginPrice = {}; _marginCost = {}; _marginDrr = {}; renderMargin(); }
+function _mgBase(b) { return b.price_live != null ? b.price_live : b.price0; }
 function _marginDrr0(b) { return b.price0 > 0 ? Math.round(b.advert / b.price0 * 1000) / 10 : 0; }
 
 // ядро расчёта одной строки
 function _marginCalc(b) {
-  const price = _marginPrice[b.sku] != null ? _marginPrice[b.sku] : b.price0;
+  const price = _marginPrice[b.sku] != null ? _marginPrice[b.sku] : _mgBase(b);
   const cogs = _marginCost[b.sku] != null ? _marginCost[b.sku] : b.cogs;
   const drr = _marginAdvOn ? (_marginDrr[b.sku] != null ? _marginDrr[b.sku] : _marginDrr0(b)) : 0;
   const advert = price * drr / 100;
@@ -4844,8 +4845,8 @@ function recalcMarginRow(sku) {
   // цена покупателя: живой замер с карточки (агент, с фактическим СПП)
   // в приоритете; при правке цены СПП применяется к новой цене
   if (b.spp_live != null) {
-    const price = _marginPrice[sku] != null ? _marginPrice[sku] : b.price0;
-    const buyerLive = (b.buyer_live != null && (_marginPrice[sku] == null || _marginPrice[sku] === b.price0))
+    const price = _marginPrice[sku] != null ? _marginPrice[sku] : _mgBase(b);
+    const buyerLive = (b.buyer_live != null && (_marginPrice[sku] == null || _marginPrice[sku] === _mgBase(b)))
       ? b.buyer_live
       : Math.round(price * (1 - b.spp_live / 100));
     set('mg-buyer', `${fmtRub(buyerLive)}<div class="small" style="color:var(--ink-3)" title="живой замер с карточки WB, ${esc(b.buyer_at || '')}">СПП ${b.spp_live}%</div>`);
@@ -4876,7 +4877,7 @@ function recalcMarginRow(sku) {
     const frow = document.querySelector(`tr[data-mskufbs="${CSS.escape(sku)}"]`);
     const line = frow && frow.querySelector('.mg-fbsline');
     if (line) {
-      const price = _marginPrice[sku] != null ? _marginPrice[sku] : b.price0;
+      const price = _marginPrice[sku] != null ? _marginPrice[sku] : _mgBase(b);
       const cogs = _marginCost[sku] != null ? _marginCost[sku] : b.cogs;
       const drr = _marginAdvOn ? (_marginDrr[sku] != null ? _marginDrr[sku] : _marginDrr0(b)) : 0;
       if (b.fbs.logist == null) {
@@ -5010,7 +5011,7 @@ function renderMargin() {
     list.sort((a, b) => b.qty - a.qty);
     html += `<tr class="table-secondary"><td colspan="17" style="padding:6px 12px"><strong>${gname}</strong> <span class="text-secondary small">(${list.length} арт.)</span></td></tr>`;
     list.forEach(b => {
-      const price = _marginPrice[b.sku] != null ? _marginPrice[b.sku] : b.price0;
+      const price = _marginPrice[b.sku] != null ? _marginPrice[b.sku] : _mgBase(b);
       const cogs = _marginCost[b.sku] != null ? _marginCost[b.sku] : b.cogs;
       const drr = _marginDrr[b.sku] != null ? _marginDrr[b.sku] : _marginDrr0(b);
       const advDim = _marginAdvOn ? '' : 'opacity:.35';
@@ -5028,7 +5029,7 @@ function renderMargin() {
         <td class="text-end" style="padding:3px 6px;${advDim}"><input type="number" step="0.1" value="${drr}" oninput="_marginDrr['${esc(b.sku)}']=parseFloat(this.value)||0;recalcMarginRow('${esc(b.sku)}')"
           style="width:62px;text-align:right;background:rgba(56,189,248,.10);border:1px solid var(--border);border-radius:6px;color:var(--ink);padding:2px 6px"></td>
         <td class="text-end mg-adv" style="${advDim}"></td>
-        <td class="text-end" style="padding:3px 6px;background:rgba(16,185,129,.06)"><input type="number" value="${price}" oninput="_marginPrice['${esc(b.sku)}']=parseFloat(this.value)||0;recalcMarginRow('${esc(b.sku)}')"
+        <td class="text-end" style="padding:3px 6px;background:rgba(16,185,129,.06)"><input type="number" value="${price}" title="${b.price_live != null ? 'Живая цена продавца из API цен WB (до СПП)' : 'Средняя цена по отчёту реализации за окно'}" oninput="_marginPrice['${esc(b.sku)}']=parseFloat(this.value)||0;recalcMarginRow('${esc(b.sku)}')"
           style="width:84px;text-align:right;background:rgba(16,185,129,.12);border:1px solid var(--pos);border-radius:6px;color:var(--ink);font-weight:600;padding:2px 6px"></td>
         <td class="text-end mg-buyer" style="color:var(--gold);font-weight:600"></td>
         <td class="text-end mg-costs" style="color:var(--ink-2)"></td>

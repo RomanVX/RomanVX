@@ -1245,6 +1245,16 @@ async def get_margin(mp: str = Query(default="WB")):
     # живые клиентские цены (СПП) — от домашнего агента, если снимались
     _cp = ((await asyncio.to_thread(_snap.load, "client_prices", None))
            or {}).get("items") or {}
+    # живая цена продавца (до СПП) — из API цен WB, актуальнее среднего по отчёту
+    _lp: dict = {}
+    if mp == "WB":
+        try:
+            import wb_client as _wbc
+            _live = await _wbc.get_current_prices()
+            _lp = {k.upper(): (v or {}).get("discounted") or 0
+                   for k, v in (_live or {}).items()}
+        except Exception as e:
+            _log.warning("live prices: %s", str(e)[:120])
 
     def _fbs_logist(litres):
         if not litres:
@@ -1337,6 +1347,9 @@ async def get_margin(mp: str = Query(default="WB")):
             # FBS-экономика той же карточки: комиссия kgvpMarketplace,
             # логистика по литражу карточки × тариф склада Чехов, хранение 0
             # живая цена покупателя и фактический СПП (снято домашним агентом)
+            "price_live": (round(_lp[str(r.get("sku") or "").upper()])
+                           if _lp.get(str(r.get("sku") or "").upper())
+                           else None),
             "buyer_live": (_cp.get(str(r.get("sku") or "").upper()) or {}).get("client"),
             "spp_live": (_cp.get(str(r.get("sku") or "").upper()) or {}).get("spp_pct"),
             "buyer_at": (_cp.get(str(r.get("sku") or "").upper()) or {}).get("at"),
