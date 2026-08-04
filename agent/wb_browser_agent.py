@@ -114,28 +114,35 @@ async def _own_prices(page, nm_csv: str):
         chunk = ";".join(nms[i:i + 100])
         url = ("https://card.wb.ru/cards/v2/detail?appType=1&curr=rub"
                "&dest=-1257786&spp=30&nm=" + chunk)
-        data = await page.evaluate(
-            "(u) => fetch(u, {credentials:'include'}).then(r => r.json())"
-            ".catch(e => ({err: String(e)}))", url)
+        data, products = None, []
+        # способ 1: запрос через сетевой стек браузера (куки контекста,
+        # жилой IP, никаких CORS/CSP ограничений страницы)
+        try:
+            r = await page.context.request.get(
+                url, headers={"Accept": "application/json"}, timeout=30000)
+            if r.ok:
+                data = await r.json()
+            else:
+                print(f"   card.wb.ru ответил HTTP {r.status}")
+        except Exception as e:
+            print("   запрос из браузера не прошёл:", str(e)[:100])
         products = ((data or {}).get("data") or {}).get("products") or []
+        # способ 2: прямой httpx с домашнего IP
         if not products:
-            if data and data.get("err"):
-                print("   fetch не прошёл:", str(data["err"])[:100])
-            # запасной путь: открыть URL как страницу, JSON лежит в <pre>/body
             try:
-                await page.goto(url, wait_until="domcontentloaded",
-                                timeout=30000)
-                raw = await page.evaluate("() => document.body.innerText")
-                data = json.loads(raw)
-                products = ((data or {}).get("data") or {}).get("products") or []
+                rr = await asyncio.to_thread(
+                    _HTTP.get, url,
+                    headers={"User-Agent": UA, "Accept": "application/json",
+                             "Origin": "https://www.wildberries.ru",
+                             "Referer": "https://www.wildberries.ru/"})
+                if rr.status_code == 200:
+                    data = rr.json()
+                    products = ((data or {}).get("data") or {}) \
+                        .get("products") or []
+                else:
+                    print(f"   httpx: HTTP {rr.status_code}")
             except Exception as e:
-                print("   и напрямую не прошёл:", str(e)[:100])
-            finally:
-                try:
-                    await page.goto("https://www.wildberries.ru/",
-                                    wait_until="domcontentloaded", timeout=30000)
-                except Exception:
-                    pass
+                print("   httpx не прошёл:", str(e)[:100])
         for p in products:
             sizes = p.get("sizes") or []
             price = ((sizes[0].get("price") or {}) if sizes else {})
@@ -148,7 +155,7 @@ async def _own_prices(page, nm_csv: str):
                             "client": round(total / 100)})
         if not products:
             print("   WB вернул 0 товаров на чанк — ответ:",
-                  json.dumps(data, ensure_ascii=False)[:200])
+                  json.dumps(data, ensure_ascii=False)[:300])
         await page.wait_for_timeout(800)
     return out
 
