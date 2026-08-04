@@ -4998,12 +4998,12 @@ function renderMargin() {
       <th class="text-end">Логист.</th><th class="text-end">Хранен.</th>
       <th class="text-end" title="Доля рекламных расходов от цены — редактируется">ДРР %</th>
       <th class="text-end" title="Продвижение на штуку = цена × ДРР">Продв.</th>
-      <th class="text-end" title="Цена — редактируется" style="background:rgba(16,185,129,.10)">Цена ₽</th>
+      <th class="text-end" title="Цена — редактируется" style="background:linear-gradient(rgba(16,185,129,.10),rgba(16,185,129,.10)),var(--t-sticky)">Цена ₽</th>
       <th class="text-end" title="Сколько платит покупатель после скидки WB (СПП) — по фактическому соотношению за 6 мес">Цена покупателя</th>
       <th class="text-end">Затраты</th>
       <th class="text-end">Прибыль/ед</th><th class="text-end">Маржа</th><th class="text-end">ROI</th>
       <th class="text-end" title="Цена, при которой прибыль = 0">Безубыт.</th>
-      ${_marginTgts.map((t, i) => `<th class="text-end" style="background:rgba(251,191,36,.08);min-width:96px" title="Цена (до СПП), дающая заданную маржу; ниже — что увидит клиент после СПП">Цена для
+      ${_marginTgts.map((t, i) => `<th class="text-end" style="background:linear-gradient(rgba(251,191,36,.08),rgba(251,191,36,.08)),var(--t-sticky);min-width:96px" title="Цена (до СПП), дающая заданную маржу; ниже — что увидит клиент после СПП">Цена для
         <input type="number" step="1" value="${t}" onchange="setMarginTgtN(${i}, this.value)"
           style="width:52px;text-align:right;background:rgba(251,191,36,.14);border:1px solid var(--border);border-radius:6px;color:var(--ink);padding:1px 4px">%</th>`).join('')}
     </tr></thead><tbody>`;
