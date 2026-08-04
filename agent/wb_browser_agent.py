@@ -103,13 +103,78 @@ async def _search(page, query: str, limit: int = 60):
     return items
 
 
+SELLER_ID = os.getenv("WB_SELLER_ID", "").strip()
+
+
+async def _own_prices_dom(page, nms: list):
+    """Цены своих карточек из живой выдачи WB (DOM) — как по конкурентам.
+    Основной путь: страница продавца (все товары одной сеткой).
+    Добор: точечный поиск по nmId для тех, кого на странице не нашли."""
+    want = {int(n) for n in nms}
+    got: dict = {}
+    if SELLER_ID:
+        for pg in (1, 2, 3):
+            url = (f"https://www.wildberries.ru/seller/{SELLER_ID}"
+                   + (f"?page={pg}" if pg > 1 else ""))
+            try:
+                await page.goto(url, wait_until="domcontentloaded",
+                                timeout=60000)
+                for _ in range(15):
+                    n = await page.evaluate(
+                        "() => document.querySelectorAll('[data-nm-id], .product-card').length")
+                    if n > 0:
+                        break
+                    await page.wait_for_timeout(1000)
+                # доскроллить, чтобы ленивая сетка дорисовала все карточки
+                for _ in range(8):
+                    await page.evaluate(
+                        "() => window.scrollBy(0, window.innerHeight * 2)")
+                    await page.wait_for_timeout(700)
+                items = await page.evaluate(_DOM_JS) or []
+            except Exception as e:
+                print(f"   страница продавца (стр. {pg}):", str(e)[:100])
+                items = []
+            fresh = 0
+            for p in items:
+                nm = p.get("nm")
+                if nm in want and p.get("price") and nm not in got:
+                    got[nm] = p["price"]
+                    fresh += 1
+            print(f"   продавец стр. {pg}: карточек {len(items)}, "
+                  f"наших с ценой +{fresh}")
+            if not items or len(got) >= len(want):
+                break
+    # добор точечным поиском по nmId (выдача умеет искать по артикулу WB)
+    missing = [n for n in want if n not in got]
+    for nm in missing[:15]:
+        try:
+            items = await _search(page, str(nm), limit=5)
+        except Exception:
+            items = []
+        for p in items:
+            if p.get("nm") == nm and p.get("price"):
+                got[nm] = p["price"]
+                break
+    if missing[15:]:
+        print(f"   не добрали {len(missing[15:])} SKU (лимит времени)")
+    return [{"nm": nm, "client": price} for nm, price in got.items()]
+
+
 async def _own_prices(page, nm_csv: str):
-    """Клиентские цены своих карточек: card.wb.ru прямо из браузера
-    (жилой IP + куки анти-бота) — это цена, которую видит покупатель, с СПП.
-    Сначала fetch со страницы WB; если пусто (CORS/анти-бот) — открываем
-    URL напрямую как страницу и читаем JSON из тела."""
-    out = []
+    """Клиентские цены своих карточек. card.wb.ru WB закрыл (403/404),
+    поэтому основной путь — DOM выдачи (страница продавца + поиск по nmId),
+    как по конкурентам. API оставлен первой быстрой попыткой на случай,
+    если WB его вернёт."""
     nms = [n for n in nm_csv.split(",") if n.strip().isdigit()]
+    out = await _own_prices_api(page, nms)
+    if out:
+        return out
+    print("   API цен закрыт — иду через выдачу (DOM)")
+    return await _own_prices_dom(page, nms)
+
+
+async def _own_prices_api(page, nms: list):
+    out = []
     for i in range(0, len(nms), 100):
         chunk = ";".join(nms[i:i + 100])
         url = ("https://card.wb.ru/cards/v2/detail?appType=1&curr=rub"
