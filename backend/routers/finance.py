@@ -315,6 +315,50 @@ def _get_detail_if_ready(date_from: str, date_to: str) -> list[dict]:
     return []
 
 
+@router.get("/wb/compensations")
+async def wb_compensations():
+    """Компенсации WB (ущерб/потеря товара и пр.) из детального отчёта:
+    операции, не являющиеся продажей/возвратом/логистикой — сгруппированы
+    по месяцам и типам. Ищем и по сгоревшим SKU: сколько выплачено."""
+    rows = _detail_cache.get("rows", [])
+    if not rows:
+        return {"error": "детальный отчёт ещё не собран — открой Финансы и подожди"}
+    import re as _re
+    pat = _re.compile("компенс|ущерб|возмещ|потер|утил|брак|уценк|списан", _re.I)
+    by_month: dict = {}
+    total = 0.0
+    for r in rows:
+        oper = str(r.get("operName") or "")
+        doc = str(r.get("docTypeName") or "")
+        if not (pat.search(oper) or pat.search(doc)):
+            continue
+        mk = str(r.get("rrDate") or "")[:7]
+        amount = float(r.get("forPay") or 0) or float(r.get("retailAmount") or 0)
+        b = by_month.setdefault(mk, {}).setdefault(oper or doc, {
+            "rows": 0, "qty": 0, "sum": 0.0, "skus": {}})
+        b["rows"] += 1
+        b["qty"] += int(r.get("quantity") or 0)
+        b["sum"] += amount
+        sku = str(r.get("vendorCode") or "?")
+        b["skus"][sku] = round(b["skus"].get(sku, 0) + amount)
+        total += amount
+    # компактно: топ-10 SKU в каждом типе
+    for mk, opers in by_month.items():
+        for op, b in opers.items():
+            b["sum"] = round(b["sum"])
+            b["skus"] = dict(sorted(b["skus"].items(),
+                                    key=lambda kv: -abs(kv[1]))[:10])
+    # для полноты — все типы операций отчёта (вдруг компенсация зовётся иначе)
+    oper_names: dict = {}
+    for r in rows:
+        k = str(r.get("operName") or r.get("docTypeName") or "—")
+        oper_names[k] = oper_names.get(k, 0) + 1
+    return {"total": round(total),
+            "months": {mk: by_month[mk] for mk in sorted(by_month)},
+            "all_oper_names": dict(sorted(oper_names.items(),
+                                          key=lambda kv: -kv[1]))}
+
+
 @router.get("/wb/debug", include_in_schema=False)
 async def wb_finance_debug():
     """Диагностика WB P&L: состояние кешей + живая проба reportDetailByPeriod."""
