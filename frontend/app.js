@@ -5382,7 +5382,7 @@ function renderProductolog() {
     return row;
   };
   orderedGroups.forEach(([gname, list]) => {
-    html += `<tr class="table-secondary"><td colspan="5" style="padding:6px 12px"><strong>${gname}</strong> <span class="text-secondary small">(${list.length} арт.)</span></td></tr>`;
+    html += `<tr class="table-secondary"><td colspan="6" style="padding:6px 12px"><strong>${gname}</strong> <span class="text-secondary small">(${list.length} арт.)</span></td></tr>`;
     list.forEach(it => { html += rowHtml(it); });
   });
   html += `</tbody></table></div></div></div>
@@ -7245,6 +7245,23 @@ function _dimCell(p) {
   return `<td class="text-center"><div>${dims} см</div><div class="small text-secondary">${p.litres != null ? p.litres + ' л' : ''}${wt}</div></td>`;
 }
 
+async function editDimActual(sku) {
+  const i = ((_dimsData || {}).items || []).find(x => x.sku === sku) || {};
+  const cur = i.actual ? `${i.actual.l}x${i.actual.w}x${i.actual.h} ${i.actual.weight_g || ''}`.trim() : '';
+  const raw = prompt(`Факт для ${sku}: Д×Ш×В в см и вес в граммах\nформат: 7x17.5x7 156`, cur);
+  if (raw == null) return;
+  const m = raw.trim().match(/^([\d.,]+)\s*[x×х]\s*([\d.,]+)\s*[x×х]\s*([\d.,]+)(?:\s+([\d.,]+))?$/i);
+  if (!m) { alert('Не понял формат. Пример: 7x17.5x7 156'); return; }
+  const n = v => parseFloat(String(v).replace(',', '.'));
+  const body = { sku, l: n(m[1]), w: n(m[2]), h: n(m[3]) };
+  if (m[4]) body.weight_g = n(m[4]);
+  try {
+    await fetch('/api/tools/dimensions/actual', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    loadDims();
+  } catch (e) { alert('Не сохранилось: ' + e.message); }
+}
+
 function renderDims() {
   const wrap = document.getElementById('dimsWrap');
   const d = _dimsData || {};
@@ -7263,7 +7280,8 @@ function renderDims() {
       <th class="text-center">WB (Д×Ш×В)</th>
       <th class="text-center">Ozon</th>
       <th class="text-center">ЯМ</th>
-      <th class="text-center" title="Разброс литража между площадками">Разброс</th>
+      <th class="text-center" style="background:linear-gradient(rgba(16,185,129,.08),rgba(16,185,129,.08)),var(--t-sticky)" title="Фактический замер (рулетка+весы)">Факт (замер)</th>
+      <th class="text-center" title="Наибольшее отклонение площадки от факта (или разброс между площадками, если замера нет)">Расхожд.</th>
     </tr></thead><tbody>`;
   const groups = {};
   items.forEach(i => {
@@ -7273,13 +7291,14 @@ function renderDims() {
   const order = GROUP_ORDER.filter(g => groups[g]).concat(Object.keys(groups).filter(g => !GROUP_ORDER.includes(g)));
   order.forEach(gname => {
     const list = groups[gname];
-    html += `<tr class="table-secondary"><td colspan="5" style="padding:6px 12px"><strong>${esc(gname)}</strong> <span class="text-secondary small">(${list.length} арт.)</span></td></tr>`;
+    html += `<tr class="table-secondary"><td colspan="6" style="padding:6px 12px"><strong>${esc(gname)}</strong> <span class="text-secondary small">(${list.length} арт.)</span></td></tr>`;
     list.forEach(i => {
       html += `<tr style="background:var(--t-row)">
         <td style="padding:5px 12px"><code style="color:var(--val-soft)">${esc(i.sku)}</code>
           <div class="small text-secondary" style="max-width:260px;overflow:hidden;text-overflow:ellipsis">${esc(i.name || '')}</div></td>
         ${_dimCell(i.wb)}${_dimCell(i.ozon)}${_dimCell(i.ym)}
-        <td class="text-center">${i.spread_pct != null ? `<span class="${i.mismatch ? 'text-danger fw-bold' : 'text-secondary'}">${i.spread_pct}%</span>` : '<span class="text-secondary">—</span>'}</td>
+        <td class="text-center" style="background:rgba(16,185,129,.05);cursor:pointer" title="Клик — поправить замер" onclick="editDimActual('${esc(i.sku)}')">${i.actual ? `<div>${i.actual.l}×${i.actual.w}×${i.actual.h} см</div><div class="small text-secondary">${i.actual.litres != null ? i.actual.litres + ' л' : ''}${i.actual.weight_g ? ' · ' + (i.actual.weight_g >= 1000 ? (i.actual.weight_g/1000).toFixed(1) + ' кг' : i.actual.weight_g + ' г') : ''}</div>` : '<span class="text-secondary">— <i class="bi bi-pencil small"></i></span>'}</td>
+        <td class="text-center">${i.spread_pct != null ? `<span class="${i.mismatch ? 'text-danger fw-bold' : 'text-secondary'}" title="${i.vs_actual ? 'отклонение от факта' : 'разброс между площадками'}">${i.spread_pct}%</span>` : '<span class="text-secondary">—</span>'}</td>
       </tr>`;
     });
   });

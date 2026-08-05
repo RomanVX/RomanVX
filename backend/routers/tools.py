@@ -1832,6 +1832,71 @@ async def refresh_client_prices() -> dict:
 _dims_cache: dict = {}
 _dims_ts: float = 0.0
 
+# фактические замеры (листы владельца, 08.2026): вес г, габариты см
+_DIMS_ACTUAL_SEED = {
+    **{f"ST-0{i}": {"l": 7, "w": 17.5, "h": 7, "weight_g": 156}
+       for i in range(1, 7)},
+    "ST-07": {"l": 12, "w": 12, "h": 12, "weight_g": 618},
+    "AL-01": {"l": 7, "w": 17.5, "h": 7, "weight_g": 212},
+    "AL-02": {"l": 7, "w": 17.5, "h": 7, "weight_g": 205},
+    "AL-03": {"l": 7, "w": 17.5, "h": 7, "weight_g": 207},
+    "AL-04": {"l": 7, "w": 17.5, "h": 7, "weight_g": 208},
+    "AL-05": {"l": 7, "w": 17.5, "h": 7, "weight_g": 146},
+    "AL-06": {"l": 7, "w": 17.5, "h": 7, "weight_g": 150},
+    "AL-07": {"l": 7, "w": 17.5, "h": 7, "weight_g": 148},
+    "BMN-0002": {"l": 7, "w": 17.5, "h": 7, "weight_g": 256},
+    "BMN-0008": {"l": 7, "w": 17.5, "h": 7, "weight_g": 256},
+    "BMN-0004": {"l": 7, "w": 17.5, "h": 7, "weight_g": 258},
+    "BMN-0006": {"l": 7, "w": 17.5, "h": 7, "weight_g": 257},
+    "BMN-0053": {"l": 7, "w": 17.5, "h": 7, "weight_g": 258},
+    "BMN-0055": {"l": 7, "w": 17.5, "h": 7, "weight_g": 259},
+    "BMN-0106": {"l": 7, "w": 17.5, "h": 7, "weight_g": 253},
+    "BMN-0109": {"l": 7, "w": 17.5, "h": 7, "weight_g": 254},
+    "BMN-0110": {"l": 7, "w": 17.5, "h": 7, "weight_g": 93},
+    "BMN-0115": {"l": 7, "w": 17.5, "h": 7, "weight_g": 93},
+    "BMN-0116": {"l": 7, "w": 17.5, "h": 7, "weight_g": 93},
+    "BMN-0013": {"l": 12, "w": 12, "h": 12, "weight_g": 297},
+    "BMN-0036": {"l": 12, "w": 12, "h": 12, "weight_g": 297},
+    "BMN-0028": {"l": 12, "w": 12, "h": 12, "weight_g": 620},
+    "BMN-0035": {"l": 12, "w": 12, "h": 12, "weight_g": 620},
+    "BMN-0058": {"l": 10, "w": 20, "h": 13, "weight_g": 304},
+    **{f"BMN-01{i}": {"l": 10, "w": 20, "h": 13, "weight_g": 342}
+       for i in (11, 12, 13, 14)},
+    **{f"BMN-01{i}": {"l": 10, "w": 20, "h": 13, "weight_g": 460}
+       for i in (17, 18, 19, 20, 21)},
+    "BMN-0069": {"l": 8.5, "w": 9, "h": 9.5, "weight_g": 77},
+    "BMN-0070": {"l": 8.5, "w": 9, "h": 9.5, "weight_g": 77},
+}
+
+
+async def _dims_actual() -> dict:
+    import snapshot as _snap
+    stored = await asyncio.to_thread(_snap.load, "dims_actual", None) or {}
+    out = dict(_DIMS_ACTUAL_SEED)
+    out.update(stored)
+    for v in out.values():
+        try:
+            v["litres"] = round(v["l"] * v["w"] * v["h"] / 1000, 2)
+        except (KeyError, TypeError):
+            v["litres"] = None
+    return out
+
+
+@router.post("/dimensions/actual")
+async def set_dimension_actual(payload: dict):
+    """Правка фактического замера: {sku, l, w, h, weight_g}."""
+    import snapshot as _snap
+    global _dims_cache, _dims_ts
+    sku = str(payload.get("sku") or "").strip().upper()
+    if not sku:
+        return {"error": "нет sku"}
+    stored = await asyncio.to_thread(_snap.load, "dims_actual", None) or {}
+    stored[sku] = {k: float(payload[k]) for k in ("l", "w", "h", "weight_g")
+                   if payload.get(k) is not None}
+    await asyncio.to_thread(_snap.save, "dims_actual", stored)
+    _dims_cache, _dims_ts = {}, 0.0
+    return {"status": "ok"}
+
 
 @router.get("/dimensions")
 async def get_dimensions(refresh: bool = Query(default=False)):
@@ -1862,11 +1927,10 @@ async def get_dimensions(refresh: bool = Query(default=False)):
     except Exception as e:
         _log.warning("dims ym: %s", str(e)[:120])
 
-    def _mm_to_cm(v):
-        return round(v / 10, 1) if v else None
+    actual = await _dims_actual()
 
     items = []
-    for sku in sorted(set(wb) | set(oz) | set(ym)):
+    for sku in sorted(set(wb) | set(oz) | set(ym) | set(actual)):
         w, o, y = wb.get(sku), oz.get(sku), ym.get(sku)
         row = {"sku": sku,
                "name": (w or {}).get("title") or (y or {}).get("name") or ""}
@@ -1886,13 +1950,23 @@ async def get_dimensions(refresh: bool = Query(default=False)):
             row["ym"] = {"l": y.get("length"), "w": y.get("width"),
                          "h": y.get("height"), "litres": y.get("litres"),
                          "weight_g": y.get("weight_g")}
+        act = actual.get(sku)
+        if act:
+            row["actual"] = act
         if len(row) <= 2:
             continue
-        lits = [p["litres"] for p in (row.get("wb"), row.get("ozon"),
-                                      row.get("ym"))
-                if p and p.get("litres")]
-        if len(lits) >= 2 and min(lits) > 0:
-            spread = (max(lits) - min(lits)) / min(lits) * 100
+        plats = [p["litres"] for p in (row.get("wb"), row.get("ozon"),
+                                       row.get("ym"))
+                 if p and p.get("litres")]
+        if act and act.get("litres") and plats:
+            # расхождение к факту: наибольшее отклонение площадки от замера
+            spread = max(abs(l - act["litres"]) / act["litres"] * 100
+                         for l in plats)
+            row["spread_pct"] = round(spread)
+            row["mismatch"] = spread >= 15
+            row["vs_actual"] = True
+        elif len(plats) >= 2 and min(plats) > 0:
+            spread = (max(plats) - min(plats)) / min(plats) * 100
             row["spread_pct"] = round(spread)
             row["mismatch"] = spread >= 15
         items.append(row)
