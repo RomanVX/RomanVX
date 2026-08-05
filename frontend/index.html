@@ -98,6 +98,7 @@
         <a href="#" id="tabRepricer" style="display:none" onclick="goNav('repricer','navOps');return false">Репрайсер</a>
         <a href="#" id="tabStrategy" style="display:none" onclick="goNav('strategy','navOps');return false">Стратегия</a>
         <div class="mp-drop-sep"></div>
+        <a href="#" onclick="goNav('dims','navOps');return false">Габариты товаров</a>
         <a href="#" onclick="goNav('timeline','navOps');return false">Действия на графике</a>
         <a href="#" onclick="goNav('actions','navOps');return false">Управление и решения</a>
         <a href="#" onclick="goNav('onboard','navOps');return false">Подключение кабинета</a>
@@ -285,6 +286,16 @@
     </div>
     <div id="fbsWrap"><div class="text-center text-secondary py-4"><span class="spinner-border"></span></div></div>
   </div><!-- /pane-fbs -->
+
+  <!-- ── Габариты товаров ── -->
+  <div id="pane-dims" style="display:none">
+    <div class="d-flex gap-3 mb-3 flex-wrap align-items-center">
+      <h3 class="mb-0 fw-bold">Габариты товаров</h3>
+      <span class="text-secondary small">размеры карточек на всех площадках · расхождения = переплата за логистику</span>
+      <button class="mp-refresh ms-auto" onclick="loadDims(true)" title="Обновить с площадок"><i class="bi bi-arrow-clockwise"></i></button>
+    </div>
+    <div id="dimsWrap"><div class="text-center text-secondary py-4"><span class="spinner-border"></span></div></div>
+  </div><!-- /pane-dims -->
 
   <!-- ── Действия на графике ── -->
   <div id="pane-timeline" style="display:none">
@@ -674,6 +685,6 @@
 
 <script src="vendor/bootstrap.bundle.min.js"></script>
 <script src="vendor/chart.umd.min.js"></script>
-<script src="app.js?v=216"></script>
+<script src="app.js?v=217"></script>
 </body>
 </html>

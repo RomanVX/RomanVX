@@ -406,3 +406,40 @@ async def get_services_report_month(year: int, month: int) -> bytes | None:
     r = await _http().get(file_url, follow_redirects=True, timeout=120)
     r.raise_for_status()
     return r.content
+
+
+async def get_dimensions() -> dict[str, dict]:
+    """Габариты карточек ЯМ: POST /v2/businesses/{id}/offer-mappings,
+    поле offer.weightDimensions — length/width/height в СМ, weight в КГ."""
+    if not YM_API_KEY or not YM_BUSINESS_ID:
+        return {}
+    out: dict[str, dict] = {}
+    page_token = ""
+    for _ in range(20):
+        params = {"limit": 200}
+        if page_token:
+            params["page_token"] = page_token
+        data = await _post(f"/v2/businesses/{YM_BUSINESS_ID}/offer-mappings",
+                           {}, params=params)
+        result = (data.get("result") or {})
+        for m in result.get("offerMappings") or []:
+            offer = m.get("offer") or {}
+            oid = str(offer.get("offerId") or "").strip()
+            wd = offer.get("weightDimensions") or {}
+            if not oid or not wd:
+                continue
+            oid = SKU_ALIASES.get(oid, oid)
+            l = float(wd.get("length") or 0)
+            w = float(wd.get("width") or 0)
+            h = float(wd.get("height") or 0)
+            out[oid.upper()] = {
+                "length": l or None, "width": w or None, "height": h or None,
+                "litres": round(l * w * h / 1000, 2) if l and w and h else None,
+                "weight_g": (round(float(wd.get("weight")) * 1000)
+                             if wd.get("weight") else None),
+                "name": (offer.get("name") or "")[:80]}
+        page_token = ((result.get("paging") or {}).get("nextPageToken")) or ""
+        if not page_token:
+            break
+    _log.info("[YM] dimensions: %d карточек", len(out))
+    return out

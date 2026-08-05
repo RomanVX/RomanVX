@@ -1829,6 +1829,79 @@ async def refresh_client_prices() -> dict:
     return {"updated": len(rows), "fetched_at": today}
 
 
+_dims_cache: dict = {}
+_dims_ts: float = 0.0
+
+
+@router.get("/dimensions")
+async def get_dimensions(refresh: bool = Query(default=False)):
+    """Габариты товаров со всех площадок: WB (карточки content-API),
+    Ozon (product/info/attributes), ЯМ (offer-mappings). Литраж и вес
+    по каждой площадке + флаг расхождения (переплата за логистику)."""
+    global _dims_cache, _dims_ts
+    if not refresh and _dims_cache and _time.monotonic() - _dims_ts < 3600:
+        return _dims_cache
+    import wb_fbs
+    import ozon_client
+    import ym_client
+    wb, oz, ym = {}, {}, {}
+    try:
+        wb = await wb_fbs.chrt_map()
+        # старый снапшот без габаритов — пересобрать один раз
+        if wb and not any(v.get("length") for v in wb.values()):
+            wb = await wb_fbs.chrt_map(refresh=True)
+    except Exception as e:
+        _log.warning("dims wb: %s", str(e)[:120])
+    try:
+        oz = await ozon_client.get_product_volumes()
+        oz = {k.upper(): v for k, v in oz.items()}
+    except Exception as e:
+        _log.warning("dims ozon: %s", str(e)[:120])
+    try:
+        ym = await ym_client.get_dimensions()
+    except Exception as e:
+        _log.warning("dims ym: %s", str(e)[:120])
+
+    def _mm_to_cm(v):
+        return round(v / 10, 1) if v else None
+
+    items = []
+    for sku in sorted(set(wb) | set(oz) | set(ym)):
+        w, o, y = wb.get(sku), oz.get(sku), ym.get(sku)
+        row = {"sku": sku,
+               "name": (w or {}).get("title") or (y or {}).get("name") or ""}
+        if w and (w.get("length") or w.get("litres")):
+            row["wb"] = {"l": w.get("length"), "w": w.get("width"),
+                         "h": w.get("height"), "litres": w.get("litres"),
+                         "weight_g": w.get("weight_g")}
+        if o and (o.get("height") or o.get("litres")):
+            # Ozon отдаёт мм — приводим к см для сравнимости
+            k = 1 if (o.get("unit") == "cm") else 0.1
+            row["ozon"] = {"l": round((o.get("depth") or 0) * k, 1) or None,
+                           "w": round((o.get("width") or 0) * k, 1) or None,
+                           "h": round((o.get("height") or 0) * k, 1) or None,
+                           "litres": o.get("litres"),
+                           "weight_g": o.get("weight_g")}
+        if y and (y.get("length") or y.get("litres")):
+            row["ym"] = {"l": y.get("length"), "w": y.get("width"),
+                         "h": y.get("height"), "litres": y.get("litres"),
+                         "weight_g": y.get("weight_g")}
+        if len(row) <= 2:
+            continue
+        lits = [p["litres"] for p in (row.get("wb"), row.get("ozon"),
+                                      row.get("ym"))
+                if p and p.get("litres")]
+        if len(lits) >= 2 and min(lits) > 0:
+            spread = (max(lits) - min(lits)) / min(lits) * 100
+            row["spread_pct"] = round(spread)
+            row["mismatch"] = spread >= 15
+        items.append(row)
+    out = {"items": items, "counts": {"wb": len(wb), "ozon": len(oz),
+                                      "ym": len(ym)}}
+    _dims_cache, _dims_ts = out, _time.monotonic()
+    return out
+
+
 @router.get("/logistics_compare")
 async def logistics_compare(sku: str = Query(default="ST-03"),
                             wh: str = Query(default="Коледино,Владивосток")):

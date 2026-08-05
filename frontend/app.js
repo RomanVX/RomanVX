@@ -25,7 +25,7 @@ document.addEventListener('DOMContentLoaded', _initThemeBtn);
 const API = '';
 let charts = {};
 let sortState = {};
-const dirty = { salesan: true, stocks: true, reviews: true, finance: true, unit: true, tools: true, toolsoz: true, docs: true, strategy: true, repricer: true, news: true, money: true, onboard: true, sim: true, actions: true, damage: true, timeline: true, fbs: true };
+const dirty = { salesan: true, stocks: true, reviews: true, finance: true, unit: true, tools: true, toolsoz: true, docs: true, strategy: true, repricer: true, news: true, money: true, onboard: true, sim: true, actions: true, damage: true, timeline: true, fbs: true, dims: true };
 let _advertData = [];
 let currentTab = 'finance';
 let prodAllData = [];
@@ -247,7 +247,7 @@ function goNavTool(tab, tool, navId) {
 function switchTab(name, linkEl) {
   document.querySelectorAll('#mainTabs .nav-link').forEach(a => a.classList.remove('active'));
   if (linkEl) linkEl.classList.add('active');
-  ['salesan', 'stocks', 'reviews', 'finance', 'unit', 'tools', 'toolsoz', 'docs', 'strategy', 'repricer', 'news', 'money', 'onboard', 'sim', 'actions', 'damage', 'timeline', 'fbs'].forEach(t => {
+  ['salesan', 'stocks', 'reviews', 'finance', 'unit', 'tools', 'toolsoz', 'docs', 'strategy', 'repricer', 'news', 'money', 'onboard', 'sim', 'actions', 'damage', 'timeline', 'fbs', 'dims'].forEach(t => {
     const el = document.getElementById('pane-' + t);
     if (el) el.style.display = t === name ? 'block' : 'none';
   });
@@ -259,7 +259,7 @@ function switchTab(name, linkEl) {
        unit: loadUnitEconomics, strategy: loadStrategy, repricer: loadRepricer,
        news: loadNews, money: loadMoney, onboard: loadOnboard,
        sim: loadSim, actions: loadActions, damage: loadDamage,
-       timeline: loadTimeline, fbs: loadFbs })[name]();
+       timeline: loadTimeline, fbs: loadFbs, dims: loadDims })[name]();
   }
 }
 
@@ -7221,4 +7221,68 @@ async function damageFetch(wh) {
     }
     loadDamage();
   } catch (e) { alert('Ошибка: ' + e.message); loadDamage(); }
+}
+
+
+// ── Габариты товаров (все площадки) ─────────────────────────────────────────
+let _dimsData = null;
+async function loadDims(refresh) {
+  const wrap = document.getElementById('dimsWrap');
+  if (refresh) wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border"></span><div class="small mt-2">Собираю карточки с WB, Ozon и ЯМ…</div></div>';
+  try {
+    _dimsData = await (await fetch('/api/tools/dimensions' + (refresh ? '?refresh=1' : ''))).json();
+  } catch (e) {
+    wrap.innerHTML = `<div class="alert alert-warning">Не загрузилось: ${esc(e.message)}</div>`;
+    return;
+  }
+  renderDims();
+}
+
+function _dimCell(p) {
+  if (!p) return '<td class="text-center text-secondary">—</td>';
+  const dims = (p.l && p.w && p.h) ? `${p.l}×${p.w}×${p.h}` : '?';
+  const wt = p.weight_g ? ` · ${p.weight_g >= 1000 ? (p.weight_g / 1000).toFixed(1) + ' кг' : p.weight_g + ' г'}` : '';
+  return `<td class="text-center"><div>${dims} см</div><div class="small text-secondary">${p.litres != null ? p.litres + ' л' : ''}${wt}</div></td>`;
+}
+
+function renderDims() {
+  const wrap = document.getElementById('dimsWrap');
+  const d = _dimsData || {};
+  const items = d.items || [];
+  if (d.error) { wrap.innerHTML = `<div class="alert alert-warning">${esc(d.error)}</div>`; return; }
+  if (!items.length) { wrap.innerHTML = '<div class="alert alert-secondary">Карточек с габаритами не нашлось</div>'; return; }
+  const bad = items.filter(i => i.mismatch);
+  let html = '';
+  if (bad.length) {
+    html += `<div class="alert alert-warning py-2 small mb-3"><b>Расхождение литража ≥15% у ${bad.length} SKU</b> — где литраж завышен, там переплата за логистику при каждой продаже. Проверь карточки: ${bad.slice(0, 8).map(i => `<code>${esc(i.sku)}</code>`).join(', ')}${bad.length > 8 ? '…' : ''}</div>`;
+  }
+  html += `<div class="text-secondary small mb-2">Карточек: WB ${((d.counts||{}).wb)||0} · Ozon ${((d.counts||{}).ozon)||0} · ЯМ ${((d.counts||{}).ym)||0}. Литраж считает тариф логистики — чем меньше честный объём, тем дешевле каждая продажа.</div>`;
+  html += `<div class="card border-0 bg-card"><div class="card-body p-0"><div class="table-responsive" style="max-height:75vh">
+    <table class="table table-sm align-middle mb-0 text-nowrap" style="font-size:.85rem"><thead><tr>
+      <th style="min-width:220px">Товар</th>
+      <th class="text-center">WB (Д×Ш×В)</th>
+      <th class="text-center">Ozon</th>
+      <th class="text-center">ЯМ</th>
+      <th class="text-center" title="Разброс литража между площадками">Разброс</th>
+    </tr></thead><tbody>`;
+  const groups = {};
+  items.forEach(i => {
+    const g = articleGroup({ supplierArticle: i.sku, brand: i.group || '' });
+    (groups[g] = groups[g] || []).push(i);
+  });
+  const order = GROUP_ORDER.filter(g => groups[g]).concat(Object.keys(groups).filter(g => !GROUP_ORDER.includes(g)));
+  order.forEach(gname => {
+    const list = groups[gname];
+    html += `<tr class="table-secondary"><td colspan="5" style="padding:6px 12px"><strong>${esc(gname)}</strong> <span class="text-secondary small">(${list.length} арт.)</span></td></tr>`;
+    list.forEach(i => {
+      html += `<tr style="background:var(--t-row)">
+        <td style="padding:5px 12px"><code style="color:var(--val-soft)">${esc(i.sku)}</code>
+          <div class="small text-secondary" style="max-width:260px;overflow:hidden;text-overflow:ellipsis">${esc(i.name || '')}</div></td>
+        ${_dimCell(i.wb)}${_dimCell(i.ozon)}${_dimCell(i.ym)}
+        <td class="text-center">${i.spread_pct != null ? `<span class="${i.mismatch ? 'text-danger fw-bold' : 'text-secondary'}">${i.spread_pct}%</span>` : '<span class="text-secondary">—</span>'}</td>
+      </tr>`;
+    });
+  });
+  html += '</tbody></table></div></div></div>';
+  wrap.innerHTML = html;
 }

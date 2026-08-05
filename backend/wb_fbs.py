@@ -82,7 +82,12 @@ async def chrt_map(refresh: bool = False) -> dict:
                 "art": art, "nmID": c.get("nmID"),
                 "chrtId": s0.get("chrtID"),
                 "barcode": (s0.get("skus") or [""])[0],
-                "litres": litres}
+                "litres": litres,
+                "title": (c.get("title") or "")[:80],
+                "length": dims.get("length"), "width": dims.get("width"),
+                "height": dims.get("height"),
+                "weight_g": (round(float(dims.get("weightBrutto")) * 1000)
+                             if dims.get("weightBrutto") else None)}
         cur = data.get("cursor") or {}
         if (cur.get("total") or 0) < cursor.get("limit", 100) or not cards:
             break
