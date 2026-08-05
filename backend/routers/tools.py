@@ -1829,6 +1829,70 @@ async def refresh_client_prices() -> dict:
     return {"updated": len(rows), "fetched_at": today}
 
 
+@router.get("/logistics_compare")
+async def logistics_compare(sku: str = Query(default="ST-03"),
+                            wh: str = Query(default="Коледино,Владивосток")):
+    """Сравнение тарифа логистики WB (FBW, короба) для одного SKU по складам:
+    база + ₽/доп.литр × объём карточки. Показывает, во что обходится отгрузка
+    одной штуки с каждого склада (без учёта индекса локализации)."""
+    import wb_client
+
+    def _n(v):
+        try:
+            return float(str(v).replace(",", "."))
+        except Exception:
+            return 0.0
+    # объём единицы, л — из отчёта платного хранения за последние дни
+    sku_u = sku.strip().upper()
+    vol, nm_found = 0.0, None
+    try:
+        from datetime import date as _date
+        d_to = (_date.today() - timedelta(days=1)).isoformat()
+        d_from = (_date.today() - timedelta(days=3)).isoformat()
+        for r in await wb_client.get_paid_storage(d_from, d_to):
+            if str(r.get("vendorCode") or "").strip().upper() == sku_u \
+                    and _n(r.get("volume")) > 0:
+                vol, nm_found = _n(r.get("volume")), r.get("nmId")
+                break
+    except Exception as e:
+        _log.warning("logcmp storage: %s", str(e)[:120])
+    if not vol:
+        # фолбэк — литраж из габаритов карточки (content-API)
+        try:
+            import wb_fbs
+            cm = await wb_fbs.chrt_map()
+            vol = float((cm.get(sku_u) or {}).get("litres") or 0)
+            nm_found = (cm.get(sku_u) or {}).get("nmID")
+        except Exception:
+            pass
+    if not vol:
+        return {"error": f"не нашёл объём для {sku_u}"}
+    wants = [w.strip().lower() for w in wh.split(",") if w.strip()]
+    boxes = await wb_client.get_box_tariffs()
+    res = []
+    for b in boxes:
+        name = str(b.get("warehouseName") or "")
+        if not any(w in name.lower() for w in wants):
+            continue
+        base, liter = _n(b.get("boxDeliveryBase")), _n(b.get("boxDeliveryLiter"))
+        if base <= 0:
+            continue
+        cost = base + liter * max(vol - 1, 0)
+        res.append({"warehouse": name, "base": base, "per_liter": liter,
+                    "unit_logistics": round(cost, 1)})
+    res.sort(key=lambda x: x["unit_logistics"])
+    out = {"sku": sku_u, "nmId": nm_found, "volume_l": round(vol, 2),
+           "warehouses": res}
+    if len(res) >= 2:
+        out["diff_per_unit"] = round(res[-1]["unit_logistics"]
+                                     - res[0]["unit_logistics"], 1)
+    if not res:
+        out["hint"] = ("склады не найдены — доступные имена: "
+                       + ", ".join(sorted({str(b.get('warehouseName') or '')
+                                           for b in boxes})[:40]))
+    return out
+
+
 @router.get("/client_prices")
 async def get_client_prices(refresh: bool = Query(default=False)):
     """Живые клиентские цены (после СПП) своих карточек + фактический СПП."""
