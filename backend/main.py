@@ -245,6 +245,23 @@ async def _damage_autofill():
         log.warning("autofill notify: %s", e)
 
 
+async def _fbs_multi_loop():
+    """Мультисклад FBS: синк виртуального остатка на привязанные склады WB
+    каждые 15 минут (как FBS-хабы, но своими руками, ключи не уходят наружу)."""
+    import wb_fbs
+    await asyncio.sleep(600)
+    log = logging.getLogger("fbs_multi")
+    while True:
+        try:
+            res = await wb_fbs.multi_sync()
+            if not res.get("skipped"):
+                log.info("синк: заказов списано %s, склады: %s",
+                         res.get("consumed_orders"), res.get("pushed"))
+        except Exception as e:
+            log.warning("синк: %s", str(e)[:150])
+        await asyncio.sleep(900)
+
+
 async def _client_prices_loop():
     """Клиентские цены (СПП) своих карточек через домашний агент: раз в
     4 часа в окно 10-22 МСК (ПК владельца включён). Молча пропускает,
@@ -498,6 +515,7 @@ async def lifespan(app: FastAPI):
     task9 = asyncio.create_task(_bid_history_daily())
     asyncio.create_task(_funnel_daily())
     asyncio.create_task(_client_prices_loop())
+    asyncio.create_task(_fbs_multi_loop())
     import gist_bridge
     asyncio.create_task(gist_bridge.loop())
     task10 = asyncio.create_task(_slot_watcher())

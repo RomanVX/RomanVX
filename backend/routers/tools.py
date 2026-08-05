@@ -3309,6 +3309,47 @@ async def export_ozon_clusters():
 
 # ══ FBS WB: сборочные задания и остатки склада продавца ══════════════════════
 
+@router.get("/fbs/multi")
+async def fbs_multi_get():
+    """Настройки мультисклада + список складов продавца WB."""
+    import wb_fbs
+    cfg = await asyncio.to_thread(wb_fbs._multi_load)
+    cfg.pop("seen", None)
+    try:
+        whs = await wb_fbs.list_warehouses()
+    except Exception as e:
+        whs = []
+        cfg["wh_error"] = str(e)[:200]
+    return {"cfg": cfg, "warehouses": whs}
+
+
+@router.post("/fbs/multi")
+async def fbs_multi_save(payload: dict):
+    """Сохранение настроек мультисклада: enabled/stock/linked/safety/zero_if_fbo."""
+    import wb_fbs
+    cfg = await asyncio.to_thread(wb_fbs._multi_load)
+    for k in ("enabled", "safety", "zero_if_fbo"):
+        if k in payload:
+            cfg[k] = payload[k]
+    if "linked" in payload:
+        cfg["linked"] = [int(w) for w in payload["linked"] or []]
+    if "stock" in payload:
+        cfg["stock"] = {str(k).strip().upper(): max(0, int(v or 0))
+                        for k, v in (payload["stock"] or {}).items()}
+    await asyncio.to_thread(wb_fbs._multi_save, cfg)
+    return {"status": "ok"}
+
+
+@router.post("/fbs/multi/sync")
+async def fbs_multi_sync():
+    """Запустить синхронизацию мультисклада прямо сейчас."""
+    import wb_fbs
+    try:
+        return await wb_fbs.multi_sync(force=True)
+    except Exception as e:
+        return {"error": str(e)[:300]}
+
+
 @router.get("/fbs/overview")
 async def fbs_overview():
     """Задания FBS (новые + последние со статусами) и текущие остатки склада."""

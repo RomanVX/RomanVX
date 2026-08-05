@@ -99,9 +99,9 @@ async def chrt_map(refresh: bool = False) -> dict:
     return out
 
 
-async def get_stocks() -> dict:
+async def get_stocks(wid: int | None = None) -> dict:
     """Текущие FBS-остатки склада: {АРТИКУЛ: qty}."""
-    wid = warehouse_id()
+    wid = wid or warehouse_id()
     if not wid:
         return {"error": "не задан ID склада продавца (fbs_warehouse_id)"}
     cmap = await chrt_map()
@@ -120,9 +120,9 @@ async def get_stocks() -> dict:
     return {"stocks": stocks, "warehouse_id": wid}
 
 
-async def set_stocks(items: list[dict]) -> dict:
+async def set_stocks(items: list[dict], wid: int | None = None) -> dict:
     """Выставить остатки: items = [{sku: 'AL-01', qty: 20}, …]."""
-    wid = warehouse_id()
+    wid = wid or warehouse_id()
     if not wid:
         return {"error": "не задан ID склада продавца"}
     cmap = await chrt_map()
@@ -224,3 +224,91 @@ async def stickers(order_ids: list[int]) -> bytes | None:
     c.save()
     buf.seek(0)
     return buf.read()
+
+# ── Мультисклад: виртуальный общий остаток на несколько складов WB ──────────
+# Конфиг в kv fbs_multi: {enabled, stock:{SKU:qty}, linked:[warehouseId],
+#   safety, zero_if_fbo, seen:[orderId], last_sync}
+
+async def list_warehouses() -> list[dict]:
+    """GET /api/v3/warehouses — все склады продавца."""
+    resp = await _req("GET", "/api/v3/warehouses")
+    if not resp.is_success:
+        return []
+    out = []
+    for w in resp.json() or []:
+        out.append({"id": w.get("id"), "name": w.get("name"),
+                    "officeId": w.get("officeId"),
+                    "cargoType": w.get("cargoType"),
+                    "deliveryType": w.get("deliveryType")})
+    return out
+
+
+def _multi_load() -> dict:
+    import snapshot as _snap
+    return _snap.load("fbs_multi", None) or {
+        "enabled": False, "stock": {}, "linked": [], "safety": 2,
+        "zero_if_fbo": 0, "seen": [], "last_sync": ""}
+
+
+def _multi_save(cfg: dict) -> None:
+    import snapshot as _snap
+    _snap.save("fbs_multi", cfg)
+
+
+async def multi_sync(force: bool = False) -> dict:
+    """Синк виртуального остатка на все привязанные склады:
+    1) новые заказы списывают штуки из виртуального стока;
+    2) страховочный запас вычитается;
+    3) опция: обнулять SKU, если на складах WB (FBO) лежит ≥ N шт;
+    4) результат пушится на каждый привязанный склад."""
+    cfg = await asyncio.to_thread(_multi_load)
+    if not cfg.get("enabled") or not cfg.get("linked") or not cfg.get("stock"):
+        return {"skipped": "мультисклад выключен или не настроен"}
+    # 1. списание по новым заказам (любой склад кабинета)
+    seen = set(cfg.get("seen") or [])
+    consumed = 0
+    resp = await _req("GET", "/api/v3/orders/new")
+    if resp.is_success:
+        cmap = await chrt_map()
+        by_nm = {v["nmID"]: k for k, v in cmap.items() if v.get("nmID")}
+        for o in (resp.json() or {}).get("orders") or []:
+            oid = o.get("id")
+            if oid in seen:
+                continue
+            seen.add(oid)
+            art = by_nm.get(o.get("nmId"))
+            if art and cfg["stock"].get(art):
+                cfg["stock"][art] = max(0, int(cfg["stock"][art]) - 1)
+                consumed += 1
+    cfg["seen"] = list(seen)[-2000:]
+    # 2-3. эффективный остаток
+    safety = int(cfg.get("safety") or 0)
+    zero_n = int(cfg.get("zero_if_fbo") or 0)
+    fbo: dict = {}
+    if zero_n:
+        try:
+            for r in await wb_client.get_stocks():
+                a = str(r.get("supplierArticle") or "").strip().upper()
+                if a:
+                    fbo[a] = fbo.get(a, 0) + int(r.get("quantity") or 0)
+        except Exception as e:
+            _log.warning("multi fbo stocks: %s", str(e)[:120])
+    items = []
+    zeroed = []
+    for sku, qty in cfg["stock"].items():
+        eff = max(0, int(qty) - safety)
+        if zero_n and fbo.get(sku, 0) >= zero_n:
+            eff = 0
+            zeroed.append(sku)
+        items.append({"sku": sku, "qty": eff})
+    # 4. пуш на все склады
+    results = {}
+    for wid in cfg["linked"]:
+        r = await set_stocks(items, wid=int(wid))
+        results[str(wid)] = r.get("error") or f"ok ({r.get('updated')})"
+        await asyncio.sleep(0.3)
+    from datetime import datetime as _dt, timedelta as _td
+    cfg["last_sync"] = (_dt.utcnow() + _td(hours=3)).strftime("%Y-%m-%d %H:%M")
+    await asyncio.to_thread(_multi_save, cfg)
+    return {"consumed_orders": consumed, "pushed": results,
+            "zeroed_by_fbo": zeroed, "last_sync": cfg["last_sync"]}

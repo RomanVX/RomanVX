@@ -6891,6 +6891,13 @@ function renderFbs() {
       <span class="text-secondary small">отправляются только заполненные строки</span>
     </div></div>`;
 
+  html += `<div class="card bg-card p-3 mb-3" id="fbsMultiCard">
+    <div class="fw-semibold mb-1">Мультисклад — общий остаток на несколько складов WB</div>
+    <div class="text-secondary small mb-2">Виртуальный сток транслируется на все привязанные склады каждые 15 минут; заказ с любого склада списывает штуку у всех. Страховочный запас и обнуление при наличии на FBO защищают от двойных заказов и невыкупов.</div>
+    <div id="fbsMultiBody" class="text-secondary small">Загружаю настройки…</div>
+  </div>`;
+  setTimeout(loadFbsMulti, 50);
+
   if (recent.length) {
     const ST = { new: 'новое', confirm: 'на сборке', complete: 'в доставке', cancel: 'отменено' };
     html += `<div class="card bg-card p-3"><div class="fw-semibold mb-2">Задания за 14 дней (${recent.length})</div>
@@ -7304,4 +7311,71 @@ function renderDims() {
   });
   html += '</tbody></table></div></div></div>';
   wrap.innerHTML = html;
+}
+
+
+// ── Мультисклад FBS ──────────────────────────────────────────────────────────
+let _fbsMulti = null;
+async function loadFbsMulti() {
+  const el = document.getElementById('fbsMultiBody');
+  if (!el) return;
+  try {
+    _fbsMulti = await (await fetch('/api/tools/fbs/multi')).json();
+  } catch (e) { el.innerHTML = 'Не загрузилось: ' + esc(e.message); return; }
+  const cfg = _fbsMulti.cfg || {};
+  const whs = _fbsMulti.warehouses || [];
+  const stockN = Object.keys(cfg.stock || {}).length;
+  el.innerHTML = `
+    <div class="d-flex flex-wrap gap-3 align-items-center mb-2">
+      <label class="form-check form-switch mb-0"><input class="form-check-input" type="checkbox" id="fmEnabled" ${cfg.enabled ? 'checked' : ''}>
+        <span class="form-check-label">Синк включён</span></label>
+      <span>Страховочный запас <input type="number" id="fmSafety" value="${cfg.safety != null ? cfg.safety : 2}" min="0" style="width:60px" class="form-control form-control-sm d-inline-block"> шт</span>
+      <span title="0 = выключено">Обнулять, если на складах WB ≥ <input type="number" id="fmZero" value="${cfg.zero_if_fbo || 0}" min="0" style="width:60px" class="form-control form-control-sm d-inline-block"> шт</span>
+    </div>
+    <div class="mb-2"><b>Склады WB (привязка):</b><br>${whs.length ? whs.map(w =>
+      `<label class="me-3"><input type="checkbox" class="fm-wh" value="${w.id}" ${(cfg.linked || []).includes(w.id) ? 'checked' : ''}> ${esc(w.name || '')} <span class="text-secondary">#${w.id}</span></label>`).join('')
+      : '<span class="text-warning">склады не загрузились — проверь токен (категория «Маркетплейс»)</span>'}</div>
+    <div class="mb-2">Виртуальный сток: <b>${stockN ? stockN + ' SKU' : 'не задан'}</b>${cfg.last_sync ? ` · последний синк ${esc(cfg.last_sync)}` : ''}</div>
+    <div class="d-flex gap-2 flex-wrap">
+      <button class="btn btn-sm btn-outline-success" onclick="fbsMultiSaveStock()">Взять сток из полей остатков ↑</button>
+      <button class="btn btn-sm btn-primary" onclick="fbsMultiSave()">Сохранить настройки</button>
+      <button class="btn btn-sm btn-outline-primary" onclick="fbsMultiSyncNow()">Синхронизировать сейчас</button>
+    </div>`;
+}
+
+function _fbsMultiCollect() {
+  return {
+    enabled: document.getElementById('fmEnabled')?.checked || false,
+    safety: parseInt(document.getElementById('fmSafety')?.value, 10) || 0,
+    zero_if_fbo: parseInt(document.getElementById('fmZero')?.value, 10) || 0,
+    linked: [...document.querySelectorAll('.fm-wh:checked')].map(i => parseInt(i.value, 10)),
+  };
+}
+
+async function fbsMultiSave(extra) {
+  const body = Object.assign(_fbsMultiCollect(), extra || {});
+  try {
+    await fetch('/api/tools/fbs/multi', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    loadFbsMulti();
+  } catch (e) { alert('Не сохранилось: ' + e.message); }
+}
+
+async function fbsMultiSaveStock() {
+  const stock = {};
+  [...document.querySelectorAll('.fbs-qty')].filter(i => i.value !== '')
+    .forEach(i => { stock[i.dataset.sku] = parseInt(i.value, 10) || 0; });
+  if (!Object.keys(stock).length) { alert('Заполни количество в таблице остатков выше'); return; }
+  if (!confirm(`Записать виртуальный сток по ${Object.keys(stock).length} SKU?`)) return;
+  await fbsMultiSave({ stock });
+}
+
+async function fbsMultiSyncNow() {
+  const el = document.getElementById('fbsMultiBody');
+  try {
+    const r = await (await fetch('/api/tools/fbs/multi/sync', { method: 'POST' })).json();
+    if (r.error || r.skipped) { alert(r.error || r.skipped); return; }
+    alert(`Синк: заказов списано ${r.consumed_orders}, склады: ${JSON.stringify(r.pushed)}${(r.zeroed_by_fbo || []).length ? ', обнулены по FBO: ' + r.zeroed_by_fbo.join(', ') : ''}`);
+    loadFbsMulti();
+  } catch (e) { alert('Ошибка: ' + e.message); }
 }
