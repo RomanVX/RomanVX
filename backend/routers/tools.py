@@ -1882,6 +1882,69 @@ async def _dims_actual() -> dict:
     return out
 
 
+@router.get("/dimensions/export")
+async def dimensions_export():
+    """Экспорт габаритов всех площадок + фактических замеров в Excel."""
+    import io
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+    from fastapi.responses import StreamingResponse
+    data = await get_dimensions(refresh=False)
+    items = data.get("items") or []
+    wb_x = openpyxl.Workbook()
+    ws = wb_x.active
+    ws.title = "Габариты"
+    head = ["Группа", "Артикул", "Название",
+            "WB Д×Ш×В, см", "WB л", "WB вес, г",
+            "Ozon Д×Ш×В, см", "Ozon л", "Ozon вес, г",
+            "ЯМ Д×Ш×В, см", "ЯМ л", "ЯМ вес, г",
+            "Факт Д×Ш×В, см", "Факт л", "Факт вес, г",
+            "Расхождение, %"]
+    ws.append(head)
+    hfill = PatternFill("solid", fgColor="1a7f5a")
+    for c in ws[1]:
+        c.font = Font(bold=True, color="FFFFFF")
+        c.fill = hfill
+        c.alignment = Alignment(horizontal="center", wrap_text=True)
+    warnfill = PatternFill("solid", fgColor="FDE9E9")
+
+    def _cells(p):
+        if not p:
+            return ["", "", ""]
+        dims = (f"{p.get('l')}×{p.get('w')}×{p.get('h')}"
+                if p.get("l") and p.get("w") and p.get("h") else "")
+        return [dims, p.get("litres") or "", p.get("weight_g") or ""]
+
+    order = {g: i for i, g in enumerate(
+        ["Джага", "Satisfucktion", "Aloe"])}
+    items = sorted(items, key=lambda i: (order.get(i.get("group"), 99),
+                                         i["sku"]))
+    for i in items:
+        rowv = ([i.get("group") or "Прочее", i["sku"], i.get("name") or ""]
+                + _cells(i.get("wb")) + _cells(i.get("ozon"))
+                + _cells(i.get("ym")) + _cells(i.get("actual"))
+                + [i.get("spread_pct") if i.get("spread_pct") is not None
+                   else ""])
+        ws.append(rowv)
+        if i.get("mismatch"):
+            for c in ws[ws.max_row]:
+                c.fill = warnfill
+    widths = [14, 12, 30] + [14, 7, 9] * 4 + [14]
+    for idx, wd in enumerate(widths, 1):
+        ws.column_dimensions[get_column_letter(idx)].width = wd
+    ws.freeze_panes = "A2"
+    buf = io.BytesIO()
+    wb_x.save(buf)
+    buf.seek(0)
+    from urllib.parse import quote
+    fname = quote("Габариты товаров.xlsx")
+    return StreamingResponse(
+        buf, media_type="application/vnd.openxmlformats-officedocument"
+                        ".spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{fname}"})
+
+
 @router.post("/dimensions/actual")
 async def set_dimension_actual(payload: dict):
     """Правка фактического замера: {sku, l, w, h, weight_g}."""
@@ -1932,8 +1995,12 @@ async def get_dimensions(refresh: bool = Query(default=False)):
     items = []
     for sku in sorted(set(wb) | set(oz) | set(ym) | set(actual)):
         w, o, y = wb.get(sku), oz.get(sku), ym.get(sku)
+        import catalog as _cat
+        _ci = _cat.CATALOG.get(sku) or {}
         row = {"sku": sku,
-               "name": (w or {}).get("title") or (y or {}).get("name") or ""}
+               "group": _ci.get("brand") or "",
+               "name": _ci.get("name") or (w or {}).get("title")
+               or (y or {}).get("name") or ""}
         if w and (w.get("length") or w.get("litres")):
             row["wb"] = {"l": w.get("length"), "w": w.get("width"),
                          "h": w.get("height"), "litres": w.get("litres"),
@@ -1953,7 +2020,7 @@ async def get_dimensions(refresh: bool = Query(default=False)):
         act = actual.get(sku)
         if act:
             row["actual"] = act
-        if len(row) <= 2:
+        if not (row.get("wb") or row.get("ozon") or row.get("ym") or act):
             continue
         plats = [p["litres"] for p in (row.get("wb"), row.get("ozon"),
                                        row.get("ym"))

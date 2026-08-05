@@ -292,7 +292,8 @@
     <div class="d-flex gap-3 mb-3 flex-wrap align-items-center">
       <h3 class="mb-0 fw-bold">Габариты товаров</h3>
       <span class="text-secondary small">размеры карточек на всех площадках · расхождения = переплата за логистику</span>
-      <button class="mp-refresh ms-auto" onclick="loadDims(true)" title="Обновить с площадок"><i class="bi bi-arrow-clockwise"></i></button>
+      <a class="btn btn-sm btn-outline-success ms-auto" href="/api/tools/dimensions/export"><i class="bi bi-file-earmark-excel"></i> Экспорт в Excel</a>
+      <button class="mp-refresh" onclick="loadDims(true)" title="Обновить с площадок"><i class="bi bi-arrow-clockwise"></i></button>
     </div>
     <div id="dimsWrap"><div class="text-center text-secondary py-4"><span class="spinner-border"></span></div></div>
   </div><!-- /pane-dims -->
