@@ -6862,7 +6862,8 @@ function renderFbs() {
     + '</div>';
 
   html += `<div class="card bg-card p-3 mb-3">
-    <div class="fw-semibold mb-2">📦 Остатки на складе продавца (Чехов, #${d.warehouse_id || '—'})</div>
+    <details id="fbsStockFold" ${localStorage.getItem('fbs_stock_open') === '0' ? '' : 'open'} ontoggle="localStorage.setItem('fbs_stock_open', this.open ? '1' : '0')">
+    <summary class="fw-semibold mb-2" style="cursor:pointer;list-style-position:outside">📦 Остатки на складе продавца (Чехов, #${d.warehouse_id || '—'}) <span class="text-secondary small fw-normal">— клик, чтобы свернуть/развернуть</span></summary>
     <div class="small text-secondary mb-2">Впиши количество и нажми «Отправить» — остатки уйдут на WB по официальному API.
       Подсвечены артикулы, у которых на складах WB осталось ≤20 шт — их FBS спасает в первую очередь.</div>
     <div class="table-responsive" style="max-height:55vh"><table class="table table-sm align-middle mb-0" style="font-size:.85rem"><thead><tr>
@@ -6889,7 +6890,7 @@ function renderFbs() {
     <div class="mt-2 d-flex gap-2 align-items-center">
       <button class="btn btn-sm btn-success" onclick="fbsSendStocks()">Отправить остатки на WB</button>
       <span class="text-secondary small">отправляются только заполненные строки</span>
-    </div></div>`;
+    </div></details></div>`;
 
   html += `<div class="card bg-card p-3 mb-3" id="fbsMultiCard">
     <div class="fw-semibold mb-1">Мультисклад — общий остаток на несколько складов WB</div>
