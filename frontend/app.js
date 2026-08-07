@@ -7376,6 +7376,11 @@ async function fbsMultiSaveStock() {
 async function fbsMultiSyncNow() {
   const el = document.getElementById('fbsMultiBody');
   try {
+    // сначала сохраняем текущее состояние тумблера/галочек — чтобы не было
+    // «выключен или не настроен» при верном виде на экране
+    await fetch('/api/tools/fbs/multi', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(_fbsMultiCollect()) });
     const r = await (await fetch('/api/tools/fbs/multi/sync', { method: 'POST' })).json();
     if (r.error || r.skipped) { alert(r.error || r.skipped); return; }
     alert(`Синк: заказов списано ${r.consumed_orders}, склады: ${JSON.stringify(r.pushed)}${(r.zeroed_by_fbo || []).length ? ', обнулены по FBO: ' + r.zeroed_by_fbo.join(', ') : ''}`);
