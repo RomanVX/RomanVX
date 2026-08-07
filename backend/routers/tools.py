@@ -3358,6 +3358,11 @@ async def fbs_stocks_import(file: UploadFile = File(...)):
     cmap = await wb_fbs.chrt_map()
     known = {k: v for k, v in stock.items() if k in cmap}
     unknown = sorted(set(stock) - set(known))
+    if unknown:
+        # кеш карточек мог устареть — пересобираем и пробуем ещё раз
+        cmap = await wb_fbs.chrt_map(refresh=True)
+        known = {k: v for k, v in stock.items() if k in cmap}
+        unknown = sorted(set(stock) - set(known))
     # в виртуальный сток мультисклада
     cfg = await asyncio.to_thread(wb_fbs._multi_load)
     cfg["stock"] = known
