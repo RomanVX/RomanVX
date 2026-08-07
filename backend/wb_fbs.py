@@ -139,7 +139,15 @@ async def set_stocks(items: list[dict], wid: int | None = None) -> dict:
         return {"error": f"ни один артикул не найден в карточках: {unknown}"}
     resp = await _req("PUT", f"/api/v3/stocks/{wid}", json={"stocks": stocks})
     if resp.status_code != 204:
-        return {"error": f"обновление → {resp.status_code}: {resp.text[:250]}"}
+        # вытащить код/сообщение WB, а не хвост data-массива
+        try:
+            errs = resp.json()
+            msg = "; ".join(f"{e.get('code')}: {e.get('message')}"
+                            for e in (errs if isinstance(errs, list) else [errs])
+                            if isinstance(e, dict) and (e.get("code") or e.get("message")))
+        except Exception:
+            msg = resp.text[:200]
+        return {"error": f"обновление → {resp.status_code}: {msg or resp.text[:200]}"}
     return {"updated": len(stocks), "unknown": unknown, "warehouse_id": wid}
 
 
