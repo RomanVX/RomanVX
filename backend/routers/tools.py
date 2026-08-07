@@ -3309,6 +3309,70 @@ async def export_ozon_clusters():
 
 # ══ FBS WB: сборочные задания и остатки склада продавца ══════════════════════
 
+@router.post("/fbs/stocks/import")
+async def fbs_stocks_import(file: UploadFile = File(...)):
+    """Загрузка остатков FBS из Excel: колонки «Артикул» и «Кол-во»
+    (шапка распознаётся; лишние колонки игнорируются). Остатки пишутся
+    в виртуальный сток мультисклада; если синк выключен — сразу пушатся
+    на основной склад."""
+    import io
+    import openpyxl
+    import wb_fbs
+    raw = await file.read()
+    try:
+        wb_x = openpyxl.load_workbook(io.BytesIO(raw), data_only=True)
+    except Exception as e:
+        return {"error": f"не смог открыть файл: {str(e)[:150]}"}
+    ws = wb_x.active
+    rows = list(ws.iter_rows(values_only=True))
+    if not rows:
+        return {"error": "файл пустой"}
+    # найти колонки по шапке, иначе взять первые две
+    sku_i, qty_i, start = 0, 1, 0
+    for ri, r in enumerate(rows[:5]):
+        cells = [str(v or "").strip().lower() for v in r]
+        if any("артикул" in c or "sku" in c for c in cells):
+            for ci, c in enumerate(cells):
+                if "артикул" in c or "sku" in c:
+                    sku_i = ci
+                if "кол" in c or "qty" in c or "шт" in c:
+                    qty_i = ci
+            start = ri + 1
+            break
+    stock: dict = {}
+    skipped = []
+    for r in rows[start:]:
+        if not r or len(r) <= max(sku_i, qty_i):
+            continue
+        sku = str(r[sku_i] or "").strip().upper()
+        if not sku or sku.startswith("ИТОГО"):
+            continue
+        try:
+            qty = max(0, int(float(r[qty_i])))
+        except (TypeError, ValueError):
+            skipped.append(sku)
+            continue
+        stock[sku] = qty
+    if not stock:
+        return {"error": "не нашёл ни одной строки «артикул + количество»"}
+    cmap = await wb_fbs.chrt_map()
+    known = {k: v for k, v in stock.items() if k in cmap}
+    unknown = sorted(set(stock) - set(known))
+    # в виртуальный сток мультисклада
+    cfg = await asyncio.to_thread(wb_fbs._multi_load)
+    cfg["stock"] = known
+    await asyncio.to_thread(wb_fbs._multi_save, cfg)
+    pushed = None
+    if cfg.get("enabled") and cfg.get("linked"):
+        pushed = await wb_fbs.multi_sync(force=True)
+    else:
+        r = await wb_fbs.set_stocks(
+            [{"sku": k, "qty": v} for k, v in known.items()])
+        pushed = r
+    return {"loaded": len(known), "unknown": unknown,
+            "skipped": skipped[:20], "pushed": pushed}
+
+
 @router.get("/fbs/multi")
 async def fbs_multi_get():
     """Настройки мультисклада + список складов продавца WB."""

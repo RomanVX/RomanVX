@@ -6889,7 +6889,9 @@ function renderFbs() {
     ${skuList.length ? '' : '<div class="alert alert-warning mb-0">Карточки кабинета не загрузились — нажми ↻; если повторится, у токена WB нет категории «Контент».</div>'}
     <div class="mt-2 d-flex gap-2 align-items-center">
       <button class="btn btn-sm btn-success" onclick="fbsSendStocks()">Отправить остатки на WB</button>
-      <span class="text-secondary small">отправляются только заполненные строки</span>
+      <label class="btn btn-sm btn-outline-success mb-0">Загрузить из Excel
+        <input type="file" accept=".xlsx" style="display:none" onchange="fbsImportStocks(this)"></label>
+      <span class="text-secondary small">отправляются только заполненные строки · Excel: колонки «Артикул» и «Кол-во»</span>
     </div></details></div>`;
 
   html += `<div class="card bg-card p-3 mb-3" id="fbsMultiCard">
@@ -7378,5 +7380,23 @@ async function fbsMultiSyncNow() {
     if (r.error || r.skipped) { alert(r.error || r.skipped); return; }
     alert(`Синк: заказов списано ${r.consumed_orders}, склады: ${JSON.stringify(r.pushed)}${(r.zeroed_by_fbo || []).length ? ', обнулены по FBO: ' + r.zeroed_by_fbo.join(', ') : ''}`);
     loadFbsMulti();
+  } catch (e) { alert('Ошибка: ' + e.message); }
+}
+
+
+async function fbsImportStocks(inp) {
+  const f = inp.files && inp.files[0];
+  if (!f) return;
+  inp.value = '';
+  if (!confirm(`Загрузить остатки из «${f.name}»? Они заменят виртуальный сток и уйдут на WB.`)) return;
+  const fd = new FormData();
+  fd.append('file', f);
+  try {
+    const r = await (await fetch('/api/tools/fbs/stocks/import', { method: 'POST', body: fd })).json();
+    if (r.error) { alert('Не вышло: ' + r.error); return; }
+    alert(`Загружено ${r.loaded} SKU.` +
+      ((r.unknown || []).length ? `\nНет в карточках WB (пропущены): ${r.unknown.join(', ')}` : '') +
+      (r.pushed && r.pushed.pushed ? `\nСинк по складам: ${JSON.stringify(r.pushed.pushed)}` : ''));
+    loadFbs(true);
   } catch (e) { alert('Ошибка: ' + e.message); }
 }
