@@ -2255,7 +2255,25 @@ function setUnitMp(mp) {
   loadUnitEconomics();
 }
 let _unitMode = 'month';                       // month — как в Excel; dyn — динамика
-let _unitMonth = null;                         // выбранный месяц или 'ALL'
+let _unitMonth = null;                         // выбранный месяц, 'ALL' или 'RANGE'
+let _unitFrom = null, _unitTo = null;          // границы диапазона (режим 'RANGE')
+
+function _unitSelMonths(months) {
+  if (_unitMonth === 'ALL') return months;
+  if (_unitMonth === 'RANGE') {
+    const keys = months.map(m => m.key);
+    const f = _unitFrom || keys[0], t = _unitTo || keys[keys.length - 1];
+    const [lo, hi] = f <= t ? [f, t] : [t, f];
+    return months.filter(m => m.key >= lo && m.key <= hi);
+  }
+  return months.filter(m => m.key === _unitMonth);
+}
+
+function setUnitRange(which, val) {
+  if (which === 'from') _unitFrom = val; else _unitTo = val;
+  _unitMonth = 'RANGE';
+  renderUnitTable();
+}
 let _unitTax = parseFloat(localStorage.getItem('unit_tax_profit_pct') || '0');
 const _unitExpanded = new Set();
 
@@ -2384,11 +2402,17 @@ function renderUnitTable() {
                  : (months.length ? months[months.length - 1].key : 'ALL');
     }
     if (_unitMode === 'month' || _unitMode === 'perunit') {
+      const rangeSel = (which, cur) => `<select class="form-select form-select-sm d-inline-block" style="width:auto;padding:2px 24px 2px 8px"
+                 onchange="setUnitRange('${which}', this.value)">` +
+        months.map(m => `<option value="${m.key}" ${cur === m.key ? 'selected' : ''}>${m.label}</option>`).join('') + '</select>';
       mBox.innerHTML = months.map(m =>
         `<button class="btn btn-sm btn-outline-info ${_unitMonth === m.key ? 'active' : ''}"
                  onclick="setUnitMonth('${m.key}')">${m.label}</button>`).join('') +
         `<button class="btn btn-sm btn-outline-info ${_unitMonth === 'ALL' ? 'active' : ''}"
-                 onclick="setUnitMonth('ALL')">Σ Период</button>`;
+                 onclick="setUnitMonth('ALL')">Σ Период</button>` +
+        `<span class="ms-2 ${_unitMonth === 'RANGE' ? '' : 'text-secondary'}" style="white-space:nowrap">от ` +
+        rangeSel('from', _unitFrom || (months[0] || {}).key) + ' до ' +
+        rangeSel('to', _unitTo || (months[months.length - 1] || {}).key) + '</span>';
     } else {
       mBox.innerHTML = '';
     }
@@ -2405,7 +2429,7 @@ let _perUnitPrice = {};         // sku → изменённая цена (руч
 function renderUnitPerUnit() {
   const wrap = document.getElementById('unitTableWrap');
   const months = _unitData.months || [];
-  const selMonths = _unitMonth === 'ALL' ? months : months.filter(m => m.key === _unitMonth);
+  const selMonths = _unitSelMonths(months);
   const skus = _unitData.skus || [];
   _perUnitBase = {};
 
@@ -2525,7 +2549,7 @@ function _unitCellSum(cells, months) {
 function renderUnitMonth() {
   const wrap = document.getElementById('unitTableWrap');
   const months = _unitData.months || [];
-  const selMonths = _unitMonth === 'ALL' ? months : months.filter(m => m.key === _unitMonth);
+  const selMonths = _unitSelMonths(months);
   const skus = _unitData.skus || [];
   const totalsCell = _unitCellSum(_unitData.totals || {}, selMonths);
 
