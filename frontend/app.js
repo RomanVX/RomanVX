@@ -2259,7 +2259,7 @@ let _unitMonth = null;                         // выбранный месяц,
 let _unitFrom = null, _unitTo = null;          // границы диапазона (режим 'RANGE')
 
 function _unitSelMonths(months) {
-  if (_unitMonth === 'ALL') return months;
+  if (_unitMonth === 'ALL' || _unitMonth === 'RANGE_DAYS') return months;
   if (_unitMonth === 'RANGE') {
     const keys = months.map(m => m.key);
     const f = _unitFrom || keys[0], t = _unitTo || keys[keys.length - 1];
@@ -2273,6 +2273,31 @@ function setUnitRange(which, val) {
   if (which === 'from') _unitFrom = val; else _unitTo = val;
   _unitMonth = 'RANGE';
   renderUnitTable();
+}
+
+// ── дневной диапазон: отдельная выборка с бэка (WB) ─────────────────────────
+let _unitDaysData = null;
+async function loadUnitDays() {
+  const f = document.getElementById('unitDayFrom')?.value;
+  const t = document.getElementById('unitDayTo')?.value;
+  if (!f || !t) { alert('Выбери обе даты'); return; }
+  const wrap = document.getElementById('unitTableWrap');
+  wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border"></span></div>';
+  try {
+    const d = await (await fetch(`/api/finance/wb/unit_days?date_from=${f}&date_to=${t}`)).json();
+    if (d.error || d.message) { wrap.innerHTML = `<div class="alert alert-warning">${esc(d.error || d.message)}</div>`; return; }
+    _unitDaysData = d;
+    _unitData = d;
+    _unitMonth = 'RANGE_DAYS';
+    renderUnitTable();
+  } catch (e) { wrap.innerHTML = `<div class="alert alert-warning">${esc(e.message)}</div>`; }
+}
+
+function unitDaysBack() {
+  _unitDaysData = null;
+  _unitMonth = null;
+  _unitData = _unitDataByMp[_unitMp] || null;
+  if (_unitData) renderUnitTable(); else loadUnitEconomics();
 }
 let _unitTax = parseFloat(localStorage.getItem('unit_tax_profit_pct') || '0');
 const _unitExpanded = new Set();
@@ -2412,7 +2437,11 @@ function renderUnitTable() {
                  onclick="setUnitMonth('ALL')">Σ Период</button>` +
         `<span class="ms-2 ${_unitMonth === 'RANGE' ? '' : 'text-secondary'}" style="white-space:nowrap">от ` +
         rangeSel('from', _unitFrom || (months[0] || {}).key) + ' до ' +
-        rangeSel('to', _unitTo || (months[months.length - 1] || {}).key) + '</span>';
+        rangeSel('to', _unitTo || (months[months.length - 1] || {}).key) + '</span>' +
+        (_unitMp === 'WB' ? `<span class="ms-3" style="white-space:nowrap">дни: <input type="date" id="unitDayFrom" class="form-control form-control-sm d-inline-block" style="width:auto;padding:2px 6px">
+          – <input type="date" id="unitDayTo" class="form-control form-control-sm d-inline-block" style="width:auto;padding:2px 6px">
+          <button class="btn btn-sm btn-outline-info" onclick="loadUnitDays()">Показать</button>` +
+          (_unitMonth === 'RANGE_DAYS' ? ' <button class="btn btn-sm btn-outline-secondary" onclick="unitDaysBack()">↩ к месяцам</button>' : '') + '</span>' : '');
     } else {
       mBox.innerHTML = '';
     }

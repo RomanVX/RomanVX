@@ -315,6 +315,163 @@ def _get_detail_if_ready(date_from: str, date_to: str) -> list[dict]:
     return []
 
 
+@router.get("/wb/unit_days")
+async def get_wb_unit_days(date_from: str = Query(...), date_to: str = Query(...)):
+    """Юнитка WB по SKU за произвольный диапазон ДНЕЙ (из детального отчёта).
+    Продажи — по дате продажи, затраты — по дате операции. Реклама месяца
+    распределяется пропорционально доле дней диапазона в месяце.
+    Формат ответа совместим с /wb/unit: months=[один период], skus[].months."""
+    from datetime import date as _date
+    rows = _detail_cache.get("rows", [])
+    if not rows:
+        return {"months": [], "skus": [],
+                "message": "⏳ Детальный отчёт ещё собирается — открой Финансы и подожди"}
+    try:
+        d_from = _date.fromisoformat(date_from)
+        d_to = _date.fromisoformat(date_to)
+    except ValueError:
+        return {"error": "даты в формате YYYY-MM-DD"}
+    if d_from > d_to:
+        d_from, d_to = d_to, d_from
+    f_s, t_s = d_from.isoformat(), d_to.isoformat()
+    import catalog as _cat
+    costs = cost_store.get_costs()
+    costs_upper = {k.upper(): v for k, v in costs.items()}
+    names = cost_store.get_names()
+    nmids = cost_store.get_nmids()
+
+    def _f(v):
+        try:
+            return float(str(v).replace(",", ".") or 0)
+        except Exception:
+            return 0.0
+
+    KEYS = ("revenue", "forPay", "qty", "cogs", "delivery", "storage",
+            "acceptance", "penalty", "acquiring", "paid", "deductions",
+            "advert", "advert_bonus",
+            "fbs_qty", "fbs_revenue", "fbs_forPay", "fbs_delivery")
+    RK = "RANGE"
+    sku_data: dict[str, dict] = {}
+
+    def sd(sku):
+        return sku_data.setdefault(sku, {k: 0.0 for k in KEYS})
+
+    def _canon(row):
+        nm = row.get("nmId")
+        if nm:
+            r = _cat.resolve_wb(nm)
+            if r and not str(r).isdigit():
+                return r
+        return (row.get("vendorCode") or "").strip().upper() or "—"
+
+    for row in rows:
+        rr = (row.get("rrDate") or "")[:10]
+        doc_type = row.get("docTypeName", "")
+        oper = (row.get("operName") or "").lower()
+        is_return = doc_type == "Возврат" or "возврат" in oper
+        if "сторно возврат" in oper:
+            is_return = False
+        elif "сторно продаж" in oper:
+            is_return = True
+        sign = -1 if is_return else 1
+        has_sale = (_f(row.get("retailPreSpp")) != 0
+                    or (_f(row.get("retailAmount")) != 0
+                        and int(row.get("quantity") or 0) > 0))
+        if has_sale:
+            sale_date = (row.get("saleDate") or rr)[:10]
+            if f_s <= sale_date <= t_s:
+                s = sd(_canon(row))
+                base = abs(_f(row.get("retailPreSpp"))) or abs(_f(row.get("retailAmount")))
+                qty = int(row.get("quantity") or 0)
+                sku_u = (row.get("vendorCode") or "").strip().upper()
+                uc = costs_upper.get(sku_u, 0.0)
+                if uc <= 0 and row.get("nmId"):
+                    uc = costs.get(_cat.resolve_wb(row.get("nmId")), 0.0)
+                s["revenue"] += sign * base
+                s["forPay"] += sign * abs(_f(row.get("forPay")))
+                s["qty"] += sign * qty
+                s["paid"] += sign * abs(_f(row.get("retailAmount")))
+                s["acquiring"] += sign * abs(_f(row.get("acquiringFee")))
+                if uc > 0 and qty > 0:
+                    s["cogs"] += sign * uc * qty
+                if row.get("isFbs"):
+                    s["fbs_qty"] += sign * qty
+                    s["fbs_revenue"] += sign * base
+                    s["fbs_forPay"] += sign * abs(_f(row.get("forPay")))
+        # операционные затраты — по дате операции
+        if rr and f_s <= rr <= t_s:
+            s = sd(_canon(row))
+            s["delivery"] += _f(row.get("deliveryService"))
+            s["storage"] += _f(row.get("paidStorage"))
+            s["acceptance"] += _f(row.get("paidAcceptance"))
+            s["penalty"] += _f(row.get("penalty"))
+            s["deductions"] += _f(row.get("deduction"))
+            if row.get("isFbs"):
+                s["fbs_delivery"] += _f(row.get("deliveryService"))
+
+    # реклама: месячная раскладка по nm → пропорция дней диапазона в месяце
+    await _adv_nm_ensure_loaded()
+    import calendar as _cal
+    for mk, per_nm in (_adv_nm_cache or {}).items():
+        y, m = int(mk[:4]), int(mk[5:7])
+        dim = _cal.monthrange(y, m)[1]
+        m_start = _date(y, m, 1)
+        m_end = _date(y, m, dim)
+        lo = max(d_from, m_start)
+        hi = min(d_to, m_end)
+        overlap = (hi - lo).days + 1
+        if overlap <= 0:
+            continue
+        share = overlap / dim
+        for nm, spend in per_nm.items():
+            sku = _cat.resolve_wb(nm)
+            sd(sku)["advert"] += spend * share
+
+    def _fmt_range_month(d):
+        rev = d["revenue"]
+        commission_full = rev - d["forPay"]
+        acq = d.get("acquiring", 0.0)
+        costs_sum = (commission_full + d["delivery"] + d["storage"]
+                     + d["acceptance"] + d["penalty"] + d["advert"]
+                     + d["deductions"])
+        gross = rev - costs_sum - d["cogs"]
+        out = {
+            "qty": round(d["qty"]), "revenue": round(rev),
+            "paid": round(d.get("paid", 0.0)),
+            "commission": round(commission_full - acq),
+            "acquiring": round(acq),
+            "delivery": round(d["delivery"]), "storage": round(d["storage"]),
+            "acceptance": round(d["acceptance"]), "penalty": round(d["penalty"]),
+            "advert": round(d["advert"]), "advert_bonus": round(d["advert_bonus"]),
+            "deductions": round(d["deductions"]), "cogs": round(d["cogs"]),
+            "payout": round(rev - costs_sum), "gross": round(gross),
+            "margin": round(gross / rev * 100) if rev > 0 else 0,
+        }
+        if d.get("fbs_qty"):
+            f_rev = d.get("fbs_revenue", 0.0)
+            out["fbs"] = {"qty": round(d["fbs_qty"]), "revenue": round(f_rev),
+                          "commission": round(f_rev - d.get("fbs_forPay", 0.0)),
+                          "delivery": round(d.get("fbs_delivery", 0.0))}
+        return out
+
+    label = f"{d_from.strftime('%d.%m')}–{d_to.strftime('%d.%m.%Y')}"
+    skus_out = []
+    for sku, m in sku_data.items():
+        if not (m["revenue"] or m["qty"] or m["delivery"] or m["advert"]):
+            continue
+        cat_info = _cat.lookup(sku)
+        skus_out.append({
+            "sku": sku, "nmId": nmids.get(sku),
+            "name": names.get(sku) or cat_info.get("name", ""),
+            "brand": cat_info.get("brand", ""),
+            "unitCost": costs_upper.get(sku.upper(), 0.0),
+            "months": {RK: _fmt_range_month(m)},
+        })
+    return {"months": [{"key": RK, "label": label}], "skus": skus_out,
+            "note": ("Реклама за дни распределена пропорционально из месячной "
+                     "раскладки; хранение/удержания — по дате операции.")}
+
+
 @router.get("/wb/compensations")
 async def wb_compensations():
     """Компенсации WB (ущерб/потеря товара и пр.) из детального отчёта:
