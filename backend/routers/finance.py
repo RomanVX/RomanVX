@@ -412,17 +412,22 @@ async def get_wb_unit_days(date_from: str = Query(...), date_to: str = Query(...
     # реклама: месячная раскладка по nm → пропорция дней диапазона в месяце
     await _adv_nm_ensure_loaded()
     import calendar as _cal
+    _today = (datetime.utcnow() + timedelta(hours=3)).date()
     for mk, per_nm in (_adv_nm_cache or {}).items():
         y, m = int(mk[:4]), int(mk[5:7])
         dim = _cal.monthrange(y, m)[1]
         m_start = _date(y, m, 1)
         m_end = _date(y, m, dim)
+        # для текущего месяца спенд накоплен только по вчера/сегодня —
+        # делим на покрытые данными дни, а не на весь месяц
+        covered_end = min(m_end, _today)
+        covered = max((covered_end - m_start).days + 1, 1)
         lo = max(d_from, m_start)
-        hi = min(d_to, m_end)
+        hi = min(d_to, covered_end)
         overlap = (hi - lo).days + 1
         if overlap <= 0:
             continue
-        share = overlap / dim
+        share = overlap / covered
         for nm, spend in per_nm.items():
             sku = _cat.resolve_wb(nm)
             sd(sku)["advert"] += spend * share
