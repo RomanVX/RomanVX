@@ -2043,6 +2043,13 @@ async def get_dimensions(refresh: bool = Query(default=False)):
     return out
 
 
+@router.post("/sales_history/cleanup")
+async def sales_history_cleanup():
+    """Разовая чистка дублей sales_daily (строки с ключом-nmId)."""
+    import sales_history
+    return await asyncio.to_thread(sales_history.cleanup_digit_skus)
+
+
 @router.get("/logistics_compare")
 async def logistics_compare(sku: str = Query(default="ST-03"),
                             wh: str = Query(default="Коледино,Владивосток")):

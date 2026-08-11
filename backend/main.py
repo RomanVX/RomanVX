@@ -516,6 +516,16 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(_funnel_daily())
     asyncio.create_task(_client_prices_loop())
     asyncio.create_task(_fbs_multi_loop())
+
+    async def _sales_cleanup_once():
+        await asyncio.sleep(120)
+        try:
+            import sales_history
+            res = await asyncio.to_thread(sales_history.cleanup_digit_skus)
+            logging.getLogger("sales_history").info("чистка дублей: %s", res)
+        except Exception as e:
+            logging.getLogger("sales_history").warning("чистка: %s", str(e)[:120])
+    asyncio.create_task(_sales_cleanup_once())
     import gist_bridge
     asyncio.create_task(gist_bridge.loop())
     task10 = asyncio.create_task(_slot_watcher())

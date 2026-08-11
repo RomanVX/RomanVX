@@ -58,10 +58,18 @@ except Exception as _e:
     _log.error("sales_history _init failed (БД недоступна?): %s", _e)
 
 
-def _upsert(agg: dict, platform: str):
-    """agg: {(sale_date, sku): [qty, revenue]} → upsert одним запросом."""
+def _upsert(agg: dict, platform: str, replace_range: bool = False):
+    """agg: {(sale_date, sku): [qty, revenue]} → upsert одним запросом.
+    replace_range=True: перед вставкой удалить ВСЕ строки платформы в диапазоне
+    дат agg — иначе строки со старыми ключами (nmId до выучивания артикула)
+    остаются и задваивают историю."""
     if not agg:
         return
+    if replace_range:
+        dates = [d for (d, _sku) in agg.keys()]
+        lo, hi = min(dates), max(dates)
+        db.execute("DELETE FROM sales_daily WHERE platform=? "
+                   "AND sale_date>=? AND sale_date<=?", (platform, lo, hi))
     today = _date.today().isoformat()
     rows = [(d, platform, sku, int(q), float(rev), today)
             for (d, sku), (q, rev) in agg.items()]
@@ -96,7 +104,7 @@ def persist_wb(sales: list[dict]):
             a = agg.setdefault((d, sku), [0, 0.0])
             a[0] += 1
             a[1] += rev
-        _upsert(agg, "WB")
+        _upsert(agg, "WB", replace_range=True)
     except Exception as e:
         _log.warning("persist_wb failed: %s", e)
 
@@ -119,7 +127,7 @@ def persist_wb_orders(orders: list[dict]):
             a = agg.setdefault((d, sku), [0, 0.0])
             a[0] += 1
             a[1] += rev
-        _upsert(agg, "WB_ORDERS")
+        _upsert(agg, "WB_ORDERS", replace_range=True)
     except Exception as e:
         _log.warning("persist_wb_orders failed: %s", e)
 
@@ -254,3 +262,32 @@ def stock_days(sku: str = "", days: int = 90) -> list[dict]:
         "SELECT day, platform, sku, qty FROM stocks_daily WHERE "
         + " AND ".join(where) + " ORDER BY day", tuple(params))
     return [dict(zip(["day", "platform", "sku", "qty"], r)) for r in rows]
+
+def cleanup_digit_skus() -> dict:
+    """Разовая чистка дублей: строки с ключом-nmId (цифры), для которых
+    каталог теперь знает артикул. Если строка с артикулом за тот же день уже
+    есть — цифровая строка является дублем и удаляется; иначе — переименовывается."""
+    import catalog as cat
+    rows = db.fetchall("SELECT sale_date, platform, sku, qty, revenue FROM sales_daily "
+                    "WHERE sku ~ '^[0-9]+$'" if db.IS_PG else
+                    "SELECT sale_date, platform, sku, qty, revenue FROM sales_daily "
+                    "WHERE sku GLOB '[0-9]*' AND NOT sku GLOB '*[^0-9]*'")
+    deleted = renamed = 0
+    for r in rows:
+        d, plat, sku = r[0], r[1], r[2]
+        resolved = cat.resolve_wb(sku)
+        if not resolved or str(resolved).isdigit():
+            continue
+        dup = db.fetchone("SELECT 1 FROM sales_daily WHERE sale_date=? "
+                           "AND platform=? AND sku=?", (d, plat, resolved))
+        if dup:
+            db.execute("DELETE FROM sales_daily WHERE sale_date=? AND platform=? "
+                       "AND sku=?", (d, plat, sku))
+            deleted += 1
+        else:
+            db.execute("UPDATE sales_daily SET sku=? WHERE sale_date=? "
+                       "AND platform=? AND sku=?", (resolved, d, plat, sku))
+            renamed += 1
+    _log.info("sales_daily cleanup: удалено дублей %d, переименовано %d",
+              deleted, renamed)
+    return {"deleted_duplicates": deleted, "renamed": renamed}
