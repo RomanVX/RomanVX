@@ -113,7 +113,7 @@ async def _own_prices_dom(page, nms: list):
     want = {int(n) for n in nms}
     got: dict = {}
     if SELLER_ID:
-        for pg in (1, 2, 3):
+        for pg in (1, 2, 3, 4, 5):
             url = (f"https://www.wildberries.ru/seller/{SELLER_ID}"
                    + (f"?page={pg}" if pg > 1 else ""))
             try:
@@ -146,7 +146,7 @@ async def _own_prices_dom(page, nms: list):
                 break
     # добор точечным поиском по nmId (выдача умеет искать по артикулу WB)
     missing = [n for n in want if n not in got]
-    for nm in missing[:15]:
+    for nm in missing[:60]:
         try:
             items = await _search(page, str(nm), limit=5)
         except Exception:
@@ -155,8 +155,8 @@ async def _own_prices_dom(page, nms: list):
             if p.get("nm") == nm and p.get("price"):
                 got[nm] = p["price"]
                 break
-    if missing[15:]:
-        print(f"   не добрали {len(missing[15:])} SKU (лимит времени)")
+    if missing[60:]:
+        print(f"   не добрали {len(missing[60:])} SKU (лимит времени)")
     return [{"nm": nm, "client": price} for nm, price in got.items()]
 
 

@@ -1728,7 +1728,8 @@ async def niche_pending(token: str = ""):
         raise HTTPException(status_code=401, detail="bad token")
     now = _t_mono()
     # чистим протухшие (агент офлайн > 5 мин)
-    for q in [q for q, ts in _agent_pending.items() if now - ts > 300]:
+    for q in [q for q, ts in _agent_pending.items()
+              if now - ts > (900 if q.startswith("nmprice:") else 300)]:
         _agent_pending.pop(q, None)
     return {"queries": list(_agent_pending.keys())}
 
@@ -2143,7 +2144,9 @@ async def _wb_agent_search(query: str) -> tuple[list, int]:
     global _niche_last_err
     _agent_inbox.pop(query, None)
     _agent_pending[query] = _t_mono()
-    for _ in range(60):            # ~3 мин ожидания результата от агента
+    # снятие клиентских цен обходит выдачу по каждому SKU — даём до 10 минут
+    _rounds = 200 if query.startswith("nmprice:") else 60
+    for _ in range(_rounds):       # ~3 мин (поиск) / ~10 мин (nmprice)
         await asyncio.sleep(3)
         res = _agent_inbox.pop(query, None)
         if res is None:
