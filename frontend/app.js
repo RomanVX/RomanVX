@@ -4910,8 +4910,9 @@ function recalcMarginRow(sku) {
       : Math.round(price * (1 - sppNow / 100));
     set('mg-buyer', `${fmtRub(buyerLive)}<div class="small" style="color:var(--ink-3)" title="живой замер с карточки WB, ${esc(b.buyer_at || '')}${stale ? ' — цена продавца менялась после замера, % пересчитан к текущей цене' : ''}">СПП ${sppNow}%${stale ? ' ⚠' : ''}</div>`);
   } else {
+    const estPct = (b.buyer0 && b.price0 > 0) ? Math.round((1 - b.buyer0 / b.price0) * 1000) / 10 : null;
     set('mg-buyer', c.buyer != null
-      ? `${fmtRub(Math.round(c.buyer))}<div class="small text-secondary" title="оценка по среднему СПП из юнитки — живой замер ещё не снимался">≈ср. СПП</div>`
+      ? `${fmtRub(Math.round(c.buyer))}<div class="small text-secondary" title="оценка: средний фактический СПП по продажам периода — живой замер с витрины ещё не снимался">≈СПП ${estPct != null ? estPct : '?'}%</div>`
       : '<span class="text-secondary">—</span>');
   }
   set('mg-costs', fmtRub(Math.round(c.comm + c.acq + c.advert + c.fixed)));

@@ -1243,8 +1243,18 @@ async def get_margin(mp: str = Query(default="WB")):
     _ft = (await asyncio.to_thread(_snap.load, "fbs_tariff", None)) \
         or {"base": 89.7, "per": 27.3}
     # живые клиентские цены (СПП) — от домашнего агента, если снимались
-    _cp = ((await asyncio.to_thread(_snap.load, "client_prices", None))
-           or {}).get("items") or {}
+    _cp_snap = (await asyncio.to_thread(_snap.load, "client_prices", None)) or {}
+    _cp = _cp_snap.get("items") or {}
+    # замер устарел (или не снимался) — тихо ставим агенту задание в фоне,
+    # чтобы фактическая СПП была на вкладке без ручного refresh
+    global _cp_auto_ts
+    try:
+        _fresh = _cp_snap.get("fetched_at") ==             (datetime.utcnow() + timedelta(hours=3)).strftime("%Y-%m-%d")
+        if mp == "WB" and not _fresh                 and _time.monotonic() - _cp_auto_ts > 1800:
+            _cp_auto_ts = _time.monotonic()
+            asyncio.create_task(refresh_client_prices())
+    except Exception:
+        pass
     # живая цена продавца (до СПП) — из API цен WB, актуальнее среднего по отчёту
     _lp: dict = {}
     if mp == "WB":
@@ -1829,6 +1839,7 @@ async def refresh_client_prices() -> dict:
     return {"updated": len(rows), "fetched_at": today}
 
 
+_cp_auto_ts: float = 0.0
 _dims_cache: dict = {}
 _dims_ts: float = 0.0
 
