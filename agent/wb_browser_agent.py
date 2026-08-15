@@ -83,6 +83,40 @@ _DOM_JS = r"""
 """
 
 
+async def _dismiss_adult(page):
+    """WB на товарах 18+ показывает заглушку «Подтвердите возраст» —
+    жмём подтверждение и ставим её куку, иначе карточек в DOM нет."""
+    try:
+        clicked = await page.evaluate("""() => {
+            const btns = [...document.querySelectorAll('button, a')];
+            const b = btns.find(x => /да|исполнилось|18|продолжить|подтвер/i
+                                     .test(x.textContent || ''));
+            if (b) { b.click(); return (b.textContent || '').trim().slice(0, 40); }
+            return null;
+        }""")
+        if clicked:
+            print(f"   подтвердил 18+ (кнопка: {clicked!r})")
+            await page.wait_for_timeout(1500)
+            return True
+    except Exception:
+        pass
+    return False
+
+
+async def _page_debug(page, tag):
+    """Диагностика пустой выдачи: что за страница на самом деле."""
+    try:
+        info = await page.evaluate("""() => ({
+            title: document.title,
+            cards: document.querySelectorAll('[data-nm-id], .product-card').length,
+            text: (document.body.innerText || '').slice(0, 180).replace(/\s+/g, ' '),
+        })""")
+        print(f"   [{tag}] title={info['title']!r} cards={info['cards']} "
+              f"text={info['text']!r}")
+    except Exception as e:
+        print(f"   [{tag}] debug не снялся: {str(e)[:80]}")
+
+
 async def _search(page, query: str, limit: int = 60):
     url = ("https://www.wildberries.ru/catalog/0/search.aspx?search="
            + urllib.parse.quote(query))
@@ -100,6 +134,13 @@ async def _search(page, query: str, limit: int = 60):
     await page.wait_for_timeout(1500)
     items = await page.evaluate(_DOM_JS)
     items = [p for p in (items or []) if p.get("nm")][:limit]
+    if not items:
+        if await _dismiss_adult(page):
+            await page.wait_for_timeout(2500)
+            items = await page.evaluate(_DOM_JS)
+            items = [p for p in (items or []) if p.get("nm")][:limit]
+        if not items:
+            await _page_debug(page, "search")
     return items
 
 
@@ -131,6 +172,11 @@ async def _own_prices_dom(page, nms: list):
                         "() => window.scrollBy(0, window.innerHeight * 2)")
                     await page.wait_for_timeout(700)
                 items = await page.evaluate(_DOM_JS) or []
+                if not items and await _dismiss_adult(page):
+                    await page.wait_for_timeout(2500)
+                    items = await page.evaluate(_DOM_JS) or []
+                if not items:
+                    await _page_debug(page, f"seller p{pg}")
             except Exception as e:
                 print(f"   страница продавца (стр. {pg}):", str(e)[:100])
                 items = []
@@ -241,6 +287,7 @@ async def main():
         try:
             await page.goto("https://www.wildberries.ru/", timeout=60000)
             await page.wait_for_timeout(3000)
+            await _dismiss_adult(page)
         except Exception:
             pass
 
