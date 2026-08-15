@@ -4899,10 +4899,16 @@ function recalcMarginRow(sku) {
   // в приоритете; при правке цены СПП применяется к новой цене
   if (b.spp_live != null) {
     const price = _marginPrice[sku] != null ? _marginPrice[sku] : _mgBase(b);
+    // СПП пересчитываем от ТЕКУЩЕЙ цены продавца: замер витрины мог быть
+    // сделан при другой цене, и зафиксированный % уже неактуален
+    const sppNow = (b.buyer_live != null && price > 0)
+      ? Math.round((1 - b.buyer_live / price) * 1000) / 10
+      : b.spp_live;
+    const stale = b.buyer_live != null && price > 0 && Math.abs(sppNow - b.spp_live) >= 3;
     const buyerLive = (b.buyer_live != null && (_marginPrice[sku] == null || _marginPrice[sku] === _mgBase(b)))
       ? b.buyer_live
-      : Math.round(price * (1 - b.spp_live / 100));
-    set('mg-buyer', `${fmtRub(buyerLive)}<div class="small" style="color:var(--ink-3)" title="живой замер с карточки WB, ${esc(b.buyer_at || '')}">СПП ${b.spp_live}%</div>`);
+      : Math.round(price * (1 - sppNow / 100));
+    set('mg-buyer', `${fmtRub(buyerLive)}<div class="small" style="color:var(--ink-3)" title="живой замер с карточки WB, ${esc(b.buyer_at || '')}${stale ? ' — цена продавца менялась после замера, % пересчитан к текущей цене' : ''}">СПП ${sppNow}%${stale ? ' ⚠' : ''}</div>`);
   } else {
     set('mg-buyer', c.buyer != null
       ? `${fmtRub(Math.round(c.buyer))}<div class="small text-secondary" title="оценка по среднему СПП из юнитки — живой замер ещё не снимался">≈ср. СПП</div>`
