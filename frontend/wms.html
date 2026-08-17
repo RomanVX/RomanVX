@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <title>WMS · Market Partners</title>
+  <link rel="icon" href="/static/mp_logo_mono.svg" />
+  <link rel="stylesheet" href="wms.css?v=1" />
+</head>
+<body>
+
+<!-- Вход -->
+<div id="wmsLogin" class="w-login">
+  <div class="w-login-box">
+    <div class="w-logo">WMS</div>
+    <div class="w-login-sub">Фулфилмент Market Partners · Чехов</div>
+    <input id="wLogin" type="text" placeholder="Логин" autocomplete="username" />
+    <input id="wPass" type="password" placeholder="Пароль" autocomplete="current-password" />
+    <button class="w-btn w-btn-primary" onclick="wmsDoLogin()">Войти</button>
+    <div id="wLoginErr" class="w-err"></div>
+  </div>
+</div>
+
+<!-- Приложение -->
+<div id="wmsApp" style="display:none">
+  <header class="w-top">
+    <div class="w-brand">WMS <span id="wWho" class="w-who"></span></div>
+    <nav id="wNav" class="w-nav"></nav>
+    <button class="w-btn w-btn-ghost" onclick="wmsLogout()">Выйти</button>
+  </header>
+  <main id="wMain" class="w-main"></main>
+</div>
+
+<script src="wms.js?v=1"></script>
+</body>
+</html>

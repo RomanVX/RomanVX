@@ -499,6 +499,7 @@ async def _agent_weekly():
 async def lifespan(app: FastAPI):
     cost_store.init()
     _auth.ensure_bootstrap()
+    _wms.ensure_bootstrap()
     task = asyncio.create_task(_prefetch_weekly())
     task2 = asyncio.create_task(_warm_finance())
     task3 = asyncio.create_task(_keep_awake())
@@ -516,6 +517,19 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(_funnel_daily())
     asyncio.create_task(_client_prices_loop())
     asyncio.create_task(_fbs_multi_loop())
+
+    async def _wms_storage_loop():
+        from routers import wms as _w
+        await asyncio.sleep(300)
+        while True:
+            try:
+                res = await asyncio.to_thread(_w.storage_accrue)
+                if res.get("snapshots"):
+                    logging.getLogger("wms").info("хранение: %s", res)
+            except Exception as e:
+                logging.getLogger("wms").warning("хранение: %s", str(e)[:120])
+            await asyncio.sleep(3600)
+    asyncio.create_task(_wms_storage_loop())
 
     async def _sales_cleanup_once():
         await asyncio.sleep(120)
@@ -553,6 +567,8 @@ app.include_router(reviews.router)
 app.include_router(finance.router)
 app.include_router(tools.router)
 app.include_router(docs.router)
+from routers import wms as _wms
+app.include_router(_wms.router)
 
 import auth as _auth
 app.include_router(_auth.router)
@@ -604,5 +620,9 @@ if FRONTEND_DIR.exists():
             str(FRONTEND_DIR / "index.html"),
             headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
         )
+
+    @app.get("/wms")
+    async def wms_app():
+        return FileResponse(str(FRONTEND_DIR / "wms.html"))
 
     app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="static")

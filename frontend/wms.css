@@ -1,0 +1,86 @@
+/* WMS Market Partners — отдельное приложение. Светлый складской интерфейс:
+   крупные цели для пальцев, минимум декора, статусы цветом. */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #f4f6f5; --card: #ffffff; --ink: #17211c; --ink2: #5b6b63;
+  --line: #dde4e0; --brand: #1a7f5a; --brand-soft: #e7f4ee;
+  --warn: #b45309; --warn-soft: #fef3e2; --bad: #b91c1c; --bad-soft: #fdeaea;
+  --ok: #15803d;
+}
+html, body { height: 100%; }
+body {
+  font: 16px/1.45 -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  background: var(--bg); color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+}
+button, input, select, textarea { font: inherit; color: inherit; }
+
+/* Вход */
+.w-login { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
+.w-login-box { background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+  padding: 28px 26px; width: 340px; display: flex; flex-direction: column; gap: 12px; }
+.w-logo { font-size: 30px; font-weight: 800; letter-spacing: 4px; color: var(--brand); text-align: center; }
+.w-login-sub { color: var(--ink2); font-size: 13px; text-align: center; margin-bottom: 6px; }
+.w-login-box input { padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+.w-err { color: var(--bad); font-size: 13px; min-height: 18px; text-align: center; }
+
+/* Каркас */
+.w-top { display: flex; align-items: center; gap: 14px; padding: 10px 16px;
+  background: var(--card); border-bottom: 1px solid var(--line);
+  position: sticky; top: 0; z-index: 10; flex-wrap: wrap; }
+.w-brand { font-weight: 800; color: var(--brand); font-size: 18px; letter-spacing: 1px; }
+.w-who { color: var(--ink2); font-weight: 500; font-size: 13px; letter-spacing: 0; }
+.w-nav { display: flex; gap: 6px; flex-wrap: wrap; flex: 1; }
+.w-nav button { border: 1px solid transparent; background: none; padding: 9px 14px;
+  border-radius: 10px; cursor: pointer; color: var(--ink2); font-weight: 600; }
+.w-nav button.active { background: var(--brand-soft); color: var(--brand); }
+.w-main { padding: 16px; max-width: 1200px; margin: 0 auto; }
+
+/* Кнопки */
+.w-btn { border: 1px solid var(--line); background: var(--card); padding: 10px 16px;
+  border-radius: 10px; cursor: pointer; font-weight: 600; }
+.w-btn-primary { background: var(--brand); border-color: var(--brand); color: #fff; }
+.w-btn-ghost { color: var(--ink2); }
+.w-btn-big { padding: 14px 18px; font-size: 17px; width: 100%; }
+.w-btn:disabled { opacity: .5; cursor: default; }
+
+/* Карточки и таблицы */
+.w-card { background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+  padding: 16px; margin-bottom: 14px; }
+.w-h { font-size: 19px; font-weight: 700; margin-bottom: 10px; }
+.w-sub { color: var(--ink2); font-size: 13px; margin-bottom: 12px; }
+.w-table-wrap { overflow-x: auto; }
+table.w-table { width: 100%; border-collapse: collapse; font-size: 15px; }
+.w-table th { text-align: left; color: var(--ink2); font-size: 12px;
+  text-transform: uppercase; letter-spacing: .4px; padding: 8px 10px;
+  border-bottom: 2px solid var(--line); white-space: nowrap; }
+.w-table td { padding: 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.w-table tr:last-child td { border-bottom: none; }
+.w-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* Статусы */
+.w-pill { display: inline-block; padding: 3px 10px; border-radius: 999px;
+  font-size: 12px; font-weight: 700; }
+.w-pill.ok { background: var(--brand-soft); color: var(--brand); }
+.w-pill.warn { background: var(--warn-soft); color: var(--warn); }
+.w-pill.bad { background: var(--bad-soft); color: var(--bad); }
+.w-pill.grey { background: #eceff0; color: var(--ink2); }
+
+/* Формы */
+.w-form { display: flex; flex-direction: column; gap: 10px; }
+.w-form input, .w-form select, .w-form textarea {
+  padding: 11px 13px; border: 1px solid var(--line); border-radius: 10px; background: #fff; width: 100%; }
+.w-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.w-row > * { flex: 1; min-width: 130px; }
+.w-label { font-size: 12px; color: var(--ink2); font-weight: 700;
+  text-transform: uppercase; letter-spacing: .4px; margin-bottom: 3px; }
+.w-batches { margin: 6px 0 0 0; padding: 8px 10px; background: var(--bg);
+  border-radius: 10px; font-size: 13px; color: var(--ink2); }
+.w-free { color: var(--ok); font-weight: 700; }
+.w-paid { color: var(--warn); font-weight: 700; }
+
+@media (max-width: 640px) {
+  .w-main { padding: 10px; }
+  .w-table { font-size: 14px; }
+  .w-top { padding: 8px 10px; }
+}
