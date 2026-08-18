@@ -101,6 +101,26 @@ async function vStock() {
     </tbody></table></div></div>`;
 }
 
+
+// форма заявки: артикулы клиента подтягиваются из справочника, вводится только кол-во
+function asnForm(skus, compact) {
+  if (!skus.length) return '<div class="w-sub">У клиента нет товаров — сначала загрузите справочник (Клиенты → товары)</div>';
+  return `<div class="w-table-wrap" style="max-height:340px;overflow-y:auto"><table class="w-table">
+    <thead><tr><th>Артикул</th><th>Название</th><th style="width:110px">Кол-во</th></tr></thead><tbody>
+    ${skus.map(sk => `<tr>
+      <td><b>${esc(sk.code)}</b></td>
+      <td class="w-sub" style="font-size:14px">${esc(sk.name || '')}</td>
+      <td><input type="number" inputmode="numeric" min="0" placeholder="0" class="asn-qty" data-sku="${esc(sk.code)}"
+        style="width:95px;padding:9px;border:1px solid var(--line);border-radius:10px"></td>
+    </tr>`).join('')}
+    </tbody></table></div>
+    <div class="w-row" style="margin-top:10px">
+      <div><div class="w-label">Дата поставки</div><input id="wAsnDate" type="date" /></div>
+      <div><div class="w-label">Комментарий</div><input id="wAsnNote" placeholder="машина, паллеты…" /></div>
+    </div>
+    <button class="w-btn w-btn-primary${compact ? '' : ' w-btn-big'}" style="margin-top:10px" onclick="asnCreate()">Создать заявку</button>`;
+}
+
 // ── Поставки (список + создание заявки) ─────────────────────────────────────
 async function vInbounds() {
   const m = $('wMain');
@@ -108,18 +128,13 @@ async function vInbounds() {
   let d;
   try { d = await api('/inbounds' + cidQ()); }
   catch (e) { m.innerHTML = `<div class="w-card w-err">${esc(e.message)}</div>`; return; }
+  let sk = [];
+  try { sk = (await api('/skus' + cidQ())).skus; } catch (e) {}
   m.innerHTML = clientPicker() + `
     <div class="w-card">
       <div class="w-h">Новая заявка на поставку</div>
-      <div class="w-sub">Сообщите складу заранее, что везёте — приёмка пройдёт быстрее и без расхождений.</div>
-      <div class="w-form">
-        <textarea id="wAsnLines" rows="4" placeholder="Каждая строка: АРТИКУЛ КОЛИЧЕСТВО\nнапример:\nBMN-0028 120\nST-07 50"></textarea>
-        <div class="w-row">
-          <div><div class="w-label">Дата поставки</div><input id="wAsnDate" type="date" /></div>
-          <div><div class="w-label">Комментарий</div><input id="wAsnNote" placeholder="машина, паллеты…" /></div>
-        </div>
-        <button class="w-btn w-btn-primary" onclick="asnCreate()">Создать заявку</button>
-      </div>
+      <div class="w-sub">Проставьте количество напротив товаров, которые везёте — приёмка пройдёт быстрее и без расхождений.</div>
+      ${asnForm(sk)}
     </div>
     <div class="w-card">
       <div class="w-h">Заявки</div>
@@ -149,10 +164,10 @@ function inboundCard(ib, staffMode) {
 }
 
 async function asnCreate() {
-  const lines = $('wAsnLines').value.split('\n').map(s => s.trim()).filter(Boolean)
-    .map(s => { const m = s.match(/^(\S+)\s+(\d+)/); return m ? { sku: m[1], qty: parseInt(m[2], 10) } : null; })
-    .filter(Boolean);
-  if (!lines.length) { alert('Добавь хотя бы одну строку «АРТИКУЛ КОЛИЧЕСТВО»'); return; }
+  const lines = [...document.querySelectorAll('.asn-qty')]
+    .filter(i => parseInt(i.value, 10) > 0)
+    .map(i => ({ sku: i.dataset.sku, qty: parseInt(i.value, 10) }));
+  if (!lines.length) { alert('Проставь количество хотя бы по одному товару'); return; }
   try {
     await api('/inbounds', { method: 'POST', body: JSON.stringify({
       client_id: W.clientId, lines, expected_date: $('wAsnDate').value,
@@ -176,19 +191,18 @@ async function vReceive() {
       <div class="w-h">Ожидаются поставки</div>
       ${open.map(ib => inboundCard(ib, true)).join('') || '<div class="w-sub">Нет ожидаемых заявок. Заявку может создать клиент в своём кабинете — или создайте сами на вкладке клиента ниже.</div>'}
       <details style="margin-top:8px"><summary class="w-sub" style="cursor:pointer">Создать заявку за клиента</summary>
-        <div class="w-form" style="margin-top:8px">
-          <textarea id="wAsnLines" rows="3" placeholder="BMN-0028 120"></textarea>
-          <div class="w-row">
-            <div><input id="wAsnDate" type="date" /></div>
-            <div><input id="wAsnNote" placeholder="комментарий" /></div>
-          </div>
-          <button class="w-btn" onclick="asnCreate()">Создать</button>
-        </div></details>
+        <div style="margin-top:8px" id="wAsnBox">Загружаю товары…</div>
+      </details>
     </div>
     <div id="wRecvForm"></div>
     <div class="w-card"><div class="w-h">Последние принятые</div>
       ${done.map(ib => inboundCard(ib, false)).join('') || '<div class="w-sub">—</div>'}
     </div>`;
+  try {
+    const sk = (await api('/skus' + cidQ())).skus;
+    const box = $('wAsnBox');
+    if (box) box.innerHTML = asnForm(sk, true);
+  } catch (e) {}
 }
 
 async function openReceive(iid) {
