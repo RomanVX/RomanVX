@@ -36,7 +36,7 @@ async function boot() {
   $('wmsApp').style.display = 'block';
   const u = W.user;
   $('wWho').textContent = u.role === 'client'
-    ? (u.client_name || 'клиент') : ('склад · ' + u.login);
+    ? (u.client_name || 'клиент') : u.login;
   const tabs = u.role === 'client'
     ? [['stock', 'Остатки'], ['moves', 'Движения'], ['inbounds', 'Поставки'], ['billing', 'Начисления']]
     : [['receive', 'Приёмка'], ['stock', 'Остатки'], ['ship', 'Отгрузка'],
@@ -151,10 +151,15 @@ function inboundCard(ib, staffMode) {
       <div style="flex:0"><span class="w-pill ${st[1]}">${st[0]}</span></div>
     </div>
     <div class="w-sub">${ib.expected_date ? 'на ' + esc(ib.expected_date) + ' · ' : ''}создана ${esc((ib.created_at || '').slice(0, 10))}${ib.note ? ' · ' + esc(ib.note) : ''}</div>
-    <table class="w-table"><thead><tr><th>Артикул</th><th class="w-num">Заявлено</th><th class="w-num">Принято</th><th>Партия / СГ</th><th>Расхожд.</th></tr></thead><tbody>
+    <table class="w-table" style="table-layout:fixed"><thead><tr>
+      <th style="width:22%">Артикул</th>
+      <th style="width:100px;text-align:center">Заявлено</th>
+      <th style="width:100px;text-align:center">Принято</th>
+      <th>Партия / СГ</th><th style="width:150px">Расхожд.</th></tr></thead><tbody>
     ${(ib.lines || []).map(l => `<tr>
-      <td>${esc(l.sku)}</td><td class="w-num">${l.qty_expected}</td>
-      <td class="w-num">${ib.status === 'done' ? `<b>${l.qty_received}</b>` : '—'}</td>
+      <td><b>${esc(l.sku)}</b></td>
+      <td style="text-align:center">${l.qty_expected}</td>
+      <td style="text-align:center">${ib.status === 'done' ? `<b>${l.qty_received}</b>` : '—'}</td>
       <td>${esc(l.batch_no || '')}${l.expiry_date ? ' · до ' + esc(l.expiry_date) : ''}</td>
       <td>${l.discrepancy_type ? `<span class="w-pill bad">${esc(l.discrepancy_type)} ${l.discrepancy_qty > 0 ? '+' : ''}${l.discrepancy_qty || ''}</span>` : ''}</td>
     </tr>`).join('')}
