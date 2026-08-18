@@ -416,10 +416,11 @@ async function openSkus(cid) {
       <td class="w-sub">${(s.barcodes || []).join(', ')}</td></tr>`).join('') || '<tr><td colspan="7">Товаров нет</td></tr>'}
     </tbody></table>
     <div class="w-row" style="margin-top:10px">
-      <label class="w-btn w-btn-primary" style="text-align:center">Загрузить из файла (Excel/CSV)
+      <a class="w-btn" style="text-align:center;text-decoration:none;display:block" href="/api/wms/skus/template">⬇ Скачать шаблон Excel</a>
+      <label class="w-btn w-btn-primary" style="text-align:center">Загрузить заполненный файл
         <input type="file" accept=".xlsx,.csv,.txt" style="display:none" onchange="skusFile(${cid}, this)"></label>
     </div>
-    <div class="w-sub" style="margin-top:6px">Колонки файла: Артикул · Название · Объём, л · Вес, г · Ценность, ₽ · СГ (да/1) · Штрихкод — порядок любой, лишние игнорируются.</div>
+    <div class="w-sub" style="margin-top:6px">Скачайте шаблон, заполните — в нём примеры и лист «Как заполнять» — и загрузите обратно. Подойдёт и своя таблица с теми же колонками.</div>
     <details style="margin-top:10px"><summary class="w-sub" style="cursor:pointer">Или добавить строками вручную</summary>
       <div class="w-form" style="margin-top:8px">
         <textarea id="wSkuLines" rows="4" placeholder="АРТИКУЛ;Название;объём_л;вес_г;ценность_₽;СГ(1/0);штрихкод\nBMN-0028;SEX FIST 500;1.73;620;350;1;2040646073073"></textarea>

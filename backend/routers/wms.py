@@ -437,6 +437,67 @@ async def skus_upsert(payload: dict, request: Request):
     return {"saved": n}
 
 
+@router.get("/skus/template")
+async def skus_template(request: Request):
+    """Шаблон Excel для загрузки товаров: шапка + примеры + подсказки."""
+    _require(request)
+
+    def _build():
+        import io
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Товары"
+        head = ["Артикул", "Название", "Объём, л", "Вес, г",
+                "Ценность, ₽", "СГ (да/нет)", "Штрихкод"]
+        ws.append(head)
+        for c in ws[1]:
+            c.font = Font(bold=True, color="FFFFFF")
+            c.fill = PatternFill("solid", fgColor="1a7f5a")
+            c.alignment = Alignment(horizontal="center")
+        ws.append(["ABC-001", "Крем для рук 75 мл", 0.12, 90, 250,
+                   "да", "4601234567890"])
+        ws.append(["ABC-002", "Шампунь 400 мл", 0.55, 460, 380,
+                   "да", "4601234567891"])
+        ws.append(["ABC-003", "Расчёска", 0.08, 40, 150, "нет", ""])
+        for col, w in zip("ABCDEFG", (14, 32, 10, 10, 12, 12, 18)):
+            ws.column_dimensions[col].width = w
+        ws2 = wb.create_sheet("Как заполнять")
+        tips = [
+            "Артикул — обязательное поле, ваш код товара (латиница/цифры).",
+            "Название — как товар называется у вас (видно на приёмке и в остатках).",
+            "Объём, л — объём единицы В УПАКОВКЕ: длина×ширина×высота, см ÷ 1000.",
+            "   По нему считается ступень тарифа сборки и хранение.",
+            "Вес, г — вес единицы в упаковке.",
+            "Ценность, ₽ — закупочная стоимость единицы: предел ответственности",
+            "   склада по договору ответственного хранения.",
+            "СГ — «да», если у товара есть срок годности: тогда при приёмке",
+            "   каждой партии срок обязателен (учёт FEFO).",
+            "Штрихкод — EAN с упаковки. Если штрихкодов несколько — укажите",
+            "   основной, остальные добавим отдельно.",
+            "",
+            "Примеры в первых трёх строках листа «Товары» — замените своими.",
+            "Порядок колонок менять можно, лишние колонки игнорируются.",
+        ]
+        for t in tips:
+            ws2.append([t])
+        ws2.column_dimensions["A"].width = 78
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        return buf.read()
+    data = await asyncio.to_thread(_build)
+    from urllib.parse import quote
+    from fastapi.responses import Response as _Resp
+    fname = quote("Шаблон товаров WMS.xlsx")
+    return _Resp(content=data,
+                 media_type="application/vnd.openxmlformats-officedocument"
+                            ".spreadsheetml.sheet",
+                 headers={"Content-Disposition":
+                          f"attachment; filename*=UTF-8''{fname}"})
+
+
 @router.post("/skus/import")
 async def skus_import_file(request: Request):
     """Загрузка товаров файлом (.xlsx/.csv). Шапка распознаётся по словам:
