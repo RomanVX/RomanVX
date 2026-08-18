@@ -466,12 +466,14 @@ async def skus_template(request: Request):
         ws = wb.active
         ws.title = "Товары"
         head = ["Артикул", "Название", "Длина, см", "Ширина, см",
-                "Высота, см", "Объём, л (само)", "Вес, г",
-                "Ценность, ₽", "СГ (да/нет)", "Штрихкод"]
+                "Высота, см", "Объём, л", "Вес, г",
+                "Ценность, ₽", "Срок годности (да/нет)", "Штрихкод"]
         ws.append(head)
-        for c in ws[1]:
+        for ci, c in enumerate(ws[1], start=1):
             c.font = Font(bold=True, color="FFFFFF")
-            c.fill = PatternFill("solid", fgColor="1a7f5a")
+            # авто-поле (объём) — серым: заполнять не нужно
+            c.fill = PatternFill("solid",
+                                 fgColor="9aa5a0" if ci == 6 else "1a7f5a")
             c.alignment = Alignment(horizontal="center", wrap_text=True)
         samples = [
             ["ABC-001", "Крем для рук 75 мл", 12, 4, 3, None, 90, 250,
@@ -484,9 +486,13 @@ async def skus_template(request: Request):
             row[5] = f"=C{ri}*D{ri}*E{ri}/1000"   # объём считается сам
             ws.append(row)
         # формула объёма на 500 строк вперёд — клиент просто заполняет размеры
-        for ri in range(5, 502):
-            ws.cell(row=ri, column=6,
-                    value=f'=IF(C{ri}*D{ri}*E{ri}=0,"",C{ri}*D{ri}*E{ri}/1000)')
+        grey = PatternFill("solid", fgColor="eef1ef")
+        for ri in range(2, 502):
+            cell = ws.cell(row=ri, column=6)
+            if ri >= 5:
+                cell.value = f'=IF(C{ri}*D{ri}*E{ri}=0,"",C{ri}*D{ri}*E{ri}/1000)'
+            cell.fill = grey
+        ws.cell(row=1, column=6).comment = None
         for col, w in zip("ABCDEFGHIJ",
                           (14, 32, 10, 10, 10, 12, 10, 12, 11, 18)):
             ws.column_dimensions[col].width = w
@@ -495,7 +501,8 @@ async def skus_template(request: Request):
             "Артикул — обязательное поле, ваш код товара (латиница/цифры).",
             "Название — как товар называется у вас (видно на приёмке и в остатках).",
             "Длина / Ширина / Высота, см — габариты единицы В УПАКОВКЕ.",
-            "   Объём (л) посчитается сам — по нему ступень тарифа сборки и хранение.",
+            "СЕРАЯ колонка «Объём, л» заполняется автоматически из габаритов —",
+            "   в неё ничего не вписывайте. По ней ступень тарифа сборки и хранение.",
             "Вес, г — вес единицы в упаковке.",
             "Ценность, ₽ — закупочная стоимость единицы: предел ответственности",
             "   склада по договору ответственного хранения.",
