@@ -104,8 +104,14 @@ def _init():
         expires TEXT)""")
     db.execute(f"""CREATE TABLE IF NOT EXISTS wms_skus (
         {_ID}, client_id INTEGER, code TEXT, name TEXT,
+        length_cm REAL, width_cm REAL, height_cm REAL,
         volume_l REAL, weight_g REAL, value_rub REAL,
         requires_expiry INTEGER DEFAULT 0, created_at TEXT)""")
+    for col in ("length_cm", "width_cm", "height_cm"):
+        try:
+            db.execute(f"ALTER TABLE wms_skus ADD COLUMN {col} REAL")
+        except Exception:
+            pass
     db.execute(f"""CREATE TABLE IF NOT EXISTS wms_barcodes (
         barcode TEXT PRIMARY KEY, sku_id INTEGER)""")
     db.execute(f"""CREATE TABLE IF NOT EXISTS wms_inbounds (
@@ -369,8 +375,8 @@ async def skus_list(request: Request, client_id: int | None = None):
     def _load():
         rows = db.fetchall(
             "SELECT id, code, name, volume_l, weight_g, value_rub, "
-            "requires_expiry FROM wms_skus WHERE client_id = ? ORDER BY code",
-            (cid,))
+            "requires_expiry, length_cm, width_cm, height_cm "
+            "FROM wms_skus WHERE client_id = ? ORDER BY code", (cid,))
         bcs = db.fetchall(
             "SELECT b.sku_id, b.barcode FROM wms_barcodes b "
             "JOIN wms_skus s ON s.id = b.sku_id WHERE s.client_id = ?", (cid,))
@@ -380,6 +386,7 @@ async def skus_list(request: Request, client_id: int | None = None):
         return [{"id": r[0], "code": r[1], "name": r[2], "volume_l": r[3],
                  "weight_g": r[4], "value_rub": r[5],
                  "requires_expiry": bool(r[6]),
+                 "length_cm": r[7], "width_cm": r[8], "height_cm": r[9],
                  "barcodes": bmap.get(r[0], [])} for r in rows]
     return {"skus": await asyncio.to_thread(_load), "client_id": cid}
 
@@ -399,6 +406,12 @@ async def skus_upsert(payload: dict, request: Request):
             code = str(it.get("code") or "").strip().upper()
             if not code:
                 continue
+            L = float(it.get("length_cm") or 0)
+            Wd = float(it.get("width_cm") or 0)
+            H = float(it.get("height_cm") or 0)
+            vol = float(it.get("volume_l") or 0)
+            if L > 0 and Wd > 0 and H > 0:
+                vol = round(L * Wd * H / 1000, 3)   # объём из габаритов
             row = db.fetchone(
                 "SELECT id FROM wms_skus WHERE client_id = ? AND code = ?",
                 (cid, code))
@@ -406,21 +419,24 @@ async def skus_upsert(payload: dict, request: Request):
                 sid = row[0]
                 db.execute(
                     "UPDATE wms_skus SET name=?, volume_l=?, weight_g=?, "
-                    "value_rub=?, requires_expiry=? WHERE id=?",
-                    (str(it.get("name") or ""), float(it.get("volume_l") or 0),
-                     float(it.get("weight_g") or 0),
-                     float(it.get("value_rub") or 0),
-                     1 if it.get("requires_expiry") else 0, sid))
-            else:
-                sid = _insert_id(
-                    "INSERT INTO wms_skus (client_id, code, name, volume_l, "
-                    "weight_g, value_rub, requires_expiry, created_at) "
-                    "VALUES (?,?,?,?,?,?,?,?)",
-                    (cid, code, str(it.get("name") or ""),
-                     float(it.get("volume_l") or 0),
+                    "value_rub=?, requires_expiry=?, length_cm=?, "
+                    "width_cm=?, height_cm=? WHERE id=?",
+                    (str(it.get("name") or ""), vol,
                      float(it.get("weight_g") or 0),
                      float(it.get("value_rub") or 0),
                      1 if it.get("requires_expiry") else 0,
+                     L or None, Wd or None, H or None, sid))
+            else:
+                sid = _insert_id(
+                    "INSERT INTO wms_skus (client_id, code, name, volume_l, "
+                    "weight_g, value_rub, requires_expiry, length_cm, "
+                    "width_cm, height_cm, created_at) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    (cid, code, str(it.get("name") or ""), vol,
+                     float(it.get("weight_g") or 0),
+                     float(it.get("value_rub") or 0),
+                     1 if it.get("requires_expiry") else 0,
+                     L or None, Wd or None, H or None,
                      datetime.utcnow().isoformat()))
             for bc in (it.get("barcodes") or []):
                 bc = str(bc).strip()
@@ -449,26 +465,37 @@ async def skus_template(request: Request):
         wb = openpyxl.Workbook()
         ws = wb.active
         ws.title = "Товары"
-        head = ["Артикул", "Название", "Объём, л", "Вес, г",
+        head = ["Артикул", "Название", "Длина, см", "Ширина, см",
+                "Высота, см", "Объём, л (само)", "Вес, г",
                 "Ценность, ₽", "СГ (да/нет)", "Штрихкод"]
         ws.append(head)
         for c in ws[1]:
             c.font = Font(bold=True, color="FFFFFF")
             c.fill = PatternFill("solid", fgColor="1a7f5a")
-            c.alignment = Alignment(horizontal="center")
-        ws.append(["ABC-001", "Крем для рук 75 мл", 0.12, 90, 250,
-                   "да", "4601234567890"])
-        ws.append(["ABC-002", "Шампунь 400 мл", 0.55, 460, 380,
-                   "да", "4601234567891"])
-        ws.append(["ABC-003", "Расчёска", 0.08, 40, 150, "нет", ""])
-        for col, w in zip("ABCDEFG", (14, 32, 10, 10, 12, 12, 18)):
+            c.alignment = Alignment(horizontal="center", wrap_text=True)
+        samples = [
+            ["ABC-001", "Крем для рук 75 мл", 12, 4, 3, None, 90, 250,
+             "да", "4601234567890"],
+            ["ABC-002", "Шампунь 400 мл", 7, 7, 19, None, 460, 380,
+             "да", "4601234567891"],
+            ["ABC-003", "Расчёска", 18, 5, 2, None, 40, 150, "нет", ""],
+        ]
+        for ri, row in enumerate(samples, start=2):
+            row[5] = f"=C{ri}*D{ri}*E{ri}/1000"   # объём считается сам
+            ws.append(row)
+        # формула объёма на 500 строк вперёд — клиент просто заполняет размеры
+        for ri in range(5, 502):
+            ws.cell(row=ri, column=6,
+                    value=f'=IF(C{ri}*D{ri}*E{ri}=0,"",C{ri}*D{ri}*E{ri}/1000)')
+        for col, w in zip("ABCDEFGHIJ",
+                          (14, 32, 10, 10, 10, 12, 10, 12, 11, 18)):
             ws.column_dimensions[col].width = w
         ws2 = wb.create_sheet("Как заполнять")
         tips = [
             "Артикул — обязательное поле, ваш код товара (латиница/цифры).",
             "Название — как товар называется у вас (видно на приёмке и в остатках).",
-            "Объём, л — объём единицы В УПАКОВКЕ: длина×ширина×высота, см ÷ 1000.",
-            "   По нему считается ступень тарифа сборки и хранение.",
+            "Длина / Ширина / Высота, см — габариты единицы В УПАКОВКЕ.",
+            "   Объём (л) посчитается сам — по нему ступень тарифа сборки и хранение.",
             "Вес, г — вес единицы в упаковке.",
             "Ценность, ₽ — закупочная стоимость единицы: предел ответственности",
             "   склада по договору ответственного хранения.",
@@ -531,7 +558,8 @@ async def skus_import_file(request: Request):
         def _low(r):
             return [str(v or "").strip().lower() for v in r]
         idx = {"code": 0, "name": 1, "volume_l": None, "weight_g": None,
-               "value_rub": None, "expiry": None, "barcode": None}
+               "value_rub": None, "expiry": None, "barcode": None,
+               "length": None, "width": None, "height": None}
         start = 0
         for ri, r in enumerate(rows[:5]):
             cells = _low(r)
@@ -541,6 +569,12 @@ async def skus_import_file(request: Request):
                         idx["code"] = ci
                     elif "назван" in c or "name" in c:
                         idx["name"] = ci
+                    elif "длин" in c or "length" in c:
+                        idx["length"] = ci
+                    elif "ширин" in c or "width" in c:
+                        idx["width"] = ci
+                    elif "высот" in c or "height" in c:
+                        idx["height"] = ci
                     elif "объ" in c or "литр" in c or "volume" in c:
                         idx["volume_l"] = ci
                     elif "вес" in c or "weight" in c:
@@ -576,6 +610,9 @@ async def skus_import_file(request: Request):
                 bc = bc[:-2]
             items.append({
                 "code": code, "name": _t(r, idx["name"]),
+                "length_cm": _n(r, idx["length"]),
+                "width_cm": _n(r, idx["width"]),
+                "height_cm": _n(r, idx["height"]),
                 "volume_l": _n(r, idx["volume_l"]),
                 "weight_g": _n(r, idx["weight_g"]),
                 "value_rub": _n(r, idx["value_rub"]),

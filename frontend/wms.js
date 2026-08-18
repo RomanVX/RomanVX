@@ -427,12 +427,13 @@ async function openSkus(cid) {
   $('wSkusBox').innerHTML = `<div class="w-card" style="border-color:var(--brand)">
     <div class="w-h">Товары · ${esc(c.name || '')}</div>
     <table class="w-table"><thead><tr><th>Артикул</th><th>Название</th>
-      <th class="w-num">Объём, л</th><th class="w-num">Вес, г</th><th class="w-num">Ценность, ₽</th><th>СГ?</th><th>ШК</th></tr></thead><tbody>
+      <th class="w-num">Д×Ш×В, см</th><th class="w-num">Объём, л</th><th class="w-num">Вес, г</th><th class="w-num">Ценность, ₽</th><th>СГ?</th><th>ШК</th></tr></thead><tbody>
     ${(d.skus || []).map(s => `<tr><td><b>${esc(s.code)}</b></td><td>${esc(s.name)}</td>
+      <td class="w-num">${s.length_cm ? `${s.length_cm}×${s.width_cm}×${s.height_cm}` : '—'}</td>
       <td class="w-num">${s.volume_l || '—'}</td><td class="w-num">${s.weight_g || '—'}</td>
       <td class="w-num">${s.value_rub || '—'}</td>
       <td>${s.requires_expiry ? '<span class="w-pill warn">да</span>' : '—'}</td>
-      <td class="w-sub">${(s.barcodes || []).join(', ')}</td></tr>`).join('') || '<tr><td colspan="7">Товаров нет</td></tr>'}
+      <td class="w-sub">${(s.barcodes || []).join(', ')}</td></tr>`).join('') || '<tr><td colspan="8">Товаров нет</td></tr>'}
     </tbody></table>
     <div class="w-row" style="margin-top:10px">
       <a class="w-btn" style="text-align:center;text-decoration:none;display:block" href="/api/wms/skus/template">⬇ Скачать шаблон Excel</a>
