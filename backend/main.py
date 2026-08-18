@@ -623,6 +623,7 @@ if FRONTEND_DIR.exists():
 
     @app.get("/wms")
     async def wms_app():
-        return FileResponse(str(FRONTEND_DIR / "wms.html"))
+        return FileResponse(str(FRONTEND_DIR / "wms.html"),
+                            headers={"Cache-Control": "no-cache"})
 
     app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="static")

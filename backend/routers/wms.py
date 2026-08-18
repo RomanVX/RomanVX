@@ -14,6 +14,7 @@ import hashlib
 import json
 import logging
 import secrets
+import threading
 from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, HTTPException, Request, Response
@@ -21,6 +22,31 @@ from fastapi import APIRouter, HTTPException, Request, Response
 import db
 
 _log = logging.getLogger("wms")
+
+# Один процесс (uvicorn, 1 воркер): межпоточный лок сериализует товарно-денежные
+# операции — закрывает гонки «проверка остатка → списание», двойные сабмиты
+# приёмки и погоню за id (ревью wf_77fbc29b).
+_OP_LOCK = threading.Lock()
+
+# id-колонка по диалекту: SQLite не понимает SERIAL (колонка теряет
+# автоинкремент и молча пишет NULL в PK)
+_ID = "id SERIAL PRIMARY KEY" if db.IS_PG else \
+    "id INTEGER PRIMARY KEY AUTOINCREMENT"
+
+
+def _insert_id(sql: str, params: tuple) -> int:
+    """INSERT + надёжный id той же транзакцией (RETURNING / lastrowid) —
+    вместо гоночного SELECT ... ORDER BY id DESC."""
+    with db._conn() as con:
+        cur = con.cursor()
+        if db.IS_PG:
+            cur.execute(db._tr(sql + " RETURNING id"), params)
+            new_id = cur.fetchone()[0]
+        else:
+            cur.execute(sql, params)
+            new_id = cur.lastrowid
+        con.commit()
+        return int(new_id)
 router = APIRouter(prefix="/api/wms", tags=["wms"])
 
 COOKIE = "wms_session"
@@ -66,47 +92,47 @@ SERVICE_NAMES = {
 # ── Схема БД ────────────────────────────────────────────────────────────────
 
 def _init():
-    db.execute("""CREATE TABLE IF NOT EXISTS wms_clients (
-        id SERIAL PRIMARY KEY, code TEXT UNIQUE, name TEXT, inn TEXT,
+    db.execute(f"""CREATE TABLE IF NOT EXISTS wms_clients (
+        {_ID}, code TEXT UNIQUE, name TEXT, inn TEXT,
         contact TEXT, tg_chat_id TEXT, tariff TEXT, settings TEXT,
         created_at TEXT)""")
-    db.execute("""CREATE TABLE IF NOT EXISTS wms_users (
+    db.execute(f"""CREATE TABLE IF NOT EXISTS wms_users (
         login TEXT PRIMARY KEY, salt TEXT, pass_hash TEXT,
         role TEXT, client_id INTEGER)""")
-    db.execute("""CREATE TABLE IF NOT EXISTS wms_sessions (
+    db.execute(f"""CREATE TABLE IF NOT EXISTS wms_sessions (
         token TEXT PRIMARY KEY, login TEXT, role TEXT, client_id INTEGER,
         expires TEXT)""")
-    db.execute("""CREATE TABLE IF NOT EXISTS wms_skus (
-        id SERIAL PRIMARY KEY, client_id INTEGER, code TEXT, name TEXT,
+    db.execute(f"""CREATE TABLE IF NOT EXISTS wms_skus (
+        {_ID}, client_id INTEGER, code TEXT, name TEXT,
         volume_l REAL, weight_g REAL, value_rub REAL,
         requires_expiry INTEGER DEFAULT 0, created_at TEXT)""")
-    db.execute("""CREATE TABLE IF NOT EXISTS wms_barcodes (
+    db.execute(f"""CREATE TABLE IF NOT EXISTS wms_barcodes (
         barcode TEXT PRIMARY KEY, sku_id INTEGER)""")
-    db.execute("""CREATE TABLE IF NOT EXISTS wms_inbounds (
-        id SERIAL PRIMARY KEY, client_id INTEGER, status TEXT,
+    db.execute(f"""CREATE TABLE IF NOT EXISTS wms_inbounds (
+        {_ID}, client_id INTEGER, status TEXT,
         expected_date TEXT, note TEXT, act_no TEXT,
         created_at TEXT, closed_at TEXT, created_by TEXT)""")
-    db.execute("""CREATE TABLE IF NOT EXISTS wms_inbound_lines (
-        id SERIAL PRIMARY KEY, inbound_id INTEGER, sku_id INTEGER,
+    db.execute(f"""CREATE TABLE IF NOT EXISTS wms_inbound_lines (
+        {_ID}, inbound_id INTEGER, sku_id INTEGER,
         qty_expected INTEGER, qty_received INTEGER,
         batch_no TEXT, expiry_date TEXT,
         discrepancy_type TEXT, discrepancy_qty INTEGER, note TEXT)""")
-    db.execute("""CREATE TABLE IF NOT EXISTS wms_batches (
-        id SERIAL PRIMARY KEY, client_id INTEGER, sku_id INTEGER,
+    db.execute(f"""CREATE TABLE IF NOT EXISTS wms_batches (
+        {_ID}, client_id INTEGER, sku_id INTEGER,
         batch_no TEXT, expiry_date TEXT, received_at TEXT,
         inbound_id INTEGER)""")
     # append-only журнал движений: остаток = SUM(qty)
-    db.execute("""CREATE TABLE IF NOT EXISTS wms_moves (
-        id SERIAL PRIMARY KEY, client_id INTEGER, sku_id INTEGER,
+    db.execute(f"""CREATE TABLE IF NOT EXISTS wms_moves (
+        {_ID}, client_id INTEGER, sku_id INTEGER,
         batch_id INTEGER, qty INTEGER, status TEXT,
         doc_type TEXT, doc_ref TEXT, note TEXT,
         user_login TEXT, created_at TEXT)""")
     # append-only начисления: цена зафиксирована в момент операции
-    db.execute("""CREATE TABLE IF NOT EXISTS wms_billing (
-        id SERIAL PRIMARY KEY, client_id INTEGER, service_code TEXT,
+    db.execute(f"""CREATE TABLE IF NOT EXISTS wms_billing (
+        {_ID}, client_id INTEGER, service_code TEXT,
         qty REAL, price REAL, amount REAL, occurred_at TEXT,
         source_type TEXT, source_ref TEXT, sku_id INTEGER, note TEXT)""")
-    db.execute("""CREATE TABLE IF NOT EXISTS wms_snapshots (
+    db.execute(f"""CREATE TABLE IF NOT EXISTS wms_snapshots (
         day TEXT, client_id INTEGER, sku_id INTEGER, batch_id INTEGER,
         qty INTEGER, volume_l REAL, age_days INTEGER,
         PRIMARY KEY (day, batch_id))""")
@@ -272,7 +298,11 @@ async def clients_create(payload: dict, request: Request):
         "CL" + secrets.token_hex(2).upper()
 
     def _save():
-        db.execute(
+      with _OP_LOCK:
+        if db.fetchone("SELECT 1 FROM wms_clients WHERE code = ?", (code,)):
+            raise HTTPException(status_code=400,
+                                detail=f"Код клиента {code} уже занят")
+        return _insert_id(
             "INSERT INTO wms_clients (code, name, inn, contact, tg_chat_id, "
             "tariff, settings, created_at) VALUES (?,?,?,?,?,?,?,?)",
             (code, name, str(payload.get("inn") or ""),
@@ -280,7 +310,6 @@ async def clients_create(payload: dict, request: Request):
              str(payload.get("tg_chat_id") or ""),
              json.dumps(DEFAULT_TARIFF, ensure_ascii=False), "{}",
              datetime.utcnow().isoformat()))
-        return db.fetchone("SELECT id FROM wms_clients WHERE code = ?", (code,))[0]
     cid = await asyncio.to_thread(_save)
     # логин клиента (если задан)
     login_ = str(payload.get("login") or "").strip()
@@ -322,7 +351,11 @@ def _tariff_of(cid: int) -> dict:
     row = db.fetchone("SELECT tariff FROM wms_clients WHERE id = ?", (cid,))
     t = json.loads(row[0]) if row and row[0] else {}
     out = json.loads(json.dumps(DEFAULT_TARIFF))
-    out.update(t or {})
+    for k, v in (t or {}).items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k].update(v)     # storage и будущие вложенные секции
+        else:
+            out[k] = v
     return out
 
 
@@ -360,6 +393,7 @@ async def skus_upsert(payload: dict, request: Request):
         raise HTTPException(status_code=400, detail="Нужны client_id и items")
 
     def _save():
+      with _OP_LOCK:
         n = 0
         for it in items:
             code = str(it.get("code") or "").strip().upper()
@@ -378,7 +412,7 @@ async def skus_upsert(payload: dict, request: Request):
                      float(it.get("value_rub") or 0),
                      1 if it.get("requires_expiry") else 0, sid))
             else:
-                db.execute(
+                sid = _insert_id(
                     "INSERT INTO wms_skus (client_id, code, name, volume_l, "
                     "weight_g, value_rub, requires_expiry, created_at) "
                     "VALUES (?,?,?,?,?,?,?,?)",
@@ -388,9 +422,6 @@ async def skus_upsert(payload: dict, request: Request):
                      float(it.get("value_rub") or 0),
                      1 if it.get("requires_expiry") else 0,
                      datetime.utcnow().isoformat()))
-                sid = db.fetchone(
-                    "SELECT id FROM wms_skus WHERE client_id = ? AND code = ?",
-                    (cid, code))[0]
             for bc in (it.get("barcodes") or []):
                 bc = str(bc).strip()
                 if bc:
@@ -458,29 +489,29 @@ async def inbound_create(payload: dict, request: Request):
         raise HTTPException(status_code=400, detail="Пустая заявка")
 
     def _save():
-        db.execute(
+      with _OP_LOCK:
+        iid = _insert_id(
             "INSERT INTO wms_inbounds (client_id, status, expected_date, note, "
             "act_no, created_at, created_by) VALUES (?,?,?,?,?,?,?)",
             (cid, "expected", str(payload.get("expected_date") or ""),
              str(payload.get("note") or ""), "",
              datetime.utcnow().isoformat(), sess["login"]))
-        iid = db.fetchone(
-            "SELECT id FROM wms_inbounds WHERE client_id = ? "
-            "ORDER BY id DESC LIMIT 1", (cid,))[0]
+        skipped = []
         for ln in lines:
             code = str(ln.get("sku") or "").strip().upper()
             row = db.fetchone(
                 "SELECT id FROM wms_skus WHERE client_id = ? AND code = ?",
                 (cid, code))
             if not row:
+                skipped.append(code)
                 continue
             db.execute(
                 "INSERT INTO wms_inbound_lines (inbound_id, sku_id, "
                 "qty_expected, qty_received) VALUES (?,?,?,0)",
                 (iid, row[0], int(ln.get("qty") or 0)))
-        return iid
-    iid = await asyncio.to_thread(_save)
-    return {"id": iid}
+        return iid, skipped
+    iid, skipped = await asyncio.to_thread(_save)
+    return {"id": iid, "skipped_unknown_skus": skipped}
 
 
 @router.post("/inbounds/{iid}/receive")
@@ -492,6 +523,7 @@ async def inbound_receive(iid: int, payload: dict, request: Request):
     pallets = int(payload.get("pallets") or 0)
 
     def _save():
+      with _OP_LOCK:
         head = db.fetchone(
             "SELECT client_id, status FROM wms_inbounds WHERE id = ?", (iid,))
         if not head:
@@ -501,7 +533,9 @@ async def inbound_receive(iid: int, payload: dict, request: Request):
             raise HTTPException(status_code=400, detail="Заявка уже принята")
         t = _tariff_of(cid)
         now = datetime.utcnow().isoformat()
-        total_units = 0
+        # фаза 1: валидация ВСЕХ строк до первой записи — чтобы ошибка
+        # в середине не оставляла в базе половину приёмки
+        checked = []
         for ln in lines:
             lid = int(ln.get("line_id") or 0)
             qty = int(ln.get("qty_received") or 0)
@@ -518,6 +552,12 @@ async def inbound_receive(iid: int, payload: dict, request: Request):
                 raise HTTPException(
                     status_code=400,
                     detail=f"У {req[1]} обязателен срок годности")
+            checked.append((ln, lid, qty, sku_id, qty_exp))
+        if not checked:
+            raise HTTPException(status_code=400,
+                                detail="Ни одна строка не относится к заявке")
+        total_units = 0
+        for ln, lid, qty, sku_id, qty_exp in checked:
             disc_type = None
             disc_qty = 0
             if qty != qty_exp:
@@ -535,14 +575,11 @@ async def inbound_receive(iid: int, payload: dict, request: Request):
                  str(ln.get("note") or ""), lid))
             if qty <= 0:
                 continue
-            db.execute(
+            bid = _insert_id(
                 "INSERT INTO wms_batches (client_id, sku_id, batch_no, "
                 "expiry_date, received_at, inbound_id) VALUES (?,?,?,?,?,?)",
                 (cid, sku_id, str(ln.get("batch_no") or ""),
                  str(ln.get("expiry_date") or ""), now, iid))
-            bid = db.fetchone(
-                "SELECT id FROM wms_batches WHERE inbound_id = ? "
-                "ORDER BY id DESC LIMIT 1", (iid,))[0]
             db.execute(
                 "INSERT INTO wms_moves (client_id, sku_id, batch_id, qty, "
                 "status, doc_type, doc_ref, note, user_login, created_at) "
@@ -636,6 +673,16 @@ def _assembly_price(t: dict, volume_l: float) -> float:
     return float(tiers[-1]["price"]) if tiers else 0.0
 
 
+def _ensure_batch(cid: int, sku_id: int, ref: str, now: str) -> int:
+    """Служебная партия, когда партий SKU не существует (возврат/плюс-
+    корректировка в пустой сток): без неё товар выпадает из возраста
+    хранения и FIFO."""
+    return _insert_id(
+        "INSERT INTO wms_batches (client_id, sku_id, batch_no, expiry_date, "
+        "received_at, inbound_id) VALUES (?,?,?,?,?,NULL)",
+        (cid, sku_id, f"SRV-{ref[:16]}", "", now))
+
+
 def _fifo_consume(cid: int, sku_id: int, qty: int, doc_type: str,
                   doc_ref: str, user: str, now: str):
     """Списание FIFO по партиям (старые первыми). Возвращает списанное."""
@@ -679,20 +726,22 @@ async def ops_ship(payload: dict, request: Request):
         raise HTTPException(status_code=400, detail="Нет заказов")
 
     def _save():
+      with _OP_LOCK:
         t = _tariff_of(cid)
         now = datetime.utcnow().isoformat()
         shipped, errors = 0, []
         for o in orders:
             ref = str(o.get("ref") or "").strip() or f"SHIP-{secrets.token_hex(3)}"
-            items = o.get("items") or []
+            agg: dict = {}
+            for it in (o.get("items") or []):
+                code = str(it.get("sku") or "").strip().upper()
+                q = int(it.get("qty") or 0)
+                if code and q > 0:
+                    agg[code] = agg.get(code, 0) + q
             units = 0
             max_vol = 0.0
             plan = []
-            for it in items:
-                code = str(it.get("sku") or "").strip().upper()
-                qty = int(it.get("qty") or 0)
-                if qty <= 0:
-                    continue
+            for code, qty in agg.items():
                 row = db.fetchone(
                     "SELECT id, volume_l FROM wms_skus "
                     "WHERE client_id = ? AND code = ?", (cid, code))
@@ -713,8 +762,11 @@ async def ops_ship(payload: dict, request: Request):
             if not plan:
                 continue
             for sku_id, code, qty, vol in plan:
-                _fifo_consume(cid, sku_id, qty, "ship", ref, sess["login"], now)
-                units += qty
+                done = _fifo_consume(cid, sku_id, qty, "ship", ref,
+                                     sess["login"], now)
+                if done != qty:   # под локом невозможно, но не молчим
+                    errors.append(f"{ref}: {code} списано {done} из {qty}")
+                units += done
                 max_vol = max(max_vol, vol)
             price = _assembly_price(t, max_vol)
             db.execute(
@@ -749,6 +801,7 @@ async def ops_return(payload: dict, request: Request):
         raise HTTPException(status_code=400, detail="Нужны sku и qty")
 
     def _save():
+      with _OP_LOCK:
         row = db.fetchone(
             "SELECT id FROM wms_skus WHERE client_id = ? AND code = ?",
             (cid, code))
@@ -761,7 +814,7 @@ async def ops_return(payload: dict, request: Request):
         b = db.fetchone(
             "SELECT id FROM wms_batches WHERE client_id=? AND sku_id=? "
             "ORDER BY received_at LIMIT 1", (cid, sku_id))
-        bid = b[0] if b else None
+        bid = b[0] if b else _ensure_batch(cid, sku_id, ref, now)
         status = "available" if verdict == "to_stock" else "quarantine"
         if verdict != "dispose":
             db.execute(
@@ -795,6 +848,7 @@ async def ops_adjust(payload: dict, request: Request):
                             detail="Нужны sku, qty_delta и причина")
 
     def _save():
+      with _OP_LOCK:
         row = db.fetchone(
             "SELECT id FROM wms_skus WHERE client_id = ? AND code = ?",
             (cid, code))
@@ -808,11 +862,12 @@ async def ops_adjust(payload: dict, request: Request):
         b = db.fetchone(
             "SELECT id FROM wms_batches WHERE client_id=? AND sku_id=? "
             "ORDER BY received_at LIMIT 1", (cid, row[0]))
+        bid = b[0] if b else _ensure_batch(cid, row[0], "ADJ", now)
         db.execute(
             "INSERT INTO wms_moves (client_id, sku_id, batch_id, qty, status, "
             "doc_type, doc_ref, note, user_login, created_at) "
             "VALUES (?,?,?,?,?,?,?,?,?,?)",
-            (cid, row[0], b[0] if b else None, delta, "available", "adjust",
+            (cid, row[0], bid, delta, "available", "adjust",
              f"ADJ:{reason[:40]}", "", sess["login"], now))
         return {"adjusted": delta}
     return await asyncio.to_thread(_save)
@@ -860,7 +915,13 @@ async def billing(request: Request, client_id: int | None = None,
 
 def storage_accrue(day: str | None = None) -> dict:
     """Раз в день: снапшот остатков по партиям + начисление хранения
-    партиям старше бесплатного периода. Идемпотентно по (day, batch)."""
+    партиям старше бесплатного периода. Идемпотентно по (day, batch):
+    снапшот и начисление пишутся одной транзакцией."""
+    with _OP_LOCK:
+        return _storage_accrue_locked(day)
+
+
+def _storage_accrue_locked(day: str | None = None) -> dict:
     _init()
     d = day or (datetime.utcnow() + timedelta(hours=3)).strftime("%Y-%m-%d")
     today = date.fromisoformat(d)
@@ -891,31 +952,33 @@ def storage_accrue(day: str | None = None) -> dict:
                 (d, bid))
             if exists:
                 continue
-            db.execute(
-                "INSERT INTO wms_snapshots (day, client_id, sku_id, batch_id, "
-                "qty, volume_l, age_days) VALUES (?,?,?,?,?,?,?)",
-                (d, cid, sku_id, bid, int(qty), volume, age))
-            written += 1
-            if age <= free_days:
-                continue
             rate = 0.0
-            for band in bands:
-                if int(band.get("from_day") or 0) <= age <= int(band.get("to_day") or 0):
-                    rate = float(band.get("box_day") or 0)
-                    break
-            if rate <= 0:
-                continue
-            boxes = volume / box_l
-            amount = round(boxes * rate, 2)
-            if amount <= 0:
-                continue
-            db.execute(
-                "INSERT INTO wms_billing (client_id, service_code, qty, price, "
-                "amount, occurred_at, source_type, source_ref, sku_id, note) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?)",
-                (cid, "STORAGE_DAY", round(boxes, 3), rate, amount,
-                 d + "T03:00:00", "storage", f"batch-{bid}", sku_id,
-                 f"возраст {age} дн"))
+            if age > free_days:
+                for band in bands:
+                    if int(band.get("from_day") or 0) <= age \
+                            <= int(band.get("to_day") or 0):
+                        rate = float(band.get("box_day") or 0)
+                        break
+            boxes = volume / box_l if box_l > 0 else 0.0
+            amount = round(boxes * rate, 2) if rate > 0 else 0.0
+            # пара снапшот+начисление — одна транзакция: сбой между ними
+            # не потеряет списание хранения (маркер идемпотентности = снапшот)
+            with db._conn() as con:
+                cur = con.cursor()
+                cur.execute(db._tr(
+                    "INSERT INTO wms_snapshots (day, client_id, sku_id, "
+                    "batch_id, qty, volume_l, age_days) VALUES (?,?,?,?,?,?,?)"),
+                    (d, cid, sku_id, bid, int(qty), volume, age))
+                if amount > 0:
+                    cur.execute(db._tr(
+                        "INSERT INTO wms_billing (client_id, service_code, "
+                        "qty, price, amount, occurred_at, source_type, "
+                        "source_ref, sku_id, note) VALUES (?,?,?,?,?,?,?,?,?,?)"),
+                        (cid, "STORAGE_DAY", round(boxes, 3), rate, amount,
+                         d + "T03:00:00", "storage", f"batch-{bid}", sku_id,
+                         f"возраст {age} дн"))
+                con.commit()
+            written += 1
             billed += amount
     return {"day": d, "snapshots": written, "billed": round(billed, 2)}
 

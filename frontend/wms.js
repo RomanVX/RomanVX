@@ -226,7 +226,13 @@ async function openReceive(iid) {
   $('wRecvForm').scrollIntoView({ behavior: 'smooth' });
 }
 
+let _busy = false;
 async function receiveSubmit() {
+  if (_busy) return;
+  _busy = true;
+  try { await _receiveSubmit(); } finally { _busy = false; }
+}
+async function _receiveSubmit() {
   const lines = _recv.lines.map(l => ({
     line_id: l.id,
     qty_received: parseInt($('rq' + l.id).value, 10) || 0,
@@ -257,6 +263,11 @@ async function vShip() {
 }
 
 async function shipSubmit() {
+  if (_busy) return;
+  _busy = true;
+  try { await _shipSubmit(); } finally { _busy = false; }
+}
+async function _shipSubmit() {
   const orders = $('wShipLines').value.split('\n').map(s => s.trim()).filter(Boolean)
     .map(s => {
       const p = s.split(/\s+/);
