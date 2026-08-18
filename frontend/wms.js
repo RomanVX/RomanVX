@@ -38,9 +38,9 @@ async function boot() {
   $('wWho').textContent = u.role === 'client'
     ? (u.client_name || 'клиент') : ('склад · ' + u.login);
   const tabs = u.role === 'client'
-    ? [['stock', 'Остатки'], ['inbounds', 'Поставки'], ['billing', 'Начисления']]
+    ? [['stock', 'Остатки'], ['moves', 'Движения'], ['inbounds', 'Поставки'], ['billing', 'Начисления']]
     : [['receive', 'Приёмка'], ['stock', 'Остатки'], ['ship', 'Отгрузка'],
-       ['ops', 'Возврат/корр.'], ['billing', 'Начисления'], ['clients', 'Клиенты']];
+       ['moves', 'Движения'], ['ops', 'Возврат/корр.'], ['billing', 'Начисления'], ['clients', 'Клиенты']];
   $('wNav').innerHTML = tabs.map(([k, label]) =>
     `<button id="wtab-${k}" onclick="go('${k}')">${label}</button>`).join('');
   if (u.role === 'staff') {
@@ -54,7 +54,7 @@ function go(tab) {
   document.querySelectorAll('.w-nav button').forEach(b =>
     b.classList.toggle('active', b.id === 'wtab-' + tab));
   ({ stock: vStock, inbounds: vInbounds, billing: vBilling, receive: vReceive,
-     ship: vShip, ops: vOps, clients: vClients })[tab]();
+     ship: vShip, ops: vOps, clients: vClients, moves: vMoves })[tab]();
 }
 
 // селектор клиента для сотрудника
@@ -470,3 +470,28 @@ async function skusImport(cid) {
   ['wLogin', 'wPass'].forEach(id =>
     $(id).addEventListener('keydown', e => { if (e.key === 'Enter') wmsDoLogin(); }));
 })();
+
+
+// ── Движения (журнал списаний/приходов) ─────────────────────────────────────
+async function vMoves() {
+  const m = $('wMain');
+  m.innerHTML = clientPicker() + '<div class="w-card">Загружаю…</div>';
+  let d;
+  try { d = await api('/moves' + cidQ()); }
+  catch (e) { m.innerHTML = clientPicker() + `<div class="w-card w-err">${esc(e.message)}</div>`; return; }
+  m.innerHTML = clientPicker() + `<div class="w-card">
+    <div class="w-h">Движения товара</div>
+    <div class="w-sub">Каждый приход и списание — построчно, с документом и партией. Остаток на вкладке «Остатки» — это сумма этих строк.</div>
+    <div class="w-table-wrap"><table class="w-table"><thead><tr>
+      <th>Когда</th><th>Операция</th><th>Артикул</th><th class="w-num">± шт</th><th>Партия</th><th>Документ</th>
+    </tr></thead><tbody>
+    ${(d.moves || []).map(r => `<tr>
+      <td style="white-space:nowrap">${esc(r.at)}</td>
+      <td>${esc(r.doc)}${r.status === 'quarantine' ? ' <span class="w-pill bad">брак</span>' : ''}${r.note ? `<div class="w-sub" style="margin:0">${esc(r.note)}</div>` : ''}</td>
+      <td><b>${esc(r.sku)}</b></td>
+      <td class="w-num" style="color:${r.qty < 0 ? 'var(--bad)' : 'var(--ok)'}"><b>${r.qty > 0 ? '+' : ''}${r.qty}</b></td>
+      <td>${esc(r.batch_no || '')}</td>
+      <td class="w-sub">${esc(r.ref || '')}</td>
+    </tr>`).join('') || '<tr><td colspan="6">Движений пока нет</td></tr>'}
+    </tbody></table></div></div>`;
+}

@@ -816,6 +816,33 @@ async def stock(request: Request, client_id: int | None = None):
     return {"stock": await asyncio.to_thread(_load), "client_id": cid}
 
 
+@router.get("/moves")
+async def moves(request: Request, client_id: int | None = None,
+                limit: int = 200):
+    """Журнал движений (что и когда списалось/пришло) — виден и клиенту:
+    его требование «видно, как остатки списываются» закрывается этой лентой."""
+    sess = _require(request)
+    cid = _client_scope(sess, client_id)
+
+    def _load():
+        return db.fetchall(
+            "SELECT m.created_at, s.code, s.name, m.qty, m.status, "
+            "m.doc_type, m.doc_ref, b.batch_no, m.user_login, m.note "
+            "FROM wms_moves m JOIN wms_skus s ON s.id = m.sku_id "
+            "LEFT JOIN wms_batches b ON b.id = m.batch_id "
+            "WHERE m.client_id = ? ORDER BY m.id DESC LIMIT ?",
+            (cid, min(int(limit or 200), 1000)))
+    rows = await asyncio.to_thread(_load)
+    DOC = {"receipt": "Приёмка", "ship": "Отгрузка заказа",
+           "return": "Возврат", "writeoff": "Списание",
+           "adjust": "Корректировка"}
+    return {"client_id": cid, "moves": [{
+        "at": (r[0] or "")[:16].replace("T", " "),
+        "sku": r[1], "name": r[2], "qty": r[3],
+        "status": r[4], "doc": DOC.get(r[5], r[5]), "ref": r[6],
+        "batch_no": r[7], "user": r[8], "note": r[9]} for r in rows]}
+
+
 # ── Операции: сборка/отгрузка, возврат, корректировка ───────────────────────
 
 def _assembly_price(t: dict, volume_l: float) -> float:
