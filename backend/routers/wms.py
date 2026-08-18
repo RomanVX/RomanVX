@@ -119,6 +119,10 @@ def _init():
         {_ID}, client_id INTEGER, status TEXT,
         expected_date TEXT, note TEXT, act_no TEXT,
         created_at TEXT, closed_at TEXT, created_by TEXT)""")
+    try:
+        db.execute("ALTER TABLE wms_inbounds ADD COLUMN pack_type TEXT")
+    except Exception:
+        pass
     db.execute(f"""CREATE TABLE IF NOT EXISTS wms_inbound_lines (
         {_ID}, inbound_id INTEGER, sku_id INTEGER,
         qty_expected INTEGER, qty_received INTEGER,
@@ -127,6 +131,12 @@ def _init():
     db.execute(f"""CREATE TABLE IF NOT EXISTS wms_inbound_boxes (
         {_ID}, inbound_id INTEGER, code TEXT UNIQUE, note TEXT,
         received INTEGER DEFAULT 0, created_at TEXT)""")
+    try:
+        db.execute("ALTER TABLE wms_inbound_boxes ADD COLUMN pallet_id INTEGER")
+    except Exception:
+        pass
+    db.execute(f"""CREATE TABLE IF NOT EXISTS wms_inbound_pallets (
+        {_ID}, inbound_id INTEGER, code TEXT UNIQUE, created_at TEXT)""")
     db.execute(f"""CREATE TABLE IF NOT EXISTS wms_inbound_box_items (
         {_ID}, box_id INTEGER, sku_id INTEGER, qty INTEGER,
         expiry_date TEXT, batch_no TEXT)""")
@@ -151,6 +161,7 @@ def _init():
         PRIMARY KEY (day, batch_id))""")
     for t in ("wms_clients", "wms_skus", "wms_inbounds", "wms_inbound_lines",
               "wms_inbound_boxes", "wms_inbound_box_items",
+              "wms_inbound_pallets",
               "wms_batches", "wms_moves", "wms_billing"):
         try:
             db.ensure_serial(t)
@@ -653,7 +664,8 @@ async def inbounds_list(request: Request, client_id: int | None = None,
 
     def _load():
         q = ("SELECT i.id, i.client_id, c.name, i.status, i.expected_date, "
-             "i.act_no, i.created_at, i.closed_at, i.note FROM wms_inbounds i "
+             "i.act_no, i.created_at, i.closed_at, i.note, i.pack_type "
+             "FROM wms_inbounds i "
              "JOIN wms_clients c ON c.id = i.client_id WHERE 1=1")
         params: list = []
         if cid:
@@ -664,13 +676,19 @@ async def inbounds_list(request: Request, client_id: int | None = None,
             params.append(status)
         q += " ORDER BY i.id DESC LIMIT 100"
         rows = db.fetchall(q, tuple(params))
-        # короба всех заявок — двумя запросами, не N×2
+        # короба и палеты всех заявок — тремя запросами, не N×3
         boxes_by_ib: dict = {}
+        pallets_by_ib: dict = {}
         ids = [r[0] for r in rows]
         if ids:
             ph = ",".join("?" * len(ids))
+            for p in db.fetchall(
+                    f"SELECT id, inbound_id, code FROM wms_inbound_pallets "
+                    f"WHERE inbound_id IN ({ph}) ORDER BY id", tuple(ids)):
+                pallets_by_ib.setdefault(p[1], []).append(
+                    {"id": p[0], "code": p[2]})
             brows = db.fetchall(
-                f"SELECT id, inbound_id, code, received, note "
+                f"SELECT id, inbound_id, code, received, note, pallet_id "
                 f"FROM wms_inbound_boxes WHERE inbound_id IN ({ph}) "
                 f"ORDER BY id", tuple(ids))
             items_by_box: dict = {}
@@ -691,7 +709,8 @@ async def inbounds_list(request: Request, client_id: int | None = None,
             for b in brows:
                 boxes_by_ib.setdefault(b[1], []).append({
                     "id": b[0], "code": b[2], "received": b[3],
-                    "note": b[4], "items": items_by_box.get(b[0], [])})
+                    "note": b[4], "pallet_id": b[5],
+                    "items": items_by_box.get(b[0], [])})
         out = []
         for r in rows:
             lines = db.fetchall(
@@ -703,7 +722,8 @@ async def inbounds_list(request: Request, client_id: int | None = None,
             out.append({
                 "id": r[0], "client_id": r[1], "client": r[2], "status": r[3],
                 "expected_date": r[4], "act_no": r[5], "created_at": r[6],
-                "closed_at": r[7], "note": r[8],
+                "closed_at": r[7], "note": r[8], "pack_type": r[9],
+                "pallets": pallets_by_ib.get(r[0], []),
                 "boxes": boxes_by_ib.get(r[0], []),
                 "lines": [{"id": x[0], "sku": x[1], "name": x[2],
                            "qty_expected": x[3], "qty_received": x[4],
@@ -716,18 +736,27 @@ async def inbounds_list(request: Request, client_id: int | None = None,
 
 @router.post("/inbounds")
 async def inbound_create(payload: dict, request: Request):
+    """Создание поставки. Помимо строк может сразу создать структуру
+    упаковки (мастер WB-стиля): pack_type box|mono, boxes N — короба;
+    pallets M × boxes_per_pallet K — монопаллеты с коробами."""
     sess = _require(request)
     cid = _client_scope(sess, payload.get("client_id"))
     lines = payload.get("lines") or []   # можно пустую: наполняется коробами
+    pack_type = str(payload.get("pack_type") or "box")
+    n_boxes = min(max(int(payload.get("boxes") or 0), 0), 200)
+    n_pallets = min(max(int(payload.get("pallets") or 0), 0), 50)
+    per_pallet = min(max(int(payload.get("boxes_per_pallet") or 0), 0), 100)
 
     def _save():
       with _OP_LOCK:
+        now = datetime.utcnow().isoformat()
         iid = _insert_id(
             "INSERT INTO wms_inbounds (client_id, status, expected_date, note, "
-            "act_no, created_at, created_by) VALUES (?,?,?,?,?,?,?)",
+            "act_no, created_at, created_by, pack_type) "
+            "VALUES (?,?,?,?,?,?,?,?)",
             (cid, "expected", str(payload.get("expected_date") or ""),
              str(payload.get("note") or ""), "",
-             datetime.utcnow().isoformat(), sess["login"]))
+             now, sess["login"], pack_type))
         skipped = []
         for ln in lines:
             code = str(ln.get("sku") or "").strip().upper()
@@ -741,6 +770,16 @@ async def inbound_create(payload: dict, request: Request):
                 "INSERT INTO wms_inbound_lines (inbound_id, sku_id, "
                 "qty_expected, qty_received) VALUES (?,?,?,0)",
                 (iid, row[0], int(ln.get("qty") or 0)))
+        if pack_type == "mono" and n_pallets > 0:
+            for _ in range(n_pallets):
+                seq = _next_seq("wms_inbound_pallets", iid) + 1
+                pcode = f"MP-P-{iid:05d}-{seq:02d}"
+                pid = _insert_id(
+                    "INSERT INTO wms_inbound_pallets (inbound_id, code, "
+                    "created_at) VALUES (?,?,?)", (iid, pcode, now))
+                _make_boxes(iid, per_pallet, pid, now)
+        elif n_boxes > 0:
+            _make_boxes(iid, n_boxes, None, now)
         return iid, skipped
     iid, skipped = await asyncio.to_thread(_save)
     return {"id": iid, "skipped_unknown_skus": skipped}
@@ -794,40 +833,105 @@ def _box_head(bid: int, sess: dict):
     return row
 
 
+def _inbound_open(iid: int, sess: dict) -> tuple:
+    """Заявка, доступная на редактирование; чужому клиенту — 404."""
+    head = db.fetchone(
+        "SELECT client_id, status FROM wms_inbounds WHERE id = ?", (iid,))
+    if not head or (sess["role"] == "client"
+                    and int(head[0]) != int(sess["client_id"])):
+        raise HTTPException(status_code=404, detail="Заявка не найдена")
+    if head[1] == "done":
+        raise HTTPException(status_code=400, detail="Заявка уже принята")
+    return head
+
+
+def _next_seq(table: str, iid: int) -> int:
+    """Следующий суффикс кода — от максимального (короба могли удалять)."""
+    seq = 0
+    for (code,) in db.fetchall(
+            f"SELECT code FROM {table} WHERE inbound_id = ?", (iid,)):
+        try:
+            seq = max(seq, int(str(code).rsplit("-", 1)[1]))
+        except (ValueError, IndexError):
+            pass
+    return seq
+
+
+def _make_boxes(iid: int, count: int, pallet_id, now: str) -> list:
+    seq = _next_seq("wms_inbound_boxes", iid)
+    created = []
+    for _ in range(count):
+        seq += 1
+        code = f"MP-{iid:05d}-{seq:02d}"
+        bid = _insert_id(
+            "INSERT INTO wms_inbound_boxes (inbound_id, code, note, "
+            "received, created_at, pallet_id) VALUES (?,?,?,0,?,?)",
+            (iid, code, "", now, pallet_id))
+        created.append({"id": bid, "code": code, "pallet_id": pallet_id})
+    return created
+
+
 @router.post("/inbounds/{iid}/boxes")
 async def box_create(iid: int, payload: dict, request: Request):
     sess = _require(request)
-    count = min(max(int(payload.get("count") or 1), 1), 50)
+    count = min(max(int(payload.get("count") or 1), 1), 100)
+    pallet_id = payload.get("pallet_id")
 
     def _save():
       with _OP_LOCK:
-        head = db.fetchone(
-            "SELECT client_id, status FROM wms_inbounds WHERE id = ?", (iid,))
-        if not head or (sess["role"] == "client"
-                        and int(head[0]) != int(sess["client_id"])):
-            raise HTTPException(status_code=404, detail="Заявка не найдена")
-        if head[1] == "done":
-            raise HTTPException(status_code=400, detail="Заявка уже принята")
-        # следующий номер — от максимального суффикса (короба могли удалять)
-        seq = 0
-        for (code,) in db.fetchall(
-                "SELECT code FROM wms_inbound_boxes WHERE inbound_id = ?", (iid,)):
-            try:
-                seq = max(seq, int(str(code).rsplit("-", 1)[1]))
-            except (ValueError, IndexError):
-                pass
-        now = datetime.utcnow().isoformat()
-        created = []
-        for _ in range(count):
-            seq += 1
-            code = f"MP-{iid:05d}-{seq:02d}"
-            bid = _insert_id(
-                "INSERT INTO wms_inbound_boxes (inbound_id, code, note, "
-                "received, created_at) VALUES (?,?,?,0,?)",
-                (iid, code, "", now))
-            created.append({"id": bid, "code": code})
-        return created
+        _inbound_open(iid, sess)
+        if pallet_id:
+            p = db.fetchone(
+                "SELECT id FROM wms_inbound_pallets WHERE id = ? "
+                "AND inbound_id = ?", (int(pallet_id), iid))
+            if not p:
+                raise HTTPException(status_code=404, detail="Палета не найдена")
+        return _make_boxes(iid, count,
+                           int(pallet_id) if pallet_id else None,
+                           datetime.utcnow().isoformat())
     return {"boxes": await asyncio.to_thread(_save)}
+
+
+@router.post("/inbounds/{iid}/pallets")
+async def pallet_create(iid: int, payload: dict, request: Request):
+    """Палета + сразу N коробов в ней (WB-стиль «монопаллета/короба»)."""
+    sess = _require(request)
+    n_boxes = min(max(int(payload.get("boxes") or 0), 0), 100)
+
+    def _save():
+      with _OP_LOCK:
+        _inbound_open(iid, sess)
+        now = datetime.utcnow().isoformat()
+        seq = _next_seq("wms_inbound_pallets", iid) + 1
+        code = f"MP-P-{iid:05d}-{seq:02d}"
+        pid = _insert_id(
+            "INSERT INTO wms_inbound_pallets (inbound_id, code, created_at) "
+            "VALUES (?,?,?)", (iid, code, now))
+        boxes = _make_boxes(iid, n_boxes, pid, now)
+        return {"id": pid, "code": code, "boxes": boxes}
+    return {"pallet": await asyncio.to_thread(_save)}
+
+
+@router.delete("/pallets/{pid}")
+async def pallet_delete(pid: int, request: Request):
+    """Удаляет палету вместе с её коробами и их составом."""
+    sess = _require(request)
+
+    def _del():
+      with _OP_LOCK:
+        row = db.fetchone(
+            "SELECT inbound_id FROM wms_inbound_pallets WHERE id = ?", (pid,))
+        if not row:
+            raise HTTPException(status_code=404, detail="Палета не найдена")
+        _inbound_open(int(row[0]), sess)
+        for (bid,) in db.fetchall(
+                "SELECT id FROM wms_inbound_boxes WHERE pallet_id = ?", (pid,)):
+            db.execute("DELETE FROM wms_inbound_box_items WHERE box_id = ?",
+                       (bid,))
+        db.execute("DELETE FROM wms_inbound_boxes WHERE pallet_id = ?", (pid,))
+        db.execute("DELETE FROM wms_inbound_pallets WHERE id = ?", (pid,))
+    await asyncio.to_thread(_del)
+    return {"ok": True}
 
 
 @router.post("/boxes/{bid}/items")
@@ -847,6 +951,10 @@ async def box_items_set(bid: int, payload: dict, request: Request):
             qty = int(it.get("qty") or 0)
             if not code or qty <= 0:
                 continue
+            if qty > 1_000_000:
+                raise HTTPException(status_code=400,
+                                    detail=f"Неправдоподобное кол-во {qty} "
+                                           f"для {code}")
             row = db.fetchone(
                 "SELECT id, requires_expiry, code FROM wms_skus "
                 "WHERE client_id = ? AND code = ?", (b[4], code))
@@ -884,50 +992,404 @@ async def box_delete(bid: int, request: Request):
     return {"ok": True}
 
 
-@router.get("/boxes/{bid}/label")
-async def box_label(bid: int, request: Request):
-    """Печатная этикетка короба: ШК Code128 + состав. Открывается в новой
-    вкладке (cookie той же сессии), кнопка печати скрывается при печати."""
+def _label_block(code: str, meta: str, rows_html: str, head_html: str) -> str:
     import html as _h
-    sess = _require(request)
+    return f"""<div class="lbl">
+  {_code128_svg(code)}
+  <div class="code">{_h.escape(code)}</div>
+  <div class="meta">{meta}</div>
+  <table><tr>{head_html}</tr>
+  {rows_html}</table>
+</div>"""
 
-    def _load():
-        b = _box_head(bid, sess)
-        client = db.fetchone("SELECT name FROM wms_clients WHERE id = ?", (b[4],))
-        items = db.fetchall(
-            "SELECT s.code, s.name, x.qty, x.expiry_date "
-            "FROM wms_inbound_box_items x JOIN wms_skus s ON s.id = x.sku_id "
-            "WHERE x.box_id = ? ORDER BY s.code", (bid,))
-        return b, (client[0] if client else ""), items
-    b, client_name, items = await asyncio.to_thread(_load)
-    code = str(b[2])
-    rows = "".join(
-        f"<tr><td>{_h.escape(str(r[0]))}</td><td>{_h.escape(str(r[1] or ''))}</td>"
-        f"<td class='n'>{r[2]}</td><td>{_h.escape(str(r[3] or '—'))}</td></tr>"
-        for r in items) or "<tr><td colspan='4'>Короб пуст</td></tr>"
-    total = sum(r[2] or 0 for r in items)
+
+def _label_page(title: str, blocks: list[str]) -> HTMLResponse:
+    import html as _h
+    body = "\n".join(blocks)
     page = f"""<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8">
-<title>{_h.escape(code)}</title><style>
+<title>{_h.escape(title)}</title><style>
 body {{ font: 14px/1.4 Arial, sans-serif; margin: 0; padding: 16px; color: #111; }}
-.lbl {{ width: 100mm; border: 1px dashed #999; padding: 6mm; border-radius: 4px; }}
+.lbl {{ width: 100mm; border: 1px dashed #999; padding: 6mm; border-radius: 4px;
+  margin-bottom: 10mm; page-break-after: always; }}
+.lbl:last-child {{ page-break-after: auto; }}
 svg {{ display: block; margin: 0 auto; width: 88mm; height: 20mm; }}
 .code {{ font-size: 22px; font-weight: 800; letter-spacing: 3px; text-align: center; margin-top: 2mm; }}
 .meta {{ color: #444; font-size: 12px; text-align: center; margin-top: 1mm; }}
 table {{ width: 100%; border-collapse: collapse; margin-top: 4mm; font-size: 12px; }}
 td, th {{ border-bottom: 1px solid #ddd; padding: 3px 4px; text-align: left; }}
-td.n {{ text-align: right; }}
+td.n, th.n {{ text-align: right; }}
 .btn {{ margin: 0 0 12px; padding: 10px 18px; font-size: 15px; cursor: pointer; }}
-@media print {{ .btn {{ display: none; }} .lbl {{ border: none; }} body {{ padding: 0; }} }}
+@media print {{ .btn {{ display: none; }} .lbl {{ border: none; margin-bottom: 0; }} body {{ padding: 0; }} }}
 </style></head><body>
 <button class="btn" onclick="print()">🖨 Печать</button>
-<div class="lbl">
-  {_code128_svg(code)}
-  <div class="code">{_h.escape(code)}</div>
-  <div class="meta">{_h.escape(client_name)} · заявка №{b[1]} · {total} шт · Market Partners, Чехов</div>
-  <table><tr><th>Артикул</th><th>Название</th><th class="n">шт</th><th>Срок годности</th></tr>
-  {rows}</table>
-</div></body></html>"""
+{body}</body></html>"""
     return HTMLResponse(page, headers={"Cache-Control": "no-store"})
+
+
+def _box_label_html(code: str, client_name: str, iid: int, items) -> str:
+    """items: [(sku_code, name, qty, expiry)]"""
+    import html as _h
+    rows = "".join(
+        f"<tr><td>{_h.escape(str(r[0]))}</td><td>{_h.escape(str(r[1] or ''))}</td>"
+        f"<td class='n'>{r[2]}</td><td>{_h.escape(str(r[3] or '—'))}</td></tr>"
+        for r in items) or "<tr><td colspan='4'>Короб пуст</td></tr>"
+    total = sum(r[2] or 0 for r in items)
+    meta = (f"{_h.escape(client_name)} · заявка №{iid} · {total} шт · "
+            f"Market Partners, Чехов")
+    return _label_block(code, meta, rows,
+                        "<th>Артикул</th><th>Название</th>"
+                        "<th class='n'>шт</th><th>Срок годности</th>")
+
+
+def _pallet_label_html(code: str, client_name: str, iid: int, boxes) -> str:
+    """boxes: [(box_code, units)]"""
+    import html as _h
+    rows = "".join(
+        f"<tr><td>{_h.escape(str(b[0]))}</td><td class='n'>{b[1]}</td></tr>"
+        for b in boxes) or "<tr><td colspan='2'>Палета пуста</td></tr>"
+    total = sum(b[1] or 0 for b in boxes)
+    meta = (f"{_h.escape(client_name)} · заявка №{iid} · {len(boxes)} кор. · "
+            f"{total} шт · Market Partners, Чехов")
+    return _label_block(code, meta, rows,
+                        "<th>Короб</th><th class='n'>шт</th>")
+
+
+def _box_items_for_label(bid: int):
+    return db.fetchall(
+        "SELECT s.code, s.name, x.qty, x.expiry_date "
+        "FROM wms_inbound_box_items x JOIN wms_skus s ON s.id = x.sku_id "
+        "WHERE x.box_id = ? ORDER BY s.code", (bid,))
+
+
+def _client_name(cid) -> str:
+    row = db.fetchone("SELECT name FROM wms_clients WHERE id = ?", (cid,))
+    return row[0] if row else ""
+
+
+@router.get("/boxes/{bid}/label")
+async def box_label(bid: int, request: Request):
+    """Печатная этикетка короба: ШК Code128 + состав. Открывается в новой
+    вкладке (cookie той же сессии), кнопка печати скрывается при печати."""
+    sess = _require(request)
+
+    def _load():
+        b = _box_head(bid, sess)
+        return b, _client_name(b[4]), _box_items_for_label(bid)
+    b, client_name, items = await asyncio.to_thread(_load)
+    code = str(b[2])
+    return _label_page(code, [_box_label_html(code, client_name, b[1], items)])
+
+
+@router.get("/pallets/{pid}/label")
+async def pallet_label(pid: int, request: Request):
+    sess = _require(request)
+
+    def _load():
+        row = db.fetchone(
+            "SELECT p.id, p.inbound_id, p.code, i.client_id "
+            "FROM wms_inbound_pallets p "
+            "JOIN wms_inbounds i ON i.id = p.inbound_id WHERE p.id = ?", (pid,))
+        if not row or (sess["role"] == "client"
+                       and int(row[3]) != int(sess["client_id"])):
+            raise HTTPException(status_code=404, detail="Палета не найдена")
+        boxes = db.fetchall(
+            "SELECT b.code, COALESCE((SELECT SUM(x.qty) "
+            "FROM wms_inbound_box_items x WHERE x.box_id = b.id), 0) "
+            "FROM wms_inbound_boxes b WHERE b.pallet_id = ? ORDER BY b.id",
+            (pid,))
+        return row, _client_name(row[3]), boxes
+    row, client_name, boxes = await asyncio.to_thread(_load)
+    code = str(row[2])
+    return _label_page(code,
+                       [_pallet_label_html(code, client_name, row[1], boxes)])
+
+
+@router.get("/inbounds/{iid}/labels")
+async def inbound_labels(iid: int, request: Request):
+    """Все этикетки заявки одной страницей: палеты + короба, по одной на
+    лист печати — как «Печать всех ШК» в WB."""
+    sess = _require(request)
+
+    def _load():
+        head = db.fetchone(
+            "SELECT client_id FROM wms_inbounds WHERE id = ?", (iid,))
+        if not head or (sess["role"] == "client"
+                        and int(head[0]) != int(sess["client_id"])):
+            raise HTTPException(status_code=404, detail="Заявка не найдена")
+        cname = _client_name(head[0])
+        blocks = []
+        for pid, pcode in db.fetchall(
+                "SELECT id, code FROM wms_inbound_pallets "
+                "WHERE inbound_id = ? ORDER BY id", (iid,)):
+            pboxes = db.fetchall(
+                "SELECT b.code, COALESCE((SELECT SUM(x.qty) "
+                "FROM wms_inbound_box_items x WHERE x.box_id = b.id), 0) "
+                "FROM wms_inbound_boxes b WHERE b.pallet_id = ? ORDER BY b.id",
+                (pid,))
+            blocks.append(_pallet_label_html(str(pcode), cname, iid, pboxes))
+        for bid, bcode in db.fetchall(
+                "SELECT id, code FROM wms_inbound_boxes "
+                "WHERE inbound_id = ? ORDER BY id", (iid,)):
+            blocks.append(_box_label_html(
+                str(bcode), cname, iid, _box_items_for_label(bid)))
+        return blocks
+    blocks = await asyncio.to_thread(_load)
+    if not blocks:
+        raise HTTPException(status_code=400,
+                            detail="В заявке нет коробов и палет")
+    return _label_page(f"ШК заявки №{iid}", blocks)
+
+
+def _norm_date(v) -> str:
+    """Дата из Excel/строки → YYYY-MM-DD (принимает ДД.ММ.ГГГГ и ISO)."""
+    if v is None:
+        return ""
+    if isinstance(v, datetime):
+        return v.date().isoformat()
+    if isinstance(v, date):
+        return v.isoformat()
+    s = str(v).strip()
+    if not s:
+        return ""
+    for sep in (".", "/"):
+        p = s.split(sep)
+        if len(p) == 3 and len(p[2]) == 4:
+            try:
+                return f"{int(p[2]):04d}-{int(p[1]):02d}-{int(p[0]):02d}"
+            except ValueError:
+                return s[:10]
+    return s[:10]
+
+
+@router.get("/inbounds/{iid}/boxes/template")
+async def boxes_template(iid: int, request: Request):
+    """Шаблон Excel раскладки по коробам — со штрихкодами коробов, как у WB.
+    Одна строка = один товар в коробе; несколько товаров в коробе —
+    несколько строк с одним ШК короба."""
+    sess = _require(request)
+
+    def _build():
+        head = db.fetchone(
+            "SELECT client_id FROM wms_inbounds WHERE id = ?", (iid,))
+        if not head or (sess["role"] == "client"
+                        and int(head[0]) != int(sess["client_id"])):
+            raise HTTPException(status_code=404, detail="Заявка не найдена")
+        cid = head[0]
+        boxes = db.fetchall(
+            "SELECT id, code FROM wms_inbound_boxes "
+            "WHERE inbound_id = ? ORDER BY id", (iid,))
+        if not boxes:
+            raise HTTPException(
+                status_code=400,
+                detail="Сначала добавьте короба (или палету с коробами) — "
+                       "шаблон выгружается с их штрихкодами")
+        items_by_box: dict = {}
+        for bid, sku, qty, exp in db.fetchall(
+                "SELECT x.box_id, s.code, x.qty, x.expiry_date "
+                "FROM wms_inbound_box_items x "
+                "JOIN wms_skus s ON s.id = x.sku_id "
+                "JOIN wms_inbound_boxes b ON b.id = x.box_id "
+                "WHERE b.inbound_id = ? ORDER BY x.id", (iid,)):
+            items_by_box.setdefault(bid, []).append((sku, qty, exp))
+        skus = db.fetchall(
+            "SELECT code, name, requires_expiry FROM wms_skus "
+            "WHERE client_id = ? ORDER BY code", (cid,))
+
+        import io
+        import openpyxl
+        from openpyxl.styles import Alignment, Font, PatternFill
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Раскладка"
+        ws.append(["ШК короба", "Артикул или баркод", "Кол-во",
+                   "Срок годности"])
+        for c in ws[1]:
+            c.font = Font(bold=True, color="FFFFFF")
+            c.fill = PatternFill("solid", fgColor="1a7f5a")
+            c.alignment = Alignment(horizontal="center", wrap_text=True)
+        grey_font = Font(color="6b7671")
+        for _bid, code in boxes:
+            rows = items_by_box.get(_bid) or [("", None, "")]
+            for sku, qty, exp in rows:
+                ws.append([code, sku, qty, exp])
+                ws.cell(row=ws.max_row, column=1).font = grey_font
+        for col, w in zip("ABCD", (16, 22, 9, 14)):
+            ws.column_dimensions[col].width = w
+        ws2 = wb.create_sheet("Товары")
+        ws2.append(["Артикул", "Название", "Срок годности обязателен"])
+        for c in ws2[1]:
+            c.font = Font(bold=True)
+        for r in skus:
+            ws2.append([r[0], r[1], "да" if r[2] else ""])
+        ws2.column_dimensions["A"].width = 16
+        ws2.column_dimensions["B"].width = 40
+        ws2.column_dimensions["C"].width = 24
+        ws3 = wb.create_sheet("Как заполнять")
+        for t in (
+            "Одна строка = один товар в одном коробе.",
+            "Несколько товаров в коробе — несколько строк с одним ШК короба.",
+            "ШК короба уже проставлены — копируйте код в новые строки.",
+            "Вместо полного кода можно писать номер короба: 1, 2, 3…",
+            "Артикул — из листа «Товары»; можно указать баркод с упаковки.",
+            "Срок годности — в формате ДД.ММ.ГГГГ (для товаров с пометкой",
+            "   «срок годности обязателен» — обязательно).",
+            "Загрузка файла ПОЛНОСТЬЮ заменяет состав упомянутых коробов.",
+            "Короба, которых нет в файле, не меняются.",
+        ):
+            ws3.append([t])
+        ws3.column_dimensions["A"].width = 72
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        return buf.read()
+    data = await asyncio.to_thread(_build)
+    from urllib.parse import quote
+    from fastapi.responses import Response as _Resp
+    fname = quote(f"Раскладка по коробам — заявка {iid}.xlsx")
+    return _Resp(content=data,
+                 media_type="application/vnd.openxmlformats-officedocument"
+                            ".spreadsheetml.sheet",
+                 headers={"Content-Disposition":
+                          f"attachment; filename*=UTF-8''{fname}"})
+
+
+@router.post("/inbounds/{iid}/boxes/import")
+async def boxes_import(iid: int, request: Request):
+    """Раскладка по коробам файлом (.xlsx/.csv). Понимает и наш шаблон,
+    и шаблон WB («Баркод товара | Кол-во товаров | ШК короба | Срок
+    годности»). Всё или ничего: при любой ошибке файл не применяется."""
+    sess = _require(request)
+    form = await request.form()
+    up = form.get("file")
+    if up is None:
+        raise HTTPException(status_code=400, detail="Нужен файл")
+    raw = await up.read()
+    fname = (getattr(up, "filename", "") or "").lower()
+
+    def _rows():
+        if fname.endswith(".csv") or fname.endswith(".txt"):
+            import csv
+            import io
+            text = raw.decode("utf-8-sig", errors="replace")
+            delim = ";" if text.count(";") >= text.count(",") else ","
+            return [r for r in csv.reader(io.StringIO(text), delimiter=delim)]
+        import io
+        import openpyxl
+        wb = openpyxl.load_workbook(io.BytesIO(raw), data_only=True)
+        return [list(r) for r in wb.active.iter_rows(values_only=True)]
+
+    def _save():
+      with _OP_LOCK:
+        cid, _status = _inbound_open(iid, sess)
+        rows = _rows()
+        if not rows:
+            raise HTTPException(status_code=400, detail="Файл пустой")
+        # шапка: наш шаблон и шаблон WB распознаются по словам
+        idx = {"box": None, "sku": None, "qty": None, "expiry": None}
+        start = 0
+        for ri, r in enumerate(rows[:5]):
+            cells = [str(v or "").strip().lower() for v in r]
+            if any("короб" in c for c in cells):
+                for ci, c in enumerate(cells):
+                    if "короб" in c and idx["box"] is None:
+                        idx["box"] = ci
+                    elif "артикул" in c or "баркод" in c or "sku" in c:
+                        idx["sku"] = ci
+                    elif "кол" in c or "qty" in c:
+                        idx["qty"] = ci
+                    elif "срок" in c or "годн" in c or "expiry" in c:
+                        idx["expiry"] = ci
+                start = ri + 1
+                break
+        if idx["box"] is None or idx["sku"] is None or idx["qty"] is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Не нашёл колонки: нужны «ШК короба», "
+                       "«Артикул/баркод» и «Кол-во»")
+        boxes = {str(c): b for b, c in db.fetchall(
+            "SELECT id, code FROM wms_inbound_boxes "
+            "WHERE inbound_id = ? ORDER BY id", (iid,))}
+        by_suffix = {}
+        for code, bid in boxes.items():
+            try:
+                by_suffix[int(code.rsplit("-", 1)[1])] = bid
+            except (ValueError, IndexError):
+                pass
+        sku_by_code = {}
+        sku_meta = {}
+        for sid, code, req in db.fetchall(
+                "SELECT id, code, requires_expiry FROM wms_skus "
+                "WHERE client_id = ?", (cid,)):
+            sku_by_code[str(code).upper()] = sid
+            sku_meta[sid] = (str(code), bool(req))
+        for bc, sid in db.fetchall(
+                "SELECT bc.barcode, bc.sku_id FROM wms_barcodes bc "
+                "JOIN wms_skus s ON s.id = bc.sku_id WHERE s.client_id = ?",
+                (cid,)):
+            sku_by_code.setdefault(str(bc).upper(), sid)
+
+        # фаза 1: разобрать и проверить ВСЁ, ошибки собрать разом
+        plan: dict = {}     # box_id -> [(sku_id, qty, expiry)]
+        errors: list = []
+        units = 0
+        for ri, r in enumerate(rows[start:], start=start + 1):
+            def _cell(i):
+                return r[i] if i is not None and i < len(r) else None
+            box_raw = str(_cell(idx["box"]) or "").strip()
+            sku_raw = str(_cell(idx["sku"]) or "").strip()
+            if sku_raw.endswith(".0"):
+                sku_raw = sku_raw[:-2]
+            if not box_raw and not sku_raw:
+                continue
+            try:
+                qty = int(float(str(_cell(idx["qty"]) or 0).replace(",", ".")))
+            except ValueError:
+                qty = 0
+            if not sku_raw and not qty:
+                continue    # строка пустого короба из шаблона
+            bid = boxes.get(box_raw)
+            if bid is None and box_raw.isdigit():
+                bid = by_suffix.get(int(box_raw))
+            if bid is None:
+                errors.append(f"стр. {ri}: короб «{box_raw}» не найден")
+                continue
+            if not sku_raw:
+                errors.append(f"стр. {ri}: есть кол-во, но не указан артикул")
+                continue
+            sid = sku_by_code.get(sku_raw.upper())
+            if sid is None:
+                errors.append(f"стр. {ri}: артикул/баркод «{sku_raw}» "
+                              f"не найден в справочнике")
+                continue
+            if qty <= 0 or qty > 1_000_000:
+                errors.append(f"стр. {ri}: неверное кол-во для «{sku_raw}»")
+                continue
+            exp = _norm_date(_cell(idx["expiry"]))
+            code_h, req = sku_meta[sid]
+            if req and not exp:
+                errors.append(f"стр. {ri}: у {code_h} обязателен срок "
+                              f"годности")
+                continue
+            plan.setdefault(bid, []).append((sid, qty, exp))
+            units += qty
+        if errors:
+            raise HTTPException(status_code=400,
+                                detail="Файл не применён:\n" +
+                                       "\n".join(errors[:12]))
+        if not plan:
+            raise HTTPException(status_code=400,
+                                detail="В файле нет ни одной строки раскладки")
+        # фаза 2: заменить состав упомянутых коробов
+        for bid, items in plan.items():
+            db.execute("DELETE FROM wms_inbound_box_items WHERE box_id = ?",
+                       (bid,))
+            for sid, qty, exp in items:
+                db.execute(
+                    "INSERT INTO wms_inbound_box_items (box_id, sku_id, qty, "
+                    "expiry_date, batch_no) VALUES (?,?,?,?,?)",
+                    (bid, sid, qty, exp, ""))
+        return {"boxes": len(plan), "units": units}
+    return await asyncio.to_thread(_save)
 
 
 @router.post("/inbounds/{iid}/receive_boxes")
@@ -977,6 +1439,11 @@ async def inbound_receive_boxes(iid: int, payload: dict, request: Request):
                 ov = overrides.get(xid) or {}
                 q = int(ov.get("qty", qty) or 0) if received else 0
                 e = str(ov.get("expiry_date", exp) or "").strip()
+                if q < 0 or q > 1_000_000:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Неправдоподобное кол-во {q} в коробе — "
+                               f"проверь поле «Факт» (не отсканирован ли ШК)")
                 if q > 0:
                     req = db.fetchone(
                         "SELECT requires_expiry, code FROM wms_skus "
