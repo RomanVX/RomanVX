@@ -437,6 +437,98 @@ async def skus_upsert(payload: dict, request: Request):
     return {"saved": n}
 
 
+@router.post("/skus/import")
+async def skus_import_file(request: Request):
+    """Загрузка товаров файлом (.xlsx/.csv). Шапка распознаётся по словам:
+    артикул/sku, название, объём(л), вес(г), ценность/стоимость, сг/срок,
+    штрихкод/barcode. Лишние колонки игнорируются."""
+    _require(request, staff_only=True)
+    form = await request.form()
+    cid = int(form.get("client_id") or 0)
+    up = form.get("file")
+    if not cid or up is None:
+        raise HTTPException(status_code=400, detail="Нужны client_id и file")
+    raw = await up.read()
+    fname = (getattr(up, "filename", "") or "").lower()
+
+    def _parse():
+        rows: list[list] = []
+        if fname.endswith(".csv") or fname.endswith(".txt"):
+            import csv
+            import io
+            text = raw.decode("utf-8-sig", errors="replace")
+            delim = ";" if text.count(";") >= text.count(",") else ","
+            rows = [r for r in csv.reader(io.StringIO(text), delimiter=delim)]
+        else:
+            import io
+            import openpyxl
+            wb = openpyxl.load_workbook(io.BytesIO(raw), data_only=True)
+            rows = [list(r) for r in wb.active.iter_rows(values_only=True)]
+        if not rows:
+            raise HTTPException(status_code=400, detail="Файл пустой")
+        # найти шапку в первых 5 строках
+        def _low(r):
+            return [str(v or "").strip().lower() for v in r]
+        idx = {"code": 0, "name": 1, "volume_l": None, "weight_g": None,
+               "value_rub": None, "expiry": None, "barcode": None}
+        start = 0
+        for ri, r in enumerate(rows[:5]):
+            cells = _low(r)
+            if any("артикул" in c or c == "sku" for c in cells):
+                for ci, c in enumerate(cells):
+                    if "артикул" in c or c == "sku":
+                        idx["code"] = ci
+                    elif "назван" in c or "name" in c:
+                        idx["name"] = ci
+                    elif "объ" in c or "литр" in c or "volume" in c:
+                        idx["volume_l"] = ci
+                    elif "вес" in c or "weight" in c:
+                        idx["weight_g"] = ci
+                    elif "ценност" in c or "стоимост" in c or "value" in c:
+                        idx["value_rub"] = ci
+                    elif c.startswith("сг") or "срок" in c or "expiry" in c:
+                        idx["expiry"] = ci
+                    elif "штрих" in c or "barcode" in c or "шк" == c:
+                        idx["barcode"] = ci
+                start = ri + 1
+                break
+        items = []
+        def _n(r, i):
+            if i is None or i >= len(r):
+                return 0.0
+            try:
+                return float(str(r[i]).replace(",", "."))
+            except (TypeError, ValueError):
+                return 0.0
+        def _t(r, i):
+            return str(r[i] or "").strip() if i is not None and i < len(r) else ""
+        for r in rows[start:]:
+            if not r:
+                continue
+            code = _t(r, idx["code"]).upper()
+            if not code or code.startswith("ИТОГО"):
+                continue
+            exp = _t(r, idx["expiry"]).lower()
+            bc = _t(r, idx["barcode"])
+            # штрихкоды из Excel часто приходят как 2.04e+12
+            if bc.endswith(".0"):
+                bc = bc[:-2]
+            items.append({
+                "code": code, "name": _t(r, idx["name"]),
+                "volume_l": _n(r, idx["volume_l"]),
+                "weight_g": _n(r, idx["weight_g"]),
+                "value_rub": _n(r, idx["value_rub"]),
+                "requires_expiry": exp in ("1", "да", "yes", "true", "+"),
+                "barcodes": [bc] if bc else []})
+        return items
+    items = await asyncio.to_thread(_parse)
+    if not items:
+        raise HTTPException(status_code=400,
+                            detail="Не нашёл ни одной строки с артикулом")
+    res = await skus_upsert({"client_id": cid, "items": items}, request)
+    return {"saved": res["saved"], "parsed": len(items)}
+
+
 # ── Приёмка (ASN) ───────────────────────────────────────────────────────────
 
 @router.get("/inbounds")

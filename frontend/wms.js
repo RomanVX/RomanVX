@@ -415,13 +415,34 @@ async function openSkus(cid) {
       <td>${s.requires_expiry ? '<span class="w-pill warn">да</span>' : '—'}</td>
       <td class="w-sub">${(s.barcodes || []).join(', ')}</td></tr>`).join('') || '<tr><td colspan="7">Товаров нет</td></tr>'}
     </tbody></table>
-    <details style="margin-top:10px"><summary class="w-sub" style="cursor:pointer">Добавить товары (строками)</summary>
+    <div class="w-row" style="margin-top:10px">
+      <label class="w-btn w-btn-primary" style="text-align:center">Загрузить из файла (Excel/CSV)
+        <input type="file" accept=".xlsx,.csv,.txt" style="display:none" onchange="skusFile(${cid}, this)"></label>
+    </div>
+    <div class="w-sub" style="margin-top:6px">Колонки файла: Артикул · Название · Объём, л · Вес, г · Ценность, ₽ · СГ (да/1) · Штрихкод — порядок любой, лишние игнорируются.</div>
+    <details style="margin-top:10px"><summary class="w-sub" style="cursor:pointer">Или добавить строками вручную</summary>
       <div class="w-form" style="margin-top:8px">
         <textarea id="wSkuLines" rows="4" placeholder="АРТИКУЛ;Название;объём_л;вес_г;ценность_₽;СГ(1/0);штрихкод\nBMN-0028;SEX FIST 500;1.73;620;350;1;2040646073073"></textarea>
         <button class="w-btn" onclick="skusImport(${cid})">Сохранить товары</button>
       </div></details>
   </div>`;
   $('wSkusBox').scrollIntoView({ behavior: 'smooth' });
+}
+
+async function skusFile(cid, inp) {
+  const f = inp.files && inp.files[0];
+  if (!f) return;
+  inp.value = '';
+  const fd = new FormData();
+  fd.append('client_id', cid);
+  fd.append('file', f);
+  try {
+    const r = await fetch('/api/wms/skus/import', { method: 'POST', body: fd });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.detail || ('HTTP ' + r.status));
+    alert(`Загружено товаров: ${j.saved} (в файле распознано ${j.parsed})`);
+    openSkus(cid);
+  } catch (e) { alert('Не вышло: ' + e.message); }
 }
 
 async function skusImport(cid) {
