@@ -132,7 +132,8 @@ table.w-table { width: 100%; border-collapse: collapse; font-size: 15px; }
 .w-box-row:last-child { border-bottom: none; }
 .w-box-code { font-weight: 700; font-variant-numeric: tabular-nums; }
 .w-box-sub { color: var(--ink2); font-size: 13px; }
-.w-box-actions { margin-left: auto; display: flex; gap: 6px; flex-wrap: nowrap; }
+.w-box-actions { margin-left: auto; display: flex; gap: 6px; flex-wrap: nowrap; align-items: center; }
+.w-palsel { min-height: 38px; padding: 6px 8px; font-size: 13px; max-width: 150px; color: var(--ink2); }
 .w-ibtn { width: 38px; height: 38px; display: inline-flex; align-items: center;
   justify-content: center; border: 1px solid var(--line); border-radius: 10px;
   background: #fff; cursor: pointer; text-decoration: none; color: var(--ink); font-size: 16px; }

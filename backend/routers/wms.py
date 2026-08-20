@@ -938,6 +938,46 @@ async def pallet_create(iid: int, payload: dict, request: Request):
     return {"pallet": await asyncio.to_thread(_save)}
 
 
+@router.post("/boxes/{bid}/pallet")
+async def box_set_pallet(bid: int, payload: dict, request: Request):
+    """Привязка короба к палете: pallet_id = id | null («без палеты») |
+    "new" (создать палету на лету). Опустевшие палеты удаляются сами."""
+    sess = _require(request)
+    target = payload.get("pallet_id")
+
+    def _save():
+      with _OP_LOCK:
+        b = _box_head(bid, sess)
+        if b[5] == "done":
+            raise HTTPException(status_code=400, detail="Заявка уже принята")
+        iid = int(b[1])
+        pid = None
+        if target == "new":
+            seq = _next_seq("wms_inbound_pallets", iid) + 1
+            pid = _insert_id(
+                "INSERT INTO wms_inbound_pallets (inbound_id, code, "
+                "created_at) VALUES (?,?,?)",
+                (iid, f"MP-P-{iid:05d}-{seq:02d}",
+                 datetime.utcnow().isoformat()))
+        elif target not in (None, "", 0):
+            row = db.fetchone(
+                "SELECT id FROM wms_inbound_pallets WHERE id = ? "
+                "AND inbound_id = ?", (int(target), iid))
+            if not row:
+                raise HTTPException(status_code=404, detail="Палета не найдена")
+            pid = int(target)
+        db.execute("UPDATE wms_inbound_boxes SET pallet_id = ? WHERE id = ?",
+                   (pid, bid))
+        for (empty_pid,) in db.fetchall(
+                "SELECT p.id FROM wms_inbound_pallets p WHERE p.inbound_id = ? "
+                "AND NOT EXISTS (SELECT 1 FROM wms_inbound_boxes x "
+                "WHERE x.pallet_id = p.id)", (iid,)):
+            db.execute("DELETE FROM wms_inbound_pallets WHERE id = ?",
+                       (empty_pid,))
+        return pid
+    return {"pallet_id": await asyncio.to_thread(_save)}
+
+
 @router.delete("/pallets/{pid}")
 async def pallet_delete(pid: int, request: Request):
     """Удаляет палету вместе с её коробами и их составом."""
