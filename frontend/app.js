@@ -3216,7 +3216,9 @@ async function slotsBoxUpload(input) {
 }
 
 function _slotsHasWaves() {
-  return !_slotsBoxes || Object.keys(_slotsBoxes.waves || {}).some(k => k !== '?');
+  // селектор волны — только когда волны реально есть в загруженном файле;
+  // без файла и в файлах без колонки «Волна» заливаются все короба
+  return !!_slotsBoxes && Object.keys(_slotsBoxes.waves || {}).some(k => k !== '?');
 }
 
 function _slotWave() {
@@ -3321,12 +3323,12 @@ function renderSlots() {
       <select id="slotWave" class="form-select form-select-sm" style="width:110px">
         ${keys.map(w => `<option value="${w}" ${String(w) === _slotWaveSel ? 'selected' : ''}>${w}${dates[w] ? ' · ' + dates[w] : ''}</option>`).join('')}
       </select>`;
-      })() : '<span class="small text-secondary">файл без волн — берём все короба</span>'}
+      })() : (_slotsBoxes ? '<span class="small text-secondary">волн в файле нет — заливаются все короба</span>' : '')}
     </div>
     <div id="slotBoxInfo" class="small mt-2">${_slotsBoxes ? `Файл разобран: <b>${_slotsBoxes.boxes} коробов</b>,
       ${_slotsBoxes.qty} шт${_slotsHasWaves() ? ` · волны: ${esc(Object.entries(_slotsBoxes.waves || {}).map(([w, n]) => `${w} — ${n} кор.${(_slotsBoxes.wave_dates || {})[w] ? ' (' + _slotsBoxes.wave_dates[w] + ')' : ''}`).join(', '))}` : ''}
       ${(_slotsBoxes.conflicts || []).length ? `<span class="text-danger d-block">Конфликты: ${esc(_slotsBoxes.conflicts.join('; '))}</span>` : ''}`
-      : '<span class="text-secondary">Загрузи файл с листом «отгрузка OZON» (короб → кластер, волна — если есть) — дальше «Сверка» и «Залить короба» у нужной заявки, этикетки скачаются архивом по кластерам.</span>'}</div>
+      : '<span class="text-secondary">Загрузи файл с листом «отгрузка OZON» (короб → кластер) — короба сами разложатся по кластерам заявки. Дальше «Сверка» и «Залить короба» у нужной заявки, этикетки скачаются архивом по кластерам.</span>'}</div>
   </div>`;
 
   const od = _slotsData.orders || {};
