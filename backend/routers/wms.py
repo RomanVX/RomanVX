@@ -747,6 +747,11 @@ async def inbound_create(payload: dict, request: Request):
     n_pallets = min(max(int(payload.get("pallets") or 0), 0), 50)
     per_pallet = min(max(int(payload.get("boxes_per_pallet") or 0), 0), 100)
 
+    # клиент создаёт ЧЕРНОВИК (draft): раскладка, печать ШК — и только
+    # «Отправить в фулфилмент» превращает его в заявку складу (expected).
+    # Склад, создавая за клиента, минует черновик.
+    status0 = "draft" if sess["role"] == "client" else "expected"
+
     def _save():
       with _OP_LOCK:
         now = datetime.utcnow().isoformat()
@@ -754,7 +759,7 @@ async def inbound_create(payload: dict, request: Request):
             "INSERT INTO wms_inbounds (client_id, status, expected_date, note, "
             "act_no, created_at, created_by, pack_type) "
             "VALUES (?,?,?,?,?,?,?,?)",
-            (cid, "expected", str(payload.get("expected_date") or ""),
+            (cid, status0, str(payload.get("expected_date") or ""),
              str(payload.get("note") or ""), "",
              now, sess["login"], pack_type))
         skipped = []
@@ -783,6 +788,27 @@ async def inbound_create(payload: dict, request: Request):
         return iid, skipped
     iid, skipped = await asyncio.to_thread(_save)
     return {"id": iid, "skipped_unknown_skus": skipped}
+
+
+@router.post("/inbounds/{iid}/send")
+async def inbound_send(iid: int, request: Request):
+    """Черновик → заявка складу (draft → expected). Идемпотентно."""
+    sess = _require(request)
+
+    def _save():
+      with _OP_LOCK:
+        head = db.fetchone(
+            "SELECT client_id, status FROM wms_inbounds WHERE id = ?", (iid,))
+        if not head or (sess["role"] == "client"
+                        and int(head[0]) != int(sess["client_id"])):
+            raise HTTPException(status_code=404, detail="Поставка не найдена")
+        if head[1] == "done":
+            raise HTTPException(status_code=400, detail="Поставка уже принята")
+        if head[1] == "draft":
+            db.execute("UPDATE wms_inbounds SET status='expected' WHERE id=?",
+                       (iid,))
+        return "expected"
+    return {"status": await asyncio.to_thread(_save)}
 
 
 # ── Короба поставки (WB ФБО-стиль): клиент сам пакует и клеит ШК ────────────
@@ -1410,6 +1436,10 @@ async def inbound_receive_boxes(iid: int, payload: dict, request: Request):
         cid, status = head
         if status == "done":
             raise HTTPException(status_code=400, detail="Заявка уже принята")
+        if status == "draft":
+            raise HTTPException(status_code=400,
+                                detail="Черновик: клиент ещё не отправил "
+                                       "поставку в фулфилмент")
         box_rows = db.fetchall(
             "SELECT id FROM wms_inbound_boxes WHERE inbound_id = ?", (iid,))
         if not box_rows:
@@ -1545,6 +1575,10 @@ async def inbound_receive(iid: int, payload: dict, request: Request):
         cid, status = head
         if status == "done":
             raise HTTPException(status_code=400, detail="Заявка уже принята")
+        if status == "draft":
+            raise HTTPException(status_code=400,
+                                detail="Черновик: клиент ещё не отправил "
+                                       "поставку в фулфилмент")
         t = _tariff_of(cid)
         now = datetime.utcnow().isoformat()
         # фаза 1: валидация ВСЕХ строк до первой записи — чтобы ошибка

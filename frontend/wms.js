@@ -130,6 +130,11 @@ async function vInbounds() {
   let sk = [];
   try { sk = (await api('/skus' + cidQ())).skus; } catch (e) {}
   W.skus = sk; W.inbounds = d.inbounds || [];
+  if (WZ) {   // мастер открыт — он занимает весь экран, списка не видно
+    m.innerHTML = clientPicker() + '<div id="wWiz"></div>';
+    wizRender();
+    return;
+  }
   const opened = W.openInbound && W.inbounds.find(x => x.id === W.openInbound);
   if (opened) {
     m.innerHTML = clientPicker() + supplyCard(opened);
@@ -137,7 +142,6 @@ async function vInbounds() {
   }
   W.openInbound = null;
   m.innerHTML = clientPicker() + `
-    <div id="wWiz"></div>
     <div class="w-card">
       <div class="w-row" style="justify-content:space-between;align-items:center">
         <div class="w-h" style="margin:0">Поставки</div>
@@ -154,26 +158,33 @@ async function vInbounds() {
   supListRender();
 }
 
-function supplyRowsHtml(list) {
+const ST_PILL = { draft: ['черновик', 'grey'], expected: ['отправлена', 'warn'],
+  receiving: ['на приёмке', 'warn'], done: ['принята', 'ok'] };
+function stPill(s) {
+  const [t, c] = ST_PILL[s] || [s, 'grey'];
+  return `<span class="w-pill ${c}">${t}</span>`;
+}
+
+function supplyRowsHtml(list, withSend) {
   return `<div class="w-table-wrap"><table class="w-table"><thead><tr>
     <th>Номер и тип</th><th>Дата поставки</th><th>Статус</th>
     <th class="w-num">Заявлено, шт</th><th class="w-num">Разложено → Принято</th>
+    ${withSend ? '<th style="width:170px"></th>' : ''}
   </tr></thead><tbody>
   ${list.map(ib => {
     const asked  = (ib.lines || []).reduce((s, l) => s + (l.qty_expected || 0), 0);
     const packed = (ib.boxes || []).reduce((s, b) => s + b.items.reduce((q, i) => q + i.qty, 0), 0);
     const recv   = (ib.lines || []).reduce((s, l) => s + (l.qty_received || 0), 0);
-    const st = ib.status === 'done'
-      ? '<span class="w-pill ok">принята</span>'
-      : '<span class="w-pill warn">ожидается</span>';
     return `<tr class="w-sup-row" onclick="openInbound(${ib.id})">
       <td><b>№${ib.id}</b><div class="w-sub" style="margin:0">${ib.pack_type === 'mono' ? 'Монопаллета' : 'Короб'}${W.user.role !== 'client' ? ' · ' + esc(ib.client || '') : ''}</div></td>
       <td>${esc(ib.expected_date || (ib.created_at || '').slice(0, 10))}</td>
-      <td>${st}</td>
+      <td>${stPill(ib.status)}</td>
       <td class="w-num"><b>${asked || packed || '—'}</b></td>
       <td class="w-num">${packed}${ib.status === 'done' ? ` → <b style="color:var(--ok)">${recv}</b>` : ''}</td>
+      ${withSend ? `<td style="text-align:right"><button class="w-btn w-btn-primary" style="padding:7px 13px;white-space:nowrap"
+        onclick="event.stopPropagation();sendInbound(${ib.id})">📤 Отправить в ФФ</button></td>` : ''}
     </tr>`;
-  }).join('') || '<tr><td colspan="5" class="w-sub">Пусто</td></tr>'}
+  }).join('') || `<tr><td colspan="${withSend ? 6 : 5}" class="w-sub">Пусто</td></tr>`}
   </tbody></table></div>`;
 }
 
@@ -183,11 +194,27 @@ function supListRender() {
     (ib.lines || []).some(l => (l.sku || '').toLowerCase().includes(q)) ||
     (ib.boxes || []).some(b => (b.code || '').toLowerCase().includes(q) ||
       b.items.some(i => (i.sku || '').toLowerCase().includes(q)));
-  const open = W.inbounds.filter(i => i.status !== 'done' && match(i));
+  const drafts = W.inbounds.filter(i => i.status === 'draft' && match(i));
+  const sent = W.inbounds.filter(i => i.status !== 'done' && i.status !== 'draft' && match(i));
   const hist = W.inbounds.filter(i => i.status === 'done' && match(i));
+  const sec = (title, html) =>
+    `<div class="w-h" style="margin-top:18px;font-size:16px">${title}</div>${html}`;
   const el = $('wSupList');
-  if (el) el.innerHTML = supplyRowsHtml(open) +
-    (hist.length ? `<div class="w-h" style="margin-top:18px;font-size:16px">История</div>${supplyRowsHtml(hist)}` : '');
+  if (!el) return;
+  let out = '';
+  if (drafts.length) out += sec('Черновики — разложите товар и отправьте нам',
+    supplyRowsHtml(drafts, true));
+  out += sec('Отправленные в фулфилмент', supplyRowsHtml(sent));
+  if (hist.length) out += sec('История', supplyRowsHtml(hist));
+  el.innerHTML = out;
+}
+
+async function sendInbound(id) {
+  const ib = (W.inbounds || []).find(x => x.id === id);
+  const packed = ib ? (ib.boxes || []).reduce((s, b) => s + b.items.reduce((q, i) => q + i.qty, 0), 0) : 0;
+  if (!packed && !confirm('По коробам ничего не разложено. Отправить поставку в фулфилмент всё равно?')) return;
+  if (packed && !confirm('Отправить поставку в фулфилмент? После отправки склад увидит заявку и примет по коробам.')) return;
+  _packOp(() => api(`/inbounds/${id}/send`, { method: 'POST' }));
 }
 
 function openInbound(id) { W.openInbound = id; W.packSearch = ''; go(curTab()); }
@@ -195,14 +222,15 @@ function closeInbound() { W.openInbound = null; go(curTab()); }
 
 // карточка поставки (клиентский экран «Упаковка и печать ШК»)
 function supplyCard(ib) {
-  const st = ib.status === 'done'
-    ? '<span class="w-pill ok">принята</span>'
-    : '<span class="w-pill warn">ожидается</span>';
   return `<div class="w-card">
     <div class="w-row" style="align-items:center;gap:12px">
       <div style="flex:0"><button class="w-btn w-btn-ghost" onclick="closeInbound()">← Поставки</button></div>
-      <div class="w-h" style="margin:0;flex:1">Поставка №${ib.id} ${st}</div>
+      <div class="w-h" style="margin:0;flex:1">Поставка №${ib.id} ${stPill(ib.status)}</div>
+      ${ib.status === 'draft' ? `<div style="flex:0;white-space:nowrap">
+        <button class="w-btn w-btn-primary" onclick="sendInbound(${ib.id})">📤 Отправить в фулфилмент</button>
+      </div>` : ''}
     </div>
+    ${ib.status === 'draft' ? '<div class="w-sub" style="margin-top:4px">Это черновик: разложите товар по коробам, распечатайте ШК и отправьте поставку — тогда склад увидит заявку.</div>' : ''}
     <div class="w-sub">${ib.pack_type === 'mono' ? 'Монопаллета' : 'Короб'}${ib.expected_date ? ' · на ' + esc(ib.expected_date) : ''} · создана ${esc((ib.created_at || '').slice(0, 10))}${W.user.role !== 'client' ? ' · ' + esc(ib.client || '') : ''}${ib.note ? ' · ' + esc(ib.note) : ''}${ib.act_no ? ' · акт ' + esc(ib.act_no) : ''}</div>
     ${(ib.lines || []).length ? `<table class="w-table" style="table-layout:fixed"><thead><tr>
       <th style="width:26%">Артикул</th>
@@ -225,10 +253,12 @@ let WZ = null;
 function wizOpen() {
   WZ = { step: 1, qty: {}, search: '', pack: 'box', boxes: 5, pallets: 1, perPallet: 4,
     date: '', note: '' };
+  const m = $('wMain');
+  m.innerHTML = clientPicker() + '<div id="wWiz"></div>';  // мастер на весь экран
   wizRender();
-  $('wWiz').scrollIntoView({ behavior: 'smooth' });
+  window.scrollTo(0, 0);
 }
-function wizClose() { WZ = null; $('wWiz').innerHTML = ''; }
+function wizClose() { WZ = null; go(curTab()); }
 const wizUnits = () => Object.values(WZ.qty).reduce((s, q) => s + q, 0);
 const wizSkus = () => Object.keys(WZ.qty).length;
 
@@ -274,17 +304,18 @@ function wizRender() {
         ${WZ.pack === 'box'
           ? `<div><div class="w-label">Сколько коробов создать</div>
               <input type="number" inputmode="numeric" min="0" max="200" value="${WZ.boxes}"
-                oninput="WZ.boxes=parseInt(this.value,10)||0"></div>
+                oninput="WZ.boxes=parseInt(this.value,10)||0;wizPackHint()"></div>
              <div></div>`
           : `<div><div class="w-label">Палет</div>
               <input type="number" inputmode="numeric" min="1" max="50" value="${WZ.pallets}"
-                oninput="WZ.pallets=parseInt(this.value,10)||0"></div>
+                oninput="WZ.pallets=parseInt(this.value,10)||0;wizPackHint()"></div>
              <div><div class="w-label">Коробов на палете</div>
               <input type="number" inputmode="numeric" min="1" max="100" value="${WZ.perPallet}"
-                oninput="WZ.perPallet=parseInt(this.value,10)||0"></div>`}
+                oninput="WZ.perPallet=parseInt(this.value,10)||0;wizPackHint()"></div>`}
       </div>
-      <div class="w-sub" style="margin-top:8px">Штрихкоды коробов и палет создадутся сразу — печать и раскладка
-        товара будут в карточке поставки. Добавить или удалить короба можно и позже.</div>`;
+      <div class="w-batches" id="wWizPackHint" style="margin-top:10px">${packHintText()}</div>
+      <div class="w-sub" style="margin-top:8px">Печать ШК и раскладка товара — в карточке поставки после
+        создания. Добавить или удалить короба можно и позже.</div>`;
   } else {
     const packTxt = WZ.pack === 'mono'
       ? `${WZ.pallets} палет × ${WZ.perPallet} коробов`
@@ -298,7 +329,8 @@ function wizRender() {
       </div>
       <div class="w-batches" style="margin-top:12px">
         Итого: <b>${wizSkus()}</b> товаров · <b>${wizUnits()}</b> шт · упаковка: <b>${packTxt}</b>.
-        После создания — разложите товар по коробам (вручную или через Excel) и распечатайте ШК.
+        Создастся <b>черновик</b>: разложите товар по коробам (вручную или через Excel), распечатайте
+        ШК — и нажмите «Отправить в фулфилмент», тогда заявка придёт складу.
       </div>`;
   }
   $('wWiz').innerHTML = `<div class="w-card" style="border-color:var(--brand)">
@@ -312,9 +344,25 @@ function wizRender() {
       <div>${WZ.step > 1 ? `<button class="w-btn" onclick="WZ.step--;wizRender()">← Назад</button>` : ''}</div>
       <div>${WZ.step < 3
         ? `<button class="w-btn w-btn-primary" onclick="wizNext()">Дальше →</button>`
-        : `<button class="w-btn w-btn-primary" onclick="wizSubmit()">Создать поставку</button>`}</div>
+        : `<button class="w-btn w-btn-primary" onclick="wizSubmit()">Создать черновик поставки</button>`}</div>
     </div>
   </div>`;
+}
+
+function packHintText() {
+  if (WZ.pack === 'mono') {
+    const p = WZ.pallets || 0, k = WZ.perPallet || 0;
+    return p && k
+      ? `Будет создано: <b>${p}</b> ${p === 1 ? 'палета' : 'палет'} × <b>${k}</b> коробов = <b>${p * k}</b> коробов, у каждой палеты и короба свой штрихкод`
+      : 'Укажите число палет и коробов на палете';
+  }
+  const b = WZ.boxes || 0;
+  return b ? `Будет создано: <b>${b}</b> коробов, у каждого свой штрихкод`
+           : 'Укажите число коробов';
+}
+function wizPackHint() {
+  const el = $('wWizPackHint');
+  if (el) el.innerHTML = packHintText();
 }
 
 // перерисовка без потери фокуса в поиске
@@ -355,7 +403,8 @@ async function wizSubmit() {
 }
 
 function inboundCard(ib, staffMode) {
-  const st = { expected: ['ожидается', 'warn'], receiving: ['на приёмке', 'warn'],
+  const st = { draft: ['черновик', 'grey'], expected: ['ожидается', 'warn'],
+               receiving: ['на приёмке', 'warn'],
                done: ['принята', 'ok'] }[ib.status] || [ib.status, 'grey'];
   return `<div style="border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:10px">
     <div class="w-row" style="justify-content:space-between">
@@ -605,7 +654,8 @@ async function vReceive() {
   try { d = await api('/inbounds' + cidQ()); }
   catch (e) { m.innerHTML = `<div class="w-card w-err">${esc(e.message)}</div>`; return; }
   W.inbounds = d.inbounds || [];
-  const open = (d.inbounds || []).filter(i => i.status !== 'done');
+  // черновики клиентов складу не показываем — они ещё не отправлены
+  const open = (d.inbounds || []).filter(i => i.status !== 'done' && i.status !== 'draft');
   const done = (d.inbounds || []).filter(i => i.status === 'done').slice(0, 5);
   m.innerHTML = clientPicker() + `
     <div class="w-card">

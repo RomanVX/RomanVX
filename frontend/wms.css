@@ -70,6 +70,7 @@ table.w-table { width: 100%; border-collapse: collapse; font-size: 15px; }
 .w-table td { padding: 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
 .w-table tr:last-child td { border-bottom: none; }
 .w-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.w-table th.w-num { text-align: right; }  /* иначе th.text-align:left перебивает */
 
 /* Статусы */
 .w-pill { display: inline-block; padding: 3px 10px; border-radius: 999px;
