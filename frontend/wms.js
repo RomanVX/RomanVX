@@ -120,7 +120,7 @@ function asnForm(skus, compact) {
     <button class="w-btn w-btn-primary${compact ? '' : ' w-btn-big'}" style="margin-top:10px" onclick="asnCreate()">Создать заявку</button>`;
 }
 
-// ── Поставки (список + мастер новой поставки в стиле WB) ────────────────────
+// ── Поставки: таблица-список (как в WB), карточка поставки, мастер ──────────
 async function vInbounds() {
   const m = $('wMain');
   m.innerHTML = clientPicker() + '<div class="w-card">Загружаю…</div>';
@@ -130,6 +130,12 @@ async function vInbounds() {
   let sk = [];
   try { sk = (await api('/skus' + cidQ())).skus; } catch (e) {}
   W.skus = sk; W.inbounds = d.inbounds || [];
+  const opened = W.openInbound && W.inbounds.find(x => x.id === W.openInbound);
+  if (opened) {
+    m.innerHTML = clientPicker() + supplyCard(opened);
+    return;
+  }
+  W.openInbound = null;
   m.innerHTML = clientPicker() + `
     <div id="wWiz"></div>
     <div class="w-card">
@@ -139,10 +145,79 @@ async function vInbounds() {
           <button class="w-btn w-btn-primary" onclick="wizOpen()">+ Новая поставка</button>
         </div>
       </div>
-      <div class="w-sub" style="margin-top:6px">Как на WB ФБО: товары → упаковка (короба или монопаллеты) →
-        раскладка по коробам со сроками годности → печать ШК. Склад принимает по коробам.</div>
-      ${(d.inbounds || []).map(ib => inboundCard(ib, false)).join('') || '<div class="w-sub">Поставок пока нет — создайте первую</div>'}
+      <div class="w-row" style="margin:10px 0 4px">
+        <input class="w-search" placeholder="Номер поставки, артикул или ШК короба"
+          value="${esc(W.supSearch || '')}" oninput="W.supSearch=this.value;supListRender()">
+      </div>
+      <div id="wSupList"></div>
     </div>`;
+  supListRender();
+}
+
+function supplyRowsHtml(list) {
+  return `<div class="w-table-wrap"><table class="w-table"><thead><tr>
+    <th>Номер и тип</th><th>Дата поставки</th><th>Статус</th>
+    <th class="w-num">Заявлено, шт</th><th class="w-num">Разложено → Принято</th>
+  </tr></thead><tbody>
+  ${list.map(ib => {
+    const asked  = (ib.lines || []).reduce((s, l) => s + (l.qty_expected || 0), 0);
+    const packed = (ib.boxes || []).reduce((s, b) => s + b.items.reduce((q, i) => q + i.qty, 0), 0);
+    const recv   = (ib.lines || []).reduce((s, l) => s + (l.qty_received || 0), 0);
+    const st = ib.status === 'done'
+      ? '<span class="w-pill ok">принята</span>'
+      : '<span class="w-pill warn">ожидается</span>';
+    return `<tr class="w-sup-row" onclick="openInbound(${ib.id})">
+      <td><b>№${ib.id}</b><div class="w-sub" style="margin:0">${ib.pack_type === 'mono' ? 'Монопаллета' : 'Короб'}${W.user.role !== 'client' ? ' · ' + esc(ib.client || '') : ''}</div></td>
+      <td>${esc(ib.expected_date || (ib.created_at || '').slice(0, 10))}</td>
+      <td>${st}</td>
+      <td class="w-num"><b>${asked || packed || '—'}</b></td>
+      <td class="w-num">${packed}${ib.status === 'done' ? ` → <b style="color:var(--ok)">${recv}</b>` : ''}</td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="5" class="w-sub">Пусто</td></tr>'}
+  </tbody></table></div>`;
+}
+
+function supListRender() {
+  const q = (W.supSearch || '').trim().toLowerCase();
+  const match = ib => !q || String(ib.id).includes(q) ||
+    (ib.lines || []).some(l => (l.sku || '').toLowerCase().includes(q)) ||
+    (ib.boxes || []).some(b => (b.code || '').toLowerCase().includes(q) ||
+      b.items.some(i => (i.sku || '').toLowerCase().includes(q)));
+  const open = W.inbounds.filter(i => i.status !== 'done' && match(i));
+  const hist = W.inbounds.filter(i => i.status === 'done' && match(i));
+  const el = $('wSupList');
+  if (el) el.innerHTML = supplyRowsHtml(open) +
+    (hist.length ? `<div class="w-h" style="margin-top:18px;font-size:16px">История</div>${supplyRowsHtml(hist)}` : '');
+}
+
+function openInbound(id) { W.openInbound = id; W.packSearch = ''; go(curTab()); }
+function closeInbound() { W.openInbound = null; go(curTab()); }
+
+// карточка поставки (клиентский экран «Упаковка и печать ШК»)
+function supplyCard(ib) {
+  const st = ib.status === 'done'
+    ? '<span class="w-pill ok">принята</span>'
+    : '<span class="w-pill warn">ожидается</span>';
+  return `<div class="w-card">
+    <div class="w-row" style="align-items:center;gap:12px">
+      <div style="flex:0"><button class="w-btn w-btn-ghost" onclick="closeInbound()">← Поставки</button></div>
+      <div class="w-h" style="margin:0;flex:1">Поставка №${ib.id} ${st}</div>
+    </div>
+    <div class="w-sub">${ib.pack_type === 'mono' ? 'Монопаллета' : 'Короб'}${ib.expected_date ? ' · на ' + esc(ib.expected_date) : ''} · создана ${esc((ib.created_at || '').slice(0, 10))}${W.user.role !== 'client' ? ' · ' + esc(ib.client || '') : ''}${ib.note ? ' · ' + esc(ib.note) : ''}${ib.act_no ? ' · акт ' + esc(ib.act_no) : ''}</div>
+    ${(ib.lines || []).length ? `<table class="w-table" style="table-layout:fixed"><thead><tr>
+      <th style="width:26%">Артикул</th>
+      <th style="width:110px;text-align:center">Заявлено</th>
+      <th style="width:110px;text-align:center">Принято</th>
+      <th>Расхождение</th></tr></thead><tbody>
+    ${ib.lines.map(l => `<tr>
+      <td><b>${esc(l.sku)}</b></td>
+      <td style="text-align:center">${l.qty_expected}</td>
+      <td style="text-align:center">${ib.status === 'done' ? `<b>${l.qty_received}</b>` : '—'}</td>
+      <td>${l.discrepancy_type ? `<span class="w-pill bad">${esc(l.discrepancy_type)} ${l.discrepancy_qty > 0 ? '+' : ''}${l.discrepancy_qty || ''}</span>` : ''}</td>
+    </tr>`).join('')}
+    </tbody></table>` : ''}
+    ${boxesSection(ib)}
+  </div>`;
 }
 
 // ── Мастер «Новая поставка»: 1 товары → 2 упаковка → 3 дата и создание ──────
@@ -264,7 +339,7 @@ async function wizSubmit() {
   _wizBusy = true;
   try {
     const lines = Object.entries(WZ.qty).map(([sku, qty]) => ({ sku, qty }));
-    await api('/inbounds', { method: 'POST', body: JSON.stringify({
+    const r = await api('/inbounds', { method: 'POST', body: JSON.stringify({
       client_id: W.clientId, lines,
       expected_date: WZ.date, note: WZ.note,
       pack_type: WZ.pack,
@@ -272,6 +347,8 @@ async function wizSubmit() {
       pallets: WZ.pack === 'mono' ? WZ.pallets : 0,
       boxes_per_pallet: WZ.pack === 'mono' ? WZ.perPallet : 0 }) });
     WZ = null;
+    // сразу открываем карточку созданной поставки — шаг «Упаковка и печать ШК»
+    if (W.user.role === 'client' && r && r.id) W.openInbound = r.id;
     go(W.user.role === 'client' ? 'inbounds' : 'receive');
   } catch (e) { alert(e.message); }
   finally { _wizBusy = false; }
@@ -304,25 +381,46 @@ function inboundCard(ib, staffMode) {
   </div>`;
 }
 
-// ── Упаковка поставки (WB ФБО-стиль): палеты и короба со штрихкодами ────────
-function boxRowView(ib, b, editable) {
+// ── Упаковка поставки (WB ФБО-стиль): аккордеоны коробов, палеты, ШК ────────
+W.boxOpen = new Set();
+
+function packItemsHtml(ib, b, editable) {
+  const rows = b.items.map(i => `<div class="w-item-row">
+      <div class="w-item-name">
+        <div class="nm">${esc(i.name || i.sku)}</div>
+        <div class="w-item-meta">Артикул: <b>${esc(i.sku)}</b></div>
+      </div>
+      <div style="white-space:nowrap"><b>${i.qty} шт</b></div>
+      <div class="w-item-meta" style="white-space:nowrap">${i.expiry_date ? 'до ' + esc(i.expiry_date) : ''}</div>
+      ${editable ? `<button class="w-ibtn danger" title="Убрать из короба" onclick="packRmItem(${ib.id},${b.id},${i.id})">✕</button>` : ''}
+    </div>`).join('');
+  const opts = (W.skus || []).map(s =>
+    `<option value="${esc(s.code)}" data-exp="${s.requires_expiry ? 1 : 0}">${esc(s.code)}${s.requires_expiry ? ' — нужен срок годности' : ''}</option>`).join('');
+  const addForm = editable ? `<div class="w-add-row">
+      <select id="pkSku${b.id}"><option value="">— выберите товар —</option>${opts}</select>
+      <input id="pkQty${b.id}" type="number" inputmode="numeric" min="1" placeholder="шт">
+      <input id="pkExp${b.id}" type="date" title="Срок годности">
+      <button class="w-btn w-btn-primary" onclick="packAdd(${ib.id},${b.id})">+ В короб</button>
+    </div>` : '';
+  return `<div class="w-pack-body">${rows || '<div class="w-sub">Короб пуст</div>'}${addForm}</div>`;
+}
+
+function packRowHtml(ib, b, editable) {
   const units = b.items.reduce((q, i) => q + i.qty, 0);
-  return `<div class="w-box-row">
-    <div style="min-width:0;flex:1">
-      <span class="w-box-code">${esc(b.code)}</span>
-      <span class="w-box-sub"> · ${units} шт</span>
-      ${ib.status === 'done' ? (b.received ? ' <span class="w-pill ok">принят</span>' : ' <span class="w-pill bad">не принят</span>') : ''}
-      <div class="w-box-sub">${b.items.length
-        ? b.items.map(i => `${esc(i.sku)}×${i.qty}${i.expiry_date ? ' · СГ ' + esc(i.expiry_date) : ''}`).join(', ')
-        : editable ? 'пустой — нажмите ✎, чтобы разложить товар' : 'пусто'}</div>
-      <div id="wBoxEd${b.id}"></div>
+  const open = W.boxOpen.has(b.id);
+  return `<div class="w-pack-row ${open ? 'open' : ''}" onclick="packToggle(${b.id})">
+      <span class="arr">▶</span>
+      <div style="min-width:0;flex:1">
+        <span class="w-box-code">${esc(b.code)}</span>
+        <span class="w-box-sub"> · ${b.items.length} арт · ${units} шт</span>
+        ${ib.status === 'done' ? (b.received ? ' <span class="w-pill ok">принят</span>' : ' <span class="w-pill bad">не принят</span>') : ''}
+      </div>
+      <div class="w-box-actions" onclick="event.stopPropagation()">
+        <a class="w-ibtn" title="Печать ШК короба" target="_blank" href="/api/wms/boxes/${b.id}/label">🖨</a>
+        ${editable ? `<button class="w-ibtn danger" title="Удалить короб" onclick="boxDel(${b.id})">✕</button>` : ''}
+      </div>
     </div>
-    <div class="w-box-actions">
-      <a class="w-ibtn" title="Печать ШК короба" target="_blank" href="/api/wms/boxes/${b.id}/label">🖨</a>
-      ${editable ? `<button class="w-ibtn" title="Состав короба" onclick="boxEdit(${ib.id},${b.id})">✎</button>
-      <button class="w-ibtn danger" title="Удалить короб" onclick="boxDel(${b.id})">✕</button>` : ''}
-    </div>
-  </div>`;
+    ${open ? packItemsHtml(ib, b, editable) : ''}`;
 }
 
 function boxesSection(ib) {
@@ -330,27 +428,22 @@ function boxesSection(ib) {
   const pallets = ib.pallets || [];
   const editable = ib.status !== 'done';
   if (!boxes.length && !pallets.length && !editable) return '';
-  const packed = boxes.reduce((s, b) => s + b.items.reduce((q, i) => q + i.qty, 0), 0);
+  const packedBySku = {};
+  boxes.forEach(b => b.items.forEach(i => {
+    packedBySku[i.sku] = (packedBySku[i.sku] || 0) + i.qty; }));
+  const packed = Object.values(packedBySku).reduce((s, v) => s + v, 0);
   const asked = (ib.lines || []).reduce((s, l) => s + (l.qty_expected || 0), 0);
-  const groups = pallets.map(p => {
-    const pb = boxes.filter(b => b.pallet_id === p.id);
-    return `<div class="w-pallet-head">
-      <span>🟫 ${esc(p.code)}</span>
-      <span class="w-box-sub">· ${pb.length} кор. · ${pb.reduce((s, b) => s + b.items.reduce((q, i) => q + i.qty, 0), 0)} шт</span>
-      <div class="w-box-actions">
-        <a class="w-ibtn" title="Печать ШК палеты" target="_blank" href="/api/wms/pallets/${p.id}/label">🖨</a>
-        ${editable ? `<button class="w-ibtn" title="Добавить короб в палету" onclick="boxAdd(${ib.id},${p.id})">＋</button>
-        <button class="w-ibtn danger" title="Удалить палету с коробами" onclick="palletDel(${p.id})">✕</button>` : ''}
-      </div>
-    </div>` + pb.map(b => boxRowView(ib, b, editable)).join('');
-  }).join('');
-  const loose = boxes.filter(b => !b.pallet_id);
+  // чипсы «осталось разложить» по заявленным товарам
+  const chips = (ib.lines || [])
+    .map(l => ({ sku: l.sku, left: (l.qty_expected || 0) - (packedBySku[l.sku] || 0) }))
+    .filter(c => c.left > 0)
+    .map(c => `<span class="w-chip">${esc(c.sku)} · осталось ${c.left}</span>`).join(' ');
   const hasAny = boxes.length || pallets.length;
   return `<div style="margin-top:12px;padding-top:10px;border-top:1px dashed var(--line)">
-    <div class="w-label">Упаковка${boxes.length ? ` · ${boxes.length} кор.` : ''}${pallets.length ? ` · ${pallets.length} пал.` : ''}${packed ? ` · разложено ${packed} шт${asked ? ' из ' + asked + ' заявленных' : ''}` : ''}</div>
-    ${asked && packed && packed !== asked ? `<div class="w-sub" style="color:var(--warn);margin:2px 0 0">⚠ Раскладка не сходится с заявкой: разложено ${packed}, заявлено ${asked}</div>` : ''}
-    ${editable ? `<div class="w-toolbar">
-      <button class="w-btn" onclick="boxAdd(${ib.id})">+ Короб</button>
+    <div class="w-pack-top">
+      <input class="w-search" placeholder="Поиск по товару или номеру короба"
+        value="${esc(W.packSearch || '')}" oninput="packSearchInput(${ib.id}, this.value)">
+      ${editable ? `<button class="w-btn" onclick="boxAdd(${ib.id})">+ Короб</button>
       <div class="w-menu">
         <button class="w-btn" onclick="menuToggle('wPal${ib.id}')">+ Палета ▾</button>
         <div id="wPal${ib.id}" class="w-menu-list" style="display:none;padding:12px;min-width:230px">
@@ -366,46 +459,82 @@ function boxesSection(ib) {
           <label>⬆ Загрузить раскладку
             <input type="file" accept=".xlsx,.csv,.txt" style="display:none" onchange="boxesFile(${ib.id}, this)"></label>
         </div>
+      </div>` : ''}
+      ${hasAny ? `<a class="w-btn" style="text-decoration:none" target="_blank" href="/api/wms/inbounds/${ib.id}/labels">🖨 ШК</a>` : ''}
+    </div>
+    <div class="w-pack-sum">
+      <span><b>${boxes.length}</b> коробов${pallets.length ? ` · <b>${pallets.length}</b> палет` : ''}</span>
+      <span>Разложено <b>${packed}</b>${asked ? ` из <b>${asked}</b>` : ''} шт</span>
+      ${editable && asked && !chips ? '<span class="w-chip done">✓ всё разложено</span>' : ''}
+    </div>
+    ${editable && chips ? `<div style="margin:0 0 8px;display:flex;gap:6px;flex-wrap:wrap">${chips}</div>` : ''}
+    ${hasAny ? `<div class="w-box-list" id="wPackList${ib.id}">${packListInner(ib, editable)}</div>`
+             : '<div class="w-sub">Коробов пока нет — добавьте короб или палету</div>'}
+  </div>`;
+}
+
+function packListInner(ib, editable) {
+  const boxes = ib.boxes || [];
+  const pallets = ib.pallets || [];
+  const q = (W.packSearch || '').trim().toLowerCase();
+  const show = b => !q || b.code.toLowerCase().includes(q) ||
+    b.items.some(i => (i.sku || '').toLowerCase().includes(q) || (i.name || '').toLowerCase().includes(q));
+  const groups = pallets.map(p => {
+    const pb = boxes.filter(b => b.pallet_id === p.id && show(b));
+    if (q && !pb.length) return '';
+    return `<div class="w-pallet-head">
+      <span>🟫 ${esc(p.code)}</span>
+      <span class="w-box-sub">· ${pb.length} кор.</span>
+      <div class="w-box-actions">
+        <a class="w-ibtn" title="Печать ШК палеты" target="_blank" href="/api/wms/pallets/${p.id}/label">🖨</a>
+        ${editable ? `<button class="w-ibtn" title="Добавить короб в палету" onclick="boxAdd(${ib.id},${p.id})">＋</button>
+        <button class="w-ibtn danger" title="Удалить палету с коробами" onclick="palletDel(${p.id})">✕</button>` : ''}
       </div>
-      ${hasAny ? `<a class="w-btn" style="text-decoration:none" target="_blank" href="/api/wms/inbounds/${ib.id}/labels">🖨 Все ШК</a>` : ''}
-    </div>` : hasAny ? `<div class="w-toolbar">
-      <a class="w-btn" style="text-decoration:none" target="_blank" href="/api/wms/inbounds/${ib.id}/labels">🖨 Все ШК</a>
-    </div>` : ''}
-    ${hasAny ? `<div class="w-box-list">
-      ${groups}
-      ${loose.length && pallets.length ? '<div class="w-pallet-head"><span>📦 Без палеты</span></div>' : ''}
-      ${loose.map(b => boxRowView(ib, b, editable)).join('')}
-    </div>` : '<div class="w-sub">Коробов пока нет — добавьте короб или палету</div>'}
-  </div>`;
+    </div>` + pb.map(b => packRowHtml(ib, b, editable)).join('');
+  }).join('');
+  const loose = boxes.filter(b => !b.pallet_id && show(b));
+  return groups +
+    (loose.length && pallets.length ? '<div class="w-pallet-head"><span>📦 Без палеты</span></div>' : '') +
+    loose.map(b => packRowHtml(ib, b, editable)).join('') ||
+    '<div class="w-sub" style="padding:12px">Ничего не найдено</div>';
 }
 
-function boxRowHtml(it) {
-  const opts = (W.skus || []).map(s =>
-    `<option value="${esc(s.code)}" ${it && it.sku === s.code ? 'selected' : ''}>${esc(s.code)}${s.requires_expiry ? ' — нужен СГ' : ''}</option>`).join('');
-  return `<div class="w-editor-grid bxi" style="margin-top:6px">
-    <select class="bxi-sku"><option value="">— артикул —</option>${opts}</select>
-    <input class="bxi-qty" type="number" inputmode="numeric" min="1" placeholder="шт" value="${it ? it.qty : ''}">
-    <input class="bxi-exp" type="date" title="Срок годности" value="${it && it.expiry_date ? esc(it.expiry_date) : ''}">
-    <button class="w-ibtn danger" title="Убрать строку" onclick="this.closest('.bxi').remove()">✕</button>
-  </div>`;
+function packSearchInput(iid, val) {
+  W.packSearch = val;
+  const ib = (W.inbounds || []).find(x => x.id === iid);
+  const el = $('wPackList' + iid);
+  if (ib && el) el.innerHTML = packListInner(ib, ib.status !== 'done');
 }
 
-function boxEdit(iid, bid) {
+function packToggle(bid) {
+  if (W.boxOpen.has(bid)) W.boxOpen.delete(bid); else W.boxOpen.add(bid);
+  go(curTab());
+}
+
+function packAdd(iid, bid) {
   const ib = (W.inbounds || []).find(x => x.id === iid); if (!ib) return;
   const b = (ib.boxes || []).find(x => x.id === bid); if (!b) return;
-  const el = $('wBoxEd' + bid);
-  if (el.innerHTML) { el.innerHTML = ''; return; }
-  el.innerHTML = `<div class="w-editor">
-    <div class="w-editor-grid">
-      <div class="w-editor-head">Артикул</div><div class="w-editor-head">Кол-во</div>
-      <div class="w-editor-head">Срок годности</div><div></div>
-    </div>
-    <div id="wBoxRows${bid}">${(b.items.length ? b.items : [null]).map(boxRowHtml).join('')}</div>
-    <div class="w-row" style="margin-top:10px">
-      <button class="w-btn w-btn-ghost" onclick="$('wBoxRows${bid}').insertAdjacentHTML('beforeend', boxRowHtml())">+ строка</button>
-      <button class="w-btn w-btn-primary" onclick="boxSave(${bid})">Сохранить короб</button>
-    </div>
-  </div>`;
+  const sel = $('pkSku' + bid);
+  const sku = sel.value;
+  const qty = parseInt($('pkQty' + bid).value, 10) || 0;
+  const exp = $('pkExp' + bid).value;
+  if (!sku) { alert('Выберите товар'); return; }
+  if (qty <= 0) { alert('Укажите количество'); return; }
+  const needExp = sel.selectedOptions[0] && sel.selectedOptions[0].dataset.exp === '1';
+  if (needExp && !exp) { alert('У этого товара обязателен срок годности'); return; }
+  const items = b.items.map(i => ({ sku: i.sku, qty: i.qty, expiry_date: i.expiry_date || '' }));
+  // тот же товар с тем же СГ — складываем, не дублируем строку
+  const same = items.find(i => i.sku === sku && (i.expiry_date || '') === (exp || ''));
+  if (same) same.qty += qty; else items.push({ sku, qty, expiry_date: exp });
+  _packOp(() => api(`/boxes/${bid}/items`, { method: 'POST', body: JSON.stringify({ items }) }));
+}
+
+function packRmItem(iid, bid, itemId) {
+  const ib = (W.inbounds || []).find(x => x.id === iid); if (!ib) return;
+  const b = (ib.boxes || []).find(x => x.id === bid); if (!b) return;
+  const items = b.items.filter(i => i.id !== itemId)
+    .map(i => ({ sku: i.sku, qty: i.qty, expiry_date: i.expiry_date || '' }));
+  _packOp(() => api(`/boxes/${bid}/items`, { method: 'POST', body: JSON.stringify({ items }) }));
 }
 
 const curTab = () => { const b = document.querySelector('.w-nav button.active'); return b ? b.id.slice(5) : 'stock'; };
@@ -434,14 +563,6 @@ const palletCreate = iid => _packOp(() =>
 function palletDel(pid) {
   if (!confirm('Удалить палету вместе с её коробами?')) return;
   _packOp(() => api(`/pallets/${pid}`, { method: 'DELETE' }));
-}
-function boxSave(bid) {
-  const items = [...document.querySelectorAll(`#wBoxRows${bid} .bxi`)].map(r => ({
-    sku: r.querySelector('.bxi-sku').value,
-    qty: parseInt(r.querySelector('.bxi-qty').value, 10) || 0,
-    expiry_date: r.querySelector('.bxi-exp').value }))
-    .filter(i => i.sku && i.qty > 0);
-  _packOp(() => api(`/boxes/${bid}/items`, { method: 'POST', body: JSON.stringify({ items }) }));
 }
 function boxDel(bid) {
   if (!confirm('Удалить короб?')) return;

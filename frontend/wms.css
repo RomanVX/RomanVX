@@ -92,7 +92,38 @@ table.w-table { width: 100%; border-collapse: collapse; font-size: 15px; }
 .w-free { color: var(--ok); font-weight: 700; }
 .w-paid { color: var(--warn); font-weight: 700; }
 
-/* ── Упаковка поставки: короба и палеты ── */
+/* ── Упаковка поставки: короба и палеты (WB-стиль) ── */
+.w-sup-row { cursor: pointer; }
+.w-sup-row:hover td { background: var(--bg); }
+.w-pack-top { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 10px 0 6px; }
+.w-pack-top .w-search { flex: 1; min-width: 200px; max-width: 340px; }
+.w-pack-sum { display: flex; gap: 14px; flex-wrap: wrap; align-items: center;
+  font-size: 13px; color: var(--ink2); font-weight: 600; margin: 4px 0 8px; }
+.w-pack-sum b { color: var(--ink); }
+.w-chip { display: inline-block; padding: 3px 10px; border-radius: 999px;
+  background: var(--warn-soft); color: var(--warn); font-size: 12px; font-weight: 700; }
+.w-chip.done { background: var(--brand-soft); color: var(--brand); }
+.w-pack-row { display: flex; align-items: center; gap: 10px; padding: 12px;
+  border-bottom: 1px solid var(--line); cursor: pointer; user-select: none; }
+.w-pack-row:hover { background: var(--bg); }
+.w-pack-row .arr { width: 16px; color: var(--ink2); font-size: 12px; flex: 0 0 auto;
+  transition: transform .15s; }
+.w-pack-row.open .arr { transform: rotate(90deg); }
+.w-pack-body { padding: 4px 12px 12px 38px; border-bottom: 1px solid var(--line); }
+.w-item-row { display: flex; align-items: center; gap: 10px; padding: 9px 0;
+  border-bottom: 1px dashed var(--line); }
+.w-item-row:last-of-type { border-bottom: none; }
+.w-item-name { flex: 1; min-width: 0; }
+.w-item-name .nm { font-weight: 600; }
+.w-item-meta { color: var(--ink2); font-size: 13px; }
+.w-add-row { display: grid; grid-template-columns: minmax(150px, 2fr) 90px 150px auto;
+  gap: 8px; align-items: center; margin-top: 10px; padding: 10px;
+  background: var(--bg); border-radius: 12px; }
+@media (max-width: 640px) {
+  .w-add-row { grid-template-columns: 1fr 70px; }
+  .w-add-row select { grid-column: 1 / -1; }
+}
+
 .w-toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 10px 0 8px; }
 .w-box-list { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; margin-top: 8px; background: #fff; }
 .w-box-row { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px;
