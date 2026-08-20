@@ -593,8 +593,8 @@ html[data-theme="light"] .text-warning { color: var(--warn) !important; }
 /* приглушённый текст Bootstrap в тёмной теме (контраст 3.7:1 → токен) */
 :root:not([data-theme="light"]) .text-secondary { color: var(--ink-2) !important; }
 /* пилюля «% выкупа»: было 9.6px зелёным на сером (~2.8:1) — нечитаемо */
-.buyout-pill { font-size: .72rem; line-height: 1.2; margin-top: 1px; color: #4ade80; }
-html[data-theme="light"] .buyout-pill { color: #15803d; }
+.buyout-pill { font-size: .72rem; line-height: 1.2; margin-top: 1px; color: #fbbf24; }
+html[data-theme="light"] .buyout-pill { color: #b45309; }
 /* табличные цифры: числа в колонках выравниваются по разрядам и не пляшут */
 .table, .mp-badge { font-variant-numeric: tabular-nums; }
 /* тактильный отклик кнопок: лёгкое сжатие на нажатии (ровно 0.96) */

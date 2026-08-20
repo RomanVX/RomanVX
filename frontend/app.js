@@ -1434,8 +1434,8 @@ function _ordersTableHTML() {
     const bRub       = Array(n).fill(0);
     const bQty       = Array(n).fill(0);
     const bCancelRub = Array(n).fill(0);
-    // % выкупа показываем только там, где отмены реально трекаются
-    // (недельный WB); в День/Месяц данных об отменах нет — «100%» было бы враньём
+    // отмены показываем только там, где они реально трекаются
+    // (недельный WB); в День/Месяц данных об отменах нет
     const hasCancel = _ordersMode === 'week' && grpSkus.some(s => s.cancel_rub);
     grpSkus.forEach(s => {
       s.rub.forEach((v, i) => { bRub[i] += v; });
@@ -1455,16 +1455,16 @@ function _ordersTableHTML() {
            + `<span class="me-1" style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${_groupColor(grp)}"></span>`
            + `<strong>${grp}</strong> <span class="small" style="color:var(--muted)">(${grpSkus.length} арт.)</span></td>`;
 
-    // Ячейки по неделям с % выкупа под суммой
+    // Ячейки по неделям: сумма = все заказы (как «Заказали» воронки WB),
+    // под ней — доля отменённых из них (по дате заказа)
     vis.forEach(i => {
       const v    = bRub[i];
       const prev = i > 0 ? bRub[i - 1] : 0;
-      // суммы в таблице уже БЕЗ отмен — % выкупа считаем от (заказы + отмены)
-      const pct  = hasCancel && (v + bCancelRub[i]) > 0
-        ? Math.round(v / (v + bCancelRub[i]) * 100) : null;
+      const pct  = hasCancel && v > 0 && bCancelRub[i] > 0
+        ? Math.round(bCancelRub[i] / v * 100) : null;
       const dynHtml   = v ? _dynArrow(v, prev) : '';
       const buyoutHtml = pct !== null
-        ? `<div class="buyout-pill">✓${pct}% выкуп</div>`
+        ? `<div class="buyout-pill" title="Отменено из заказов этой недели (включая отмены после её конца)">↩ ${pct}% отмен</div>`
         : '';
       const cellVal = v
         ? `${fmtRub(v)}${dynHtml}${buyoutHtml}`

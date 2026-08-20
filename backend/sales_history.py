@@ -110,14 +110,13 @@ def persist_wb(sales: list[dict]):
 
 
 def persist_wb_orders(orders: list[dict]):
-    """WB заказы (без отмен) → platform WB_ORDERS: то, что видит селлер
-    в виджете «Заказы» ЛК. Поток WB (продажи) не трогаем — на нём живут
-    прогнозы и юнитка."""
+    """WB заказы → platform WB_ORDERS: как «Заказали» в воронке ЛК —
+    ВСЕ заказы по дате заказа, включая отменённые позже (иначе история
+    «тает» задним числом и не бьётся с воронкой). Поток WB (продажи)
+    не трогаем — на нём живут прогнозы и юнитка."""
     try:
         agg: dict = {}
         for o in orders or []:
-            if o.get("isCancel"):
-                continue
             d = (o.get("date") or "")[:10]
             if not d:
                 continue
