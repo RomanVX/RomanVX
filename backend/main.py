@@ -291,29 +291,28 @@ async def _client_prices_loop():
 
 
 async def _funnel_daily():
-    """Воронка WB (nm-report): раз в сутки дособираем последние 7 дней в
-    вечную таблицу. Первый прогон — глубже (28 дн), чтобы сразу было с чем
-    сравнивать."""
+    """Воронка WB (nm-report): каждые 3 часа дособираем последние 7 дней в
+    вечную таблицу wb_funnel и в sales_daily (WB_ORDERS — источник вкладки
+    «Заказы», 1в1 с ЛК). Первый прогон — 92 дня, чтобы закрыть 8 недель
+    недельной таблицы и месячный вид."""
     import config
     import wb_funnel
     if config.USE_MOCK:
         return
     await asyncio.sleep(420)
     log = logging.getLogger("wb_funnel")
-    first = True
     while True:
         try:
-            have = await asyncio.to_thread(
-                lambda: (wb_funnel.summary(14) or {}).get("history"))
-            res = await wb_funnel.fetch(28 if (first and not have) else 7)
+            import sales_history
+            deep = not sales_history.funnel_fresh(24 * 14)
+            res = await wb_funnel.fetch(92 if deep else 7)
             if res.get("error"):
-                log.warning("daily: %s", res["error"])
+                log.warning("funnel: %s", res["error"])
             else:
-                log.info("daily: %s", res)
+                log.info("funnel: %s", res)
         except Exception as e:
-            log.warning("daily: %s", str(e)[:200])
-        first = False
-        await asyncio.sleep(24 * 3600)
+            log.warning("funnel: %s", str(e)[:200])
+        await asyncio.sleep(3 * 3600)
 
 
 

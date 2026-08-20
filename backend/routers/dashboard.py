@@ -965,40 +965,82 @@ async def get_weekly_orders():
                     return i
             return None
 
-        # ── WB: из кеша orders. Суммы = ВСЕ заказы недели, как «Заказали»
-        # в воронке ЛК: заказ, отменённый позже, остаётся в своей неделе,
-        # иначе история «тает» задним числом и не бьётся с воронкой.
-        # Отмены копятся отдельно (пилюля «отмен» на фронте). ──
+        # ── WB. Первичный источник — sales_daily, куда воронка ЛК пишет
+        # WB_ORDERS («Заказали», 1в1 с ЛК) и WB_CANCELS («Отменили и
+        # вернули» по дате события). statistics /orders занижает заказы
+        # (по спеке не отдаёт неподтверждённые оплаты — рассрочка, оплата
+        # при получении), поэтому кеш /orders — только фолбэк, пока
+        # воронка ещё ни разу не выгружалась. ──
         wb_by_sku: dict = {}   # sku → {rub, qty, cancel_rub, cancel_qty, name}
         wb_total_rub        = [0.0] * n
         wb_total_qty        = [0]   * n
         wb_total_cancel_rub = [0.0] * n
         wb_total_cancel_qty = [0]   * n
+
+        def _wb_slot(sku, name):
+            if sku not in wb_by_sku:
+                wb_by_sku[sku] = {"rub": [0.0]*n, "qty": [0]*n,
+                                  "cancel_rub": [0.0]*n, "cancel_qty": [0]*n,
+                                  "name": name}
+            return wb_by_sku[sku]
+
+        wb_from_funnel = False
         try:
-            _, wb_orders, _ = await cache.get_raw_data(dt_from, dt_to)
-            for o in wb_orders:
-                idx = week_idx(o.get("date") or o.get("lastChangeDate"))
-                if idx is None:
-                    continue
-                raw = o.get("nmId") or o.get("supplierArticle") or ""
-                sku = _cat.resolve_wb(raw) if raw else str(raw)
-                name = o.get("subject") or o.get("category") or sku
-                price = float(o.get("priceWithDisc") or o.get("totalPrice") or 0)
-                is_cancel = bool(o.get("isCancel"))
-                if sku not in wb_by_sku:
-                    wb_by_sku[sku] = {"rub": [0.0]*n, "qty": [0]*n,
-                                      "cancel_rub": [0.0]*n, "cancel_qty": [0]*n, "name": name}
-                wb_by_sku[sku]["rub"][idx] += price
-                wb_by_sku[sku]["qty"][idx] += 1
-                wb_total_rub[idx] += price
-                wb_total_qty[idx] += 1
-                if is_cancel:
-                    wb_by_sku[sku]["cancel_rub"][idx] += price
-                    wb_by_sku[sku]["cancel_qty"][idx] += 1
-                    wb_total_cancel_rub[idx] += price
-                    wb_total_cancel_qty[idx] += 1
+            sd_rows = await asyncio.to_thread(
+                sales_history.get_history, date_from_str, date_to_str)
+            if sales_history.funnel_fresh(26 * 14):   # свежее двух недель
+                for r in sd_rows:
+                    plat = str(r.get("platform") or "").upper()
+                    if plat not in ("WB_ORDERS", "WB_CANCELS"):
+                        continue
+                    idx = week_idx(r.get("date"))
+                    if idx is None:
+                        continue
+                    sku = r.get("sku") or ""
+                    rev = float(r.get("revenue") or 0)
+                    qty = int(r.get("qty") or 0)
+                    e = _wb_slot(sku, sku)
+                    if plat == "WB_ORDERS":
+                        e["rub"][idx] += rev
+                        e["qty"][idx] += qty
+                        wb_total_rub[idx] += rev
+                        wb_total_qty[idx] += qty
+                        wb_from_funnel = True
+                    else:
+                        e["cancel_rub"][idx] += rev
+                        e["cancel_qty"][idx] += qty
+                        wb_total_cancel_rub[idx] += rev
+                        wb_total_cancel_qty[idx] += qty
         except Exception as e:
-            import logging; logging.getLogger(__name__).warning("weekly_orders WB: %s", e)
+            import logging; logging.getLogger(__name__).warning("weekly_orders WB(sd): %s", e)
+        if not wb_from_funnel:
+            wb_by_sku.clear()
+            wb_total_rub        = [0.0] * n
+            wb_total_qty        = [0]   * n
+            wb_total_cancel_rub = [0.0] * n
+            wb_total_cancel_qty = [0]   * n
+            try:
+                _, wb_orders, _ = await cache.get_raw_data(dt_from, dt_to)
+                for o in wb_orders:
+                    idx = week_idx(o.get("date") or o.get("lastChangeDate"))
+                    if idx is None:
+                        continue
+                    raw = o.get("nmId") or o.get("supplierArticle") or ""
+                    sku = _cat.resolve_wb(raw) if raw else str(raw)
+                    name = o.get("subject") or o.get("category") or sku
+                    price = float(o.get("priceWithDisc") or o.get("totalPrice") or 0)
+                    e = _wb_slot(sku, name)
+                    e["rub"][idx] += price
+                    e["qty"][idx] += 1
+                    wb_total_rub[idx] += price
+                    wb_total_qty[idx] += 1
+                    if bool(o.get("isCancel")):
+                        e["cancel_rub"][idx] += price
+                        e["cancel_qty"][idx] += 1
+                        wb_total_cancel_rub[idx] += price
+                        wb_total_cancel_qty[idx] += 1
+            except Exception as e:
+                import logging; logging.getLogger(__name__).warning("weekly_orders WB: %s", e)
 
         # ── OZON / YM ──
         oz_ok = ym_ok = True
@@ -1094,9 +1136,9 @@ _OM_TTL = 600
 @router.get("/orders_matrix")
 async def get_orders_matrix(period: str = Query(default="day")):
     """Заказы той же матрицей, что weekly_orders, но по дням (14) или
-    месяцам (6). Источник — вечная sales_daily, поэтому месяцы не упираются
-    в 90-дневное окно WB API. Отмен в sales_daily нет — пилюли выкупа
-    показываются только в недельном виде."""
+    месяцам (6). Источник — вечная sales_daily (WB_ORDERS пишет воронка
+    ЛК, «сегодня» дописывает statistics /orders), поэтому месяцы не
+    упираются в 90-дневное окно WB API. Пилюли отмен — только в неделях."""
     period = period if period in ("day", "month") else "day"
     cached = _om_cache.get(period)
     if cached and _wtime.monotonic() - cached[0] < _OM_TTL:

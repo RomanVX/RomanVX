@@ -91,11 +91,13 @@ async def fetch(days: int = 28) -> dict:
 
     reader = csv.DictReader(io.StringIO(raw))
     rows_out = []
+    raw_recs = []          # сырые строки — мостик в sales_daily (WB_ORDERS)
     for r in reader:
         nm = str(r.get("nmID") or "").strip()
         dt = str(r.get("dt") or "")[:10]
         if not nm or not dt:
             continue
+        raw_recs.append(r)
         rows_out.append((
             dt, nm, nm_to_art.get(nm, ""),
             _i(r.get("openCardCount")), _i(r.get("addToCartCount")),
@@ -119,6 +121,20 @@ async def fetch(days: int = 28) -> dict:
             "cancels=excluded.cancels, wishlist=excluded.wishlist",
             rows_out)
     await asyncio.to_thread(_save)
+    # мостик в вечную sales_daily: WB_ORDERS/WB_CANCELS = «Заказали» и
+    # «Отменили и вернули» из воронки — источник для вкладки «Заказы»
+    try:
+        import sales_history
+        await asyncio.to_thread(sales_history.persist_wb_funnel, raw_recs)
+    except Exception as e:
+        _log.warning("funnel → sales_daily: %s", str(e)[:200])
+    # недельная таблица пересобирается со свежими данными сразу
+    try:
+        from routers import dashboard as _dash
+        _dash._wo_cache = {}
+        _dash._wo_cache_ts = 0.0
+    except Exception:
+        pass
     _log.info("wb_funnel: %d строк за %s..%s", len(rows_out), dt_from, dt_to)
     return {"rows": len(rows_out), "from": str(dt_from), "to": str(dt_to)}
 

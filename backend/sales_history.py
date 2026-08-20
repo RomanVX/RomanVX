@@ -109,15 +109,90 @@ def persist_wb(sales: list[dict]):
         _log.warning("persist_wb failed: %s", e)
 
 
+def _funnel_state() -> dict:
+    try:
+        import snapshot
+        return snapshot.load("wb_funnel_state", None) or {}
+    except Exception:
+        return {}
+
+
+def funnel_fresh(max_age_h: int = 26) -> bool:
+    """True, если воронка ЛК недавно писала WB_ORDERS — тогда путь из
+    statistics /orders не трогает закрытые ею дни (он занижает заказы:
+    по спеке не отдаёт неподтверждённые оплаты — рассрочку и оплату
+    при получении)."""
+    import time
+    return (time.time() - float(_funnel_state().get("ts") or 0)) < max_age_h * 3600
+
+
+def persist_wb_funnel(rows: list[dict]):
+    """Воронка ЛК (nm-report CSV) → sales_daily:
+    WB_ORDERS — «Заказали» по дате заказа (1в1 с воронкой);
+    WB_CANCELS — «Отменили и вернули» по дате события.
+    Диапазон отчёта замещается целиком, включая обнулившиеся дни."""
+    try:
+        agg_o: dict = {}
+        agg_c: dict = {}
+        dts: set = set()
+
+        def _num(r, k):
+            try:
+                return float(str(r.get(k) or 0).replace(",", ".").replace("\xa0", ""))
+            except ValueError:
+                return 0.0
+        for r in rows or []:
+            d = str(r.get("dt") or r.get("date") or "")[:10]
+            nm = str(r.get("nmID") or r.get("nmId") or "").strip()
+            if not d or not nm:
+                continue
+            dts.add(d)
+            sku = cat.resolve_wb(nm)
+            oq, orub = _num(r, "ordersCount"), _num(r, "ordersSumRub")
+            cq, crub = _num(r, "cancelCount"), _num(r, "cancelSumRub")
+            if oq or orub:
+                a = agg_o.setdefault((d, sku), [0, 0.0])
+                a[0] += int(oq); a[1] += orub
+            if cq or crub:
+                a = agg_c.setdefault((d, sku), [0, 0.0])
+                a[0] += int(cq); a[1] += crub
+        if not dts:
+            return
+        lo, hi = min(dts), max(dts)
+        for plat in ("WB_ORDERS", "WB_CANCELS"):
+            db.execute("DELETE FROM sales_daily WHERE platform=? "
+                       "AND sale_date>=? AND sale_date<=?", (plat, lo, hi))
+        _upsert(agg_o, "WB_ORDERS")
+        _upsert(agg_c, "WB_CANCELS")
+        import time
+        import snapshot
+        snapshot.save("wb_funnel_state", {"ts": time.time(), "lo": lo, "hi": hi})
+        _log.info("funnel → sales_daily: %s..%s, %d дней-sku заказов, %d отмен",
+                  lo, hi, len(agg_o), len(agg_c))
+    except Exception as e:
+        _log.warning("persist_wb_funnel failed: %s", e)
+
+
 def persist_wb_orders(orders: list[dict]):
     """WB заказы → platform WB_ORDERS: как «Заказали» в воронке ЛК —
     ВСЕ заказы по дате заказа, включая отменённые позже (иначе история
     «тает» задним числом и не бьётся с воронкой). Поток WB (продажи)
-    не трогаем — на нём живут прогнозы и юнитка."""
+    не трогаем — на нём живут прогнозы и юнитка.
+
+    Разделение с воронкой: закрытые ею дни (до её hi включительно) не
+    трогаем — там данные полнее; дни после hi (обычно сегодня) пишем
+    отсюда как оперативку, завтра их перепишет воронка."""
+    cut = ""
+    if funnel_fresh():
+        cut = str(_funnel_state().get("hi") or "")
+        if not cut:
+            return
     try:
         agg: dict = {}
         for o in orders or []:
             d = (o.get("date") or "")[:10]
+            if cut and d <= cut:
+                continue
             if not d:
                 continue
             raw = o.get("nmId") or o.get("supplierArticle") or ""

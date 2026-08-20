@@ -1464,7 +1464,7 @@ function _ordersTableHTML() {
         ? Math.round(bCancelRub[i] / v * 100) : null;
       const dynHtml   = v ? _dynArrow(v, prev) : '';
       const buyoutHtml = pct !== null
-        ? `<div class="buyout-pill" title="Отменено из заказов этой недели (включая отмены после её конца)">↩ ${pct}% отмен</div>`
+        ? `<div class="buyout-pill" title="«Отменили и вернули» за эту неделю по дате события — как в воронке ЛК WB">↩ ${pct}% отмен</div>`
         : '';
       const cellVal = v
         ? `${fmtRub(v)}${dynHtml}${buyoutHtml}`
