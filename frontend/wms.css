@@ -47,7 +47,7 @@ button { transition: background .15s, border-color .15s, color .15s; }
 .w-nav button { border: 1px solid transparent; background: none; padding: 9px 14px;
   border-radius: 10px; cursor: pointer; color: var(--ink2); font-weight: 600; }
 .w-nav button.active { background: var(--brand-soft); color: var(--brand); }
-.w-main { padding: 16px; max-width: 1200px; margin: 0 auto; }
+.w-main { padding: 16px 24px; width: 100%; margin: 0 auto; }
 
 /* Кнопки */
 .w-btn { border: 1px solid var(--line); background: var(--card); padding: 10px 16px;

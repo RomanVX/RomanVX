@@ -35,8 +35,7 @@ async function boot() {
   $('wmsLogin').style.display = 'none';
   $('wmsApp').style.display = 'block';
   const u = W.user;
-  $('wWho').textContent = u.role === 'client'
-    ? (u.client_name || 'клиент') : u.login;
+  $('wWho').textContent = u.role === 'client' ? '' : u.login;
   const tabs = u.role === 'client'
     ? [['stock', 'Остатки'], ['moves', 'Движения'], ['inbounds', 'Поставки'], ['billing', 'Начисления']]
     : [['receive', 'Приёмка'], ['stock', 'Остатки'], ['ship', 'Отгрузка'],
