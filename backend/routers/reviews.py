@@ -27,6 +27,7 @@ async def get_reviews_data(
         "dynamics": rc.get_rating_dynamics(),
         "stats":    rc.get_stats(),
         "drafts":   rc.get_drafts(),
+        "auto":     auto_status,
     }
 
 
@@ -218,6 +219,9 @@ async def decline_draft(id: str = Query(...)):
 
 AUTO_MIN_RATING = 3
 
+# телеметрия автоответов — видна на фронте (когда прогонялся, что сделал)
+auto_status: dict = {"last_run": "", "result": None, "error": ""}
+
 
 def _is_gone(msg: str) -> bool:
     low = (msg or "").lower()
@@ -230,6 +234,10 @@ async def auto_reply_pass(limit: int = 60) -> dict:
     неотвеченные отзывы с рейтингом >= AUTO_MIN_RATING (включая беститекстовые).
     Негатив (1-2★) не трогаем — его смотрят люди. Старые pending-черновики
     на позитив публикуются без повторной генерации."""
+    from datetime import datetime, timedelta
+    auto_status["last_run"] = (datetime.utcnow()
+                               + timedelta(hours=3)).strftime("%H:%M")
+    auto_status["error"] = ""
     published = generated = failed = 0
     # 1) готовые черновики на позитив — просто публикуем
     for d in rc.get_pending_autoable(AUTO_MIN_RATING, limit):
@@ -253,6 +261,7 @@ async def auto_reply_pass(limit: int = 60) -> dict:
                 review, platform=review["platform"])
         except Exception as e:
             _log.warning("auto generate: %s", e)
+            auto_status["error"] = f"генерация: {str(e)[:180]}"
             break   # скорее всего лимит/ключ API — прерываем проход целиком
         if not draft:
             failed += 1
@@ -272,10 +281,19 @@ async def auto_reply_pass(limit: int = 60) -> dict:
     if published or failed:
         _log.info("auto-reviews: published=%d generated=%d failed=%d",
                   published, generated, failed)
-    return {"published": published, "generated": generated, "failed": failed}
+    res = {"published": published, "generated": generated, "failed": failed}
+    auto_status["result"] = res
+    return res
 
 
 @router.post("/auto-pass")
 async def run_auto_pass(limit: int = Query(60)):
-    """Ручной запуск прохода автоответов (для разгребания бэклога)."""
-    return await auto_reply_pass(min(int(limit or 60), 200))
+    """Ручной запуск прохода автоответов в фоне (Render обрывает запросы
+    ~30с, а проход с генерацией может идти минуты). Результат — в поле
+    auto ответа /data (строка статуса на фронте)."""
+    auto_status["error"] = ""
+    auto_status["result"] = None
+    t = asyncio.create_task(auto_reply_pass(min(int(limit or 60), 200)))
+    _bg_tasks.add(t)
+    t.add_done_callback(_bg_tasks.discard)
+    return {"scheduled": True}

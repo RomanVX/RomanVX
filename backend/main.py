@@ -532,6 +532,10 @@ async def lifespan(app: FastAPI):
                     log.info("проход: %s", res)
             except Exception as e:
                 log.warning("проход: %s", str(e)[:200])
+                try:
+                    _rv.auto_status["error"] = str(e)[:180]
+                except Exception:
+                    pass
             await asyncio.sleep(1200)
     asyncio.create_task(_auto_reviews_loop())
 

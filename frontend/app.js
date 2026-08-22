@@ -5602,6 +5602,35 @@ function _applyReviewsData(data) {
   renderRatingDynamicsFiltered();
   renderReviewsFeed();
   populateRatingCalc((data.ratings || {}).articles || [], (data.ratings || {}).groups || []);
+  const as = data.auto || {};
+  const asEl = document.getElementById('autoRevStatus');
+  if (asEl) {
+    if (as.error) {
+      asEl.innerHTML = `<span class="text-danger">Автоответы 3-5★: ошибка — ${esc(as.error)}</span>`;
+    } else if (as.last_run) {
+      const r = as.result || {};
+      asEl.textContent = `Автоответы 3-5★: последний прогон ${as.last_run} МСК · опубликовано ${r.published ?? 0}` +
+        (r.failed ? ` · не удалось ${r.failed}` : '') + ' · проходы каждые 20 минут';
+    } else {
+      asEl.textContent = 'Автоответы 3-5★ включены: первый прогон в течение ~20 минут после запуска сервера.';
+    }
+  }
+}
+
+async function runAutoPass() {
+  const btn = document.getElementById('autoPassBtn');
+  if (btn) { btn.disabled = true; btn.textContent = '⚡ Отвечаю…'; }
+  try {
+    await fetch(`${API}/api/reviews/auto-pass?limit=100`, { method: 'POST' });
+    // проход идёт в фоне минуты — поллим статус и ленту
+    for (let i = 0; i < 12; i++) {
+      await new Promise(r => setTimeout(r, 15000));
+      await loadReviews();
+      const st = document.getElementById('autoRevStatus')?.textContent || '';
+      if (st.includes('опубликовано')) break;
+    }
+  } catch (e) { alert('Ошибка: ' + e.message); }
+  if (btn) { btn.disabled = false; btn.textContent = '⚡ Ответить на 3-5★ сейчас'; }
 }
 
 async function loadReviews() {

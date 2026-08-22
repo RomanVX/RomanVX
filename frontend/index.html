@@ -506,8 +506,13 @@
         <button id="genBatchBtn" class="btn btn-sm btn-info py-0" onclick="genBatch()">
           ✨ Сгенерировать ответы
         </button>
+        <button id="autoPassBtn" class="btn btn-sm btn-success py-0" onclick="runAutoPass()"
+          title="Сгенерировать и сразу опубликовать ответы на отзывы 3-5★ (негатив остаётся на ручную обработку)">
+          ⚡ Ответить на 3-5★ сейчас
+        </button>
       </div>
     </div>
+    <div id="autoRevStatus" class="small text-secondary mb-2"></div>
     <details class="rev-fold mb-3" ontoggle="if(this.open)loadReplyRules()">
       <summary>🎛 Правила для ИИ-ответов <span class="text-secondary small fw-normal">— «так не пиши, пиши так»: действуют на все новые черновики</span></summary>
       <div class="card bg-card mt-2 p-3">
@@ -690,6 +695,6 @@
 
 <script src="vendor/bootstrap.bundle.min.js"></script>
 <script src="vendor/chart.umd.min.js"></script>
-<script src="app.js?v=231"></script>
+<script src="app.js?v=232"></script>
 </body>
 </html>
