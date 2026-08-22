@@ -481,6 +481,10 @@
         <option value="WB">WB</option>
         <option value="YM">YM</option>
       </select>
+      <select id="reviewsSort" class="form-select form-select-sm w-auto bg-dark text-white border-secondary" onchange="renderReviewsFeed()">
+        <option value="new">Сначала новые</option>
+        <option value="old">Сначала старые</option>
+      </select>
       <div class="form-check mb-0">
         <input class="form-check-input" type="checkbox" id="reviewsOnlyText" checked onchange="renderReviewsFeed()">
         <label class="form-check-label small" for="reviewsOnlyText">Только с текстом</label>
@@ -686,6 +690,6 @@
 
 <script src="vendor/bootstrap.bundle.min.js"></script>
 <script src="vendor/chart.umd.min.js"></script>
-<script src="app.js?v=230"></script>
+<script src="app.js?v=231"></script>
 </body>
 </html>

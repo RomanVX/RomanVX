@@ -5970,6 +5970,12 @@ function renderReviewsFeed() {
   if (tabUn) tabUn.textContent = `Неотвеченные${filtered.length - nAns ? ` (${filtered.length - nAns})` : ''}`;
   if (_revTab === 'un') filtered = filtered.filter(r => !isAns(r));
   else if (_revTab === 'ans') filtered = filtered.filter(isAns);
+  // сортировка по дате: по умолчанию новые сверху, «старые» — чтобы
+  // разгребать хвост неотвеченных с самого начала
+  if ((document.getElementById('reviewsSort')?.value || 'new') === 'old') {
+    filtered = [...filtered].sort((a, b) =>
+      String(a.date || '').localeCompare(String(b.date || '')));
+  }
   window._reviewsFiltered = filtered;
 
   if (!filtered.length) {
