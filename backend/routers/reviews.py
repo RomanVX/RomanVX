@@ -238,7 +238,12 @@ async def auto_reply_pass(limit: int = 60) -> dict:
     auto_status["last_run"] = (datetime.utcnow()
                                + timedelta(hours=3)).strftime("%H:%M")
     auto_status["error"] = ""
-    published = generated = failed = 0
+    published = generated = failed = gone = 0
+    errors: list = []          # первые сообщения площадок — для диагностики
+
+    def _note(rid, msg):
+        if len(errors) < 3:
+            errors.append(f"{rid}: {str(msg)[:140]}")
     # 1) готовые черновики на позитив — просто публикуем
     for d in rc.get_pending_autoable(AUTO_MIN_RATING, limit):
         ok, msg = await rc.post_answer(d["id"], d["draft"])
@@ -247,8 +252,11 @@ async def auto_reply_pass(limit: int = 60) -> dict:
             published += 1
         elif _is_gone(msg):
             rc.set_draft_status(d["id"], "gone")
+            gone += 1
+            _note(d["id"], msg)
         else:
             failed += 1
+            _note(d["id"], msg)
             _log.warning("auto publish %s: %s", d["id"], msg)
     # 2) свежие без черновика — генерим и публикуем
     todo = []
@@ -273,15 +281,19 @@ async def auto_reply_pass(limit: int = 60) -> dict:
             published += 1
         elif _is_gone(msg):
             rc.save_draft(review["id"], draft, status="gone")
+            gone += 1
+            _note(review["id"], msg)
         else:
             # площадка не приняла — оставляем как pending-черновик человеку
             rc.save_draft(review["id"], draft, status="pending")
             failed += 1
+            _note(review["id"], msg)
             _log.warning("auto publish %s: %s", review["id"], msg)
-    if published or failed:
-        _log.info("auto-reviews: published=%d generated=%d failed=%d",
-                  published, generated, failed)
-    res = {"published": published, "generated": generated, "failed": failed}
+    if published or failed or gone:
+        _log.info("auto-reviews: published=%d generated=%d gone=%d failed=%d",
+                  published, generated, gone, failed)
+    res = {"published": published, "generated": generated,
+           "gone": gone, "failed": failed, "errors": errors}
     auto_status["result"] = res
     return res
 

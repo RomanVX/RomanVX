@@ -5609,8 +5609,11 @@ function _applyReviewsData(data) {
       asEl.innerHTML = `<span class="text-danger">Автоответы 3-5★: ошибка — ${esc(as.error)}</span>`;
     } else if (as.last_run) {
       const r = as.result || {};
-      asEl.textContent = `Автоответы 3-5★: последний прогон ${as.last_run} МСК · опубликовано ${r.published ?? 0}` +
-        (r.failed ? ` · не удалось ${r.failed}` : '') + ' · проходы каждые 20 минут';
+      asEl.innerHTML = esc(`Автоответы 3-5★: последний прогон ${as.last_run} МСК · опубликовано ${r.published ?? 0}` +
+        (r.generated ? ` · сгенерировано ${r.generated}` : '') +
+        (r.gone ? ` · недоступны на площадке ${r.gone}` : '') +
+        (r.failed ? ` · не удалось ${r.failed}` : '') + ' · проходы каждые 20 минут') +
+        ((r.errors || []).length ? `<div class="text-warning">Ответы площадок: ${esc(r.errors.join(' | '))}</div>` : '');
     } else {
       asEl.textContent = 'Автоответы 3-5★ включены: первый прогон в течение ~20 минут после запуска сервера.';
     }
