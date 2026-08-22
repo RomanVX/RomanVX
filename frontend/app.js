@@ -5612,6 +5612,7 @@ function _applyReviewsData(data) {
       asEl.innerHTML = esc(`Автоответы 3-5★: последний прогон ${as.last_run} МСК · опубликовано ${r.published ?? 0}` +
         (r.generated ? ` · сгенерировано ${r.generated}` : '') +
         (r.gone ? ` · недоступны на площадке ${r.gone}` : '') +
+        (r.skipped ? ` · без текста, ответ невозможен (Ozon): ${r.skipped}` : '') +
         (r.failed ? ` · не удалось ${r.failed}` : '') + ' · проходы каждые 20 минут') +
         ((r.errors || []).length ? `<div class="text-warning">Ответы площадок: ${esc(r.errors.join(' | '))}</div>` : '');
     } else {
@@ -5994,7 +5995,7 @@ function renderReviewsFeed() {
   if (_reviewsArtSel.size) filtered = filtered.filter(r => _reviewsArtSel.has(r.sku || ''));
   // вкладки Неотвеченные / Отвеченные: отвеченные не путаются под ногами
   const isAns = r => !!r.answer
-    || ['approved', 'gone', 'auto'].includes((_drafts[r.id] || {}).status);
+    || ['approved', 'gone', 'auto', 'skip'].includes((_drafts[r.id] || {}).status);
   const nAns = filtered.filter(isAns).length;
   const tabAns = document.getElementById('revTabAns');
   if (tabAns) tabAns.textContent = `Отвеченные${nAns ? ` (${nAns})` : ''}`;

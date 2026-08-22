@@ -229,6 +229,12 @@ def _is_gone(msg: str) -> bool:
             or "review not found" in low)
 
 
+def _is_empty_ban(msg: str) -> bool:
+    """Ozon: «cannot comment on empty review» — на отзыв без текста ответить
+    нельзя в принципе. Помечаем skip, чтобы не долбить API каждые 20 минут."""
+    return "empty review" in (msg or "").lower()
+
+
 async def auto_reply_pass(limit: int = 60) -> dict:
     """Один проход автоответов: сгенерировать и опубликовать ответы на
     неотвеченные отзывы с рейтингом >= AUTO_MIN_RATING (включая беститекстовые).
@@ -244,6 +250,7 @@ async def auto_reply_pass(limit: int = 60) -> dict:
     def _note(rid, msg):
         if len(errors) < 3:
             errors.append(f"{rid}: {str(msg)[:140]}")
+    skipped = 0
     # 1) готовые черновики на позитив — просто публикуем
     for d in rc.get_pending_autoable(AUTO_MIN_RATING, limit):
         ok, msg = await rc.post_answer(d["id"], d["draft"])
@@ -253,7 +260,9 @@ async def auto_reply_pass(limit: int = 60) -> dict:
         elif _is_gone(msg):
             rc.set_draft_status(d["id"], "gone")
             gone += 1
-            _note(d["id"], msg)
+        elif _is_empty_ban(msg):
+            rc.set_draft_status(d["id"], "skip")
+            skipped += 1
         else:
             failed += 1
             _note(d["id"], msg)
@@ -264,6 +273,12 @@ async def auto_reply_pass(limit: int = 60) -> dict:
         todo += [r for r in rc.get_unanswered(platform=p, limit=limit)
                  if int(r.get("rating") or 0) >= AUTO_MIN_RATING]
     for review in todo[:max(limit - published, 0)]:
+        # Ozon не принимает комментарии к отзывам без текста — не тратим
+        # генерацию, помечаем «ответ не требуется»
+        if review["platform"] == "Ozon" and not (review.get("text") or "").strip():
+            rc.save_draft(review["id"], "", status="skip")
+            skipped += 1
+            continue
         try:
             draft = await review_ai.generate_reply(
                 review, platform=review["platform"])
@@ -282,7 +297,9 @@ async def auto_reply_pass(limit: int = 60) -> dict:
         elif _is_gone(msg):
             rc.save_draft(review["id"], draft, status="gone")
             gone += 1
-            _note(review["id"], msg)
+        elif _is_empty_ban(msg):
+            rc.save_draft(review["id"], draft, status="skip")
+            skipped += 1
         else:
             # площадка не приняла — оставляем как pending-черновик человеку
             rc.save_draft(review["id"], draft, status="pending")
@@ -292,8 +309,8 @@ async def auto_reply_pass(limit: int = 60) -> dict:
     if published or failed or gone:
         _log.info("auto-reviews: published=%d generated=%d gone=%d failed=%d",
                   published, generated, gone, failed)
-    res = {"published": published, "generated": generated,
-           "gone": gone, "failed": failed, "errors": errors}
+    res = {"published": published, "generated": generated, "gone": gone,
+           "skipped": skipped, "failed": failed, "errors": errors}
     auto_status["result"] = res
     return res
 
