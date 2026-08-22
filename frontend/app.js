@@ -5613,6 +5613,7 @@ function _applyReviewsData(data) {
         (r.generated ? ` · сгенерировано ${r.generated}` : '') +
         (r.gone ? ` · недоступны на площадке ${r.gone}` : '') +
         (r.skipped ? ` · без текста, ответ невозможен (Ozon): ${r.skipped}` : '') +
+        (r.deferred ? ` · ждут публикации отзыва: ${r.deferred}` : '') +
         (r.failed ? ` · не удалось ${r.failed}` : '') + ' · проходы каждые 20 минут') +
         ((r.errors || []).length ? `<div class="text-warning">Ответы площадок: ${esc(r.errors.join(' | '))}</div>` : '');
     } else {

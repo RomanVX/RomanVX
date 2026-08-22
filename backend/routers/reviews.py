@@ -229,6 +229,12 @@ def _is_gone(msg: str) -> bool:
             or "review not found" in low)
 
 
+def _is_delayed(msg: str) -> bool:
+    """Ozon: «cannot comment on publish delayed review» — отзыв ещё на
+    модерации площадки. Черновик оставляем pending: опубликуется — ответим."""
+    return "publish delayed" in (msg or "").lower()
+
+
 def _is_empty_ban(msg: str) -> bool:
     """Ozon: «cannot comment on empty review» — на отзыв без текста ответить
     нельзя в принципе. Помечаем skip, чтобы не долбить API каждые 20 минут."""
@@ -250,7 +256,7 @@ async def auto_reply_pass(limit: int = 60) -> dict:
     def _note(rid, msg):
         if len(errors) < 3:
             errors.append(f"{rid}: {str(msg)[:140]}")
-    skipped = 0
+    skipped = deferred = 0
     # 1) готовые черновики на позитив — просто публикуем
     for d in rc.get_pending_autoable(AUTO_MIN_RATING, limit):
         ok, msg = await rc.post_answer(d["id"], d["draft"])
@@ -263,6 +269,8 @@ async def auto_reply_pass(limit: int = 60) -> dict:
         elif _is_empty_ban(msg):
             rc.set_draft_status(d["id"], "skip")
             skipped += 1
+        elif _is_delayed(msg):
+            deferred += 1          # отзыв на модерации — попробуем позже
         else:
             failed += 1
             _note(d["id"], msg)
@@ -300,6 +308,9 @@ async def auto_reply_pass(limit: int = 60) -> dict:
         elif _is_empty_ban(msg):
             rc.save_draft(review["id"], draft, status="skip")
             skipped += 1
+        elif _is_delayed(msg):
+            rc.save_draft(review["id"], draft, status="pending")
+            deferred += 1
         else:
             # площадка не приняла — оставляем как pending-черновик человеку
             rc.save_draft(review["id"], draft, status="pending")
@@ -310,7 +321,8 @@ async def auto_reply_pass(limit: int = 60) -> dict:
         _log.info("auto-reviews: published=%d generated=%d gone=%d failed=%d",
                   published, generated, gone, failed)
     res = {"published": published, "generated": generated, "gone": gone,
-           "skipped": skipped, "failed": failed, "errors": errors}
+           "skipped": skipped, "deferred": deferred,
+           "failed": failed, "errors": errors}
     auto_status["result"] = res
     return res
 
