@@ -213,6 +213,7 @@ P&L последних месяцев: {pnl_note or "нет"}
 проблема №1. Не выдумывай данных, которых нет."""
 
     import anthropic
+    from config import ai_gate; ai_gate()   # экономия: только отзывы
     client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
     msg = await client.messages.create(
         model=_MODEL, max_tokens=1800, system=KNOWLEDGE,
@@ -565,6 +566,7 @@ async def _answer_question(question: str, thread: int | None,
                         {"type": "text", "text": question}]
                        if image_b64 else question)
             import anthropic
+            from config import ai_gate; ai_gate()   # экономия: только отзывы
             client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
             msg = await client.messages.create(
                 model=_MODEL_CHEAP, max_tokens=350, system=system,
@@ -603,6 +605,7 @@ WB/Ozon/ЯМ), общаешься с владельцем и его команд
             content = user_text
         messages = history + [{"role": "user", "content": content}]
         import anthropic
+        from config import ai_gate; ai_gate()   # экономия: только отзывы
         client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
         msg = await client.messages.create(
             model=_MODEL, max_tokens=1500, system=system, messages=messages)

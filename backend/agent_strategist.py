@@ -1078,6 +1078,7 @@ async def _run_session_locked(trigger, focus, light, status_msg_id,
             pass
     try:
         import anthropic
+        from config import ai_gate; ai_gate()   # экономия: только отзывы
         client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
         today = (datetime.utcnow() + timedelta(hours=3)).strftime("%Y-%m-%d %H:%M (%A)")
         user_msg = f"Сейчас {today} МСК. Триггер сессии: {trigger}."

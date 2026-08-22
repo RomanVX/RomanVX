@@ -2,6 +2,16 @@ import os
 import logging
 from dotenv import load_dotenv
 
+
+def ai_gate():
+    """Экономия Anthropic API: все ИИ-вызовы, кроме ответов на отзывы
+    (review_ai.py), проходят через этот гейт. Пока AI_ONLY_REVIEWS включён
+    (по умолчанию), гейт бросает RuntimeError с понятным текстом — вызовы
+    падают в свои обработчики ошибок и токены не тратятся.
+    Вернуть ИИ-функции: AI_ONLY_REVIEWS=0 в env (Render)."""
+    if AI_ONLY_REVIEWS:
+        raise RuntimeError(AI_PAUSED_MSG)
+
 load_dotenv()  # no-op on Render (env vars already set), safe to keep
 
 WB_API_KEY: str    = os.getenv("WB_API_KEY", "").strip()
@@ -15,6 +25,15 @@ YM_CAMPAIGN_ID: str  = os.getenv("YM_CAMPAIGN_ID", "").strip()
 YM_BUSINESS_ID: str  = os.getenv("YM_BUSINESS_ID", "").strip()
 
 ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "").strip()
+
+# Режим экономии: работают только ответы на отзывы, остальные ИИ-функции
+# (TG-бот, стратег, новости, AI-анализы, советы по рекламе) выключены.
+# Отключить экономию: AI_ONLY_REVIEWS=0 в env.
+AI_ONLY_REVIEWS: bool = os.getenv("AI_ONLY_REVIEWS", "1").strip().lower() \
+    not in ("0", "false", "off")
+AI_PAUSED_MSG = ("🔇 ИИ-функции приостановлены для экономии Anthropic API — "
+                 "работают только ответы на отзывы. Вернуть: AI_ONLY_REVIEWS=0 "
+                 "в переменных окружения Render.")
 
 # ── Кабинет ─────────────────────────────────────────────────────────────────
 # Один деплой = один кабинет; кабинет задаётся переменными окружения.

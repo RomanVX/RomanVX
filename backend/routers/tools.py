@@ -79,6 +79,7 @@ async def _analyze_sku(sku: str, name: str, reviews: list) -> dict | None:
 }}
 Правила: до 6 плюсов и до 6 минусов, сортируй по частоте, pct — целое число (доля отзывов, где тема упомянута), формулировки конкретные («Течёт крышка», а не «Плохое качество»). Если минусов нет — пустой список и рекомендация «Существенных проблем в отзывах нет»."""
     import anthropic
+    from config import ai_gate; ai_gate()   # экономия: только отзывы
     client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
     msg = await client.messages.create(
         model=_MODEL, max_tokens=1200,
@@ -745,6 +746,7 @@ async def _adv_build_bg(force: bool = False) -> None:
 
 Дай 3-6 конкретных рекомендаций по оптимизации: что остановить/минусовать, куда перераспределить бюджет, где потенциал масштабирования. Формат: маркированный список, каждая рекомендация 1-2 предложения с цифрами. Без воды и вступлений."""
                 import anthropic
+                from config import ai_gate; ai_gate()   # экономия: только отзывы
                 client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
                 msg = await client.messages.create(model=_MODEL, max_tokens=900,
                                                    messages=[{"role": "user", "content": prompt}])
@@ -2809,6 +2811,7 @@ async def _analyze_niche_impl(payload: dict, query: str,
 
 Дай вердикт: 1) итог одной строкой (ИДТИ / ИДТИ ОСТОРОЖНО / НЕ ИДТИ + почему); 2) 3-4 пункта обоснования с цифрами; 3) при каких условиях заходить (цена, на что давить). Кратко, без воды."""
             import anthropic
+            from config import ai_gate; ai_gate()   # экономия: только отзывы
             client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
             msg = await client.messages.create(model=_MODEL, max_tokens=2000,
                                                messages=[{"role": "user", "content": prompt}])
@@ -2974,6 +2977,7 @@ async def get_visuals(query: str = Query(...), refresh: bool = Query(default=Fal
                     content.append({"type": "image", "source": {
                         "type": "base64", "media_type": mt, "data": b64}})
                 import anthropic
+                from config import ai_gate; ai_gate()   # экономия: только отзывы
                 client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
                 msg = await client.messages.create(model=_MODEL, max_tokens=3000,
                                                    messages=[{"role": "user", "content": content}])
@@ -3041,6 +3045,7 @@ async def visuals_prompt(payload: dict):
 
     try:
         import anthropic
+        from config import ai_gate; ai_gate()   # экономия: только отзывы
         client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
         msg = await client.messages.create(model=_MODEL, max_tokens=2200,
                                            messages=[{"role": "user", "content": sys_prompt}])
@@ -3941,6 +3946,7 @@ async def get_ozads(refresh: bool = Query(default=False), days: int = Query(defa
 
 Дай практику кратко: 1) куда утекают деньги (кампании с высоким ДРР / без заказов); 2) что масштабировать (низкий ДРР, хороший ROAS); 3) 3-4 конкретных действия. С цифрами, без воды."""
             import anthropic
+            from config import ai_gate; ai_gate()   # экономия: только отзывы
             client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
             msg = await client.messages.create(model=_MODEL, max_tokens=1200,
                                                messages=[{"role": "user", "content": prompt}])

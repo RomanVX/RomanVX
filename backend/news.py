@@ -185,6 +185,7 @@ async def analyze_new(limit: int = 12) -> int:
         "Ответ — ТОЛЬКО массив JSON, без пояснений и markdown.")
     try:
         import anthropic
+        from config import ai_gate; ai_gate()   # экономия: только отзывы
         client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
         msg = await client.messages.create(
             model=_MODEL, max_tokens=2500, system=system,

@@ -379,6 +379,7 @@ async def get_supply_recommendations():
     import logging as _logging
     _log = _logging.getLogger(__name__)
     try:
+        from config import ai_gate; ai_gate()   # экономия: только отзывы
         client = _anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
         message = await client.messages.create(
             model="claude-haiku-4-5",
@@ -463,6 +464,7 @@ async def get_sales_analysis(refresh: bool = False):
     import logging as _salog
     _salog = _salog.getLogger(__name__)
     try:
+        from config import ai_gate; ai_gate()   # экономия: только отзывы
         client = _anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
         message = await client.messages.create(
             model="claude-haiku-4-5",
