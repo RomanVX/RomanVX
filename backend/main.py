@@ -517,6 +517,24 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(_client_prices_loop())
     asyncio.create_task(_fbs_multi_loop())
 
+    async def _auto_reviews_loop():
+        """Автоответы на отзывы 3-5★: каждые 20 минут подтягиваем свежие
+        отзывы и отвечаем; 1-2★ остаются на ручную обработку."""
+        import reviews_client as _rc
+        from routers import reviews as _rv
+        await asyncio.sleep(240)
+        log = logging.getLogger("auto_reviews")
+        while True:
+            try:
+                await _rc.refresh_all(force=False)
+                res = await _rv.auto_reply_pass(60)
+                if res.get("published") or res.get("failed"):
+                    log.info("проход: %s", res)
+            except Exception as e:
+                log.warning("проход: %s", str(e)[:200])
+            await asyncio.sleep(1200)
+    asyncio.create_task(_auto_reviews_loop())
+
     async def _wms_storage_loop():
         from routers import wms as _w
         await asyncio.sleep(300)

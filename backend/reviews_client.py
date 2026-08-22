@@ -174,6 +174,20 @@ def get_drafts() -> dict:
     return {r[0]: {"draft": r[1], "status": r[2]} for r in rows}
 
 
+def get_pending_autoable(min_rating: int = 3, limit: int = 100) -> list[dict]:
+    """Готовые pending-черновики на позитив (>= min_rating), которые можно
+    опубликовать автоматически — токены уже потрачены, текст есть."""
+    rows = db.fetchall(
+        "SELECT d.review_id, d.draft, r.platform, r.rating "
+        "FROM drafts d JOIN reviews r ON r.id = d.review_id "
+        "WHERE d.status = 'pending' AND r.rating >= ? "
+        "AND (r.answer IS NULL OR r.answer = '') LIMIT ?",
+        (min_rating, limit),
+    )
+    return [{"id": r[0], "draft": r[1], "platform": r[2], "rating": r[3]}
+            for r in rows]
+
+
 def get_unanswered(platform="WB", limit=20) -> list[dict]:
     """Reviews we haven't answered yet and have no draft, newest first.
     Включая беститекстовые (одни звёзды) — на них тоже отвечаем по рейтингу."""

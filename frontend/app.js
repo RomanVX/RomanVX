@@ -5962,7 +5962,7 @@ function renderReviewsFeed() {
   if (_reviewsArtSel.size) filtered = filtered.filter(r => _reviewsArtSel.has(r.sku || ''));
   // вкладки Неотвеченные / Отвеченные: отвеченные не путаются под ногами
   const isAns = r => !!r.answer
-    || ['approved', 'gone'].includes((_drafts[r.id] || {}).status);
+    || ['approved', 'gone', 'auto'].includes((_drafts[r.id] || {}).status);
   const nAns = filtered.filter(isAns).length;
   const tabAns = document.getElementById('revTabAns');
   if (tabAns) tabAns.textContent = `Отвеченные${nAns ? ` (${nAns})` : ''}`;

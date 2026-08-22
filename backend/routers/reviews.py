@@ -212,3 +212,70 @@ async def decline_draft(id: str = Query(...)):
     """Mark a draft as declined."""
     rc.set_draft_status(id, "declined")
     return {"id": id, "status": "declined"}
+
+
+# ── Автоответы: 3-5★ отвечаем и публикуем сами, 1-2★ остаются людям ─────────
+
+AUTO_MIN_RATING = 3
+
+
+def _is_gone(msg: str) -> bool:
+    low = (msg or "").lower()
+    return ("content not found" in low or "getreviewbyuuid" in low
+            or "review not found" in low)
+
+
+async def auto_reply_pass(limit: int = 60) -> dict:
+    """Один проход автоответов: сгенерировать и опубликовать ответы на
+    неотвеченные отзывы с рейтингом >= AUTO_MIN_RATING (включая беститекстовые).
+    Негатив (1-2★) не трогаем — его смотрят люди. Старые pending-черновики
+    на позитив публикуются без повторной генерации."""
+    published = generated = failed = 0
+    # 1) готовые черновики на позитив — просто публикуем
+    for d in rc.get_pending_autoable(AUTO_MIN_RATING, limit):
+        ok, msg = await rc.post_answer(d["id"], d["draft"])
+        if ok:
+            rc.save_draft(d["id"], d["draft"], status="auto")
+            published += 1
+        elif _is_gone(msg):
+            rc.set_draft_status(d["id"], "gone")
+        else:
+            failed += 1
+            _log.warning("auto publish %s: %s", d["id"], msg)
+    # 2) свежие без черновика — генерим и публикуем
+    todo = []
+    for p in ("WB", "Ozon", "YM"):
+        todo += [r for r in rc.get_unanswered(platform=p, limit=limit)
+                 if int(r.get("rating") or 0) >= AUTO_MIN_RATING]
+    for review in todo[:max(limit - published, 0)]:
+        try:
+            draft = await review_ai.generate_reply(
+                review, platform=review["platform"])
+        except Exception as e:
+            _log.warning("auto generate: %s", e)
+            break   # скорее всего лимит/ключ API — прерываем проход целиком
+        if not draft:
+            failed += 1
+            continue
+        generated += 1
+        ok, msg = await rc.post_answer(review["id"], draft)
+        if ok:
+            rc.save_draft(review["id"], draft, status="auto")
+            published += 1
+        elif _is_gone(msg):
+            rc.save_draft(review["id"], draft, status="gone")
+        else:
+            # площадка не приняла — оставляем как pending-черновик человеку
+            rc.save_draft(review["id"], draft, status="pending")
+            failed += 1
+            _log.warning("auto publish %s: %s", review["id"], msg)
+    if published or failed:
+        _log.info("auto-reviews: published=%d generated=%d failed=%d",
+                  published, generated, failed)
+    return {"published": published, "generated": generated, "failed": failed}
+
+
+@router.post("/auto-pass")
+async def run_auto_pass(limit: int = Query(60)):
+    """Ручной запуск прохода автоответов (для разгребания бэклога)."""
+    return await auto_reply_pass(min(int(limit or 60), 200))
