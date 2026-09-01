@@ -2996,6 +2996,7 @@ const _TOOL_HINTS = {
   margin: 'Затраты на единицу из фактической юнитки: вводите цену/себестоимость — видите прибыль, маржу и точку безубыточности',
   competitors: 'Суточные срезы выдачи WB по вашим запросам: позиции, цены и демпинг конкурентов (сбор через домашний агент)',
   whstocks: 'Остатки WB по складам и сколько денег заморожено в стоке (по себестоимости)',
+  geo: 'Откуда → куда едут заказы WB: склад отгрузки (FBO/FBS) × округ и регион покупателя',
   bid: 'Максимальная ставка за 1000 показов из юнитки: вводишь CTR запроса и конверсию карточки — видишь потолок ставки при нулевой марже и при целевом ДРР',
   wbfunnel: 'Воронка WB по каждому артикулу: переходы в карточку → корзина → заказ → выкуп, конверсии и сравнение с прошлым периодом',
 };
@@ -3003,7 +3004,7 @@ const _TOOL_HINTS = {
 function setTool(t) {
   if (_toolActive === t) return;
   _toolActive = t;
-  ['Prod', 'Clusters', 'Adv', 'Niche', 'Nichecalc', 'Visuals', 'Margin', 'Competitors', 'Whstocks', 'Bid', 'Wbfunnel'].forEach(k => {
+  ['Prod', 'Clusters', 'Adv', 'Niche', 'Nichecalc', 'Visuals', 'Margin', 'Competitors', 'Whstocks', 'Bid', 'Wbfunnel', 'Geo'].forEach(k => {
     document.getElementById('tool' + k)?.classList.toggle('active', k.toLowerCase() === t);
   });
   const hint = document.getElementById('toolHint');
@@ -3016,7 +3017,7 @@ function reloadTool() {
      adv: () => loadAdv(true), niche: () => loadDemand(true),
      nichecalc: () => renderNicheForm(), visuals: () => renderVisualsForm(),
      margin: () => loadMargin(true), competitors: () => loadCompetitors(true),
-     whstocks: () => loadWhStocks(true),
+     whstocks: () => loadWhStocks(true), geo: () => loadGeo(true),
      wbfunnel: () => loadWbFunnel(true) })[_toolActive]();
 }
 function loadTools() {
@@ -3024,7 +3025,7 @@ function loadTools() {
      niche: loadDemand, nichecalc: renderNicheForm,
      visuals: renderVisualsForm, margin: loadMargin,
      competitors: loadCompetitors, whstocks: loadWhStocks,
-     bid: loadBidCalc, wbfunnel: loadWbFunnel })[_toolActive]();
+     bid: loadBidCalc, wbfunnel: loadWbFunnel, geo: loadGeo })[_toolActive]();
 }
 
 // ── Воронка WB (nm-report) ───────────────────────────────────────────────────
@@ -3163,6 +3164,110 @@ function renderWhStocks() {
   });
   html += `</tbody></table></div></div></div>
   <div class="text-secondary small mt-2">Склады отсортированы по объёму, показан топ-8${otherQty ? ' (+«Прочие»)' : ''}. «💰 Заморожено» — деньги в товаре на складах WB по себестоимости. Обновлено: ${d.fetched_at}</div>`;
+  wrap.innerHTML = html;
+}
+
+// ── География заказов WB: откуда (склад) → куда (регион покупателя) ─────────
+let _geoData = null;
+let _geoDays = 28;
+
+async function loadGeo(refresh) {
+  const wrap = document.getElementById('toolsWrap');
+  if (!wrap || _toolActive !== 'geo') return;
+  if (_geoData && !refresh && _geoData.days === _geoDays) { renderGeo(); return; }
+  wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>Считаем маршруты заказов…</div>';
+  try {
+    const r = await fetch(`${API}/api/tools/geo?days=${_geoDays}${refresh ? '&refresh=true' : ''}`);
+    _geoData = await r.json();
+  } catch (e) {
+    wrap.innerHTML = `<div class="alert alert-warning">Не загрузилось: ${esc(e.message)}</div>`;
+    return;
+  }
+  renderGeo();
+}
+
+function setGeoDays(d) { _geoDays = d; _geoData = null; loadGeo(); }
+
+const _OKRUG_SHORT = { 'Центральный': 'ЦФО', 'Северо-Западный': 'СЗФО',
+  'Приволжский': 'ПФО', 'Южный': 'ЮФО', 'Северо-Кавказский': 'СКФО',
+  'Уральский': 'УФО', 'Сибирский': 'СФО', 'Дальневосточный': 'ДФО',
+  'Прочее': 'Проч.' };
+
+function renderGeo() {
+  const wrap = document.getElementById('toolsWrap');
+  const d = _geoData;
+  if (!wrap || !d) return;
+  if (d.error) { wrap.innerHTML = `<div class="alert alert-warning">${esc(d.error)}</div>`; return; }
+  const whs = d.warehouses || [];
+  const okrugs = (d.okrugs || []).filter(o =>
+    whs.some(w => (w.cells || {})[o]));
+  const maxCell = Math.max(1, ...whs.flatMap(w => okrugs.map(o => (w.cells || {})[o] || 0)));
+  const daysBtn = n => `<button class="btn btn-sm ${_geoDays === n ? 'btn-info' : 'btn-outline-secondary'} py-0" onclick="setGeoDays(${n})">${n} дн</button>`;
+  const typeBadge = t => t === 'FBS'
+    ? '<span class="badge bg-warning text-dark">FBS</span>'
+    : '<span class="badge bg-info text-dark">FBO</span>';
+  let html = `
+  <div class="d-flex gap-2 align-items-center flex-wrap mb-2">
+    <h5 class="mb-0">🗺 География заказов WB</h5>
+    <div class="d-flex gap-1">${daysBtn(7)}${daysBtn(14)}${daysBtn(28)}${daysBtn(90)}</div>
+    <span class="text-secondary small ms-auto">строки — склад отгрузки, колонки — округ покупателя · без отмен (${fmt(d.cancels_excluded)} отменённых исключено)</span>
+  </div>
+  <div class="row g-2 mb-3">
+    <div class="col-md-4"><div class="card bg-card p-3">
+      <div class="text-secondary small">Всего заказов за ${d.days} дн</div>
+      <div class="fs-4 fw-bold">${fmt(d.total_qty)} шт · ${fmtRub(d.total_rub)}</div>
+    </div></div>
+    <div class="col-md-4"><div class="card bg-card p-3">
+      <div class="text-secondary small">🔵 FBO — со складов WB</div>
+      <div class="fs-4 fw-bold">${fmt(d.fbo.qty)} шт <span class="text-secondary fs-6">(${d.total_qty ? Math.round(d.fbo.qty / d.total_qty * 100) : 0}%)</span></div>
+      <div class="text-secondary small">${fmtRub(d.fbo.rub)}</div>
+    </div></div>
+    <div class="col-md-4"><div class="card bg-card p-3">
+      <div class="text-secondary small">🟡 FBS — с нашего склада</div>
+      <div class="fs-4 fw-bold">${fmt(d.fbs.qty)} шт <span class="text-secondary fs-6">(${d.total_qty ? Math.round(d.fbs.qty / d.total_qty * 100) : 0}%)</span></div>
+      <div class="text-secondary small">${fmtRub(d.fbs.rub)}</div>
+    </div></div>
+  </div>
+  <div class="card bg-card mb-3"><div class="card-body p-0"><div class="table-responsive">
+    <table class="table table-sm align-middle mb-0" style="font-size:.85rem"><thead><tr>
+      <th style="position:sticky;left:0;background:var(--surface-2);z-index:2">Склад отгрузки</th>
+      <th class="text-end">Шт</th><th class="text-end">Доля</th>` +
+    okrugs.map(o => `<th class="text-end" title="${esc(o)} федеральный округ покупателя">${_OKRUG_SHORT[o] || o}</th>`).join('') +
+    `</tr></thead><tbody>` +
+    whs.map(w => `<tr>
+      <td style="position:sticky;left:0;background:var(--surface-1);z-index:1;white-space:nowrap">
+        ${typeBadge(w.type)} <b>${esc(w.name)}</b>
+        <div class="text-secondary" style="font-size:.72rem">${(w.top_regions || []).slice(0, 3).map(([r, q]) => `${esc(r)} ${q}`).join(' · ')}</div>
+      </td>
+      <td class="text-end fw-semibold">${fmt(w.qty)}</td>
+      <td class="text-end text-secondary">${w.share}%</td>` +
+      okrugs.map(o => {
+        const q = (w.cells || {})[o] || 0;
+        if (!q) return '<td class="text-end"><span style="opacity:.2">·</span></td>';
+        const heat = Math.min(0.55, 0.08 + q / maxCell * 0.5);
+        return `<td class="text-end" style="background:rgba(34,211,238,${heat.toFixed(2)})" title="${esc(w.name)} → ${esc(o)}: ${q} шт"><b>${fmt(q)}</b></td>`;
+      }).join('') + `</tr>`).join('') +
+    `</tbody></table></div></div></div>
+  <div class="row g-3">
+    <div class="col-lg-6"><div class="card bg-card p-3">
+      <h6>Куда едут заказы — топ регионов покупателей</h6>
+      <table class="table table-sm mb-0" style="font-size:.85rem"><tbody>` +
+      (d.top_regions || []).map(([r, q]) => `<tr>
+        <td>${esc(r)}</td><td class="text-end fw-semibold">${fmt(q)}</td>
+        <td class="text-end text-secondary" style="width:70px">${d.total_qty ? (q / d.total_qty * 100).toFixed(1) : 0}%</td>
+      </tr>`).join('') +
+      `</tbody></table>
+    </div></div>
+    <div class="col-lg-6"><div class="card bg-card p-3">
+      <h6>Как читать</h6>
+      <div class="small text-secondary">
+        <p class="mb-2">Каждый заказ WB несёт склад отгрузки и регион покупателя — матрица показывает реальные маршруты: например, строка «Владивосток» — что уезжает с ДВ-склада и в какие округа, строка со значком FBS — что мы отправляем сами (Чехов/Москва).</p>
+        <p class="mb-2">Ячейка на пересечении «своего» округа — локальные заказы (короткая логистика); всё остальное — межокружные перевозки WB, они дороже и дольше.</p>
+        <p class="mb-0">Данные: WB statistics, окно 90 дней, обновление каждые 10 мин. Ozon и ЯМ пока без географии заказов — их API не отдают регион покупателя в нашем сборе (у Ozon доступен только склад отгрузки, добавим при необходимости).</p>
+      </div>
+    </div></div>
+  </div>
+  <div class="text-secondary small mt-2">Обновлено: ${esc(d.updated)} · период: последние ${d.days} дней</div>`;
   wrap.innerHTML = html;
 }
 

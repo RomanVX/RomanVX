@@ -585,6 +585,91 @@ async def export_clusters():
         headers={"Content-Disposition": 'attachment; filename="clusters.xlsx"'})
 
 
+# ══ География заказов WB: откуда (склад) → куда (регион покупателя) ══════════
+# Каждая строка statistics /orders несёт warehouseName (склад отгрузки),
+# warehouseType («Склад WB» = FBO / «Склад продавца» = FBS) и
+# oblastOkrugName/regionName покупателя — матрица строится из кеша wb_raw
+# без единого нового запроса к WB. Окно данных WB — 90 дней.
+
+_geo_cache: dict = {}   # days → (ts, result)
+
+
+@router.get("/geo")
+async def get_geo(days: int = Query(default=28), refresh: bool = Query(default=False)):
+    import time as _time
+    days = days if days in (7, 14, 28, 90) else 28
+    cached = _geo_cache.get(days)
+    if not refresh and cached and _time.monotonic() - cached[0] < 1800:
+        return cached[1]
+
+    from datetime import timedelta
+    import cache
+    dt_to = datetime.utcnow()
+    _sales, orders, _stocks = await cache.get_raw_data(
+        dt_to - timedelta(days=days), dt_to)
+
+    OKRUGS = ["Центральный", "Северо-Западный", "Приволжский", "Южный",
+              "Северо-Кавказский", "Уральский", "Сибирский",
+              "Дальневосточный", "Прочее"]
+
+    def okrug_of(r) -> str:
+        return _okrug_cluster(r.get("oblastOkrugName") or r.get("regionName") or "")
+
+    by_wh: dict[str, dict] = {}
+    fbo = {"qty": 0, "rub": 0.0}
+    fbs = {"qty": 0, "rub": 0.0}
+    cancels = 0
+    for r in orders or []:
+        if r.get("isCancel"):
+            cancels += 1            # отменённый заказ никуда не поехал
+            continue
+        wh = (r.get("warehouseName") or "—").strip() or "—"
+        wtype = "FBS" if (r.get("warehouseType") == "Склад продавца") else "FBO"
+        price = float(r.get("priceWithDisc") or r.get("totalPrice") or 0)
+        ok = okrug_of(r)
+        region = (r.get("regionName") or "").strip()
+        e = by_wh.setdefault(wh, {
+            "name": wh, "type": wtype, "qty": 0, "rub": 0.0,
+            "cells": {}, "regions": {}})
+        e["qty"] += 1
+        e["rub"] += price
+        e["cells"][ok] = e["cells"].get(ok, 0) + 1
+        if region:
+            e["regions"][region] = e["regions"].get(region, 0) + 1
+        t = fbs if wtype == "FBS" else fbo
+        t["qty"] += 1
+        t["rub"] += price
+
+    rows = sorted(by_wh.values(), key=lambda x: -x["qty"])
+    # регионы покупателей суммарно (для «куда едет» без разреза складов)
+    region_tot: dict[str, int] = {}
+    for e in rows:
+        for reg, q in e["regions"].items():
+            region_tot[reg] = region_tot.get(reg, 0) + q
+    total_qty = fbo["qty"] + fbs["qty"]
+    result = {
+        "days": days,
+        "updated": datetime.utcnow().strftime("%H:%M UTC"),
+        "total_qty": total_qty,
+        "total_rub": round(fbo["rub"] + fbs["rub"]),
+        "cancels_excluded": cancels,
+        "fbo": {"qty": fbo["qty"], "rub": round(fbo["rub"])},
+        "fbs": {"qty": fbs["qty"], "rub": round(fbs["rub"])},
+        "okrugs": OKRUGS,
+        "warehouses": [{
+            "name": e["name"], "type": e["type"],
+            "qty": e["qty"], "rub": round(e["rub"]),
+            "share": round(e["qty"] / total_qty * 100, 1) if total_qty else 0,
+            "cells": e["cells"],
+            "top_regions": sorted(e["regions"].items(),
+                                  key=lambda x: -x[1])[:5],
+        } for e in rows],
+        "top_regions": sorted(region_tot.items(), key=lambda x: -x[1])[:20],
+    }
+    _geo_cache[days] = (_time.monotonic(), result)
+    return result
+
+
 # ══ Контроль рекламы WB ═══════════════════════════════════════════════════════
 
 _ADV_TYPES = {4: "Каталог", 5: "Карточка", 6: "Поиск", 7: "Рекомендации",

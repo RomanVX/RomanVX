@@ -81,6 +81,7 @@
         <div class="mp-drop-sep"></div>
         <a href="#" onclick="goNavTool('tools','clusters','navWarehouse');return false">WB: остатки по кластерам</a>
         <a href="#" onclick="goNavTool('tools','whstocks','navWarehouse');return false">WB: остатки по складам</a>
+        <a href="#" onclick="goNavTool('tools','geo','navWarehouse');return false">WB: география заказов (откуда → куда)</a>
         <div class="mp-drop-sep"></div>
         <a href="#" onclick="goNavTool('toolsoz','clusters','navWarehouse');return false">Ozon: остатки по кластерам</a>
         <a href="#" onclick="goNavTool('toolsoz','slots','navWarehouse');return false">Ozon: поставки — слоты и короба</a>
@@ -611,6 +612,9 @@
       <div id="toolWhstocks" class="mp-selector-bloc" style="--mp-color:#818cf8" onclick="setTool('whstocks')">
         <span class="mp-selector-dot" style="background:#818cf8"></span>Остатки по складам
       </div>
+      <div id="toolGeo" class="mp-selector-bloc" style="--mp-color:#22d3ee" onclick="setTool('geo')">
+        <span class="mp-selector-dot" style="background:#22d3ee"></span>География заказов
+      </div>
       <div id="toolBid" class="mp-selector-bloc" style="--mp-color:#fb7185" onclick="setTool('bid')">
         <span class="mp-selector-dot" style="background:#fb7185"></span>Ставка CPM
       </div>
@@ -695,6 +699,6 @@
 
 <script src="vendor/bootstrap.bundle.min.js"></script>
 <script src="vendor/chart.umd.min.js"></script>
-<script src="app.js?v=235"></script>
+<script src="app.js?v=236"></script>
 </body>
 </html>
