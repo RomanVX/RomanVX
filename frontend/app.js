@@ -3210,6 +3210,8 @@ function renderGeo() {
   <div class="d-flex gap-2 align-items-center flex-wrap mb-2">
     <h5 class="mb-0">🗺 География заказов WB</h5>
     <div class="d-flex gap-1">${daysBtn(7)}${daysBtn(14)}${daysBtn(28)}${daysBtn(90)}</div>
+    <a class="btn btn-sm btn-outline-success py-0" href="${API}/api/tools/geo/export?days=${_geoDays}"
+      title="3 листа: маршруты по артикулам · артикул × склад · Владивосток vs FBS">⬇ Excel по артикулам</a>
     <span class="text-secondary small ms-auto">строки — склад отгрузки, колонки — округ покупателя · без отмен (${fmt(d.cancels_excluded)} отменённых исключено)</span>
   </div>
   <div class="row g-2 mb-3">

@@ -670,6 +670,122 @@ async def get_geo(days: int = Query(default=28), refresh: bool = Query(default=F
     return result
 
 
+@router.get("/geo/export")
+async def geo_export(days: int = Query(default=28)):
+    """Excel «откуда → куда» по артикулам. Три листа:
+    1) Маршруты — плоско: артикул × склад × регион покупателя (для сводных);
+    2) Артикул × склад — агрегат с топ-направлениями;
+    3) Владивосток vs остальные — по каждому SKU сравнение: сколько уехало
+       с ДВ-складов, с нашего FBS и с прочих складов WB, и куда."""
+    days = days if days in (7, 14, 28, 90) else 28
+    from datetime import timedelta
+    import io
+    import cache
+    dt_to = datetime.utcnow()
+    _s, orders, _st = await cache.get_raw_data(dt_to - timedelta(days=days), dt_to)
+
+    def is_vlad(wh: str) -> bool:
+        low = (wh or "").lower()
+        return "владивосток" in low or "артем" in low or "артём" in low
+
+    # (sku, склад, тип, округ, регион) → [шт, ₽]
+    flat: dict = {}
+    per: dict = {}   # sku → {"vlad": n, "fbs": n, "other": n,
+                     #        "vlad_to": {}, "fbs_to": {}, "rub": {...}}
+    for r in orders or []:
+        if r.get("isCancel"):
+            continue
+        sku = (r.get("supplierArticle") or "").strip() or "—"
+        wh = (r.get("warehouseName") or "—").strip() or "—"
+        fbs = r.get("warehouseType") == "Склад продавца"
+        wtype = "FBS" if fbs else "FBO"
+        okrug = _okrug_cluster(r.get("oblastOkrugName") or "")
+        region = (r.get("regionName") or "—").strip() or "—"
+        price = float(r.get("priceWithDisc") or r.get("totalPrice") or 0)
+        a = flat.setdefault((sku, wh, wtype, okrug, region), [0, 0.0])
+        a[0] += 1
+        a[1] += price
+        p = per.setdefault(sku, {"vlad": 0, "fbs": 0, "other": 0,
+                                 "vlad_to": {}, "fbs_to": {}})
+        if fbs:
+            p["fbs"] += 1
+            p["fbs_to"][region] = p["fbs_to"].get(region, 0) + 1
+        elif is_vlad(wh):
+            p["vlad"] += 1
+            p["vlad_to"][region] = p["vlad_to"].get(region, 0) + 1
+        else:
+            p["other"] += 1
+
+    def _build():
+        import openpyxl
+        from openpyxl.styles import Alignment, Font, PatternFill
+        wb = openpyxl.Workbook()
+
+        def head(ws, cols, widths):
+            ws.append(cols)
+            for c in ws[1]:
+                c.font = Font(bold=True, color="FFFFFF")
+                c.fill = PatternFill("solid", fgColor="1a6f9f")
+                c.alignment = Alignment(horizontal="center", wrap_text=True)
+            for col, w in zip("ABCDEFGHIJ", widths):
+                ws.column_dimensions[col].width = w
+            ws.freeze_panes = "A2"
+
+        ws = wb.active
+        ws.title = "Маршруты"
+        head(ws, ["Артикул", "Склад отгрузки", "FBO или FBS",
+                  "Округ покупателя", "Регион покупателя", "Заказов, шт",
+                  "Сумма, ₽"], (16, 22, 12, 20, 24, 12, 14))
+        for (sku, wh, wtype, okrug, region), (q, rub) in sorted(
+                flat.items(), key=lambda x: (x[0][0], -x[1][0])):
+            ws.append([sku, wh, wtype, okrug, region, q, round(rub)])
+
+        ws2 = wb.create_sheet("Артикул × склад")
+        head(ws2, ["Артикул", "Склад отгрузки", "FBO или FBS", "Заказов, шт",
+                   "Сумма, ₽", "Топ направления (регион — шт)"],
+             (16, 22, 12, 12, 14, 64))
+        agg2: dict = {}
+        for (sku, wh, wtype, _o, region), (q, rub) in flat.items():
+            a = agg2.setdefault((sku, wh, wtype), [0, 0.0, {}])
+            a[0] += q
+            a[1] += rub
+            a[2][region] = a[2].get(region, 0) + q
+        for (sku, wh, wtype), (q, rub, regs) in sorted(
+                agg2.items(), key=lambda x: (x[0][0], -x[1][0])):
+            top = " · ".join(f"{r} — {n}" for r, n in
+                             sorted(regs.items(), key=lambda x: -x[1])[:6])
+            ws2.append([sku, wh, wtype, q, round(rub), top])
+
+        ws3 = wb.create_sheet("Владивосток vs остальные")
+        head(ws3, ["Артикул", "С ДВ-складов (Владивосток/Артём), шт",
+                   "С нашего FBS, шт", "С прочих складов WB, шт",
+                   "Куда едет с ДВ (топ)", "Куда едет с FBS (топ)"],
+             (16, 18, 14, 16, 44, 44))
+        for sku, p in sorted(per.items(),
+                             key=lambda x: -(x[1]["vlad"] + x[1]["fbs"])):
+            if not (p["vlad"] or p["fbs"]):
+                continue    # SKU без отгрузок с ДВ и FBS — не для сравнения
+            v_top = " · ".join(f"{r} — {n}" for r, n in
+                               sorted(p["vlad_to"].items(), key=lambda x: -x[1])[:5])
+            f_top = " · ".join(f"{r} — {n}" for r, n in
+                               sorted(p["fbs_to"].items(), key=lambda x: -x[1])[:5])
+            ws3.append([sku, p["vlad"], p["fbs"], p["other"], v_top, f_top])
+
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        return buf.read()
+    data = await asyncio.to_thread(_build)
+    from urllib.parse import quote
+    from fastapi.responses import StreamingResponse
+    fname = quote(f"География заказов WB — {days} дн.xlsx")
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/vnd.openxmlformats-officedocument"
+                   ".spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{fname}"})
+
+
 # ══ Контроль рекламы WB ═══════════════════════════════════════════════════════
 
 _ADV_TYPES = {4: "Каталог", 5: "Карточка", 6: "Поиск", 7: "Рекомендации",
