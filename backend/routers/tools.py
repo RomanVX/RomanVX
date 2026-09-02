@@ -3537,9 +3537,11 @@ async def export_ozon_clusters():
 # ══ FBS WB: сборочные задания и остатки склада продавца ══════════════════════
 
 @router.get("/fbs/stocks/export")
-async def fbs_stocks_export(wid: int | None = None):
-    """Excel текущих остатков склада продавца WB (артикул, штрихкод, название,
-    кол-во) — стартовая загрузка в МПФИТ или сверка с физическим пересчётом."""
+async def fbs_stocks_export(wid: int | None = None, format: str = "full"):
+    """Excel текущих остатков склада продавца WB.
+    format=full  — артикул, штрихкод, название, кол-во (сверка/пересчёт);
+    format=mpfit — шаблон приёмки МПФИТ import_arrival_items:
+                   «Код товара | Кол-во | Примечание к товару»."""
     import io
     import wb_fbs
     import catalog as _cat
@@ -3548,23 +3550,37 @@ async def fbs_stocks_export(wid: int | None = None):
     if st.get("error"):
         raise HTTPException(400, st["error"])
     cmap = await wb_fbs.chrt_map()
+    mpfit = format == "mpfit"
 
     def _build():
         import openpyxl
         from openpyxl.styles import Font, PatternFill
         wb = openpyxl.Workbook()
         ws = wb.active
-        ws.title = "Остатки FBS"
-        ws.append(["Артикул", "Штрихкод", "Название", "Кол-во, шт"])
-        for c in ws[1]:
-            c.font = Font(bold=True, color="FFFFFF")
-            c.fill = PatternFill("solid", fgColor="1a6f9f")
-        for sku, qty in sorted((st.get("stocks") or {}).items()):
-            ws.append([sku, str((cmap.get(sku) or {}).get("barcode") or ""),
-                       (_cat.CATALOG.get(sku) or {}).get("name") or "",
-                       int(qty or 0)])
-        for col, w in zip("ABCD", (14, 18, 40, 12)):
-            ws.column_dimensions[col].width = w
+        rows = sorted((st.get("stocks") or {}).items())
+        if mpfit:
+            ws.title = "Worksheet"
+            ws.append(["Код товара", "Кол-во", "Примечание к товару"])
+            for sku, qty in rows:
+                if int(qty or 0) <= 0:
+                    continue        # нули в приёмку не грузим
+                bc = str((cmap.get(sku) or {}).get("barcode") or "")
+                name = (_cat.CATALOG.get(sku) or {}).get("name") or ""
+                ws.append([sku, int(qty), f"{name} · ШК {bc}".strip(" ·")])
+            for col, w in zip("ABC", (16, 10, 48)):
+                ws.column_dimensions[col].width = w
+        else:
+            ws.title = "Остатки FBS"
+            ws.append(["Артикул", "Штрихкод", "Название", "Кол-во, шт"])
+            for c in ws[1]:
+                c.font = Font(bold=True, color="FFFFFF")
+                c.fill = PatternFill("solid", fgColor="1a6f9f")
+            for sku, qty in rows:
+                ws.append([sku, str((cmap.get(sku) or {}).get("barcode") or ""),
+                           (_cat.CATALOG.get(sku) or {}).get("name") or "",
+                           int(qty or 0)])
+            for col, w in zip("ABCD", (14, 18, 40, 12)):
+                ws.column_dimensions[col].width = w
         ws.freeze_panes = "A2"
         buf = io.BytesIO()
         wb.save(buf)
@@ -3572,7 +3588,8 @@ async def fbs_stocks_export(wid: int | None = None):
         return buf.read()
     data = await asyncio.to_thread(_build)
     from urllib.parse import quote
-    fname = quote(f"Остатки FBS склад {st.get('warehouse_id')}.xlsx")
+    fname = quote("import_arrival_items.xlsx" if mpfit
+                  else f"Остатки FBS склад {st.get('warehouse_id')}.xlsx")
     return StreamingResponse(
         io.BytesIO(data),
         media_type="application/vnd.openxmlformats-officedocument"
