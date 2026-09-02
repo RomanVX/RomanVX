@@ -7073,6 +7073,8 @@ function renderFbs() {
   html += `<div class="card bg-card p-3 mb-3">
     <details id="fbsStockFold" ${localStorage.getItem('fbs_stock_open') === '0' ? '' : 'open'} ontoggle="localStorage.setItem('fbs_stock_open', this.open ? '1' : '0')">
     <summary class="fw-semibold mb-2" style="cursor:pointer;list-style-position:outside">📦 Остатки на складе продавца (Чехов, #${d.warehouse_id || '—'}) <span class="text-secondary small fw-normal">— клик, чтобы свернуть/развернуть</span></summary>
+    <div class="mb-2"><a class="btn btn-sm btn-outline-success py-0" href="/api/tools/fbs/stocks/export"
+      title="Артикул, штрихкод, название, кол-во — для стартовой загрузки в МПФИТ или сверки с пересчётом">⬇ Excel текущих остатков (для МПФИТ)</a></div>
     <div class="small text-secondary mb-2 fbs-manual-only">Впиши количество и нажми «Отправить» — остатки уйдут на WB по официальному API.
       Подсвечены артикулы, у которых на складах WB осталось ≤20 шт — их FBS спасает в первую очередь.</div>
     <div id="fbsMirrorNote" class="alert alert-info py-2 small mb-2" style="display:none">Режим «зеркало»: мастер остатков — <b>МПФИТ</b>. Остатки меняем только там; здесь — просмотр и сверка, поля ввода отключены.</div>

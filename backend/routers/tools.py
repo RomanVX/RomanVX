@@ -3536,6 +3536,50 @@ async def export_ozon_clusters():
 
 # ══ FBS WB: сборочные задания и остатки склада продавца ══════════════════════
 
+@router.get("/fbs/stocks/export")
+async def fbs_stocks_export(wid: int | None = None):
+    """Excel текущих остатков склада продавца WB (артикул, штрихкод, название,
+    кол-во) — стартовая загрузка в МПФИТ или сверка с физическим пересчётом."""
+    import io
+    import wb_fbs
+    import catalog as _cat
+    from fastapi.responses import StreamingResponse
+    st = await wb_fbs.get_stocks(wid=wid)
+    if st.get("error"):
+        raise HTTPException(400, st["error"])
+    cmap = await wb_fbs.chrt_map()
+
+    def _build():
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Остатки FBS"
+        ws.append(["Артикул", "Штрихкод", "Название", "Кол-во, шт"])
+        for c in ws[1]:
+            c.font = Font(bold=True, color="FFFFFF")
+            c.fill = PatternFill("solid", fgColor="1a6f9f")
+        for sku, qty in sorted((st.get("stocks") or {}).items()):
+            ws.append([sku, str((cmap.get(sku) or {}).get("barcode") or ""),
+                       (_cat.CATALOG.get(sku) or {}).get("name") or "",
+                       int(qty or 0)])
+        for col, w in zip("ABCD", (14, 18, 40, 12)):
+            ws.column_dimensions[col].width = w
+        ws.freeze_panes = "A2"
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        return buf.read()
+    data = await asyncio.to_thread(_build)
+    from urllib.parse import quote
+    fname = quote(f"Остатки FBS склад {st.get('warehouse_id')}.xlsx")
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/vnd.openxmlformats-officedocument"
+                   ".spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{fname}"})
+
+
 @router.post("/fbs/stocks/import")
 async def fbs_stocks_import(file: UploadFile = File(...)):
     """Загрузка остатков FBS из Excel: колонки «Артикул» и «Кол-во»
