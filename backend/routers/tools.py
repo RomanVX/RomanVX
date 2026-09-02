@@ -3627,6 +3627,10 @@ async def fbs_multi_save(payload: dict):
     for k in ("enabled", "safety", "zero_if_fbo"):
         if k in payload:
             cfg[k] = payload[k]
+    if payload.get("mode") in ("manual", "mirror"):
+        cfg["mode"] = payload["mode"]
+    if "source_wid" in payload:
+        cfg["source_wid"] = int(payload.get("source_wid") or 0)
     if "linked" in payload:
         cfg["linked"] = [int(w) for w in payload["linked"] or []]
     if "stock" in payload:
@@ -3642,6 +3646,16 @@ async def fbs_multi_sync():
     import wb_fbs
     try:
         return await wb_fbs.multi_sync(force=True)
+    except Exception as e:
+        return {"error": str(e)[:300]}
+
+
+@router.get("/fbs/multi/check")
+async def fbs_multi_check():
+    """Сверка остатков по всем привязанным складам против источника."""
+    import wb_fbs
+    try:
+        return await wb_fbs.multi_check()
     except Exception as e:
         return {"error": str(e)[:300]}
 

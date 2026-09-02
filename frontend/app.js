@@ -7073,8 +7073,9 @@ function renderFbs() {
   html += `<div class="card bg-card p-3 mb-3">
     <details id="fbsStockFold" ${localStorage.getItem('fbs_stock_open') === '0' ? '' : 'open'} ontoggle="localStorage.setItem('fbs_stock_open', this.open ? '1' : '0')">
     <summary class="fw-semibold mb-2" style="cursor:pointer;list-style-position:outside">📦 Остатки на складе продавца (Чехов, #${d.warehouse_id || '—'}) <span class="text-secondary small fw-normal">— клик, чтобы свернуть/развернуть</span></summary>
-    <div class="small text-secondary mb-2">Впиши количество и нажми «Отправить» — остатки уйдут на WB по официальному API.
+    <div class="small text-secondary mb-2 fbs-manual-only">Впиши количество и нажми «Отправить» — остатки уйдут на WB по официальному API.
       Подсвечены артикулы, у которых на складах WB осталось ≤20 шт — их FBS спасает в первую очередь.</div>
+    <div id="fbsMirrorNote" class="alert alert-info py-2 small mb-2" style="display:none">Режим «зеркало»: мастер остатков — <b>МПФИТ</b>. Остатки меняем только там; здесь — просмотр и сверка, поля ввода отключены.</div>
     <div class="table-responsive" style="max-height:55vh"><table class="table table-sm align-middle mb-0" style="font-size:.85rem"><thead><tr>
       <th>Артикул</th><th>Название</th><th class="text-secondary">nmID</th>
       <th class="text-end">FBS сейчас</th><th style="width:120px">Новое кол-во</th></tr></thead><tbody>` +
@@ -7096,7 +7097,7 @@ function renderFbs() {
         }).join('');
     }).join('') + `</tbody></table></div>
     ${skuList.length ? '' : '<div class="alert alert-warning mb-0">Карточки кабинета не загрузились — нажми ↻; если повторится, у токена WB нет категории «Контент».</div>'}
-    <div class="mt-2 d-flex gap-2 align-items-center">
+    <div class="mt-2 d-flex gap-2 align-items-center fbs-manual-only">
       <button class="btn btn-sm btn-success" onclick="fbsSendStocks()">Отправить остатки на WB</button>
       <label class="btn btn-sm btn-outline-success mb-0">Загрузить из Excel
         <input type="file" accept=".xlsx" style="display:none" onchange="fbsImportStocks(this)"></label>
@@ -7105,7 +7106,7 @@ function renderFbs() {
 
   html += `<div class="card bg-card p-3 mb-3" id="fbsMultiCard">
     <div class="fw-semibold mb-1">Мультисклад — общий остаток на несколько складов WB</div>
-    <div class="text-secondary small mb-2">Виртуальный сток транслируется на все привязанные склады каждые 15 минут; заказ с любого склада списывает штуку у всех. Страховочный запас и обнуление при наличии на FBO защищают от двойных заказов и невыкупов.</div>
+    <div class="text-secondary small mb-2">«Зеркало»: МПФИТ ведёт остаток основного склада, дашборд копирует его на региональные виртуальные склады каждые 5 минут и сверяет. «Вручную»: виртуальный сток из полей выше, синк каждые 15 минут, заказ с любого склада списывает штуку у всех. Страховочный запас закрывает лаг между списанием и синком.</div>
     <div id="fbsMultiBody" class="text-secondary small">Загружаю настройки…</div>
   </div>`;
   setTimeout(loadFbsMulti, 50);
@@ -7537,7 +7538,20 @@ async function loadFbsMulti() {
   const cfg = _fbsMulti.cfg || {};
   const whs = _fbsMulti.warehouses || [];
   const stockN = Object.keys(cfg.stock || {}).length;
+  const mirror = cfg.mode === 'mirror';
   el.innerHTML = `
+    <div class="mb-2">
+      <b>Источник остатков:</b>
+      <label class="ms-2 me-3"><input type="radio" name="fmMode" value="mirror" ${mirror ? 'checked' : ''} onchange="fbsMultiModeUi()"> Зеркало основного склада <span class="text-secondary">(остатки ведёт МПФИТ)</span></label>
+      <label><input type="radio" name="fmMode" value="manual" ${!mirror ? 'checked' : ''} onchange="fbsMultiModeUi()"> Вручную <span class="text-secondary">(виртуальный сток из полей)</span></label>
+    </div>
+    <div id="fmSourceRow" class="mb-2" style="display:${mirror ? 'block' : 'none'}">
+      Склад-источник: <select id="fmSource" class="form-select form-select-sm d-inline-block w-auto bg-dark text-white border-secondary">
+        <option value="0">— выбери —</option>
+        ${whs.map(w => `<option value="${w.id}" ${cfg.source_wid === w.id ? 'selected' : ''}>${esc(w.name || '')} #${w.id}</option>`).join('')}
+      </select>
+      <span class="text-secondary small ms-2">в него пишет только МПФИТ; мы читаем и копируем на остальные привязанные склады каждые 5 минут</span>
+    </div>
     <div class="d-flex flex-wrap gap-3 align-items-center mb-2">
       <label class="form-check form-switch mb-0"><input class="form-check-input" type="checkbox" id="fmEnabled" ${cfg.enabled ? 'checked' : ''}>
         <span class="form-check-label">Синк включён</span></label>
@@ -7547,12 +7561,33 @@ async function loadFbsMulti() {
     <div class="mb-2"><b>Склады WB (привязка):</b><br>${whs.length ? whs.map(w =>
       `<label class="me-3"><input type="checkbox" class="fm-wh" value="${w.id}" ${(cfg.linked || []).includes(w.id) ? 'checked' : ''}> ${esc(w.name || '')} <span class="text-secondary">#${w.id}</span></label>`).join('')
       : '<span class="text-warning">склады не загрузились — проверь токен (категория «Маркетплейс»)</span>'}</div>
-    <div class="mb-2">Виртуальный сток: <b>${stockN ? stockN + ' SKU' : 'не задан'}</b>${cfg.last_sync ? ` · последний синк ${esc(cfg.last_sync)}` : ''}</div>
+    <div class="mb-2">${mirror ? 'Остаток источника' : 'Виртуальный сток'}: <b>${stockN ? stockN + ' SKU' : 'не задан'}</b>${cfg.last_sync ? ` · последний синк ${esc(cfg.last_sync)}` : ''}</div>
     <div class="d-flex gap-2 flex-wrap">
-      <button class="btn btn-sm btn-outline-success" onclick="fbsMultiSaveStock()">Взять сток из полей остатков ↑</button>
+      <button class="btn btn-sm btn-outline-success" id="fmTakeBtn" style="display:${mirror ? 'none' : 'inline-block'}" onclick="fbsMultiSaveStock()">Взять сток из полей остатков ↑</button>
       <button class="btn btn-sm btn-primary" onclick="fbsMultiSave()">Сохранить настройки</button>
       <button class="btn btn-sm btn-outline-primary" onclick="fbsMultiSyncNow()">Синхронизировать сейчас</button>
-    </div>`;
+      <button class="btn btn-sm btn-outline-info" onclick="fbsMultiCheck()">🔍 Сверить остатки по складам</button>
+    </div>
+    <div id="fbsMultiCheck" class="mt-2"></div>`;
+  fbsManualUi(!mirror);
+}
+
+// в режиме «зеркало» ручные правки остатков на дашборде запрещены —
+// мастер остатков МПФИТ, иначе правка перезапишется и запутает склад
+function fbsManualUi(manual) {
+  document.querySelectorAll('.fbs-manual-only').forEach(x => { x.style.display = manual ? '' : 'none'; });
+  document.querySelectorAll('.fbs-qty').forEach(i => { i.disabled = !manual; });
+  const note = document.getElementById('fbsMirrorNote');
+  if (note) note.style.display = manual ? 'none' : 'block';
+}
+
+function fbsMultiModeUi() {
+  const mirror = document.querySelector('input[name=fmMode]:checked')?.value === 'mirror';
+  const src = document.getElementById('fmSourceRow');
+  if (src) src.style.display = mirror ? 'block' : 'none';
+  const take = document.getElementById('fmTakeBtn');
+  if (take) take.style.display = mirror ? 'none' : 'inline-block';
+  fbsManualUi(!mirror);
 }
 
 function _fbsMultiCollect() {
@@ -7560,8 +7595,41 @@ function _fbsMultiCollect() {
     enabled: document.getElementById('fmEnabled')?.checked || false,
     safety: parseInt(document.getElementById('fmSafety')?.value, 10) || 0,
     zero_if_fbo: parseInt(document.getElementById('fmZero')?.value, 10) || 0,
+    mode: document.querySelector('input[name=fmMode]:checked')?.value || 'manual',
+    source_wid: parseInt(document.getElementById('fmSource')?.value, 10) || 0,
     linked: [...document.querySelectorAll('.fm-wh:checked')].map(i => parseInt(i.value, 10)),
   };
+}
+
+async function fbsMultiCheck() {
+  const el = document.getElementById('fbsMultiCheck');
+  if (!el) return;
+  el.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Читаю остатки со всех складов…';
+  let d;
+  try { d = await (await fetch('/api/tools/fbs/multi/check')).json(); }
+  catch (e) { el.innerHTML = `<span class="text-danger">${esc(e.message)}</span>`; return; }
+  if (d.error) { el.innerHTML = `<span class="text-danger">${esc(d.error)}</span>`; return; }
+  const whs = (_fbsMulti && _fbsMulti.warehouses) || [];
+  const name = id => { const w = whs.find(x => String(x.id) === String(id)); return w ? esc(w.name || '') : ''; };
+  const isSrc = id => d.mode === 'mirror' && String(id) === String(d.source_wid);
+  el.innerHTML = `
+    <div class="mb-1">${d.mismatches
+      ? `<span class="badge bg-danger">расхождений: ${d.mismatches}</span>`
+      : '<span class="badge bg-success">все склады совпадают</span>'}
+      <span class="text-secondary small ms-2">ожидаемое = источник − страховочный запас (${d.safety}) · проверено ${esc(d.checked_at)}</span>
+      ${Object.keys(d.errors || {}).length ? `<div class="text-warning small">Не прочитались: ${esc(Object.entries(d.errors).map(([k, v]) => `#${k}: ${v}`).join('; '))}</div>` : ''}
+    </div>
+    <div class="table-responsive" style="max-height:45vh"><table class="table table-sm mb-0" style="font-size:.83rem"><thead><tr>
+      <th>Артикул</th><th class="text-end">Ожидаемое</th>` +
+      d.warehouses.map(w => `<th class="text-end">${name(w)}<br><span class="text-secondary fw-normal">#${w}${isSrc(w) ? ' · источник' : ''}</span></th>`).join('') +
+    `</tr></thead><tbody>` +
+    (d.rows || []).map(r => `<tr${r.ok ? '' : ' style="background:rgba(248,113,113,.10)"'}>
+      <td class="fw-semibold">${esc(r.sku)}${r.ok ? '' : ' ⚠'}</td>
+      <td class="text-end">${r.expected}</td>` +
+      d.warehouses.map(w => { const c = (r.cells || {})[w] || {};
+        return `<td class="text-end ${c.ok ? '' : 'text-danger fw-bold'}">${c.qty == null ? '—' : c.qty}</td>`; }).join('') +
+      `</tr>`).join('') +
+    `</tbody></table></div>`;
 }
 
 async function fbsMultiSave(extra) {
@@ -7592,7 +7660,7 @@ async function fbsMultiSyncNow() {
       body: JSON.stringify(_fbsMultiCollect()) });
     const r = await (await fetch('/api/tools/fbs/multi/sync', { method: 'POST' })).json();
     if (r.error || r.skipped) { alert(r.error || r.skipped); return; }
-    alert(`Синк: заказов списано ${r.consumed_orders}, склады: ${JSON.stringify(r.pushed)}${(r.zeroed_by_fbo || []).length ? ', обнулены по FBO: ' + r.zeroed_by_fbo.join(', ') : ''}`);
+    alert(`Синк (${r.mode === 'mirror' ? 'зеркало, источник ' + r.source_skus + ' SKU' : 'вручную, заказов списано ' + r.consumed_orders}), склады: ${JSON.stringify(r.pushed)}${(r.zeroed_by_fbo || []).length ? ', обнулены по FBO: ' + r.zeroed_by_fbo.join(', ') : ''}`);
     loadFbsMulti();
   } catch (e) { alert('Ошибка: ' + e.message); }
 }

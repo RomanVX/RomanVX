@@ -252,14 +252,18 @@ async def _fbs_multi_loop():
     await asyncio.sleep(600)
     log = logging.getLogger("fbs_multi")
     while True:
+        mirror = False
         try:
             res = await wb_fbs.multi_sync()
+            mirror = res.get("mode") == "mirror"
             if not res.get("skipped"):
                 log.info("синк: заказов списано %s, склады: %s",
                          res.get("consumed_orders"), res.get("pushed"))
         except Exception as e:
             log.warning("синк: %s", str(e)[:150])
-        await asyncio.sleep(900)
+        # «зеркало» — чаще: чем короче лаг за МПФИТ, тем меньше окно, когда
+        # на региональных складах висит уже проданная штука
+        await asyncio.sleep(300 if mirror else 900)
 
 
 async def _client_prices_loop():

@@ -253,9 +253,15 @@ async def list_warehouses() -> list[dict]:
 
 def _multi_load() -> dict:
     import snapshot as _snap
-    return _snap.load("fbs_multi", None) or {
+    cfg = _snap.load("fbs_multi", None) or {
         "enabled": False, "stock": {}, "linked": [], "safety": 2,
         "zero_if_fbo": 0, "seen": [], "last_sync": ""}
+    # mode: manual — виртуальный сток из полей (как раньше);
+    #       mirror — читаем остаток склада-источника (его ведёт МПФИТ) и
+    #       копируем на остальные привязанные склады; в источник не пишем.
+    cfg.setdefault("mode", "manual")
+    cfg.setdefault("source_wid", 0)
+    return cfg
 
 
 def _multi_save(cfg: dict) -> None:
@@ -270,25 +276,38 @@ async def multi_sync(force: bool = False) -> dict:
     3) опция: обнулять SKU, если на складах WB (FBO) лежит ≥ N шт;
     4) результат пушится на каждый привязанный склад."""
     cfg = await asyncio.to_thread(_multi_load)
-    if not cfg.get("enabled") or not cfg.get("linked") or not cfg.get("stock"):
+    mirror = cfg.get("mode") == "mirror"
+    source_wid = int(cfg.get("source_wid") or 0)
+    if not cfg.get("enabled") or not cfg.get("linked"):
         return {"skipped": "мультисклад выключен или не настроен"}
-    # 1. списание по новым заказам (любой склад кабинета)
-    seen = set(cfg.get("seen") or [])
+    if mirror and not source_wid:
+        return {"skipped": "режим «зеркало»: не выбран склад-источник"}
+    if not mirror and not cfg.get("stock"):
+        return {"skipped": "виртуальный сток не задан"}
     consumed = 0
-    resp = await _req("GET", "/api/v3/orders/new")
-    if resp.is_success:
-        cmap = await chrt_map()
-        by_nm = {v["nmID"]: k for k, v in cmap.items() if v.get("nmID")}
-        for o in (resp.json() or {}).get("orders") or []:
-            oid = o.get("id")
-            if oid in seen:
-                continue
-            seen.add(oid)
-            art = by_nm.get(o.get("nmId"))
-            if art and cfg["stock"].get(art):
-                cfg["stock"][art] = max(0, int(cfg["stock"][art]) - 1)
-                consumed += 1
-    cfg["seen"] = list(seen)[-2000:]
+    if mirror:
+        # источник истины — склад, который ведёт МПФИТ: читаем и копируем
+        src = await get_stocks(wid=source_wid)
+        if src.get("error"):
+            return {"error": f"источник #{source_wid}: {src['error']}"}
+        cfg["stock"] = dict(src.get("stocks") or {})
+    else:
+        # 1. списание по новым заказам (любой склад кабинета)
+        seen = set(cfg.get("seen") or [])
+        resp = await _req("GET", "/api/v3/orders/new")
+        if resp.is_success:
+            cmap = await chrt_map()
+            by_nm = {v["nmID"]: k for k, v in cmap.items() if v.get("nmID")}
+            for o in (resp.json() or {}).get("orders") or []:
+                oid = o.get("id")
+                if oid in seen:
+                    continue
+                seen.add(oid)
+                art = by_nm.get(o.get("nmId"))
+                if art and cfg["stock"].get(art):
+                    cfg["stock"][art] = max(0, int(cfg["stock"][art]) - 1)
+                    consumed += 1
+        cfg["seen"] = list(seen)[-2000:]
     # 2-3. эффективный остаток
     safety = int(cfg.get("safety") or 0)
     zero_n = int(cfg.get("zero_if_fbo") or 0)
@@ -309,14 +328,73 @@ async def multi_sync(force: bool = False) -> dict:
             eff = 0
             zeroed.append(sku)
         items.append({"sku": sku, "qty": eff})
-    # 4. пуш на все склады
+    # 4. пуш на все склады (в режиме «зеркало» источник пропускаем — в него
+    #    пишет только МПФИТ, иначе два робота перетирают друг друга)
     results = {}
     for wid in cfg["linked"]:
+        if mirror and int(wid) == source_wid:
+            results[str(wid)] = "источник (не трогаем)"
+            continue
         r = await set_stocks(items, wid=int(wid))
         results[str(wid)] = r.get("error") or f"ok ({r.get('updated')})"
         await asyncio.sleep(0.3)
     from datetime import datetime as _dt, timedelta as _td
     cfg["last_sync"] = (_dt.utcnow() + _td(hours=3)).strftime("%Y-%m-%d %H:%M")
     await asyncio.to_thread(_multi_save, cfg)
-    return {"consumed_orders": consumed, "pushed": results,
-            "zeroed_by_fbo": zeroed, "last_sync": cfg["last_sync"]}
+    return {"mode": cfg.get("mode"), "consumed_orders": consumed,
+            "pushed": results, "zeroed_by_fbo": zeroed,
+            "last_sync": cfg["last_sync"],
+            "source_skus": len(cfg["stock"]) if mirror else None}
+
+
+async def multi_check() -> dict:
+    """Сверка: остатки по каждому привязанному складу против ожидаемых
+    (источник − страховочный запас; 0 при обнулении по FBO). Расхождения
+    подсвечивает фронт — это «проверка, что площадка показывает то же,
+    что и МПФИТ»."""
+    cfg = await asyncio.to_thread(_multi_load)
+    mirror = cfg.get("mode") == "mirror"
+    source_wid = int(cfg.get("source_wid") or 0)
+    wids = [int(w) for w in cfg.get("linked") or []]
+    if mirror and source_wid and source_wid not in wids:
+        wids.insert(0, source_wid)
+    if not wids:
+        return {"error": "нет привязанных складов"}
+    per_wh: dict = {}
+    errors: dict = {}
+    for wid in wids:
+        r = await get_stocks(wid=wid)
+        if r.get("error"):
+            errors[str(wid)] = r["error"]
+            per_wh[wid] = {}
+        else:
+            per_wh[wid] = r.get("stocks") or {}
+        await asyncio.sleep(0.25)
+    base = per_wh.get(source_wid, {}) if mirror else dict(cfg.get("stock") or {})
+    safety = int(cfg.get("safety") or 0)
+    skus = sorted(set(base) | {s for d in per_wh.values() for s in d})
+    rows = []
+    mismatches = 0
+    for sku in skus:
+        expected = max(0, int(base.get(sku, 0)) - safety)
+        cells = {}
+        bad = False
+        for wid in wids:
+            q = per_wh.get(wid, {}).get(sku)
+            if mirror and wid == source_wid:
+                cells[str(wid)] = {"qty": q, "ok": True}
+                continue
+            ok = (q is None and expected == 0) or (q == expected)
+            if not ok:
+                bad = True
+            cells[str(wid)] = {"qty": q, "ok": ok}
+        if bad:
+            mismatches += 1
+        rows.append({"sku": sku, "source": base.get(sku), "expected": expected,
+                     "cells": cells, "ok": not bad})
+    rows.sort(key=lambda r: (r["ok"], r["sku"]))
+    from datetime import datetime as _dt, timedelta as _td
+    return {"mode": cfg.get("mode"), "source_wid": source_wid, "safety": safety,
+            "warehouses": [str(w) for w in wids], "rows": rows,
+            "mismatches": mismatches, "errors": errors,
+            "checked_at": (_dt.utcnow() + _td(hours=3)).strftime("%H:%M")}
