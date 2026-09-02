@@ -7074,8 +7074,14 @@ function renderFbs() {
     <details id="fbsStockFold" ${localStorage.getItem('fbs_stock_open') === '0' ? '' : 'open'} ontoggle="localStorage.setItem('fbs_stock_open', this.open ? '1' : '0')">
     <summary class="fw-semibold mb-2" style="cursor:pointer;list-style-position:outside">📦 Остатки на складе продавца (Чехов, #${d.warehouse_id || '—'}) <span class="text-secondary small fw-normal">— клик, чтобы свернуть/развернуть</span></summary>
     <div class="mb-2 d-flex gap-2 flex-wrap">
-      <a class="btn btn-sm btn-success py-0" href="/api/tools/fbs/stocks/export?format=mpfit"
-        title="Готовый файл приёмки МПФИТ: Код товара | Кол-во | Примечание (название и штрихкод)">⬇ Приёмка для МПФИТ (import_arrival_items)</a>
+      <span class="btn-group">
+        <a class="btn btn-sm btn-success py-0" href="/api/tools/fbs/stocks/export?format=mpfit&code=sku"
+          title="Код товара = артикул продавца">⬇ Приёмка МПФИТ: код = артикул</a>
+        <a class="btn btn-sm btn-outline-success py-0" href="/api/tools/fbs/stocks/export?format=mpfit&code=barcode"
+          title="Код товара = штрихкод">код = штрихкод</a>
+        <a class="btn btn-sm btn-outline-success py-0" href="/api/tools/fbs/stocks/export?format=mpfit&code=nm"
+          title="Код товара = nmID WB">код = nmID</a>
+      </span>
       <a class="btn btn-sm btn-outline-success py-0" href="/api/tools/fbs/stocks/export"
         title="Артикул, штрихкод, название, кол-во — для сверки с физическим пересчётом">⬇ Excel остатков (полный)</a>
     </div>

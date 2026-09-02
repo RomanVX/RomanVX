@@ -3537,11 +3537,14 @@ async def export_ozon_clusters():
 # ══ FBS WB: сборочные задания и остатки склада продавца ══════════════════════
 
 @router.get("/fbs/stocks/export")
-async def fbs_stocks_export(wid: int | None = None, format: str = "full"):
+async def fbs_stocks_export(wid: int | None = None, format: str = "full",
+                            code: str = "sku"):
     """Excel текущих остатков склада продавца WB.
     format=full  — артикул, штрихкод, название, кол-во (сверка/пересчёт);
     format=mpfit — шаблон приёмки МПФИТ import_arrival_items:
-                   «Код товара | Кол-во | Примечание к товару»."""
+                   «Код товара | Кол-во | Примечание к товару»;
+                   code=sku|barcode|nm — что писать в «Код товара» (МПФИТ
+                   матчит по своему полю, у разных компаний оно разное)."""
     import io
     import wb_fbs
     import catalog as _cat
@@ -3564,9 +3567,13 @@ async def fbs_stocks_export(wid: int | None = None, format: str = "full"):
             for sku, qty in rows:
                 if int(qty or 0) <= 0:
                     continue        # нули в приёмку не грузим
-                bc = str((cmap.get(sku) or {}).get("barcode") or "")
+                m = cmap.get(sku) or {}
+                bc = str(m.get("barcode") or "")
+                nm = str(m.get("nmID") or "")
                 name = (_cat.CATALOG.get(sku) or {}).get("name") or ""
-                ws.append([sku, int(qty), f"{name} · ШК {bc}".strip(" ·")])
+                key = bc if code == "barcode" else nm if code == "nm" else sku
+                ws.append([key, int(qty),
+                           f"{sku} · {name} · ШК {bc} · nm {nm}"])
             for col, w in zip("ABC", (16, 10, 48)):
                 ws.column_dimensions[col].width = w
         else:
