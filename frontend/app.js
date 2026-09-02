@@ -7575,7 +7575,8 @@ async function loadFbsMulti() {
 // в режиме «зеркало» ручные правки остатков на дашборде запрещены —
 // мастер остатков МПФИТ, иначе правка перезапишется и запутает склад
 function fbsManualUi(manual) {
-  document.querySelectorAll('.fbs-manual-only').forEach(x => { x.style.display = manual ? '' : 'none'; });
+  // d-none с !important — иначе bootstrap .d-flex перебивает inline display:none
+  document.querySelectorAll('.fbs-manual-only').forEach(x => { x.classList.toggle('d-none', !manual); });
   document.querySelectorAll('.fbs-qty').forEach(i => { i.disabled = !manual; });
   const note = document.getElementById('fbsMirrorNote');
   if (note) note.style.display = manual ? 'none' : 'block';
