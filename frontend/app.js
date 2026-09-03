@@ -1692,6 +1692,17 @@ function setFinanceMp(mp) {
   renderFinanceTable();
 }
 
+async function wbDetailRefetch() {
+  if (!confirm('Перекачать детальный отчёт WB за 6 месяцев? Займёт 5–10 минут, P&L WB на это время покажет недельные цифры.')) return;
+  try {
+    const r = await fetch(`${API}/api/finance/wb/detail/refetch?months=6`, { method: 'POST' });
+    const d = await r.json();
+    alert(d.status === 'already_fetching'
+      ? 'Перекачка уже идёт — подожди, потом нажми «Обновить».'
+      : `Запущено: ${d.date_from} → ${d.date_to}. Через 5–10 минут нажми «Обновить» на вкладке Финансы.`);
+  } catch (e) { alert('Ошибка: ' + e.message); }
+}
+
 async function loadFinance() {
   const wrap = document.getElementById('financeTableWrap');
   if (wrap) wrap.innerHTML = '<div class="text-center text-secondary py-5"><span class="spinner-border me-2"></span>Загрузка P&L… (может занять до 2 мин)</div>';

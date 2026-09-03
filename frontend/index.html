@@ -543,7 +543,9 @@
       <div id="finMpTOTAL" class="mp-selector-bloc" style="--mp-color:#059669" onclick="setFinanceMp('TOTAL')">
         <span class="mp-selector-dot" style="background:#059669"></span>Тотал
       </div>
-      <button id="finCompactBtn" class="btn btn-sm btn-outline-info ms-auto" onclick="toggleFinCompact()">
+      <button class="btn btn-sm btn-outline-warning ms-auto" onclick="wbDetailRefetch()"
+        title="Перекачать детальный отчёт реализации WB за окно P&L (5–10 мин). Нужно, если в каком-то месяце WB пусто при заполненных соседних">⟲ Перекачать детали WB</button>
+      <button id="finCompactBtn" class="btn btn-sm btn-outline-info" onclick="toggleFinCompact()">
         <i class="bi bi-arrows-angle-contract"></i> Последние 2 месяца
       </button>
       <button class="btn btn-sm btn-outline-secondary" onclick="reloadFinance()">
@@ -699,6 +701,6 @@
 
 <script src="vendor/bootstrap.bundle.min.js"></script>
 <script src="vendor/chart.umd.min.js"></script>
-<script src="app.js?v=242"></script>
+<script src="app.js?v=243"></script>
 </body>
 </html>

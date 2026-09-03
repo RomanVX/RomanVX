@@ -535,21 +535,28 @@ async def wb_finance_debug():
     }
     rows = _detail_cache.get("rows", [])
     if rows:
-        # разбивка июня по типам операций: что входит в выручку, а что пропускается
-        june = [r for r in rows if (r.get("saleDate") or r.get("rrDate") or "").startswith("2026-06")]
-        out["june_rows"] = len(june)
-        by_oper: dict = {}
-        for r in june:
-            key = f"{r.get('docTypeName') or '—'} / {r.get('operName') or '—'}"
-            b = by_oper.setdefault(key, {"rows": 0, "qty": 0, "pre_spp": 0.0, "post_spp": 0.0, "forPay": 0.0})
-            b["rows"] += 1
-            b["qty"] += int(r.get("quantity") or 0)
-            b["pre_spp"] += abs(float(r.get("retailPreSpp") or 0))
-            b["post_spp"] += abs(float(r.get("retailAmount") or 0))
-            b["forPay"] += float(r.get("forPay") or 0)
-        out["june_by_oper"] = {k: {kk: round(vv) if isinstance(vv, float) else vv
-                                   for kk, vv in v.items()}
-                               for k, v in sorted(by_oper.items())}
+        # покрытие детального отчёта по месяцам: сразу видно дыры (напр.
+        # «май пустой» — недокачанная страница или снапшот с обрывом)
+        cov: dict = {}
+        for r in rows:
+            mk = (r.get("rrDate") or r.get("saleDate") or "")[:7]
+            if not mk:
+                continue
+            c = cov.setdefault(mk, {"rows": 0, "sales_qty": 0, "retail": 0.0,
+                                    "first": "9999-99-99", "last": ""})
+            c["rows"] += 1
+            if (r.get("docTypeName") or "").lower().startswith("продажа"):
+                c["sales_qty"] += int(r.get("quantity") or 0)
+                c["retail"] += float(r.get("retailAmount") or 0)
+            d = (r.get("rrDate") or "")[:10]
+            if d:
+                c["first"] = min(c["first"], d)
+                c["last"] = max(c["last"], d)
+        out["months_coverage"] = {k: {**v, "retail": round(v["retail"])}
+                                  for k, v in sorted(cov.items())}
+        out["snapshot_hint"] = ("если в каком-то месяце rows≈0 при наличии "
+                                "соседних — снапшот неполный, нажми "
+                                "POST /api/finance/wb/detail/refetch")
     # живая проба v5 (7 дней) — какие поля реально приходят
     try:
         import wb_client
@@ -566,6 +573,30 @@ async def wb_finance_debug():
     except Exception as e:
         out["v5_live_error"] = str(e)[:300]
     return out
+
+
+@router.post("/wb/detail/refetch")
+async def wb_detail_refetch(months: int = Query(default=6, ge=1, le=24)):
+    """Принудительная перекачка детального отчёта WB за окно P&L.
+    Обычное «Обновить» детали не трогает (лимит 1 req/мин, минуты загрузки);
+    сюда — когда снапшот заведомо неполный (дыра в месяце)."""
+    global _detail_cache, _detail_cache_ts, _detail_snap_checked
+    global _pnl_cache, _pnl_cache_ts
+    if _detail_fetching:
+        return {"status": "already_fetching"}
+    dt_to = datetime.utcnow() + timedelta(hours=3)
+    dt_from = max(dt_to - timedelta(days=30 * months), datetime(2025, 1, 1))
+    date_from = dt_from.strftime("%Y-%m-%d")
+    detail_to = (dt_to + timedelta(days=7)).strftime("%Y-%m-%d")
+    _detail_cache = {}
+    _detail_cache_ts = 0.0
+    _detail_snap_checked = True      # снапшот заведомо плохой — не поднимать
+    _pnl_cache = {}
+    _pnl_cache_ts = 0.0
+    _spawn(_fetch_detail_bg(date_from, detail_to))
+    return {"status": "started", "date_from": date_from, "date_to": detail_to,
+            "hint": "5–10 минут; прогресс в GET /api/finance/wb/debug "
+                    "(detail_fetching, months_coverage)"}
 
 
 @router.get("/wb/pnl")
