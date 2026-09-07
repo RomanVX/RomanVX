@@ -594,6 +594,8 @@ app.include_router(tools.router)
 app.include_router(docs.router)
 from routers import wms as _wms
 app.include_router(_wms.router)
+from routers import landing as _landing
+app.include_router(_landing.router)
 
 import auth as _auth
 app.include_router(_auth.router)

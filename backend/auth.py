@@ -86,6 +86,7 @@ def _session_of(request: Request) -> dict | None:
 
 _PUBLIC_PREFIXES = ("/api/auth/", "/api/cabinet", "/api/health",
                     "/api/wms/",   # WMS: собственные cookie-сессии (routers/wms.py)
+                    "/api/landing/",  # заявки с публичного сайта фулфилмента
                     # эндпоинты локального агента ниши — защищены собственным
                     # токеном WB_AGENT_TOKEN, сессия-cookie им не нужна
                     "/api/tools/niche/pending", "/api/tools/niche/ingest")

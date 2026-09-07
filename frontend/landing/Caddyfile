@@ -1,7 +1,16 @@
 marketpartners.ru, www.marketpartners.ru {
-    root * /var/www/marketpartners
-    file_server
     encode gzip
+    # заявки с сайта: /api/landing/* уходит в бэкенд дашборда (Render
+    # из РФ напрямую недоступен — поэтому через этот VPS)
+    handle /api/* {
+        reverse_proxy https://wb-dashboard-6wxf.onrender.com {
+            header_up Host wb-dashboard-6wxf.onrender.com
+        }
+    }
+    handle {
+        root * /var/www/marketpartners
+        file_server
+    }
 }
 biomed.marketpartners.ru {
     reverse_proxy https://wb-dashboard-6wxf.onrender.com {

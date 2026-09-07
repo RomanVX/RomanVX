@@ -1475,13 +1475,65 @@ a { transition: color .2s ease; }
     if (e.key === 'Escape' && !menu.hidden) setMenu(false);
   });
 
-  /* ---------- Forms: no backend yet (placeholder, per the mockup's bracket convention) ---------- */
+  /* ---------- Forms → Telegram (POST /api/landing/lead через прокси домена) ---------- */
   document.querySelectorAll('[data-form]').forEach(form => {
-    form.addEventListener('submit', e => {
+    // honeypot: скрытое поле, которое заполняют только боты
+    const hp = document.createElement('input');
+    hp.type = 'text'; hp.name = 'website'; hp.tabIndex = -1; hp.autocomplete = 'off';
+    hp.style.cssText = 'position:absolute;left:-9999px;opacity:0;height:0';
+    form.appendChild(hp);
+    form.addEventListener('submit', async e => {
       e.preventDefault();
       const note = form.querySelector('[data-form-note]');
-      note.hidden = false;
-      note.textContent = '[ФОРМА НЕ ПОДКЛЮЧЕНА: добавьте отправку заявки в CRM или на email]';
+      const btn = form.querySelector('[type=submit]');
+      const isCta = form.classList.contains('cta-form');
+      const consent = form.querySelector('[name=consent]');
+      if (consent && !consent.checked) {
+        note.hidden = false; note.textContent = 'Поставьте галочку согласия на обработку данных';
+        return;
+      }
+      const contact = (form.querySelector('[name=contact]') || {}).value || '';
+      if (!contact.trim()) {
+        note.hidden = false; note.textContent = 'Укажите телефон или Telegram';
+        return;
+      }
+      let topic = 'fix';
+      if (isCta) {
+        const active = document.querySelector('.cta-topics .chip.is-active');
+        const label = active ? active.textContent.trim() : '';
+        topic = /экскурс/i.test(label) ? 'tour' : /переезд/i.test(label) ? 'move' : 'calc';
+      }
+      const body = {
+        form: isCta ? 'контакты' : 'калькулятор', topic,
+        name: (form.querySelector('[name=name]') || {}).value || '',
+        contact, website: hp.value,
+      };
+      if (!isCta) {
+        const w = document.querySelector('.weight-btn.is-active');
+        body.calc = {
+          orders: (document.getElementById('orders-value') || {}).textContent || '',
+          weight: w ? w.textContent.trim() : '',
+          fragile: !!(document.getElementById('fragile') || {}).checked,
+          rate: (document.getElementById('rate') || {}).textContent || '',
+          month: (document.getElementById('month') || {}).textContent || '',
+        };
+      }
+      btn.disabled = true;
+      note.hidden = false; note.textContent = 'Отправляем…';
+      try {
+        const r = await fetch('/api/landing/lead', { method: 'POST',
+          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        const d = await r.json();
+        if (d.ok) {
+          note.textContent = 'Заявка отправлена — ответим в течение рабочего дня.';
+          form.querySelectorAll('input[type=text]').forEach(i => { i.value = ''; });
+        } else {
+          note.textContent = d.error || 'Не удалось отправить. Напишите нам в Telegram.';
+        }
+      } catch (err) {
+        note.textContent = 'Нет связи с сервером. Напишите нам в Telegram.';
+      }
+      btn.disabled = false;
     });
   });
 
