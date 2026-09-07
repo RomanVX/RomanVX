@@ -651,4 +651,11 @@ if FRONTEND_DIR.exists():
         return FileResponse(str(FRONTEND_DIR / "wms.html"),
                             headers={"Cache-Control": "no-cache"})
 
+    # публичный лендинг фулфилмента (marketpartners.ru): без авторизации,
+    # статика frontend/landing/index.html
+    @app.get("/fulfilment")
+    async def landing_app():
+        return FileResponse(str(FRONTEND_DIR / "landing" / "index.html"),
+                            headers={"Cache-Control": "public, max-age=600"})
+
     app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="static")
