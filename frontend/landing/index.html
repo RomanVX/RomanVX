@@ -188,6 +188,12 @@ a.btn-dark:hover, button.btn-dark:hover { color: var(--bg); opacity: .9; }
   letter-spacing: .08em;
   text-transform: uppercase;
 }
+/* логотип строго по центру: боковые колонки одинаковой ширины */
+@media (min-width: 900px) {
+  .nav { display: grid; grid-template-columns: 1fr auto 1fr; }
+  .nav .nav-logo { text-align: center; }
+  .nav .nav-right { justify-content: flex-end; }
+}
 .nav a { text-decoration: none; }
 .nav-links, .nav-right { display: flex; gap: 40px; align-items: center; }
 .nav-logo {
