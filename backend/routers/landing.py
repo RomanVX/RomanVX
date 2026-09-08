@@ -17,7 +17,7 @@ _log = logging.getLogger("landing")
 _RATE: dict[str, list[float]] = {}      # ip → timestamps
 _RATE_N, _RATE_WINDOW = 5, 600           # 5 заявок / 10 минут с одного IP
 
-TOPICS = {"calc": "Расчёт тарифа", "tour": "Экскурсия по складу",
+TOPICS = {"calc": "Расчёт тарифа", "consult": "Консультация", "tour": "Экскурсия по складу",
           "move": "Переезд", "fix": "Зафиксировать расчёт"}
 
 
