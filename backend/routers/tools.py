@@ -3755,6 +3755,30 @@ async def fbs_overview():
             "warehouse_id": wb_fbs.warehouse_id()}
 
 
+@router.get("/ozon/marks/export")
+async def ozon_marks_export(request: Request,
+                            date_from: str = Query(..., alias="from"),
+                            date_to: str = Query(..., alias="to")):
+    """Все продажи Ozon с кодами маркировки (КИЗ) за период — XLSX от Ozon
+    (/v1/report/marked-products-sales). Пример:
+    /api/tools/ozon/marks/export?from=2026-01-01&to=2026-09-14"""
+    _owner_only(request)
+    from fastapi.responses import Response
+    import ozon_client
+    for d in (date_from, date_to):
+        try:
+            datetime.strptime(d, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Даты в формате YYYY-MM-DD")
+    try:
+        data = await ozon_client.marked_sales_report(date_from, date_to)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Ozon: {str(e)[:300]}")
+    name = f"ozon_kiz_{date_from}_{date_to}.xlsx"
+    return Response(data, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
 @router.post("/fbs/stocks")
 async def fbs_set_stocks(request: Request, body: dict = Body(...)):
     """Выставить FBS-остатки: {items: [{sku, qty}, …]}."""

@@ -734,3 +734,31 @@ async def get_actions() -> list[dict]:
         _log.warning("ozon actions %s: %s", r.status_code, r.text[:200])
         return []
     return (r.json() or {}).get("result") or []
+
+
+# ── Отчёт по продажам маркированных товаров (КИЗы «Честный ЗНАК») ────────────
+
+async def marked_sales_report(date_from: str, date_to: str,
+                              wait_s: int = 240) -> bytes:
+    """Создаёт отчёт /v1/report/marked-products-sales/create за период
+    (YYYY-MM-DD), ждёт готовности через /v1/report/info и скачивает XLSX.
+    В одном отчёте до 50 000 кодов — при превышении Ozon вернёт ошибку,
+    тогда период надо сузить."""
+    res = await _post("/v1/report/marked-products-sales/create",
+                      {"date": {"from": date_from, "to": date_to}})
+    code = (res.get("result") or {}).get("code")
+    if not code:
+        raise RuntimeError(f"Ozon не вернул код отчёта: {res}")
+    deadline = asyncio.get_event_loop().time() + wait_s
+    while True:
+        info = (await _post("/v1/report/info", {"code": code})).get("result") or {}
+        st = info.get("status")
+        if st == "success" and info.get("file"):
+            r = await _http().get(info["file"])
+            r.raise_for_status()
+            return r.content
+        if st == "failed":
+            raise RuntimeError(f"Ozon: ошибка отчёта {info.get('error') or ''}".strip())
+        if asyncio.get_event_loop().time() > deadline:
+            raise RuntimeError("Ozon: отчёт ещё формируется, повторите через минуту")
+        await asyncio.sleep(5)
