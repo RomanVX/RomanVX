@@ -657,7 +657,23 @@ if FRONTEND_DIR.exists():
     # статика frontend/landing/index.html
     @app.get("/fulfilment")
     async def landing_app():
-        return FileResponse(str(FRONTEND_DIR / "landing" / "index.html"),
-                            headers={"Cache-Control": "public, max-age=600"})
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse("/fulfilment/", status_code=307)
+
+    @app.get("/landing/site.tar.gz")
+    async def landing_bundle():
+        """Весь сайт одним архивом — для обновления VPS:
+        curl -sSL .../landing/site.tar.gz | tar -xz -C /var/www/marketpartners"""
+        import io, tarfile
+        from fastapi.responses import Response
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            for path in sorted((FRONTEND_DIR / "landing").rglob("*")):
+                if path.is_file() and path.name != "Caddyfile":
+                    tar.add(str(path), arcname=str(path.relative_to(FRONTEND_DIR / "landing")))
+        return Response(buf.getvalue(), media_type="application/gzip",
+                        headers={"Content-Disposition": 'attachment; filename="site.tar.gz"'})
+
+    app.mount("/fulfilment", StaticFiles(directory=str(FRONTEND_DIR / "landing"), html=True), name="landing")
 
     app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="static")
