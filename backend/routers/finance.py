@@ -227,6 +227,20 @@ def _migrate_legacy_snapshot() -> int:
     return n
 
 
+def _detail_months_needed(date_from: str, date_to: str) -> list[str]:
+    """Месяцы окна, которых нет в кеше/БД или которые ещё открыты и старше TTL."""
+    have = _detail_cache.get("have") or {}
+    now = _time.time()
+    need = []
+    for mk in _months_between(date_from, date_to):
+        m_end = (datetime.strptime(mk + "-01", "%Y-%m-%d") + timedelta(days=32)).replace(day=1)
+        closed = (datetime.utcnow() - m_end).days > 45
+        fresh = mk in have and now - have[mk] < _DETAIL_TTL
+        if mk not in have or (not closed and not fresh):
+            need.append(mk)
+    return need
+
+
 async def _detail_load_snapshot(cache_key: str) -> None:
     """После рестарта собирает детальный отчёт из помесячных снапшотов БД —
     юнитка и точный P&L доступны сразу, без перекачки с WB. Месяцы, которых
@@ -663,6 +677,10 @@ async def get_wb_pnl(
     await _detail_load_snapshot(cache_key)
     detail_ready = (_detail_cache.get("key") == cache_key
                     and _time.monotonic() - _detail_cache_ts < _DETAIL_TTL)
+    # кеш поднят из БД, но в окне не хватает месяцев (или свежие устарели) —
+    # докачиваем фоном, страница пока отдаёт то, что есть
+    if detail_ready and _detail_months_needed(date_from, detail_to):
+        detail_ready = False
     if not detail_ready:
         _spawn(_fetch_detail_bg(date_from, detail_to))
     detail_rows = _get_detail_if_ready(date_from, detail_to)

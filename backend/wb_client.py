@@ -488,7 +488,7 @@ async def get_report_detail(date_from: datetime, date_to: datetime) -> list[dict
                       got, len(all_records), heavy.rss_mb())
         except Exception:
             _log.info("reportDetailByPeriod: got %d records (total %d)", got, len(all_records))
-        if got < _REPORT_PAGE:
+        if got < _REPORT_PAGE or got == 0:
             break
         await asyncio.sleep(62)  # лимит между страницами
 
