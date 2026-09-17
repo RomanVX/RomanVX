@@ -799,3 +799,11 @@ async def posting_marks(posting_numbers: list[str], chunk: int = 50) -> dict:
         out["invalid"].extend(res.get("invalid_postings") or [])
         await asyncio.sleep(0.2)
     return out
+
+
+async def fbs_exemplars(posting_number: str) -> dict:
+    """/v6/fbs/posting/product/exemplar/create-or-get: экземпляры и их
+    коды маркировки по FBS-отправлению (то, что склад передал при сборке)."""
+    data = await _post("/v6/fbs/posting/product/exemplar/create-or-get",
+                       {"posting_number": posting_number})
+    return data.get("result") or data

@@ -3810,10 +3810,35 @@ async def ozon_marks_postings(request: Request,
                      for x in (p.get("products") or [])}
             meta[num] = {"scheme": scheme, "created": (p.get("created_at") or "")[:19].replace("T", " "),
                          "status": p.get("status", ""), "products": prods}
+    note = ""
     try:
         marks = await ozon_client.posting_marks(list(meta))
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Ozon marks: {str(e)[:300]}")
+        if "403" not in str(e):
+            raise HTTPException(status_code=502, detail=f"Ozon marks: {str(e)[:300]}")
+        # /v1/posting/marks закрыт для продавцов, чьи чеки пробивает Ozon (FBO/FBS).
+        # Фолбэк: по FBS-отправлениям читаем экземпляры, переданные складом при сборке.
+        note = ("/v1/posting/marks недоступен (403): метод только для продавцов с собственной "
+                "фискализацией (rFBS/DBS). По FBS показаны коды из экземпляров сборки, по FBO кодов через API нет.")
+        marks = {"issued": [], "non_issued": [], "invalid": []}
+        need = {}
+        for num, m in meta.items():
+            if m["scheme"] != "FBS":
+                continue
+            try:
+                res = await ozon_client.fbs_exemplars(num)
+            except Exception as ex:
+                _log.warning("exemplars %s: %s", num, str(ex)[:120])
+                continue
+            for pr in res.get("products") or []:
+                sku = str(pr.get("product_id"))
+                need[sku] = bool(pr.get("is_mandatory_mark_needed"))
+                codes = [mk.get("mark") for ex in (pr.get("exemplars") or []) for mk in (ex.get("marks") or [])
+                         if mk.get("mark") and mk.get("mark_type") in (None, "", "mandatory_mark")]
+                if codes:
+                    marks["issued"].append({"posting_number": num, "sku": sku, "mandatory_marks": codes})
+            await asyncio.sleep(0.15)
+        meta["_need"] = need
     import openpyxl
     from openpyxl.styles import Font
     wb = openpyxl.Workbook(); ws = wb.active; ws.title = "Коды"
@@ -3824,6 +3849,7 @@ async def ozon_marks_postings(request: Request,
         for code in ex.get("mandatory_marks") or []:
             ws.append([num, m.get("scheme", ""), m.get("created", ""), m.get("status", ""), ex.get("sku"), pr[0], pr[1], code])
             with_codes.add(num)
+    need = meta.pop("_need", {})
     ws2 = wb.create_sheet("Без кодов")
     ws2.append(["Отправление", "Схема", "Создано", "Статус", "SKU Ozon", "Артикул", "Товар", "Кол-во", "Причина"])
     non = {(x.get("posting_number"), str(x.get("sku"))) for x in marks["non_issued"]}
@@ -3837,6 +3863,10 @@ async def ozon_marks_postings(request: Request,
             ws2.append([num, m["scheme"], m["created"], m["status"], sku, pr[0], pr[1], pr[2], why])
     ws3 = wb.create_sheet("Итого")
     ws3.append(["Показатель", "Значение"])
+    if note:
+        ws3.append(["Примечание", note])
+    if need:
+        ws3.append(["SKU с обязательной маркировкой по данным Ozon", ", ".join(k for k, v in need.items() if v) or "нет"])
     ws3.append(["Отправлений за период (FBO + FBS)", len(meta)])
     ws3.append(["Отправлений с кодами", len(with_codes)])
     ws3.append(["Кодов всего", ws.max_row - 1])
