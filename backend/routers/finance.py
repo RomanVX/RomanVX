@@ -268,18 +268,30 @@ async def _fetch_detail_bg(date_from: str, date_to: str) -> None:
             gc.collect()
         async with _detail_lock:
             rows: list[dict] = []
-            try:
-                import wb_client
-                stat_rows = await wb_client.get_report_detail(
-                    datetime.strptime(date_from, "%Y-%m-%d"),
-                    datetime.strptime(date_to, "%Y-%m-%d"),
-                )
-                rows = await asyncio.to_thread(_normalize_stat_rows, stat_rows)
-                del stat_rows  # сырой ответ statistics-api больше не нужен
-                if rows:
-                    _log.info("Detail via statistics-api: %d rows", len(rows))
-            except Exception as e:
-                _log.warning("statistics-api detail failed (%s) — пробуем finance-api", e)
+            # statistics-api качаем ПОМЕСЯЧНО: один длинный период у WB либо
+            # обрывается, либо отдаёт хвост не целиком (май 2026 выпадал целиком).
+            # Ошибка одного окна не теряет остальные — что скачалось, то в кеше.
+            import wb_client
+            d0 = datetime.strptime(date_from, "%Y-%m-%d")
+            d1 = datetime.strptime(date_to, "%Y-%m-%d")
+            failed: list[str] = []
+            cur = d0
+            while cur < d1:
+                nxt = min((cur.replace(day=1) + timedelta(days=32)).replace(day=1), d1)
+                try:
+                    stat_rows = await wb_client.get_report_detail(cur, nxt - timedelta(days=1))
+                    part = await asyncio.to_thread(_normalize_stat_rows, stat_rows)
+                    del stat_rows
+                    rows.extend(part)
+                    _log.info("Detail via statistics-api %s..%s: %d rows (всего %d)",
+                              cur.date(), (nxt - timedelta(days=1)).date(), len(part), len(rows))
+                except Exception as e:
+                    failed.append(f"{cur.date()}: {str(e)[:120]}")
+                    _log.warning("statistics-api detail %s failed: %s", cur.date(), e)
+                cur = nxt
+                await asyncio.sleep(62)   # лимит 1 req/мин на метод
+            if failed:
+                _detail_last_error = "не скачались окна: " + "; ".join(failed)[:280]
 
             if not rows:
                 rows = await wb_finance_client.get_detailed_report(date_from, date_to)
@@ -287,7 +299,8 @@ async def _fetch_detail_bg(date_from: str, date_to: str) -> None:
 
             _detail_cache = {"key": cache_key, "rows": rows}
             _detail_cache_ts = _time.monotonic()
-            _detail_last_error = ""
+            if not failed:
+                _detail_last_error = ""
             try:
                 import snapshot as _snapmod
                 await asyncio.to_thread(
