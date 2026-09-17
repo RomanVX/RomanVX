@@ -3779,6 +3779,77 @@ async def ozon_marks_export(request: Request,
                     headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
+@router.get("/ozon/marks/postings")
+async def ozon_marks_postings(request: Request,
+                              date_from: str = Query(..., alias="from"),
+                              date_to: str = Query(..., alias="to")):
+    """КИЗы по каждому отправлению Ozon (FBO + FBS) за период через
+    /v1/posting/marks — в отличие от отчёта по продажам, показывает и те
+    отправления, где кода нет. XLSX: лист «Коды», лист «Без кодов»."""
+    _owner_only(request)
+    import io
+    from fastapi.responses import Response
+    import ozon_client
+    try:
+        d1 = datetime.strptime(date_from, "%Y-%m-%d"); d2 = datetime.strptime(date_to, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Даты в формате YYYY-MM-DD")
+    since, to = d1.strftime("%Y-%m-%dT00:00:00Z"), (d2 + timedelta(days=1)).strftime("%Y-%m-%dT00:00:00Z")
+    try:
+        fbo = await ozon_client._fbo_postings(since, to)
+        fbs = await ozon_client.fbs_postings_v4(since, to)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Ozon postings: {str(e)[:300]}")
+    meta = {}
+    for scheme, lst in (("FBO", fbo), ("FBS", fbs)):
+        for p in lst:
+            num = p.get("posting_number")
+            if not num:
+                continue
+            prods = {str(x.get("sku")): (x.get("offer_id"), x.get("name"), x.get("quantity"))
+                     for x in (p.get("products") or [])}
+            meta[num] = {"scheme": scheme, "created": (p.get("created_at") or "")[:19].replace("T", " "),
+                         "status": p.get("status", ""), "products": prods}
+    try:
+        marks = await ozon_client.posting_marks(list(meta))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Ozon marks: {str(e)[:300]}")
+    import openpyxl
+    from openpyxl.styles import Font
+    wb = openpyxl.Workbook(); ws = wb.active; ws.title = "Коды"
+    ws.append(["Отправление", "Схема", "Создано", "Статус", "SKU Ozon", "Артикул", "Товар", "Код маркировки (КИЗ)"])
+    with_codes = set()
+    for ex in marks["issued"]:
+        num = ex.get("posting_number"); m = meta.get(num, {}); pr = m.get("products", {}).get(str(ex.get("sku")), ("", "", ""))
+        for code in ex.get("mandatory_marks") or []:
+            ws.append([num, m.get("scheme", ""), m.get("created", ""), m.get("status", ""), ex.get("sku"), pr[0], pr[1], code])
+            with_codes.add(num)
+    ws2 = wb.create_sheet("Без кодов")
+    ws2.append(["Отправление", "Схема", "Создано", "Статус", "SKU Ozon", "Артикул", "Товар", "Кол-во", "Причина"])
+    non = {(x.get("posting_number"), str(x.get("sku"))) for x in marks["non_issued"]}
+    invalid = set(marks["invalid"])
+    for num, m in meta.items():
+        if num in with_codes:
+            continue
+        for sku, pr in m["products"].items():
+            why = ("экземпляр не выдан покупателю" if (num, sku) in non else
+                   "Ozon не принял номер отправления" if num in invalid else "кодов по отправлению нет")
+            ws2.append([num, m["scheme"], m["created"], m["status"], sku, pr[0], pr[1], pr[2], why])
+    ws3 = wb.create_sheet("Итого")
+    ws3.append(["Показатель", "Значение"])
+    ws3.append(["Отправлений за период (FBO + FBS)", len(meta)])
+    ws3.append(["Отправлений с кодами", len(with_codes)])
+    ws3.append(["Кодов всего", ws.max_row - 1])
+    ws3.append(["Отправлений без кодов", len(meta) - len(with_codes)])
+    for w_ in (ws, ws2, ws3):
+        for c in w_[1]:
+            c.font = Font(bold=True)
+        w_.column_dimensions["A"].width = 18; w_.column_dimensions["G"].width = 50; w_.column_dimensions["H"].width = 60
+    buf = io.BytesIO(); wb.save(buf)
+    return Response(buf.getvalue(), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="ozon_kiz_postings_{date_from}_{date_to}.xlsx"'})
+
+
 @router.post("/fbs/stocks")
 async def fbs_set_stocks(request: Request, body: dict = Body(...)):
     """Выставить FBS-остатки: {items: [{sku, qty}, …]}."""

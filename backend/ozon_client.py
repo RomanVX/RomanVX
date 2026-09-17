@@ -762,3 +762,40 @@ async def marked_sales_report(date_from: str, date_to: str,
         if asyncio.get_event_loop().time() > deadline:
             raise RuntimeError("Ozon: отчёт ещё формируется, повторите через минуту")
         await asyncio.sleep(5)
+
+
+# ── Отправления FBS (v4) и коды маркировки по отправлениям ──────────────────
+
+async def fbs_postings_v4(since: str, to: str, limit: int = 100) -> list[dict]:
+    """Все FBS-отправления за период (ISO-даты), курсорная пагинация."""
+    postings: list[dict] = []
+    cursor = ""
+    while True:
+        data = await _post("/v4/posting/fbs/list", {
+            "cursor": cursor, "limit": limit, "sort_dir": "asc",
+            "filter": {"since": since, "to": to},
+            "with": {"analytics_data": False, "barcodes": False,
+                     "financial_data": False, "legal_info": False, "translit": False},
+        })
+        batch = data.get("postings") or (data.get("result") or {}).get("postings") or []
+        postings.extend(batch)
+        cursor = data.get("cursor") or (data.get("result") or {}).get("cursor") or ""
+        has_next = data.get("has_next") if "has_next" in data else (data.get("result") or {}).get("has_next")
+        if not has_next or not cursor or not batch:
+            break
+    return postings
+
+
+async def posting_marks(posting_numbers: list[str], chunk: int = 50) -> dict:
+    """/v1/posting/marks: коды «Честный ЗНАК» по отправлениям.
+    Возвращает {issued: [...], non_issued: [...], invalid: [...]}."""
+    out = {"issued": [], "non_issued": [], "invalid": []}
+    for i in range(0, len(posting_numbers), chunk):
+        part = posting_numbers[i:i + chunk]
+        data = await _post("/v1/posting/marks", {"posting_numbers": part})
+        res = data.get("result") or data
+        out["issued"].extend(res.get("issued_exemplars") or [])
+        out["non_issued"].extend(res.get("non_issued_exemplars") or [])
+        out["invalid"].extend(res.get("invalid_postings") or [])
+        await asyncio.sleep(0.2)
+    return out
