@@ -175,70 +175,81 @@ _detail_lock = asyncio.Lock()
 _detail_fetching: bool = False  # идёт ли фоновая загрузка
 _detail_last_error: str = ""
 _detail_snap_checked: bool = False  # снапшот из БД пробуем поднять один раз
+_detail_force: bool = False  # «Перекачать»: скачать все месяцы окна заново
+
+
+def _month_key(mk: str) -> str:
+    return f"wb_detail_m_{mk}"
+
+
+def _months_between(date_from: str, date_to: str) -> list[str]:
+    d = datetime.strptime(date_from, "%Y-%m-%d").replace(day=1)
+    end = datetime.strptime(date_to, "%Y-%m-%d")
+    out = []
+    while d <= end:
+        out.append(d.strftime("%Y-%m"))
+        d = (d + timedelta(days=32)).replace(day=1)
+    return out
+
+
+def _assemble_months(months: list[str]) -> tuple[list[dict], dict]:
+    """Собирает детальный отчёт из помесячных снапшотов wb_detail_m_YYYY-MM.
+    История хранится навсегда: WB отдаёт отчёт только за последние месяцы,
+    а старые месяцы живут в БД. Возвращает (rows, {месяц: ts})."""
+    import snapshot as _snapmod
+    rows: list[dict] = []
+    have: dict = {}
+    for mk in months:
+        snap = _snapmod.load(_month_key(mk), None)
+        if snap and snap.get("rows"):
+            rows.extend(snap["rows"])
+            have[mk] = float(snap.get("ts") or 0)
+    return rows, have
+
+
+def _migrate_legacy_snapshot() -> int:
+    """Одноразово: старый единый снапшот wb_detail режем по месяцам (rrDate),
+    чтобы уже накопленная история не пропала."""
+    import snapshot as _snapmod
+    snap = _snapmod.load("wb_detail", None)
+    if not snap or not snap.get("rows"):
+        return 0
+    by: dict = {}
+    for r in snap["rows"]:
+        mk = (r.get("rrDate") or r.get("saleDate") or "")[:7]
+        if mk:
+            by.setdefault(mk, []).append(r)
+    n = 0
+    for mk, rr in by.items():
+        if _snapmod.load(_month_key(mk), None) is None:
+            _snapmod.save_rows(_month_key(mk), {"ts": float(snap.get("ts") or 0), "month": mk}, rr)
+            n += 1
+    return n
 
 
 async def _detail_load_snapshot(cache_key: str) -> None:
-    """После рестарта поднимает детальный отчёт из kv_cache (zlib ~5 МБ),
-    если ключ (диапазон дат) совпадает и снапшот не старше TTL — юнитка и
-    точный P&L доступны сразу, без 5-8 минут перекачки с WB."""
+    """После рестарта собирает детальный отчёт из помесячных снапшотов БД —
+    юнитка и точный P&L доступны сразу, без перекачки с WB. Месяцы, которых
+    в БД нет или которые устарели, докачает _fetch_detail_bg."""
     global _detail_cache, _detail_cache_ts, _detail_snap_checked
     if _detail_snap_checked or _detail_cache.get("rows"):
         _detail_snap_checked = True
         return
     _detail_snap_checked = True
     try:
-        import snapshot as _snapmod
-        snap = await asyncio.to_thread(_snapmod.load, "wb_detail", None)
-        if (snap and snap.get("key") == cache_key
-                and _time.time() - float(snap.get("ts") or 0) < _DETAIL_TTL):
-            _detail_cache = {"key": cache_key, "rows": snap["rows"]}
+        date_from, date_to = cache_key.split("_")
+        months = _months_between(date_from, date_to)
+        n = await asyncio.to_thread(_migrate_legacy_snapshot)
+        if n:
+            _log.info("Detail: старый снапшот разложен на %d месяцев", n)
+        rows, have = await asyncio.to_thread(_assemble_months, months)
+        if rows:
+            _detail_cache = {"key": cache_key, "rows": rows, "have": have}
             _detail_cache_ts = _time.monotonic()
-            _log.info("Detail поднят из снапшота БД: %d строк", len(snap["rows"]))
+            _log.info("Detail поднят из помесячных снапшотов: %d строк, месяцы %s",
+                      len(rows), ",".join(sorted(have)))
     except Exception as e:
         _log.warning("Detail snapshot load failed: %s", e)
-
-
-def _normalize_stat_rows(stat_rows: list[dict]) -> list[dict]:
-    """statistics-api reportDetailByPeriod (v5) → формат finance-api detailed.
-
-    Кабинетная «Финансовая аналитика» строится из этого же отчёта,
-    поэтому цифры сходятся с ЛК.
-    """
-    import sys as _sys
-    _i = _sys.intern   # даты/типы/артикулы повторяются в тысячах строк
-    out = []
-    # деструктивно: pop() освобождает исходные записи по ходу — иначе на
-    # Render free (512 МБ) две копии полугодового отчёта дают OOM
-    stat_rows.reverse()
-    while stat_rows:
-        r = stat_rows.pop()
-        qty = r.get("quantity") or 0
-        # «до СПП»: retail_amount в v5 — фактическая сумма ПОСЛЕ СПП;
-        # цена продавца до СПП — retail_price_withdisc_rub (за единицу)
-        pre_spp = (r.get("retail_price_withdisc_rub") or 0) * (qty or 1)
-        out.append({
-            "rrDate":          _i((r.get("rr_dt") or r.get("sale_dt") or "")[:10]),
-            "saleDate":        _i((r.get("sale_dt") or r.get("rr_dt") or "")[:10]),
-            "docTypeName":     _i(r.get("doc_type_name") or ""),
-            "operName":        _i(r.get("supplier_oper_name") or ""),
-            "retailAmount":    r.get("retail_amount") or 0,
-            "retailPreSpp":    pre_spp,
-            "forPay":          r.get("ppvz_for_pay") or 0,
-            "deliveryService": r.get("delivery_rub") or 0,
-            "paidStorage":     r.get("storage_fee") or 0,
-            "paidAcceptance":  r.get("acceptance") or 0,
-            "penalty":         r.get("penalty") or 0,
-            "deduction":       r.get("deduction") or 0,
-            "cashbackAmount":  0,
-            "acquiringFee":    r.get("acquiring_fee") or 0,
-            "commissionPct":   r.get("commission_percent") or 0,
-            "vendorCode":      _i((r.get("sa_name") or "").strip()),
-            "nmId":            r.get("nm_id"),
-            "quantity":        qty,
-            # схема продажи: у FBS-строк склад = «Маркетплейс» (склад продавца)
-            "isFbs":           "маркетплейс" in str(r.get("office_name") or "").lower(),
-        })
-    return out
 
 
 async def _fetch_detail_bg(date_from: str, date_to: str) -> None:
@@ -248,7 +259,7 @@ async def _fetch_detail_bg(date_from: str, date_to: str) -> None:
     rate-limit, весь период за 1-2 запроса). Фолбэк — finance-api
     detailed (общий лимит 1 req/мин, загрузка занимает минуты).
     """
-    global _detail_cache, _detail_cache_ts, _detail_fetching, _detail_last_error
+    global _detail_cache, _detail_cache_ts, _detail_fetching, _detail_last_error, _detail_force
     global _pnl_cache, _pnl_cache_ts
     if _detail_fetching:
         return
@@ -267,47 +278,49 @@ async def _fetch_detail_bg(date_from: str, date_to: str) -> None:
             _detail_cache = {}
             gc.collect()
         async with _detail_lock:
-            rows: list[dict] = []
-            # statistics-api качаем ПОМЕСЯЧНО: один длинный период у WB либо
-            # обрывается, либо отдаёт хвост не целиком (май 2026 выпадал целиком).
-            # Ошибка одного окна не теряет остальные — что скачалось, то в кеше.
+            import snapshot as _snapmod
             import wb_client
-            d0 = datetime.strptime(date_from, "%Y-%m-%d")
-            d1 = datetime.strptime(date_to, "%Y-%m-%d")
+            months = _months_between(date_from, date_to)
+            await asyncio.to_thread(_migrate_legacy_snapshot)
+            _old, have = await asyncio.to_thread(_assemble_months, months)
+            del _old
+            now = _time.time()
+            # закрытые месяцы (закончились > 45 дней назад), которые уже лежат
+            # в БД, не перекачиваем; свежие и отсутствующие — качаем помесячно.
+            # force (кнопка «Перекачать») — всё окно заново.
+            need = []
+            for mk in months:
+                m_end = (datetime.strptime(mk + "-01", "%Y-%m-%d") + timedelta(days=32)).replace(day=1)
+                closed = (datetime.utcnow() - m_end).days > 45
+                fresh = mk in have and now - have[mk] < _DETAIL_TTL
+                if _detail_force or mk not in have or (not closed and not fresh):
+                    need.append(mk)
             failed: list[str] = []
-            cur = d0
-            while cur < d1:
-                nxt = min((cur.replace(day=1) + timedelta(days=32)).replace(day=1), d1)
+            for mk in need:
+                d0 = datetime.strptime(mk + "-01", "%Y-%m-%d")
+                d1 = min((d0 + timedelta(days=32)).replace(day=1) - timedelta(days=1),
+                         datetime.strptime(date_to, "%Y-%m-%d"))
                 try:
-                    stat_rows = await wb_client.get_report_detail(cur, nxt - timedelta(days=1))
+                    stat_rows = await wb_client.get_report_detail(d0, d1)
                     part = await asyncio.to_thread(_normalize_stat_rows, stat_rows)
                     del stat_rows
-                    rows.extend(part)
-                    _log.info("Detail via statistics-api %s..%s: %d rows (всего %d)",
-                              cur.date(), (nxt - timedelta(days=1)).date(), len(part), len(rows))
+                    if part:   # пустой ответ не затирает месяц, который уже есть в БД
+                        await asyncio.to_thread(_snapmod.save_rows, _month_key(mk),
+                                                {"ts": now, "month": mk}, part)
+                        have[mk] = now
+                    _log.info("Detail via statistics-api %s: %d rows", mk, len(part))
                 except Exception as e:
-                    failed.append(f"{cur.date()}: {str(e)[:120]}")
-                    _log.warning("statistics-api detail %s failed: %s", cur.date(), e)
-                cur = nxt
+                    failed.append(f"{mk}: {str(e)[:100]}")
+                    _log.warning("statistics-api detail %s failed: %s", mk, e)
                 await asyncio.sleep(62)   # лимит 1 req/мин на метод
-            if failed:
-                _detail_last_error = "не скачались окна: " + "; ".join(failed)[:280]
-
+            rows, have = await asyncio.to_thread(_assemble_months, months)
             if not rows:
                 rows = await wb_finance_client.get_detailed_report(date_from, date_to)
                 _log.info("Detail via finance-api: %d rows", len(rows))
-
-            _detail_cache = {"key": cache_key, "rows": rows}
+            _detail_cache = {"key": cache_key, "rows": rows, "have": have}
             _detail_cache_ts = _time.monotonic()
-            if not failed:
-                _detail_last_error = ""
-            try:
-                import snapshot as _snapmod
-                await asyncio.to_thread(
-                    _snapmod.save_rows, "wb_detail",
-                    {"key": cache_key, "ts": _time.time()}, rows)
-            except Exception as e:
-                _log.warning("Detail snapshot save failed: %s", e)
+            _detail_last_error = ("не скачались: " + "; ".join(failed))[:300] if failed else ""
+            _detail_force = False
         # детали готовы → сбрасываем P&L-кэш, чтобы следующий запрос пересобрал
         # отчёт по точным датам (иначе weekly-версия жила бы до конца TTL)
         _pnl_cache = {}
@@ -565,6 +578,7 @@ async def wb_finance_debug():
             if d:
                 c["first"] = min(c["first"], d)
                 c["last"] = max(c["last"], d)
+        out["months_in_db"] = {k: datetime.utcfromtimestamp(t).strftime("%Y-%m-%d %H:%M") for k, t in sorted((_detail_cache.get("have") or {}).items())}
         out["months_coverage"] = {k: {**v, "retail": round(v["retail"])}
                                   for k, v in sorted(cov.items())}
         out["snapshot_hint"] = ("если в каком-то месяце rows≈0 при наличии "
@@ -593,7 +607,6 @@ async def wb_detail_refetch(months: int = Query(default=6, ge=1, le=24)):
     """Принудительная перекачка детального отчёта WB за окно P&L.
     Обычное «Обновить» детали не трогает (лимит 1 req/мин, минуты загрузки);
     сюда — когда снапшот заведомо неполный (дыра в месяце)."""
-    global _detail_cache, _detail_cache_ts, _detail_snap_checked
     global _pnl_cache, _pnl_cache_ts
     if _detail_fetching:
         return {"status": "already_fetching"}
@@ -601,9 +614,8 @@ async def wb_detail_refetch(months: int = Query(default=6, ge=1, le=24)):
     dt_from = max(dt_to - timedelta(days=30 * months), datetime(2025, 1, 1))
     date_from = dt_from.strftime("%Y-%m-%d")
     detail_to = (dt_to + timedelta(days=7)).strftime("%Y-%m-%d")
-    _detail_cache = {}
-    _detail_cache_ts = 0.0
-    _detail_snap_checked = True      # снапшот заведомо плохой — не поднимать
+    global _detail_force
+    _detail_force = True             # все месяцы окна заново; старые строки остаются в БД до успеха
     _pnl_cache = {}
     _pnl_cache_ts = 0.0
     _spawn(_fetch_detail_bg(date_from, detail_to))
