@@ -5724,10 +5724,10 @@ function _applyReviewsData(data) {
   const asEl = document.getElementById('autoRevStatus');
   if (asEl) {
     if (as.error) {
-      asEl.innerHTML = `<span class="text-danger">Автоответы 3-5★: ошибка — ${esc(as.error)}</span>`;
+      asEl.innerHTML = `<span class="text-danger">Автоответы на все отзывы: ошибка — ${esc(as.error)}</span>`;
     } else if (as.last_run) {
       const r = as.result || {};
-      asEl.innerHTML = esc(`Автоответы 3-5★: последний прогон ${as.last_run} МСК · опубликовано ${r.published ?? 0}` +
+      asEl.innerHTML = esc(`Автоответы на все отзывы: последний прогон ${as.last_run} МСК · опубликовано ${r.published ?? 0}` +
         (r.generated ? ` · сгенерировано ${r.generated}` : '') +
         (r.gone ? ` · недоступны на площадке ${r.gone}` : '') +
         (r.skipped ? ` · без текста, ответ невозможен (Ozon): ${r.skipped}` : '') +
@@ -5735,7 +5735,7 @@ function _applyReviewsData(data) {
         (r.failed ? ` · не удалось ${r.failed}` : '') + ' · проходы каждые 20 минут') +
         ((r.errors || []).length ? `<div class="text-warning">Ответы площадок: ${esc(r.errors.join(' | '))}</div>` : '');
     } else {
-      asEl.textContent = 'Автоответы 3-5★ включены: первый прогон в течение ~20 минут после запуска сервера.';
+      asEl.textContent = 'Автоответы на все отзывы (1-5★) включены: первый прогон в течение ~20 минут после запуска сервера.';
     }
   }
 }
@@ -5753,7 +5753,7 @@ async function runAutoPass() {
       if (st.includes('опубликовано')) break;
     }
   } catch (e) { alert('Ошибка: ' + e.message); }
-  if (btn) { btn.disabled = false; btn.textContent = '⚡ Ответить на 3-5★ сейчас'; }
+  if (btn) { btn.disabled = false; btn.textContent = '⚡ Ответить на отзывы сейчас'; }
 }
 
 async function loadReviews() {

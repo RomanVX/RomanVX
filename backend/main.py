@@ -522,8 +522,9 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(_fbs_multi_loop())
 
     async def _auto_reviews_loop():
-        """Автоответы на отзывы 3-5★: каждые 20 минут подтягиваем свежие
-        отзывы и отвечаем; 1-2★ остаются на ручную обработку."""
+        """Автоответы на ВСЕ отзывы (1-5★): каждые 20 минут подтягиваем
+        свежие отзывы и отвечаем. Пока есть бэклог — проход идёт подряд,
+        без паузы, чтобы накопленные отзывы (Ozon) разошлись быстрее."""
         import reviews_client as _rc
         from routers import reviews as _rv
         await asyncio.sleep(240)
@@ -534,6 +535,11 @@ async def lifespan(app: FastAPI):
                 res = await _rv.auto_reply_pass(60)
                 if res.get("published") or res.get("failed"):
                     log.info("проход: %s", res)
+                # бэклог: если проход упёрся в лимит (опубликовал почти всё,
+                # что взял) — идём следующим кругом через минуту, а не через 20
+                if (res.get("published", 0) + res.get("skipped", 0)) >= 55:
+                    await asyncio.sleep(60)
+                    continue
             except Exception as e:
                 log.warning("проход: %s", str(e)[:200])
                 try:

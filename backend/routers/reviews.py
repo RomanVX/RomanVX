@@ -1,5 +1,6 @@
 """Reviews endpoints — auto-fetch from WB / Ozon / YM APIs."""
 import asyncio
+import os
 import logging
 
 from fastapi import APIRouter, BackgroundTasks, Body, Query
@@ -215,9 +216,12 @@ async def decline_draft(id: str = Query(...)):
     return {"id": id, "status": "declined"}
 
 
-# ── Автоответы: 3-5★ отвечаем и публикуем сами, 1-2★ остаются людям ─────────
+# ── Автоответы: отвечаем на ВСЕ отзывы (1-5★) ───────────────────────────────
+# Негатив тоже отвечаем: промпт review_ai отдельно инструктирует, как писать
+# на 1-2★ (извинение, разбор, предложение решить вопрос). Порог можно поднять
+# через env AUTO_MIN_RATING, если понадобится вернуть ручную обработку негатива.
 
-AUTO_MIN_RATING = 3
+AUTO_MIN_RATING = int(os.getenv("AUTO_MIN_RATING", "1"))
 
 # телеметрия автоответов — видна на фронте (когда прогонялся, что сделал)
 auto_status: dict = {"last_run": "", "result": None, "error": ""}
@@ -244,8 +248,8 @@ def _is_empty_ban(msg: str) -> bool:
 async def auto_reply_pass(limit: int = 60) -> dict:
     """Один проход автоответов: сгенерировать и опубликовать ответы на
     неотвеченные отзывы с рейтингом >= AUTO_MIN_RATING (включая беститекстовые).
-    Негатив (1-2★) не трогаем — его смотрят люди. Старые pending-черновики
-    на позитив публикуются без повторной генерации."""
+    По умолчанию порог 1★ — отвечаем на всё, включая негатив. Старые
+    pending-черновики публикуются без повторной генерации."""
     from datetime import datetime, timedelta
     auto_status["last_run"] = (datetime.utcnow()
                                + timedelta(hours=3)).strftime("%H:%M")
@@ -275,11 +279,18 @@ async def auto_reply_pass(limit: int = 60) -> dict:
             failed += 1
             _note(d["id"], msg)
             _log.warning("auto publish %s: %s", d["id"], msg)
-    # 2) свежие без черновика — генерим и публикуем
-    todo = []
+    # 2) свежие без черновика — генерим и публикуем.
+    # Площадки чередуем по кругу: иначе бэклог WB съедал весь лимит прохода,
+    # и отзывы Ozon копились неделями, ни разу не дойдя до генерации.
+    by_platform = {}
     for p in ("WB", "Ozon", "YM"):
-        todo += [r for r in rc.get_unanswered(platform=p, limit=limit)
-                 if int(r.get("rating") or 0) >= AUTO_MIN_RATING]
+        by_platform[p] = [r for r in rc.get_unanswered(platform=p, limit=limit)
+                          if int(r.get("rating") or 0) >= AUTO_MIN_RATING]
+    todo = []
+    for i in range(max(len(v) for v in by_platform.values()) if by_platform else 0):
+        for p in ("Ozon", "WB", "YM"):      # Ozon первым — там накопился бэклог
+            if i < len(by_platform[p]):
+                todo.append(by_platform[p][i])
     for review in todo[:max(limit - published, 0)]:
         # Ozon не принимает комментарии к отзывам без текста — не тратим
         # генерацию, помечаем «ответ не требуется»
