@@ -179,12 +179,25 @@ async def generate_reply(review: dict, platform="WB") -> str:
     )
     resp = await _get_client().messages.create(
         model=MODEL_DRAFT,
-        max_tokens=600,
+        # max_tokens должен покрывать И размышление, И сам ответ: при adaptive
+        # thinking модель тратит часть бюджета на рассуждение. С прежними 600
+        # бюджет уходил в thinking, текстового блока в ответе не было вовсе —
+        # черновик получался пустым, и автоответы молча ничего не публиковали.
+        max_tokens=4000,
         thinking={"type": "adaptive"},
+        # ответ на отзыв — простая задача, низкий effort экономит токены
+        output_config={"effort": "low"},
         # батч в 20 черновиков шлёт один и тот же system 20 раз подряд —
         # кешируем, платим за него один раз
         system=[{"type": "text", "text": system,
                  "cache_control": {"type": "ephemeral"}}],
         messages=[{"role": "user", "content": user}],
     )
-    return "".join(b.text for b in resp.content if b.type == "text").strip()
+    text = "".join(b.text for b in resp.content if b.type == "text").strip()
+    if not text:
+        # не глотаем молча: без текста автоответы выглядели как «ничего не
+        # произошло». stop_reason показывает причину (max_tokens/refusal)
+        raise RuntimeError(
+            f"модель вернула пустой ответ (stop_reason={resp.stop_reason}, "
+            f"output_tokens={resp.usage.output_tokens})")
+    return text

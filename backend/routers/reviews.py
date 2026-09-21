@@ -302,9 +302,18 @@ async def auto_reply_pass(limit: int = 60) -> dict:
             draft = await review_ai.generate_reply(
                 review, platform=review["platform"])
         except Exception as e:
-            _log.warning("auto generate: %s", e)
-            auto_status["error"] = f"генерация: {str(e)[:180]}"
-            break   # скорее всего лимит/ключ API — прерываем проход целиком
+            msg = str(e)
+            _log.warning("auto generate %s: %s", review["id"], msg[:200])
+            auto_status["error"] = f"генерация: {msg[:180]}"
+            low = msg.lower()
+            # ключ/лимит/доступ — дальше нет смысла, прерываем проход;
+            # ошибка по конкретному отзыву — пропускаем его и идём дальше
+            if any(k in low for k in ("rate_limit", "429", "authentication",
+                                      "api key", "permission", "credit",
+                                      "overloaded", "529")):
+                break
+            failed += 1
+            continue
         if not draft:
             failed += 1
             continue
