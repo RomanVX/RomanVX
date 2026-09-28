@@ -1,0 +1,3076 @@
+openapi: 3.0.3
+info:
+  title: Документация для разработчиков
+  description: >
+    <h2>Авторизация</h2>
+    <p>Для авторизации используется Bearer-токен. Добавляйте токен в заголовок запроса Authorization.</p>
+    <p>
+      Пример:
+      <code>Authorization: Bearer 1|9eLn13rIUzszR1d1HTs8dXOq2hfhi49MosJj08gha2e2Ff57</code>
+    </p>
+    <p>В МПФИТ есть 2 типа компаний:</p>
+    <ul>
+      <li>Фулфилмент, компания со складом, обрабатывает заказы селлеров</li>
+      <li>Селлер - компания без склада</li>
+    </ul>
+    <p>Для компании каждого типа можно выпустить токен.</p>
+    <p>У компании с типом Фулфилмент будет доступ ко всей информации своих селлеров. Получить токены можно обратившись в поддержку.</p>
+    <p>Максимальное кол-во запросов в минуту указано в заголовке X-RateLimit-Limit и равно 120 для всех методов. Текущий лимит по запросам указан в заголовке X-RateLimit-Remaining.</p>
+    <h2>Курсорная пагинация</h2>
+    <p><code>last_id</code> - идентификатор последнего значения на странице. При выполнении первого запроса должен равняться 0. Для получения следующей страницы используйте числовой <code>last_id</code> из предыдущей непустой страницы.</p>
+    <p>Выборка считается завершенной, если <code>result.data.length &lt; limit</code>. Значение <code>last_id: null</code> возвращается, если страница пуста. Не передавайте <code>null</code> в следующий запрос. Если <code>result.data.length === limit</code>, можно выполнить ещё один запрос. Он может вернуть пустую страницу.</p>
+    <p><code>last_id</code> используется для перехода между страницами и не позволяет получить изменения записей, идентификаторы которых уже были пройдены. Для повторного получения актуальных данных начните с <code>last_id: 0</code>.</p>
+  version: 1.4.0
+servers:
+  - url: 'https://app.mpfit.ru/api'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    CursorLastIdRequest:
+      type: integer
+      format: int64
+      minimum: 0
+      description: >
+        Идентификатор последнего значения на странице. При выполнении первого запроса должен равняться 0.
+        Для получения следующей страницы используйте числовой last_id из предыдущей непустой страницы.
+    CursorLastIdResponse:
+      type: integer
+      format: int64
+      nullable: true
+      description: >
+        Идентификатор последнего значения на странице.
+        Если data пуст, равен null.
+    CommonRequest:
+      example: { "limit": 200,"last_id": 0,"filter": { "ids": [ 1 ] } }
+      type: object
+      required:
+        - limit
+        - last_id
+      properties:
+        limit:
+          description: Кол-во элементов в ответе
+          type: integer
+          minimum: 1
+          maximum: 200
+        last_id:
+          $ref: "#/components/schemas/CursorLastIdRequest"
+        filter:
+          type: object
+          properties:
+            company_id:
+              description: Идентификатор компании для которой нужно получить данные, если не указан то возвращаются элементы компании для которой был выпущен токен
+              type: integer
+              minimum: 1
+              nullable: true
+            ids:
+              description: Идентификаторы сущностей. Если в массиве будет указан id сущности к которой у токена нет доступа, то id будет проигнорирован без предупреждения.
+              type: array
+              items:
+                type: integer
+                format: int64
+    CommonRequest_2:
+      example: { "limit": 200, "last_id": 0 }
+      type: object
+      required:
+        - limit
+        - last_id
+      properties:
+        limit:
+          description: Кол-во элементов в ответе
+          type: integer
+          minimum: 1
+          maximum: 200
+        last_id:
+          $ref: "#/components/schemas/CursorLastIdRequest"
+        filter:
+          type: object
+          properties:
+            company_id:
+              description: Идентификатор компании для которой нужно получить данные, если не указан то возвращаются элементы всех доступных токену компаний
+              type: integer
+              minimum: 1
+              nullable: true
+  responses:
+    Message:
+      description: ''
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              message:
+                type: string
+                description: Описание ошибки
+    ResultResponse:
+      description: ''
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              is_success:
+                type: boolean
+                description: Равен true если запрос выполнен успешно
+              errors:
+                type: array
+                description: Массив с ошибками, пуст если запрос выполнен успешно
+                items:
+                  type: object
+                  properties:
+                    message:
+                      type: string
+                      description: Описание ошибки
+security:
+  - bearerAuth: [ ]
+tags:
+  - name: Каталог
+  - name: Склад
+  - name: Заказы на приемку
+  - name: Заказы на отгрузку
+  - name: КИЗ
+  - name: Компании
+  - name: Счета
+  - name: Услуги
+  - name: Аналитика
+paths:
+  /v1/services/list:
+    post:
+      tags:
+        - Услуги
+      summary: Список услуг
+      description: >
+        Метод доступен только для компаний с типом 'фулфилмент'.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              example: { "limit": 200,"last_id": 0,"filter": { "ids": [ 1 ] } }
+              type: object
+              required:
+                - limit
+                - last_id
+              properties:
+                limit:
+                  description: Кол-во элементов в ответе
+                  type: integer
+                  minimum: 1
+                  maximum: 200
+                last_id:
+                  $ref: "#/components/schemas/CursorLastIdRequest"
+                filter:
+                  type: object
+                  properties:
+                    ids:
+                      description: Идентификаторы сущностей. Если в массиве будет указан id сущности к которой у токена нет доступа, то id будет проигнорирован без предупреждения.
+                      type: array
+                      items:
+                        type: integer
+                        format: int64
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                example: { "result": { "data": [ { "id": 1, "name": "Проверить на брак", "serviceType": "product", "stages": ["Приёмка", "Размещение", "Обработка", "Контроль", "Отгрузка"], "note": "note", "priceType": "piece_prices", "servicePrices": {"basePrice": [1000, 800, 600, 400], "costPrice": [900, 700, 500, 300], "salaryPrice": [700, 500, 300, 200]}, "companyPrices": [{"companyId": 1, "companyName": "ООО «Компания»", "pieceCompanyPriceFirst": 800, "pieceCompanyPriceSecond": 700, "pieceCompanyPriceThird": 600, "pieceCompanyPriceFourth": 500}], "consumables": [{"id": 1811694, "name": "гофрокороб 260*120*120"}], "isLimitVisibility": false, "duration": {"first": 88, "second": 88, "third": 83, "fourth": 99}, "isAutoAttach": false, "autoAttachQuantity": null, "orderTypeNames": ["OZON - FBO", "WB - FBO"], "storeProductCategoryIds": [1, 2, 3], "quantityRanges": {"first_end": 10, "second_end": 100, "third_end": 1000} } ], "total": 1, "last_id": 1 }}
+                type: object
+                properties:
+                  result:
+                    type: object
+                    properties:
+                      data:
+                        type: array
+                        description: Список услуг
+                        items:
+                          type: object
+                          properties:
+                            id:
+                              type: integer
+                              format: int64
+                              description: Уникальный идентификатор услуги
+                            name:
+                              type: string
+                              description: Название услуги
+                            serviceType:
+                              description: >
+                                Тип услуги:<br>
+                                  * `product` - услуга для товаров<br><br>
+                                  * `order` - услуга для заказов<br><br>
+                                  * `default` - услуга по умолчанию
+                              type: string
+                              enum:
+                                - product
+                                - order
+                                - default
+                            stages:
+                              description: Названия этапов склада, на которых применяется услуга
+                              type: array
+                              items:
+                                type: string
+                            note:
+                              type: string
+                              nullable: true
+                              description: Примечание к услуге
+                            priceType:
+                              description: Тип цены услуги:<br>
+                                * `piece_prices` - цена за единицу
+                                * `volume_prices` - цена за объем
+                              type: string
+                              enum:
+                                - piece_prices
+                                - volume_prices
+                            servicePrices:
+                              description: Цены услуги в копейках. Структура зависит от serviceType и priceType
+                              oneOf:
+                                - type: object
+                                  description: Цена за 1м3 для услуг с типом отличным от default и priceType равным volume_prices
+                                  properties:
+                                    volumeBasePrice:
+                                      type: integer
+                                      description: Базовая цена
+                                    volumeCostPrice:
+                                      type: integer
+                                      description: Себестоимость
+                                    volumeSalaryPrice:
+                                      type: integer
+                                      description: Зарплата
+                                - type: object
+                                  description: Цена за шт по интервалам (quantityRanges) для услуг с типом отличным от default и priceType равным piece_prices
+                                  properties:
+                                    basePrice:
+                                      type: array
+                                      description: Базовая цена
+                                      items:
+                                        type: integer
+                                      minItems: 4
+                                      maxItems: 4
+                                    costPrice:
+                                      type: array
+                                      description: Себестоимость
+                                      items:
+                                        type: integer
+                                      minItems: 4
+                                      maxItems: 4
+                                    salaryPrice:
+                                      type: array
+                                      description: Зарплата
+                                      items:
+                                        type: integer
+                                      minItems: 4
+                                      maxItems: 4
+                                - type: object
+                                  description: Для услуг с типом default
+                                  properties:
+                                    freeVolumePrice:
+                                      type: integer
+                                      description: Цена за 1м3 свободного объема.
+                                    bookedVolumePrice:
+                                      type: integer
+                                      description: Цена за 1м3 забронированного объема.
+                            companyPrices:
+                              description: Индивидуальные цены для компаний в копейках. Структура зависит от serviceType и priceType.
+                              type: array
+                              nullable: true
+                              items:
+                                oneOf:
+                                  - type: object
+                                    description: Цена за 1м3 для услуг с типом отличным от default и priceType равным volume_prices
+                                    properties:
+                                      companyId:
+                                        type: integer
+                                        description: Уникальный идентификатор компании
+                                      companyName:
+                                        type: string
+                                        description: Название компании
+                                      volumeCompanyPrice:
+                                        type: integer
+                                        description: Базовая цена                                      
+                                  - type: object
+                                    description: Цена за шт. по интервалам (quantityRanges) для услуг с типом отличным от default и priceType равным piece_prices
+                                    properties:
+                                      companyId:
+                                        type: integer
+                                        description: Уникальный идентификатор компании
+                                      companyName:
+                                        type: string
+                                        description: Название компании
+                                      pieceCompanyPriceFirst:
+                                        type: integer
+                                        description: Базовая цена для первого интервала
+                                      pieceCompanyPriceSecond:
+                                        type: integer
+                                        description: Базовая цена для второго интервала
+                                      pieceCompanyPriceThird:
+                                        type: integer
+                                        description: Базовая цена для третьего интервала
+                                      pieceCompanyPriceFourth:
+                                        type: integer
+                                        description: Базовая цена для четвертого интервала
+                                  - type: object
+                                    description: Для услуг с типом default
+                                    properties:
+                                      companyId:
+                                        type: integer
+                                        description: Уникальный идентификатор компании
+                                      companyName:
+                                        type: string
+                                        description: Название компании
+                                      freeVolumePrice:
+                                        type: integer
+                                        description: Цена за 1м3 свободного объема
+                                      bookedVolumePrice:
+                                        type: integer
+                                        description: Цена за 1м3 забронированного объема
+                                      freeStorageDays:
+                                        type: integer
+                                        description: Бесплатное хранение в днях. Только для базовой услуги хранения товара
+                            consumables:
+                              type: array
+                              nullable: true
+                              description: Расходники
+                              items:
+                                type: object
+                                properties:
+                                  id:
+                                    type: integer
+                                    description: Уникальный идентификатор товара
+                                  name:
+                                    type: string
+                                    description: Название товара
+                            isLimitVisibility:
+                              type: boolean
+                              description: Признак индивидуальной услуги
+                            duration:
+                              type: object
+                              nullable: true
+                              description: Время оказания услуги, сек
+                              properties:
+                                first:
+                                  type: integer
+                                  description: Для первого интервала
+                                second:
+                                  type: integer
+                                  description: Для второго интервала
+                                third:
+                                  type: integer
+                                  description: Для третьего интервала
+                                fourth:
+                                  type: integer
+                                  description: Для четвертого интервала
+                            isAutoAttach:
+                              type: boolean
+                              description: Признак автоуслуги
+                            autoAttachQuantity:
+                              type: integer
+                              nullable: true
+                              description: Количество для автоуслуги. Для услуг с serviceType отличным от order всегда null
+                            orderTypeNames:
+                              type: array
+                              nullable: true
+                              description: Названия мест назначений
+                              items:
+                                type: string
+                            storeProductCategoryIds:
+                              type: array
+                              nullable: true
+                              description: Идентификаторы категорий товаров (только для услуг к товарам)
+                              items:
+                                type: integer
+                                format: int64
+                            freeStorageDays:
+                              type: integer
+                              nullable: true
+                              description: Бесплатное хранение в днях. Только для услуги по умолчанию "Хранение товара"                            
+                            method:
+                              description: Метод расчета услуги по умолчанию "Хранение товара":<br>
+                                * `FIFO` - По объему товара (FIFO)<br>
+                                * `LIFO` - По объему товара (LIFO)<br>
+                                * `BY_VOLUME` - По объёму товара + по объёму ячейки
+                              type: string
+                              enum:
+                                - FIFO
+                                - LIFO
+                                - BY_VOLUME
+                            quantityRanges:
+                              description: Интервал цен. Только для услуг с priceType равным piece_prices
+                              type: object
+                              properties:
+                                first_end:
+                                  type: integer
+                                  description: конец первого интервала
+                                second_end:
+                                  type: integer
+                                  description: конец второго интервала
+                                third_end:
+                                  type: integer
+                                  description: конец третьего интервала
+                      total:
+                        type: integer
+                        description: Кол-во услуг в свойстве data
+                      last_id:
+                        $ref: "#/components/schemas/CursorLastIdResponse"
+        '401':
+          $ref: "#/components/responses/Message"
+        '403':
+          $ref: "#/components/responses/Message"
+        '422':
+          $ref: "#/components/responses/Message"
+        '429':
+          $ref: "#/components/responses/Message"
+        '500':
+          $ref: "#/components/responses/Message"
+  /v1/products/list:
+    post:
+      tags:
+        - Каталог
+      summary: Список товаров
+      description: >
+        Метод позволяет получить список товаров в каталоге
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              example: { "limit": 200,"last_id": 0,"filter": { "barcode": "4609999000111" } }
+              type: object
+              required:
+                - limit
+                - last_id
+              properties:
+                limit:
+                  description: Кол-во элементов в ответе
+                  type: integer
+                  minimum: 1
+                  maximum: 200
+                last_id:
+                  type: integer
+                  format: int64
+                  minimum: 0
+                  description: Идентификатор полученный в предыдущем запросе. При первом запросе должен равняться 0
+                filter:
+                  type: object
+                  properties:
+                    company_id:
+                      description: Идентификатор компании для которой нужно получить данные, если не указан то возвращаются элементы компании для которой был выпущен токен
+                      type: integer
+                      minimum: 1
+                      nullable: true
+                    ids:
+                      description: Идентификаторы сущностей. Если в массиве будет указан id сущности к которой у токена нет доступа, то id будет проигнорирован без предупреждения.
+                      type: array
+                      items:
+                        type: integer
+                        format: int64
+                    barcode:
+                      description: Штрихкод товара, точное совпадение (поиск по части штрихкода не поддерживается). Ищет и в штрихкодах товара, и во внешних штрихкодах (Wildberries, Ozon, Яндекс Маркет, Uzum). Внешние штрихкоды хранятся длиной до 30 символов — значение длиннее ищется только среди собственных штрихкодов товара. Пробелы по краям обрезаются. Поиск идёт по всем компаниям, доступным токену, а если передан filter.company_id — только по ней. Чтобы не фильтровать по штрихкоду, не передавайте поле — пустая строка и null дают 422, а не выдачу всего каталога. Фильтры складываются по И, поэтому barcode вместе с ids вернёт только товары, попавшие под оба условия. Когда совпадений нет, data пустой, а last_id равен null — в следующем запросе используйте свой прежний last_id.
+                      type: string
+                      minLength: 1
+                      maxLength: 40
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                example: { "result": { "data": [ { "id": 1,"company_id": 1,"article": "02120623-0767","name": "Чашка для супа Сабина Сине-золотая лента (0.3 л) с блюдцами Leander","barcodes": ["1234124","3251252"],"external_barcodes": {"wb":["2000000000011", "2000000999999"],"ozon":["OZN-12345"],"yandex_market":["23r345"],"uzum":["213546"]},"size": "46","width": 100,"length": 150,"height": 80,"gross": 350,"brand": "Leander","stock_state": "NORMAL","img": "https://some-site/1.jpg","product_type": "SIMPLE","smart_items": null,"created_at": "2024-05-07T07:21:48.603Z","updated_at": "2024-05-07T07:21:48.603Z" }, { "id": 42,"company_id": 1,"article": "02120623-SMART","name": "Набор посуды","barcodes": [],"external_barcodes": {},"size": null,"width": null,"length": null,"height": null,"gross": null,"brand": null,"stock_state": "NORMAL","img": null,"product_type": "SMART","smart_items": [ { "product_id": 1,"quantity": 2 },{ "product_id": 5,"quantity": 1 } ],"created_at": "2024-05-07T07:21:48.603Z","updated_at": "2024-05-07T07:21:48.603Z" } ],"total": 2,"last_id": 42 } }
+                type: object
+                properties:
+                  result:
+                    type: object
+                    properties:
+                      data:
+                        type: array
+                        description: Список товаров
+                        items:
+                          type: object
+                          properties:
+                            id:
+                              type: integer
+                              format: int64
+                              description: Уникальный идентификатор товара
+                            company_id:
+                              type: integer
+                              format: int64
+                              description: Идентификатор компании
+                            article:
+                              type: string
+                              maxLength: 200
+                              description: Артикул
+                            name:
+                              type: string
+                              maxLength: 1000
+                              description: Название товара
+                            barcodes:
+                              type: array
+                              description: Штрихкоды
+                              items:
+                                type: string
+                                description: штрихкод
+                            external_barcodes:
+                              type: object
+                              description: Баркоды по маркетплейсам
+                              properties:
+                                wb:
+                                  type: array
+                                  nullable: true
+                                  description: Wildberries баркоды
+                                  items:
+                                    type: string
+                                    description: Баркод Wildberries
+                                ozon:
+                                  type: array
+                                  nullable: true
+                                  description: Ozon баркоды
+                                  items:
+                                    type: string
+                                    description: Баркод Ozon
+                                yandex_market:
+                                  type: array
+                                  nullable: true
+                                  description: ЯндексМаркет баркоды
+                                  items:
+                                    type: string
+                                    description: Баркод ЯндексМаркет
+                                uzum:
+                                  type: array
+                                  nullable: true
+                                  description: Uzum баркоды
+                                  items:
+                                    type: string
+                                    description: Баркод Uzum
+                            size:
+                              type: string
+                              nullable: true
+                              description: размер
+                            width:
+                              type: integer
+                              nullable: true
+                              description: >
+                                Ширина в мм. `null` — не заполнено. У товаров, созданных через API
+                                без габаритов, вместо `null` может лежать `0` (унаследованное
+                                поведение создания товара).
+                            length:
+                              type: integer
+                              nullable: true
+                              description: >
+                                Длина в мм. `null` — не заполнено. У товаров, созданных через API
+                                без габаритов, вместо `null` может лежать `0` (унаследованное
+                                поведение создания товара).
+                            height:
+                              type: integer
+                              nullable: true
+                              description: >
+                                Высота в мм. `null` — не заполнено. У товаров, созданных через API
+                                без габаритов, вместо `null` может лежать `0` (унаследованное
+                                поведение создания товара).
+                            gross:
+                              type: integer
+                              nullable: true
+                              description: Вес с упаковкой в граммах. `null` — не заполнено.
+                            brand:
+                              type: string
+                              maxLength: 100
+                              nullable: true
+                              description: >
+                                Название бренда в каноническом написании из общего справочника брендов:
+                                регистр и лишние пробелы нормализуются, поэтому значение может отличаться от
+                                переданного в `brand` при создании товара. `null` — бренд не указан.
+                            stock_state:
+                              type: string
+                              enum:
+                                - NORMAL
+                                - PROCESSING
+                                - DEFECT
+                              description: >
+                                Состояние товара на складе:<br>
+                                  * `NORMAL` - продажа<br><br>
+                                  * `PROCESSING` - подготовка<br><br>
+                                  * `DEFECT` - брак
+                            img:
+                              type: string
+                              maxLength: 500
+                              nullable: true
+                              description: >
+                                Адрес ссылки на изображение товара — в том виде, в котором он сохранён
+                                (фото из карточки маркетплейса, загруженное в МПФИТ или переданное в `img`
+                                при создании через API). Изменить через API нельзя. `null` — не заполнено.
+                            product_type:
+                              type: string
+                              enum:
+                                - SIMPLE
+                                - SMART
+                                - PACKAGE (PIECE)
+                              description: >
+                                Тип товара:<br>
+                                  * `SIMPLE` - обычный товар<br><br>
+                                  * `SMART` - смарт-товар (набор)<br><br>
+                                  * `PACKAGE (PIECE)` - упаковка (штучная), расходник
+                            smart_items:
+                              type: array
+                              nullable: true
+                              description: Список товаров в смарт-товаре. Только для `SMART` - массив составляющих, для остальных типов - `null`
+                              items:
+                                type: object
+                                required:
+                                  - product_id
+                                  - quantity
+                                properties:
+                                  product_id:
+                                    type: integer
+                                    format: int64
+                                    minimum: 1
+                                    description: Идентификатор товара
+                                  quantity:
+                                    type: integer
+                                    minimum: 1
+                                    description: Количество
+                            created_at:
+                              type: string
+                              format: date-time
+                              description: Дата создания товара
+                            updated_at:
+                              type: string
+                              format: date-time
+                              description: Дата обновления товара
+                      total:
+                        type: integer
+                        description: Кол-во товаров в свойстве data
+                      last_id:
+                        $ref: "#/components/schemas/CursorLastIdResponse"
+        '401':
+          $ref: "#/components/responses/Message"
+        '403':
+          $ref: "#/components/responses/Message"
+        '422':
+          $ref: "#/components/responses/Message"
+        '429':
+          $ref: "#/components/responses/Message"
+        '500':
+          $ref: "#/components/responses/Message"
+  /v1/products/create:
+    post:
+      tags:
+        - Каталог
+      summary: Создание товаров
+      description: >
+        Товары создаются с категорией "Стандарт". <br>
+        Если передан smart_items, то создается смарт-товар.
+        <br>Одним запросом можно создать максимум 100 товаров
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              example: { "products": [ { "article": "02120623-G003GR","name": "Умные часы","brand": "Chronos Quantum","excise": true,"company_id": 1,"height": 1000,"length": 100,"width": 99,"multiplicity": 3,"size": "XXL","colour": "белый","composition": "хлопок 80%, полиамид 20%","code_1c": "abcABC123","cost_price": 99,"img": "https://some-site/1.jpg","smart_items": [ { "product_id": 1,"quantity": 1 } ],"product_barcodes": ["4601234567890","4601234567891"],"external_barcodes": { "wb": ["2000000000011"],"ozon": ["OZN-12345"],"yandex_market": ["YM-998877"],"uzum": ["UZ-112233"] } } ] }
+              type: object
+              required:
+                - products
+              properties:
+                products:
+                  type: array
+                  items:
+                    type: object
+                    required:
+                      - article
+                      - name
+                    properties:
+                      article:
+                        type: string
+                        minLength: 2
+                        maxLength: 200
+                        description: Артикул товара
+                      name:
+                        type: string
+                        minLength: 2
+                        maxLength: 500
+                        description: Название товара
+                      extId:
+                        type: string
+                        nullable: true
+                        maxLength: 255
+                        description: Уникальный идентификатор товара в вашей системе. Нельзя назначить один и тот же идентификатор более чем одному товару
+                      brand:
+                        type: string
+                        minLength: 2
+                        maxLength: 100
+                        nullable: true
+                        description: Бренд (производитель) товара
+                      excise:
+                        type: boolean
+                        nullable: true
+                        description: Киз/Акциз. Если не указан, то используется false
+                      company_id:
+                        type: integer
+                        format: int64
+                        nullable: true
+                        description: Идентификатор компании, если не указан то используется id компании для которой выпущен токен
+                      height:
+                        type: integer
+                        maximum: 999999
+                        nullable: true
+                        description: Высота в мм.
+                      length:
+                        type: integer
+                        maximum: 999999
+                        nullable: true
+                        description: Длина в мм.
+                      width:
+                        type: integer
+                        maximum: 999999
+                        nullable: true
+                        description: Ширина в мм.
+                      multiplicity:
+                        type: integer
+                        minimum: 1
+                        maximum: 100000
+                        nullable: true
+                        description: Кратность короба.
+                      size:
+                        type: string
+                        maxLength: 255
+                        nullable: true
+                        description: Размер
+                      colour:
+                        type: string
+                        maxLength: 255
+                        nullable: true
+                        description: Цвет
+                      composition:
+                        type: string
+                        minLength: 2
+                        maxLength: 1000
+                        nullable: true
+                        description: Состав
+                      code_1c:
+                        type: string
+                        maxLength: 30
+                        nullable: true
+                        pattern: '^[a-zA-Z0-9]{1,30}$'
+                        description: Код 1С
+                      cost_price:
+                        type: integer
+                        minimum: 0
+                        maximum: 9999999999
+                        nullable: true
+                        description: Стоимость
+                      img:
+                        type: string
+                        maxLength: 500
+                        nullable: true
+                        description: >
+                          Адрес ссылки на изображение: абсолютный URL до 500 символов, домен должен
+                          существовать (проверяется DNS-запросом). Задаётся только при создании товара.
+                      smart_items:
+                        type: array
+                        nullable: true
+                        description: Список товаров в смарт-товаре
+                        items:
+                          type: object
+                          required:
+                            - product_id
+                            - quantity
+                          properties:
+                            product_id:
+                              type: integer
+                              format: int64
+                              minimum: 1
+                              description: Идентификатор товара
+                            quantity:
+                              type: integer
+                              minimum: 1
+                              description: Количество
+                      product_barcodes:
+                        type: array
+                        nullable: true
+                        description: Штрихкоды товара
+                        items:
+                          type: string
+                          minLength: 1
+                          maxLength: 40
+                          description: Штрихкод
+                      external_barcodes:
+                        type: object
+                        nullable: true
+                        description: Баркоды по маркетплейсам
+                        properties:
+                          wb:
+                            type: array
+                            nullable: true
+                            description: Wildberries баркоды
+                            items:
+                              type: string
+                              minLength: 1
+                              maxLength: 30
+                              description: Баркод Wildberries
+                          ozon:
+                            type: array
+                            nullable: true
+                            description: Ozon баркоды
+                            items:
+                              type: string
+                              minLength: 1
+                              maxLength: 30
+                              description: Баркод Ozon
+                          yandex_market:
+                            type: array
+                            nullable: true
+                            description: ЯндексМаркет баркоды
+                            items:
+                              type: string
+                              minLength: 1
+                              maxLength: 30
+                              description: Баркод ЯндексМаркет
+                          uzum:
+                            type: array
+                            nullable: true
+                            description: Uzum баркоды
+                            items:
+                              type: string
+                              minLength: 1
+                              maxLength: 30
+                              description: Баркод Uzum
+      responses:
+        '201':
+          description: Ответ
+          content:
+            application/json:
+              schema:
+                example: { "products": [ { "id": 1, "extId": 'qwe', "article": "asd" } ] }
+                type: object
+                properties:
+                  products:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: integer
+                          format: int64
+                          description: Идентификатор созданного товара
+                        extId:
+                          type: string
+                          nullable: true
+                          description: Уникальный идентификатор товара в вашей системе
+                        article:
+                          type: string
+                          description: Артикул созданного товара
+        '401':
+          $ref: "#/components/responses/Message"
+        '403':
+          $ref: "#/components/responses/Message"
+        '422':
+          $ref: "#/components/responses/Message"
+        '429':
+          $ref: "#/components/responses/Message"
+        '500':
+          $ref: "#/components/responses/Message"
+  /v1/products/update-barcodes:
+    post:
+      tags:
+        - Каталог
+      summary: Обновление штрихкодов товаров
+      description: >
+        Массовое обновление штрихкодов для товаров. <br>
+        Полностью заменяет существующие штрихкоды на новые. <br>
+        Одним запросом можно обновить максимум 100 товаров.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              example: { "products": [ { "product_id": 12345, "barcodes": ["4601234567890", "4601234567891"] }, { "product_id": 12346, "barcodes": [] } ] }
+              type: object
+              required:
+                - products
+              properties:
+                products:
+                  type: array
+                  maxItems: 100
+                  items:
+                    type: object
+                    required:
+                      - product_id
+                    properties:
+                      product_id:
+                        type: integer
+                        format: int64
+                        minimum: 1
+                        description: Идентификатор товара
+                      barcodes:
+                        type: array
+                        nullable: true
+                        description: Массив штрихкодов товара. Если пустой массив, то все существующие штрихкоды будут удалены
+                        items:
+                          type: string
+                          minLength: 1
+                          maxLength: 40
+                          description: Штрихкод
+      responses:
+        '200':
+          description: Ответ
+          content:
+            application/json:
+              schema:
+                example: { "result": [ { "product_id": 12345, "updated": true, "error": null }, { "product_id": 12346, "updated": false, "error": "Нет доступа к товару" } ] }
+                type: object
+                properties:
+                  result:
+                    type: array
+                    description: Массив результатов обработки
+                    items:
+                      type: object
+                      properties:
+                        product_id:
+                          type: integer
+                          format: int64
+                          description: Идентификатор товара
+                        updated:
+                          type: boolean
+                          description: true - штрихкоды обновлены, false - ошибка
+                        error:
+                          type: string
+                          nullable: true
+                          description: null если успешно, текст ошибки если не удалось обновить
+        '401':
+          $ref: "#/components/responses/Message"
+        '403':
+          $ref: "#/components/responses/Message"
+        '422':
+          $ref: "#/components/responses/Message"
+        '429':
+          $ref: "#/components/responses/Message"
+        '500':
+          $ref: "#/components/responses/Message"
+  /v1/products/stocks:
+    post:
+      tags:
+        - Склад
+      summary: Просмотр остатков
+      description: >
+        Метод позволяет получить складские остатки по товарам.<br><br>
+        Остатки товара могут измениться после того, как его идентификатор уже был пройден. Для повторного получения актуальных остатков начните с `last_id: 0`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              example: { "limit": 200,"last_id": 0,"filter": { "barcode": "4609999000111" } }
+              type: object
+              required:
+                - limit
+                - last_id
+              properties:
+                limit:
+                  description: Кол-во элементов в ответе
+                  type: integer
+                  minimum: 1
+                  maximum: 200
+                last_id:
+                  type: integer
+                  format: int64
+                  minimum: 0
+                  description: Идентификатор полученный в предыдущем запросе. При первом запросе должен равняться 0
+                filter:
+                  type: object
+                  properties:
+                    company_id:
+                      description: Идентификатор компании для которой нужно получить данные, если не указан то возвращаются элементы компании для которой был выпущен токен
+                      type: integer
+                      minimum: 1
+                      nullable: true
+                    ids:
+                      description: Идентификаторы сущностей. Если в массиве будет указан id сущности к которой у токена нет доступа, то id будет проигнорирован без предупреждения.
+                      type: array
+                      items:
+                        type: integer
+                        format: int64
+                    barcode:
+                      description: Штрихкод товара, точное совпадение (поиск по части штрихкода не поддерживается). Ищет и в штрихкодах товара, и во внешних штрихкодах (Wildberries, Ozon, Яндекс Маркет, Uzum). Внешние штрихкоды хранятся длиной до 30 символов — значение длиннее ищется только среди собственных штрихкодов товара. Пробелы по краям обрезаются. Поиск идёт по всем компаниям, доступным токену, а если передан filter.company_id — только по ней. Чтобы не фильтровать по штрихкоду, не передавайте поле — пустая строка и null дают 422, а не выдачу всего каталога. Фильтры складываются по И, поэтому barcode вместе с ids вернёт только товары, попавшие под оба условия. Когда совпадений нет, data пустой, а last_id равен null — в следующем запросе используйте свой прежний last_id.
+                      type: string
+                      minLength: 1
+                      maxLength: 40
+      responses:
+        '200':
+          description: Ответ
+          content:
+            application/json:
+              schema:
+                example: { "result": { "data": [ { "product_id": 1,"article": "article", "company_id": 1,"stocks": [ { "warehouse_id": 1,"free": 1,"booked": 0,"can_collect": 0 } ] } ],"total": 1,"last_id": 1 } }
+                type: object
+                properties:
+                  result:
+                    type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            product_id:
+                              type: integer
+                              format: int64
+                              description: Уникальный идентификатор товара
+                            article:
+                              type: string
+                              description: Артикул товара
+                            company_id:
+                              type: integer
+                              format: int64
+                              description: Идентификатор компании, которой принадлежит товар
+                            stocks:
+                              type: object
+                              properties:
+                                warehouse_id:
+                                  type: integer
+                                  description: Идентификатор склада
+                                free:
+                                  type: integer
+                                  description: Кол-во незабронированного товара
+                                booked:
+                                  type: integer
+                                  description: Кол-во забронированного товара (включая не размещённое в ячейке)
+                                can_collect:
+                                  type: integer
+                                  description: Кол-во товара которое можно собрать. В случае если товар является Смарт-товаром (набором)
+                      total:
+                        type: integer
+                        description: Кол-во элементов в свойстве data
+                      last_id:
+                        $ref: "#/components/schemas/CursorLastIdResponse"
+        '401':
+          $ref: "#/components/responses/Message"
+        '403':
+          $ref: "#/components/responses/Message"
+        '422':
+          $ref: "#/components/responses/Message"
+        '429':
+          $ref: "#/components/responses/Message"
+        '500':
+          $ref: "#/components/responses/Message"
+  /v1/arrivals/create:
+    post:
+      tags:
+        - Заказы на приемку
+      summary: Создание заказа на приемку
+      description: >
+        При создании заявки допускается добавлять товары разных компаний.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              example: { "date": "2024-06-11T09:20:06Z","items": [ { "product_id": 137538,"quantity": 152 },{ "product_id": 1,"quantity": 355 } ] }
+              type: object
+              required:
+                - date
+                - items
+              properties:
+                date:
+                  type: string
+                  format: date-time
+                  description: Планируемая дата поступления заказа на склад. Не должна быть ранее даты создания заказа.
+                items:
+                  type: array
+                  items:
+                    type: object
+                    required:
+                      - product_id
+                      - quantity
+                    properties:
+                      product_id:
+                        type: integer
+                        format: int64
+                        description: Уникальный идентификатор товара
+                      quantity:
+                        type: integer
+                        description: Кол-во товара
+      responses:
+        '201':
+          description: Ответ
+          content:
+            application/json:
+              schema:
+                example: { "arrival": { "id": 17047, "company_ids": [7] } }
+                type: object
+                properties:
+                  arrival:
+                    type: object
+                    properties:
+                      id:
+                        type: integer
+                        format: int64
+                        description: Идентификатор созданного заказа
+                      company_ids:
+                        type: array
+                        description: Идентификаторы компаний, чьи товары в приёмке
+                        items:
+                          type: integer
+        '401':
+          $ref: "#/components/responses/Message"
+        '403':
+          $ref: "#/components/responses/Message"
+        '422':
+          $ref: "#/components/responses/Message"
+        '429':
+          $ref: "#/components/responses/Message"
+        '500':
+          $ref: "#/components/responses/Message"
+  /v1/arrivals/{arrival_id}:
+    get:
+      tags:
+        - Заказы на приемку
+      summary: Просмотр заказа на приемку
+      description: >
+        Метод позволяет получить информацию о заказе на приемку.
+      parameters:
+        - name: arrival_id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Идентификатор заказа
+      responses:
+        '200':
+          description: >-
+            Статус заказа:<br><br>
+            `NEW` - новый<br><br>
+            `COMPLETED` - завершен<br><br>
+            `ARCHIVE` - в архиве<br><br>
+          content:
+            application/json:
+              schema:
+                example: { "result": { "id": 1,"to_warehouse_id": 1,"status": "COMPLETED","date": "2021-05-18T21:00:00.000000Z","accepted_at": "2021-05-18T21:00:00.000000Z","created_at": "2021-05-19T09:44:27.000000Z","updated_at": "2023-05-26T10:24:14.000000Z","note": "string","items": [ { "id": 1,"company_id": 7,"quantity": 50,"fact_quantity": 50,"note": "string","product": { "id": 75150,"article": "WD-0434ASH","name": "Доска разделочная торцевая","width": 400,"length": 300,"height": 40,"gross": 1200 },"arrival_item_services": [ { "id": 1,"price": 10,"cost_price": 10,"service": { "id": 1,"name": "Сборка","price_type": "piece_prices","note": "Сборка" } } ] } ],"arrival_services": [ { "id": 1,"price": 10,"cost_price": 10,"count": 1,"service": { "id": 1,"name": "Сборка","price_type": "piece_prices","note": "Сборка" } } ] } }
+                type: object
+                properties:
+                  result:
+                    type: object
+                    properties:
+                      id:
+                        type: integer
+                        format: int64
+                        description: Идентификатор заказа
+                      to_warehouse_id:
+                        type: integer
+                        format: int64
+                        description: Идентификатор склада на который будет принят товар
+                      status:
+                        type: string
+                        description: Статус заказа
+                      date:
+                        type: string
+                        format: date-time
+                        description: Ожидаемая дата поступления заказа на склад
+                      accepted_at:
+                        type: string
+                        format: date-time
+                        nullable: true
+                        description: Дата приемки товара на склад. Равняется null если заказ не принят.
+                      created_at:
+                        type: string
+                        format: date-time
+                        description: Дата создания заказа
+                      updated_at:
+                        type: string
+                        format: date-time
+                        description: Дата обновления заказа
+                      note:
+                        type: string
+                        nullable: true
+                        description: Примечание к заказу
+                      items:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id:
+                              type: integer
+                              format: int64
+                              description: Уникальный идентификатор товара в заказе
+                            company_id:
+                              type: integer
+                              format: int64
+                              nullable: true
+                              description: Идентификатор клиентской компании владельца товара
+                            quantity:
+                              type: integer
+                              description: Ожидаемое кол-во товара
+                            fact_quantity:
+                              type: integer
+                              nullable: true
+                              description: Принятое на склад кол-во товара
+                            note:
+                              type: string
+                              nullable: true
+                              description: Примечание к товару в заказе
+                            product:
+                              type: object
+                              description: >
+                                Товар в каталоге. Если товар удалён (осиротевшая позиция), объект
+                                возвращается тем же набором полей, но все они равны `null`.
+                              properties:
+                                id:
+                                  type: integer
+                                  format: int64
+                                  nullable: true
+                                  description: Уникальный идентификатор товара
+                                article:
+                                  type: string
+                                  nullable: true
+                                  description: Артикул товара
+                                name:
+                                  type: string
+                                  nullable: true
+                                  description: Название товара
+                                width:
+                                  type: integer
+                                  nullable: true
+                                  description: >
+                                    Ширина в мм. `null` — не заполнено (или товар удалён). У товаров,
+                                    созданных через API без габаритов, вместо `null` может лежать `0`
+                                    (унаследованное поведение создания товара).
+                                length:
+                                  type: integer
+                                  nullable: true
+                                  description: >
+                                    Длина в мм. `null` — не заполнено (или товар удалён). У товаров,
+                                    созданных через API без габаритов, вместо `null` может лежать `0`
+                                    (унаследованное поведение создания товара).
+                                height:
+                                  type: integer
+                                  nullable: true
+                                  description: >
+                                    Высота в мм. `null` — не заполнено (или товар удалён). У товаров,
+                                    созданных через API без габаритов, вместо `null` может лежать `0`
+                                    (унаследованное поведение создания товара).
+                                gross:
+                                  type: integer
+                                  nullable: true
+                                  description: Вес с упаковкой в граммах. `null` — не заполнено (или товар удалён).
+                            arrival_item_services:
+                              type: array
+                              nullable: true
+                              description: Список услуг к товару в заказе, может равняться null
+                              items:
+                                type: object
+                                properties:
+                                  id:
+                                    type: integer
+                                    format: int64
+                                    description: Уникальный идентификатор услуги к товару в заказе
+                                  price:
+                                    type: integer
+                                    format: int64
+                                    description: Цена за услугу в копейках
+                                  cost_price:
+                                    type: integer
+                                    format: int64
+                                    nullable: true
+                                    description: Себестоимость услуги в копейках. Только для фулфилмент компаний
+                                  service:
+                                    type: object
+                                    description: Услуга в каталоге.
+                                    properties:
+                                      id:
+                                        type: integer
+                                        format: int64
+                                        description: Уникальный идентификатор услуги
+                                      name:
+                                        type: string
+                                        description: Название услуги
+                                      price_type:
+                                        type: string
+                                        enum:
+                                          - piece_prices
+                                          - volume_prices
+                                        description: Тип цены. piece_prices - цена за штуку. volume_prices - цена за м3
+                                      note:
+                                        type: string
+                                        nullable: true
+                                        description: Примечание к услуге. null если услуга не имеет примечания. null для компаний селлеров
+                      arrival_services:
+                        type: array
+                        nullable: true
+                        description: Список услуг в заказе, может равняться null
+                        items:
+                          type: object
+                          properties:
+                            id:
+                              type: integer
+                              format: int64
+                              description: Уникальный идентификатор услуги в заказе
+                            price:
+                              type: integer
+                              format: int64
+                              description: Цена за услугу в копейках
+                            cost_price:
+                              type: integer
+                              format: int64
+                              nullable: true
+                              description: Себестоимость услуги в копейках. Только для фулфилмент компаний
+                            count:
+                              type: integer
+                              description: Кол-во услуги
+                            service:
+                              type: object
+                              description: Услуга в каталоге.
+                              properties:
+                                id:
+                                  type: integer
+                                  format: int64
+                                  description: Уникальный идентификатор услуги
+                                name:
+                                  type: string
+                                  description: Название услуги
+                                price_type:
+                                  type: string
+                                  enum:
+                                    - piece_prices
+                                    - volume_prices
+                                  description: Тип цены. piece_prices - цена за штуку. volume_prices - цена за м3
+                                note:
+                                  type: string
+                                  nullable: true
+                                  description: Примечание к услуге. null если услуга не имеет примечания. null для компаний селлеров
+        '401':
+          $ref: "#/components/responses/Message"
+        '403':
+          $ref: "#/components/responses/Message"
+        '404':
+          $ref: "#/components/responses/Message"
+        '422':
+          $ref: "#/components/responses/Message"
+        '429':
+          $ref: "#/components/responses/Message"
+        '500':
+          $ref: "#/components/responses/Message"
+  /v1/arrivals/list:
+    post:
+      tags:
+        - Заказы на приемку
+      summary: Заказы на приемку
+      description: >
+        Метод позволяет получить список заказов на приемку.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CommonRequest"
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                example: { "result": { "data": [ { "id": 1,"to_warehouse_id": 1,"status": "COMPLETED","date": "2021-05-18T21:00:00.000000Z","accepted_at": "2021-05-18T21:00:00.000000Z","created_at": "2021-05-19T09:44:27.000000Z","updated_at": "2023-05-26T10:24:14.000000Z","items": [ { "id": 1,"company_id": 7,"quantity": 50,"fact_quantity": 50,"product": { "id": 75150,"article": "WD-0434ASH","name": "Доска разделочная торцевая из ясеня, 40х30х4 см WD-0434ASH Woodeed","width": 400,"length": 300,"height": 40,"gross": 1200 } },{ "id": 2,"company_id": 7,"quantity": 3,"fact_quantity": 1,"product": { "id": 74165,"article": "WD-0434","name": "Доска разделочная из дуба, торцевая, большая, 40 х 30 см WD-0434 Woodeed","width": null,"length": null,"height": null,"gross": null } } ] } ],"total": 1,"last_id": 1 } }
+                type: object
+                properties:
+                  result:
+                    type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id:
+                              type: integer
+                              format: int64
+                              description: Идентификатор заказа
+                            to_warehouse_id:
+                              type: integer
+                              format: int64
+                              description: Идентификатор склада на который будет принят товар
+                            status:
+                              type: string
+                              description: Статус заказа
+                            date:
+                              type: string
+                              format: date-time
+                              description: Ожидаемая дата поступления заказа на склад
+                            accepted_at:
+                              type: string
+                              format: date-time
+                              nullable: true
+                              description: Дата приемки товара на склад. Равняется null если заказ не принят.
+                            created_at:
+                              type: string
+                              format: date-time
+                              description: Дата создания заказа
+                            updated_at:
+                              type: string
+                              format: date-time
+                              description: Дата обновления заказа
+                            items:
+                              type: array
+                              items:
+                                type: object
+                                properties:
+                                  id:
+                                    type: integer
+                                    format: int64
+                                    description: Уникальный идентификатор товара в заказе
+                                  company_id:
+                                    type: integer
+                                    format: int64
+                                    nullable: true
+                                    description: Идентификатор клиентской компании владельца товара
+                                  quantity:
+                                    type: integer
+                                    description: Ожидаемое кол-во товара
+                                  fact_quantity:
+                                    type: integer
+                                    nullable: true
+                                    description: Принятое на склад кол-во товара
+                                  product:
+                                    type: object
+                                    description: Товар в каталоге. Если товар удалён, все поля равны `null`.
+                                    properties:
+                                      id:
+                                        type: integer
+                                        format: int64
+                                        nullable: true
+                                        description: Уникальный идентификатор товара
+                                      article:
+                                        type: string
+                                        nullable: true
+                                        description: Артикул товара
+                                      name:
+                                        type: string
+                                        nullable: true
+                                        description: Название товара
+                                      width:
+                                        type: integer
+                                        nullable: true
+                                        description: >
+                                          Ширина в мм. `null` — не заполнено (или товар удалён). У товаров,
+                                          созданных через API без габаритов, вместо `null` может лежать `0`
+                                          (унаследованное поведение создания товара).
+                                      length:
+                                        type: integer
+                                        nullable: true
+                                        description: >
+                                          Длина в мм. `null` — не заполнено (или товар удалён). У товаров,
+                                          созданных через API без габаритов, вместо `null` может лежать `0`
+                                          (унаследованное поведение создания товара).
+                                      height:
+                                        type: integer
+                                        nullable: true
+                                        description: >
+                                          Высота в мм. `null` — не заполнено (или товар удалён). У товаров,
+                                          созданных через API без габаритов, вместо `null` может лежать `0`
+                                          (унаследованное поведение создания товара).
+                                      gross:
+                                        type: integer
+                                        nullable: true
+                                        description: Вес с упаковкой в граммах. `null` — не заполнено (или товар удалён).
+                      total:
+                        type: integer
+                        description: Кол-во элементов в свойстве data
+                      last_id:
+                        $ref: "#/components/schemas/CursorLastIdResponse"
+        '401':
+          $ref: "#/components/responses/Message"
+        '403':
+          $ref: "#/components/responses/Message"
+        '422':
+          $ref: "#/components/responses/Message"
+        '429':
+          $ref: "#/components/responses/Message"
+        '500':
+          $ref: "#/components/responses/Message"
+  /v1/orders/create:
+    post:
+      tags:
+        - Заказы на отгрузку
+      summary: Создание заказа на отгрузку
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              example: { "number": "MPFIT-111","company_id": 1,"shipment_date": "2024-04-20T09:20:06Z","note": "Упаковка в пупырку","items": [ { "product_id": 195911,"quantity": 10 },{ "product_id": 137539,"quantity": 10 } ] }
+              type: object
+              required:
+                - shipment_date
+                - items
+              properties:
+                number:
+                  type: string
+                  maxLength: 255
+                  nullable: true
+                  description: Номер заказа
+                company_id:
+                  type: integer
+                  format: int64
+                  nullable: true
+                  description: Идентификатор компании, если не указан то используется id компании для которой выпущен токен
+                shipment_date:
+                  type: string
+                  format: date-time
+                  description: Планируемая дата отгрузки
+                note:
+                  type: string
+                  nullable: true
+                  maxLength: 3000
+                  description: Примечание к заказу
+                items:
+                  type: array
+                  items:
+                    type: object
+                    required:
+                      - product_id
+                      - quantity
+                    properties:
+                      product_id:
+                        type: integer
+                        format: int64
+                        description: Уникальный идентификатор товара
+                      quantity:
+                        type: integer
+                        description: Кол-во товара
+      responses:
+        '201':
+          description: Ответ
+          content:
+            application/json:
+              schema:
+                example: { "order": { "id": 214986 } }
+                type: object
+                properties:
+                  order:
+                    type: object
+                    properties:
+                      id:
+                        type: integer
+                        format: int64
+                        description: Идентификатор созданного заказа
+        '401':
+          $ref: "#/components/responses/Message"
+        '403':
+          $ref: "#/components/responses/Message"
+        '422':
+          $ref: "#/components/responses/Message"
+        '429':
+          $ref: "#/components/responses/Message"
+        '500':
+          $ref: "#/components/responses/Message"
+  /v1/orders/archive:
+    post:
+      tags:
+        - Заказы на отгрузку
+      summary: Архивация заказов на отгрузку
+      description: >
+        Метод позволяет заархивировать один или несколько заказов на отгрузку.<br><br>
+        Каждый идентификатор обрабатывается независимо. В ответе возвращаются два массива:<br><br>
+        `archived` — идентификаторы успешно заархивированных заказов<br><br>
+        `failed` — идентификаторы заказов, которые не удалось заархивировать<br><br>
+        В `failed` попадают заказы, которые не найдены, недоступны для токена или не могут быть заархивированы в текущем статусе.<br><br>
+        Дублирующиеся идентификаторы в массиве `ids` автоматически удаляются.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              example: { "ids": [1,2,3] }
+              type: object
+              required:
+                - ids
+              properties:
+                ids:
+                  description: Идентификаторы заказов на отгрузку
+                  type: array
+                  minItems: 1
+                  maxItems: 100
+                  items:
+                    type: integer
+                    format: int64
+                    minimum: 1
+      responses:
+        '200':
+          description: Ответ
+          content:
+            application/json:
+              schema:
+                example: { "archived": [1,2], "failed": [3] }
+                type: object
+                properties:
+                  archived:
+                    description: Идентификаторы успешно заархивированных заказов
+                    type: array
+                    items:
+                      type: integer
+                      format: int64
+                  failed:
+                    description: Идентификаторы заказов, которые не удалось заархивировать
+                    type: array
+                    items:
+                      type: integer
+                      format: int64
+        '401':
+          $ref: "#/components/responses/Message"
+        '422':
+          $ref: "#/components/responses/Message"
+        '429':
+          $ref: "#/components/responses/Message"
+        '500':
+          $ref: "#/components/responses/Message"
+  /v2/orders/create:
+    post:
+      tags:
+        - Заказы на отгрузку
+      summary: Создание заказа на отгрузку
+      description: >
+        При создании заказа с типом "Внутренний" все "items", которые не относятся к смарт-товарам, будут проигнорированы.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              example: { "number": "MPFIT-111","company_id": 1,"shipment_date": "2024-04-20T09:20:06Z","order_type_id": 1,"note": "Упаковка в пупырку","items": [ { "product_id": 195911,"quantity": 10 },{ "product_id": 137539,"quantity": 10 } ] }
+              type: object
+              required:
+                - shipment_date
+                - items
+              properties:
+                number:
+                  type: string
+                  maxLength: 255
+                  nullable: true
+                  description: Номер заказа
+                company_id:
+                  type: integer
+                  format: int64
+                  nullable: true
+                  description: Идентификатор компании, если не указан то используется id компании для которой выпущен токен
+                shipment_date:
+                  type: string
+                  format: date-time
+                  description: Планируемая дата отгрузки
+                order_type_id:
+                  type: integer
+                  format: int64
+                  description: Идентификатор типа отгрузки
+                note:
+                  type: string
+                  nullable: true
+                  maxLength: 3000
+                  description: Примечание к заказу
+                items:
+                  type: array
+                  items:
+                    type: object
+                    required:
+                      - product_id
+                      - quantity
+                    properties:
+                      product_id:
+                        type: integer
+                        format: int64
+                        description: Уникальный идентификатор товара
+                      quantity:
+                        type: integer
+                        description: Кол-во товара
+      responses:
+        '201':
+          description: Ответ
+          content:
+            application/json:
+              schema:
+                example: { "ids": [ 1 ] }
+                type: object
+                properties:
+                  ids:
+                    description: Идентификаторы созданных заказов
+                    type: array
+                    items:
+                      type: integer
+                      format: int64
+        '401':
+          $ref: "#/components/responses/Message"
+        '403':
+          $ref: "#/components/responses/Message"
+        '422':
+          $ref: "#/components/responses/Message"
+        '429':
+          $ref: "#/components/responses/Message"
+        '500':
+          $ref: "#/components/responses/Message"
+  /v2/orders/{order_id}/labels:
+    post:
+      tags:
+        - Заказы на отгрузку
+      summary: Метод позволяет загрузить транспортную этикетку заказа
+      description: >
+        Загружает файл транспортной этикетки для заказа, созданного с типом отгрузки push-FBS.<br><br>
+        В отличие от `/v1/orders/{order_id}/labels`, который лишь дописывает ссылку в примечание,
+        этот метод сохраняет саму этикетку: после загрузки её печатает кладовщик при сборке заказа.<br><br>
+        Многостраничный PDF разбивается на страницы: каждая страница становится отдельной этикеткой.
+        Страниц в файле должно быть не больше 10.<br><br>
+        Повторная загрузка перезаписывает ранее загруженный файл. Этикетки страниц, которых нет
+        в новом файле, удаляются — кроме тех, что уже попали в задание на печать.
+      parameters:
+        - name: order_id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Идентификатор заказа
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Файл этикетки в формате PDF. Размер до 10 МБ, страниц не больше 10
+      responses:
+        '200':
+          description: Возвращается в случае успеха
+        '400':
+          $ref: "#/components/responses/Message"
+        '401':
+          $ref: "#/components/responses/Message"
+        '403':
+          $ref: "#/components/responses/Message"
+        '404':
+          $ref: "#/components/responses/Message"
+        '422':
+          $ref: "#/components/responses/Message"
+        '429':
+          $ref: "#/components/responses/Message"
+        '500':
+          $ref: "#/components/responses/Message"
+  /v1/orders/{order_id}:
+    get:
+      tags:
+        - Заказы на отгрузку
+      summary: Просмотр заказа на отгрузку
+      description: >
+        Метод позволяет получить информацию о заказе на отгрузку.
+      parameters:
+        - name: order_id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Идентификатор заказа
+      responses:
+        '200':
+          description: >-
+            Свойство source определяет источник заказа. Может принимать следующие значения:<br><br>
+            `MPFIT` - создан в MPFit<br><br>
+            `OZON` - импортирован с маркетплейса Озон<br><br>
+            `WB` - импортирован с маркетплейса Wildberries<br><br>
+            `YM` - импортирован с маркетплейса Яндекс Маркет<br><br>
+            `MM` - импортирован с маркетплейса Мегамаркет<br><br>
+            `LEMANAPRO` - импортирован с маркетплейса Лемана ПРО<br><br><br>
+
+            Статус заказа:<br><br>
+            `NEW` - новый<br><br>
+            `PRODUCTS_RESERVED` - весь товар в заказе зарезервирован<br><br>
+            `EQUIPMENT` - передан в комплектацию<br><br>
+            `READY_TO_SHIP` - готов к отгрузке<br><br>
+            `SHIPPED` - отгружен<br><br>
+            `DELIVERY` - в доставке<br><br>
+            `COMPLETE` - завершен<br><br>
+            `REJECT` - отмена клиентом<br><br>
+            `CANCEL` - отмена поставщиком<br><br>
+            `ARCHIVE` - в архиве<br><br><br>
+
+            Статус заказа на стороне маркетплейса возвращается в поле `marketplace_status` сырым кодом маркетплейса, его название на русском - в `marketplace_status_name`. Оба поля равны `null` у заказов, созданных в MPFit. Перечень кодов задаёт сам маркетплейс, MPFit передаёт их без изменений.<br><br>
+          content:
+            application/json:
+              schema:
+                example: { "result": { "id": 1,"number": "1666552413","company_id": 1,"source": "WB","status": "NEW","marketplace_status": "canceled","marketplace_status_name": "Отменено","marketplace_supplier_status": "confirm","marketplace_substatus": null,"shipment_date": "2024-05-02T13:33:28.000000Z", "shipment_date_actual": "2024-05-02T13:33:28.000000Z","created_at": "2024-05-01T13:33:28.000000Z","updated_at": "2024-05-01T13:34:04.000000Z","note": "string","items": [ { "id": 1,"quantity": 1,"note": "string","product": { "id": 1,"article": "BSD0016","name": "Мультидиск 30см Mini, мятный и синий","width": 300,"length": 300,"height": 150,"gross": 500 },"order_item_services": [ { "id": 1,"price": 10,"cost_price": 10,"service": { "id": 1,"name": "Сборка","price_type": "piece_prices","note": "Сборка" } } ] },{ "id": 2,"quantity": 1,"note": null,"product": { "id": null,"article": null,"name": null,"width": null,"length": null,"height": null,"gross": null },"order_item_services": [] } ],"order_services": [ { "id": 1,"price": 10,"cost_price": 10,"count": 1,"service": { "id": 1,"name": "Сборка","price_type": "piece_prices","note": "Сборка" } } ],"wb_supply_name": "WB-GI-111111111", "supply_name": "22.05 13:06","packaging_type": null,"packaging_quantity": null } }
+                type: object
+                properties:
+                  result:
+                    type: object
+                    properties:
+                      id:
+                        type: integer
+                        format: int64
+                        description: Идентификатор заказа
+                      number:
+                        type: string
+                        maxLength: 255
+                        description: Номер заказа
+                      company_id:
+                        type: integer
+                        format: int64
+                        description: Идентификатор компании
+                      source:
+                        type: string
+                        enum:
+                          - MPFIT
+                          - OZON
+                          - WB
+                          - YM
+                          - MM
+                          - LEMANAPRO
+                        description: Символьный код определяющий источник заказа
+                      status:
+                        type: string
+                        enum:
+                          - NEW
+                          - PRODUCTS_RESERVED
+                          - EQUIPMENT
+                          - READY_TO_SHIP
+                          - SHIPPED
+                          - DELIVERY
+                          - COMPLETE
+                          - REJECT
+                          - CANCEL
+                          - ARCHIVE
+                        description: Статус заказа
+                      marketplace_status:
+                        type: string
+                        nullable: true
+                        description: >
+                          Статус заказа на стороне маркетплейса, символьный код маркетплейса.
+                          `null` у заказов, созданных в MPFit, и у маркетплейсов, по которым
+                          статус не передаётся.
+                      marketplace_status_name:
+                        type: string
+                        nullable: true
+                        description: >
+                          Название статуса маркетплейса на русском. `null`, если код статуса
+                          неизвестен MPFit - сам код при этом возвращается в `marketplace_status`.
+                      marketplace_supplier_status:
+                        type: string
+                        nullable: true
+                        description: >
+                          Статус заказа на стороне продавца, заполняется только для Wildberries.
+                          `null`, пока Wildberries не сообщил статус.
+                      marketplace_substatus:
+                        type: string
+                        nullable: true
+                        description: >
+                          Подстатус заказа на стороне маркетплейса, заполняется только для Озон
+                          и Яндекс Маркета.
+                      shipment_date:
+                        type: string
+                        format: date-time
+                        description: Дата отгрузки
+                      shipment_date_actual:
+                        type: string
+                        format: date-time
+                        description: Дата отгрузки факт
+                      created_at:
+                        type: string
+                        format: date-time
+                        description: Дата создания заказа
+                      updated_at:
+                        type: string
+                        format: date-time
+                        description: Дата обновления заказа
+                      note:
+                        type: string
+                        nullable: true
+                        description: Примечание к заказу
+                      items:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id:
+                              type: integer
+                              format: int64
+                              description: Уникальный идентификатор товара в заказе
+                            quantity:
+                              type: integer
+                              description: Кол-во товара
+                            note:
+                              type: string
+                              nullable: true
+                              description: Примечание к товару в заказе
+                            product:
+                              type: object
+                              description: >
+                                Товар в каталоге. Если товар удалён (осиротевшая позиция), объект
+                                возвращается тем же набором полей, но все они равны `null`.
+                              properties:
+                                id:
+                                  type: integer
+                                  format: int64
+                                  nullable: true
+                                  description: Уникальный идентификатор товара
+                                article:
+                                  type: string
+                                  nullable: true
+                                  description: Артикул товара
+                                name:
+                                  type: string
+                                  nullable: true
+                                  description: Название товара
+                                width:
+                                  type: integer
+                                  nullable: true
+                                  description: >
+                                    Ширина в мм. `null` — не заполнено (или товар удалён). У товаров,
+                                    созданных через API без габаритов, вместо `null` может лежать `0`
+                                    (унаследованное поведение создания товара).
+                                length:
+                                  type: integer
+                                  nullable: true
+                                  description: >
+                                    Длина в мм. `null` — не заполнено (или товар удалён). У товаров,
+                                    созданных через API без габаритов, вместо `null` может лежать `0`
+                                    (унаследованное поведение создания товара).
+                                height:
+                                  type: integer
+                                  nullable: true
+                                  description: >
+                                    Высота в мм. `null` — не заполнено (или товар удалён). У товаров,
+                                    созданных через API без габаритов, вместо `null` может лежать `0`
+                                    (унаследованное поведение создания товара).
+                                gross:
+                                  type: integer
+                                  nullable: true
+                                  description: Вес с упаковкой в граммах. `null` — не заполнено (или товар удалён).
+                            order_item_services:
+                              type: array
+                              nullable: true
+                              description: Список услуг к товару в заказе, может равняться null
+                              items:
+                                type: object
+                                properties:
+                                  id:
+                                    type: integer
+                                    format: int64
+                                    description: Уникальный идентификатор услуги к товару в заказе
+                                  price:
+                                    type: integer
+                                    format: int64
+                                    description: Цена за услугу в копейках
+                                  cost_price:
+                                    type: integer
+                                    format: int64
+                                    nullable: true
+                                    description: Себестоимость услуги в копейках. Только для фулфилмент компаний
+                                  service:
+                                    type: object
+                                    description: Услуга в каталоге.
+                                    properties:
+                                      id:
+                                        type: integer
+                                        format: int64
+                                        description: Уникальный идентификатор услуги
+                                      name:
+                                        type: string
+                                        description: Название услуги
+                                      price_type:
+                                        type: string
+                                        enum:
+                                          - piece_prices
+                                          - volume_prices
+                                        description: Тип цены. piece_prices - цена за штуку. volume_prices - цена за м3
+                                      note:
+                                        type: string
+                                        nullable: true
+                                        description: Примечание к услуге. null если услуга не имеет примечания. null для компаний селлеров
+                      order_services:
+                        type: array
+                        nullable: true
+                        description: Список услуг в заказе, может равняться null
+                        items:
+                          type: object
+                          properties:
+                            id:
+                              type: integer
+                              format: int64
+                              description: Уникальный идентификатор услуги в заказе
+                            price:
+                              type: integer
+                              format: int64
+                              description: Цена за услугу в копейках
+                            cost_price:
+                              type: integer
+                              format: int64
+                              nullable: true
+                              description: Себестоимость услуги в копейках. Только для фулфилмент компаний
+                            count:
+                              type: integer
+                              description: Кол-во услуги
+                            service:
+                              type: object
+                              description: Услуга в каталоге.
+                              properties:
+                                id:
+                                  type: integer
+                                  format: int64
+                                  description: Уникальный идентификатор услуги
+                                name:
+                                  type: string
+                                  description: Название услуги
+                                price_type:
+                                  type: string
+                                  enum:
+                                    - piece_prices
+                                    - volume_prices
+                                  description: Тип цены. piece_prices - цена за штуку. volume_prices - цена за м3
+                                note:
+                                  type: string
+                                  nullable: true
+                                  description: Примечание к услуге. null если услуга не имеет примечания. null для компаний селлеров
+                      wb_supply_name:
+                        type: string
+                        nullable: true
+                        description: Название поставки в Wildberries. Для не WB заказов всегда null.
+                      supply_name:
+                        type: string
+                        nullable: true
+                        description: Название поставки в МПФИТ. Для не WB заказов всегда null.
+                      packaging_type:
+                        type: string
+                        nullable: true
+                        enum:
+                          - box
+                          - pallet
+                          - null
+                        description: >
+                          Тип грузомест в заявке на отгрузку. `box` - короба, `pallet` - паллеты.
+                          Заполняется только у заявок на отгрузку, собираемых по FBO; у всех
+                          остальных заказов `null`.
+                      packaging_quantity:
+                        type: integer
+                        nullable: true
+                        description: >
+                          Количество грузомест в заявке на отгрузку. Заполняется только у заявок
+                          на отгрузку, собираемых по FBO; у всех остальных заказов `null`.
+        '401':
+          $ref: "#/components/responses/Message"
+        '403':
+          $ref: "#/components/responses/Message"
+        '404':
+          $ref: "#/components/responses/Message"
+        '422':
+          $ref: "#/components/responses/Message"
+        '429':
+          $ref: "#/components/responses/Message"
+        '500':
+          $ref: "#/components/responses/Message"
+  /v1/orders/{order_id}/labels:
+    post:
+      tags:
+        - Заказы на отгрузку
+      summary: Метод позволяет добавить ссылку на этикетку к заказу
+      parameters:
+        - name: order_id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Идентификатор заказа
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              example: { "url": "https://domain.ru/label.pdf" }
+              type: object
+              required:
+                - url
+              properties:
+                url:
+                  type: string
+                  maxLength: 255
+                  nullable: true
+                  description: Номер заказа
+      responses:
+        '200':
+          description: Возвращается в случае успеха
+        '401':
+          $ref: "#/components/responses/Message"
+        '403':
+          $ref: "#/components/responses/Message"
+        '404':
+          $ref: "#/components/responses/Message"
+        '422':
+          $ref: "#/components/responses/Message"
+        '429':
+          $ref: "#/components/responses/Message"
+        '500':
+          $ref: "#/components/responses/Message"
+  /v1/orders/list:
+    post:
+      tags:
+        - Заказы на отгрузку
+      summary: Заказы на отгрузку
+      description: >
+        Метод позволяет получить список заказов на отгрузку.<br><br>
+        При фильтрации по `filter.statuses` заказ может перейти в запрошенный статус после того, как его идентификатор уже был пройден. Для повторного получения актуальной выборки начните с `last_id: 0`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              example: { "limit": 1,"last_id": 0,"filter": { "statuses": [ "NEW" ] } }
+              type: object
+              required:
+                - limit
+                - last_id
+              properties:
+                limit:
+                  description: Кол-во элементов в ответе
+                  type: integer
+                  minimum: 1
+                  maximum: 200
+                last_id:
+                  $ref: "#/components/schemas/CursorLastIdRequest"
+                filter:
+                  type: object
+                  properties:
+                    company_id:
+                      description: Идентификатор компании для которой нужно получить заказы, если не указан то возвращаются заказы компании для которой был выпущен токен
+                      type: integer
+                      minimum: 1
+                      nullable: true
+                    ids:
+                      description: Идентификаторы заказов
+                      type: array
+                      items:
+                        type: integer
+                        format: int64
+                    statuses:
+                      description: Символьные коды статусов заказа
+                      type: array
+                      items:
+                        type: string
+                        enum:
+                          - NEW
+                          - PRODUCTS_RESERVED
+                          - EQUIPMENT
+                          - READY_TO_SHIP
+                          - SHIPPED
+                          - DELIVERY
+                          - COMPLETE
+                          - REJECT
+                          - CANCEL
+                          - ARCHIVE
+      responses:
+        '200':
+          description: >-
+            Свойство source определяет источник заказа. Может принимать следующие значения:<br><br>
+            `MPFIT` - создан в MPFit<br><br>
+            `OZON` - импортирован с маркетплейса Озон<br><br>
+            `WB` - импортирован с маркетплейса Wildberries<br><br>
+            `YM` - импортирован с маркетплейса Яндекс Маркет<br><br>
+            `MM` - импортирован с маркетплейса Мегамаркет<br><br>
+            `LEMANAPRO` - импортирован с маркетплейса Лемана ПРО<br><br><br>
+
+            Статус заказа:<br><br>
+            `NEW` - новый<br><br>
+            `PRODUCTS_RESERVED` - весь товар в заказе зарезервирован<br><br>
+            `EQUIPMENT` - передан в комплектацию<br><br>
+            `READY_TO_SHIP` - готов к отгрузке<br><br>
+            `SHIPPED` - отгружен<br><br>
+            `DELIVERY` - в доставке<br><br>
+            `COMPLETE` - завершен<br><br>
+            `REJECT` - отмена клиентом<br><br>
+            `CANCEL` - отмена поставщиком<br><br>
+            `ARCHIVE` - в архиве<br><br><br>
+
+            Статус заказа на стороне маркетплейса возвращается в поле `marketplace_status` сырым кодом маркетплейса, его название на русском - в `marketplace_status_name`. Оба поля равны `null` у заказов, созданных в MPFit. Перечень кодов задаёт сам маркетплейс, MPFit передаёт их без изменений.<br><br>
+          content:
+            application/json:
+              schema:
+                example: { "result": { "data": [ { "id": 1,"number": "1666552413","company_id": 1,"source": "WB","status": "NEW","marketplace_status": "canceled","marketplace_status_name": "Отменено","marketplace_supplier_status": "confirm","marketplace_substatus": null,"shipment_date": "2024-05-02T13:33:28.000000Z","shipment_date_actual": "2024-05-02T13:33:28.000000Z","created_at": "2024-05-01T13:33:28.000000Z","updated_at": "2024-05-01T13:34:04.000000Z","items": [ { "id": 1,"quantity": 1,"product": { "id": 1,"article": "BSD0016","name": "Мультидиск 30см Mini, мятный и синий","width": 300,"length": 300,"height": 150,"gross": 500 } } ],"wb_supply_name": "WB-GI-111111111","supply_name": "22.05 13:06","order_type": "Название направления заказа на отгрузку","packaging_type": null,"packaging_quantity": null } ],"total": 1,"last_id": 1 } }
+                type: object
+                properties:
+                  result:
+                    type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id:
+                              type: integer
+                              format: int64
+                              description: Идентификатор заказа на отгрузку
+                            number:
+                              type: string
+                              maxLength: 255
+                              description: Номер заказа
+                            company_id:
+                              type: integer
+                              format: int64
+                              description: Идентификатор компании
+                            source:
+                              type: string
+                              enum:
+                                - MPFIT
+                                - OZON
+                                - WB
+                                - YM
+                                - MM
+                                - LEMANAPRO
+                              description: Символьный код определяющий источник заказа
+                            status:
+                              type: string
+                              enum:
+                                - NEW
+                                - PRODUCTS_RESERVED
+                                - EQUIPMENT
+                                - READY_TO_SHIP
+                                - SHIPPED
+                                - DELIVERY
+                                - COMPLETE
+                                - REJECT
+                                - CANCEL
+                                - ARCHIVE
+                              description: Статус заказа
+                            marketplace_status:
+                              type: string
+                              nullable: true
+                              description: >
+                                Статус заказа на стороне маркетплейса, символьный код маркетплейса.
+                                `null` у заказов, созданных в MPFit, и у маркетплейсов, по которым
+                                статус не передаётся.
+                            marketplace_status_name:
+                              type: string
+                              nullable: true
+                              description: >
+                                Название статуса маркетплейса на русском. `null`, если код статуса
+                                неизвестен MPFit - сам код при этом возвращается в `marketplace_status`.
+                            marketplace_supplier_status:
+                              type: string
+                              nullable: true
+                              description: >
+                                Статус заказа на стороне продавца, заполняется только для Wildberries.
+                                `null`, пока Wildberries не сообщил статус.
+                            marketplace_substatus:
+                              type: string
+                              nullable: true
+                              description: >
+                                Подстатус заказа на стороне маркетплейса, заполняется только для Озон
+                                и Яндекс Маркета.
+                            shipment_date:
+                              type: string
+                              format: date-time
+                              description: Дата отгрузки план
+                            shipment_date_actual:
+                              type: string
+                              format: date-time
+                              description: Дата отгрузки факт
+                            created_at:
+                              type: string
+                              format: date-time
+                              description: Дата создания заказа
+                            updated_at:
+                              type: string
+                              format: date-time
+                              description: Дата обновления заказа
+                            items:
+                              type: array
+                              items:
+                                type: object
+                                properties:
+                                  id:
+                                    type: integer
+                                    format: int64
+                                    description: Уникальный идентификатор товара в заказе
+                                  quantity:
+                                    type: integer
+                                    description: Кол-во товара
+                                  product:
+                                    type: object
+                                    description: >
+                                      Товар в каталоге. Если товар удалён (осиротевшая позиция), объект
+                                      возвращается тем же набором полей, но все они равны `null`.
+                                    properties:
+                                      id:
+                                        type: integer
+                                        format: int64
+                                        nullable: true
+                                        description: Уникальный идентификатор товара
+                                      article:
+                                        type: string
+                                        nullable: true
+                                        description: Артикул товара
+                                      name:
+                                        type: string
+                                        nullable: true
+                                        description: Название товара
+                                      width:
+                                        type: integer
+                                        nullable: true
+                                        description: >
+                                          Ширина в мм. `null` — не заполнено (или товар удалён). У товаров,
+                                          созданных через API без габаритов, вместо `null` может лежать `0`
+                                          (унаследованное поведение создания товара).
+                                      length:
+                                        type: integer
+                                        nullable: true
+                                        description: >
+                                          Длина в мм. `null` — не заполнено (или товар удалён). У товаров,
+                                          созданных через API без габаритов, вместо `null` может лежать `0`
+                                          (унаследованное поведение создания товара).
+                                      height:
+                                        type: integer
+                                        nullable: true
+                                        description: >
+                                          Высота в мм. `null` — не заполнено (или товар удалён). У товаров,
+                                          созданных через API без габаритов, вместо `null` может лежать `0`
+                                          (унаследованное поведение создания товара).
+                                      gross:
+                                        type: integer
+                                        nullable: true
+                                        description: Вес с упаковкой в граммах. `null` — не заполнено (или товар удалён).
+                            wb_supply_name:
+                              type: string
+                              nullable: true
+                              description: Название поставки в Wildberries. Для не WB заказов всегда null.
+                            supply_name:
+                              type: string
+                              nullable: true
+                              description: Название поставки в МПФИТ. Для не WB заказов всегда null.
+                            order_type:
+                              type: string
+                              nullable: true
+                              description: Название направления заказа на отгрузку. Список всех направлений можно получить с помощью метода /v1/orders/types/list
+                            packaging_type:
+                              type: string
+                              nullable: true
+                              enum:
+                                - box
+                                - pallet
+                                - null
+                              description: >
+                                Тип грузомест в заявке на отгрузку. `box` - короба, `pallet` -
+                                паллеты. Заполняется только у заявок на отгрузку, собираемых
+                                по FBO; у всех остальных заказов `null`.
+                            packaging_quantity:
+                              type: integer
+                              nullable: true
+                              description: >
+                                Количество грузомест в заявке на отгрузку. Заполняется только
+                                у заявок на отгрузку, собираемых по FBO; у всех остальных
+                                заказов `null`.
+                      total:
+                        type: integer
+                        description: Кол-во элементов в свойстве data
+                      last_id:
+                        $ref: "#/components/schemas/CursorLastIdResponse"
+        '401':
+          $ref: "#/components/responses/Message"
+        '403':
+          $ref: "#/components/responses/Message"
+        '422':
+          $ref: "#/components/responses/Message"
+        '429':
+          $ref: "#/components/responses/Message"
+        '500':
+          $ref: "#/components/responses/Message"
+  /v1/orders/types/list:
+    post:
+      tags:
+        - Заказы на отгрузку
+      summary: Список направлений заказов на отгрузку
+      description: >
+        Метод позволяет получить список направлений заказов на отгрузку
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              example: { "limit": 1,"last_id": 0,"filter": { "ids": [ 1 ] } }
+              type: object
+              required:
+                - limit
+                - last_id
+              properties:
+                limit:
+                  description: Кол-во элементов в ответе
+                  type: integer
+                  minimum: 1
+                  maximum: 200
+                last_id:
+                  $ref: "#/components/schemas/CursorLastIdRequest"
+                filter:
+                  type: object
+                  properties:
+                    ids:
+                      description: Идентификаторы сущностей. Если в массиве будет указан id сущности, к которой у токена нет доступа, то id будет проигнорирован без предупреждения.
+                      type: array
+                      items:
+                        type: integer
+                        format: int64
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                example: { "result": { "data": [ { "id": 1,"name": "Стандарт","created_at": "2024-05-07T07:21:48.603Z","updated_at": "2024-05-07T07:21:48.603Z" } ],"total": 1,"last_id": 1 } }
+                type: object
+                properties:
+                  result:
+                    type: object
+                    properties:
+                      data:
+                        type: array
+                        description: Список направлений заказов на отгрузку
+                        items:
+                          type: object
+                          properties:
+                            id:
+                              type: integer
+                              format: int64
+                              description: Уникальный идентификатор направления
+                            name:
+                              type: string
+                              maxLength: 255
+                              description: Название направления
+                            created_at:
+                              type: string
+                              format: date-time
+                              description: Дата создания направления
+                            updated_at:
+                              type: string
+                              format: date-time
+                              description: Дата обновления направления
+                      total:
+                        type: integer
+                        description: Кол-во элементов в свойстве data
+                      last_id:
+                        $ref: "#/components/schemas/CursorLastIdResponse"
+        '401':
+          $ref: "#/components/responses/Message"
+        '403':
+          $ref: "#/components/responses/Message"
+        '422':
+          $ref: "#/components/responses/Message"
+        '429':
+          $ref: "#/components/responses/Message"
+        '500':
+          $ref: "#/components/responses/Message"
+  /v1/companies/list:
+    post:
+      tags:
+        - Компании
+      summary: Компании
+      description: Метод позволяет получить список доступных компаний
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              example: { "limit": 200,"last_id": 0,"filter": { "ids": [ 1 ] } }
+              type: object
+              required:
+                - limit
+                - last_id
+              properties:
+                limit:
+                  description: Кол-во элементов в ответе
+                  type: integer
+                  minimum: 1
+                  maximum: 200
+                last_id:
+                  $ref: "#/components/schemas/CursorLastIdRequest"
+                filter:
+                  type: object
+                  properties:
+                    ids:
+                      description: Идентификаторы сущностей
+                      type: array
+                      items:
+                        type: integer
+                        format: int64
+                    inn:
+                      description: ИНН компании
+                      type: string
+                      maxLength: 50
+      responses:
+        '200':
+          description: >-
+            Свойство type определяет тип компании. Может принимать следующие значения:<br><br>
+            `FF` - компания фулфилмент, имеет склады, занимается сборкой заказов<br><br>
+            `CLIENT` - компания клиент фулфилмента<br><br>
+          content:
+            application/json:
+              schema:
+                example: { "result": { "data": [ { "id": 1,"name": "ООО 'Успешный успех'","type": "CLIENT","inn": "123456789","email": null,"created_at": "2022-04-12T12:15:04.000000Z","updated_at": "2023-02-14T13:20:53.000000Z" } ],"total": 1,"last_id": 1 } }
+                type: object
+                properties:
+                  result:
+                    type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id:
+                              type: integer
+                              format: int64
+                              description: Идентификатор компании
+                            name:
+                              type: string
+                              maxLength: 255
+                              description: Название
+                            type:
+                              type: string
+                              enum:
+                                - FF
+                                - CLIENT
+                              description: Символьный код определяющий тип компании
+                            inn:
+                              type: string
+                              nullable: true
+                              description: ИНН
+                            email:
+                              type: string
+                              maxLength: 255
+                              nullable: true
+                              description: email
+                            created_at:
+                              type: string
+                              format: date-time
+                              description: Дата создания
+                            updated_at:
+                              type: string
+                              format: date-time
+                              description: Дата обновления
+                      total:
+                        type: integer
+                        description: Кол-во элементов в свойстве data
+                      last_id:
+                        $ref: "#/components/schemas/CursorLastIdResponse"
+        '401':
+          $ref: "#/components/responses/Message"
+        '403':
+          $ref: "#/components/responses/Message"
+        '422':
+          $ref: "#/components/responses/Message"
+        '429':
+          $ref: "#/components/responses/Message"
+        '500':
+          $ref: "#/components/responses/Message"
+  /v1/companies/{company_id}/balance:
+    post:
+      tags:
+        - Компании
+      summary: Пополнение баланса
+      description: Метод позволяет пополнить баланс компании
+      parameters:
+        - name: company_id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Уникальный идентификатор компании
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              example: { "amount": 20000, "transaction_id": "1234qwe", "description": "test description" }
+              type: object
+              required:
+                - amount
+                - transaction_id
+              properties:
+                amount:
+                  description: Сумма пополнения баланса в копейках (для списания передайте отрицательное число)
+                  type: integer
+                transaction_id:
+                  description: Уникальный идентификатор перевода. Запрос в повтором transaction_id будет отклонен
+                  type: string
+                  maxLength: 100
+                description:
+                  description: Примечание
+                  type: string
+                  maxLength: 150
+                  nullable: true
+      responses:
+        '200':
+          $ref: "#/components/responses/ResultResponse"
+        '403':
+          $ref: "#/components/responses/Message"
+        '422':
+          $ref: "#/components/responses/Message"
+        '429':
+          $ref: "#/components/responses/Message"
+        '500':
+          $ref: "#/components/responses/Message"
+  /v1/products/categories/list:
+    post:
+      tags:
+        - Каталог
+      summary: Список категорий товаров
+      description: >
+        Метод доступен только для компаний с типом 'фулфилмент', позволяет получить список существующих категорий товаров.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              example: { "limit": 200,"last_id": 0,"filter": { "ids": [ 1 ] } }
+              type: object
+              required:
+                - limit
+                - last_id
+              properties:
+                limit:
+                  description: Кол-во элементов в ответе
+                  type: integer
+                  minimum: 1
+                  maximum: 200
+                last_id:
+                  $ref: "#/components/schemas/CursorLastIdRequest"
+                filter:
+                  type: object
+                  properties:
+                    ids:
+                      description: Идентификаторы сущностей. Если в массиве будет указан id сущности к которой у токена нет доступа, то id будет проигнорирован без предупреждения.
+                      type: array
+                      items:
+                        type: integer
+                        format: int64
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                example: { "result": { "data": [ { "id": 1,"name": "Стандарт","created_at": "2024-05-07T07:21:48.603Z","updated_at": "2024-05-07T07:21:48.603Z" } ],"total": 1,"last_id": 1 } }
+                type: object
+                properties:
+                  result:
+                    type: object
+                    properties:
+                      data:
+                        type: array
+                        description: Список категорий
+                        items:
+                          type: object
+                          properties:
+                            id:
+                              type: integer
+                              format: int64
+                              description: Уникальный идентификатор категории
+                            name:
+                              type: string
+                              maxLength: 255
+                              description: Название категории
+                            created_at:
+                              type: string
+                              format: date-time
+                              description: Дата создания категории
+                            updated_at:
+                              type: string
+                              format: date-time
+                              description: Дата обновления категории
+                      total:
+                        type: integer
+                        description: Кол-во категорий в свойстве data
+                      last_id:
+                        $ref: "#/components/schemas/CursorLastIdResponse"
+        '401':
+          $ref: "#/components/responses/Message"
+        '403':
+          $ref: "#/components/responses/Message"
+        '405':
+          $ref: "#/components/responses/Message"
+        '422':
+          $ref: "#/components/responses/Message"
+        '429':
+          $ref: "#/components/responses/Message"
+        '500':
+          $ref: "#/components/responses/Message"
+  /v1/invoices/list:
+    post:
+      tags:
+        - Счета
+      summary: Счета
+      description: >
+        Метод доступен только для компаний с типом 'фулфилмент', позволяет получить список счетов.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              example: { "limit": 200,"last_id": 0,"filter": { "ids": [ 1 ], "company_id": 1, "number": "123-123-123" } }
+              type: object
+              required:
+                - limit
+                - last_id
+              properties:
+                limit:
+                  description: Кол-во элементов в ответе
+                  type: integer
+                  minimum: 1
+                  maximum: 200
+                last_id:
+                  $ref: "#/components/schemas/CursorLastIdRequest"
+                filter:
+                  type: object
+                  properties:                    
+                    ids:
+                      description: Идентификаторы сущностей. Если в массиве будет указан id сущности к которой у токена нет доступа, то id будет проигнорирован без предупреждения.
+                      type: array
+                      items:
+                        type: integer
+                        format: int64
+                    company_id:
+                      description: Идентификатор компании, для которой выставлен счет.
+                      type: integer
+                      minimum: 1
+                      nullable: true
+                    number:
+                      description: Номер счета.
+                      type: string
+                      maxLength: 255
+                      nullable: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                example: {"result":{"data":[{"id":1753,"number":"2-1211-2653260","company_id":2,"status":"PAID","total":700000,"total_paid":700000,"date_of_creation":"2024-11-12","comment":"Оплата услуг с 5 по 10 ноября","operations":[{"id":13846,"name":"Оплата услуг с 5 по 10 ноября","unit":"шт.","quantity":1,"price":700000,"total":700000,"vat":5,"created_at":"2024-11-12T10:30:55.000000Z","updated_at":"2024-11-12T10:30:55.000000Z"}],"created_at":"2024-11-12T10:30:55.000000Z","updated_at":"2025-01-31T06:33:48.000000Z"},{"id":1762,"number":"3-1211-2653287","company_id":3,"status":"PAID","total":300000,"total_paid":300000,"date_of_creation":"2024-11-12","comment":"","operations":[{"id":13899,"name":"Услуги с 5 по 10 ноября","unit":"шт.","quantity":1,"price":300000,"total":300000,"vat":null,"created_at":"2024-11-12T13:05:35.000000Z","updated_at":"2024-11-12T13:05:35.000000Z"}],"created_at":"2024-11-12T13:05:35.000000Z","updated_at":"2025-01-31T06:33:48.000000Z"}],"total":2,"last_id":1762}}
+                type: object
+                properties:
+                  result:
+                    type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id:
+                              type: integer
+                              format: int64
+                              description: Уникальный идентификатор счета
+                            number:
+                              type: string
+                              description: Номер счета
+                            company_id:
+                              type: integer
+                              format: int64
+                              description: Уникальный идентификатор компании на которую выставлен счет
+                            status:
+                              type: string
+                              enum:
+                                - NOT_PAID
+                                - PARTIALLY_PAID
+                                - PAID
+                              description: Статус
+                            total:
+                              type: integer
+                              format: int64
+                              description: Сумма по счету в копейках
+                            total_paid:
+                              type: integer
+                              format: int64
+                              description: Всего оплачено по счету в копейках
+                            date_of_creation:
+                              type: string
+                              format: date
+                              description: Дата создания счета
+                            comment:
+                              type: string
+                              description: Комментарий
+                            created_at:
+                              type: string
+                              format: date-time
+                              description: Дата создания счета
+                            updated_at:
+                              type: string
+                              format: date-time
+                              description: Дата обновления счета
+                            operations:
+                              type: array
+                              items:
+                                type: object
+                                properties:
+                                  id:
+                                    type: integer
+                                    format: int64
+                                    description: Уникальный идентификатор номенклатуры
+                                  name:
+                                    type: string
+                                    description: Наименование
+                                  unit:
+                                    type: string
+                                    description: Ед. измерения
+                                  quantity:
+                                    type: integer
+                                    format: int64
+                                    description: Кол-во
+                                  price:
+                                    type: integer
+                                    format: int64
+                                    description: Цена в копейках
+                                  total:
+                                    type: integer
+                                    format: int64
+                                    description: Стоимость в копейках
+                                  vat:
+                                    type: integer
+                                    format: int32
+                                    nullable: true
+                                    description: Ставка НДС
+                                  created_at:
+                                    type: string
+                                    format: date-time
+                                    description: Дата создания
+                                  updated_at:
+                                    type: string
+                                    format: date-time
+                                    description: Дата обновления
+                      total:
+                        type: integer
+                        description: Кол-во элементов в свойстве data
+                      last_id:
+                        $ref: "#/components/schemas/CursorLastIdResponse"
+        '401':
+          $ref: "#/components/responses/Message"
+        '403':
+          $ref: "#/components/responses/Message"
+        '422':
+          $ref: "#/components/responses/Message"
+        '429':
+          $ref: "#/components/responses/Message"
+        '500':
+          $ref: "#/components/responses/Message"
+  /v1/analytics/storage/list:
+    post:
+      tags:
+        - Аналитика
+      summary: Данные хранения
+      description: >
+        Метод позволяет получить данные хранения за указанный период.<br><br>
+        Для компании с типом «фулфилмент» возвращаются данные по своей компании и своим селлерам.<br><br>
+        Для компании с типом «селлер» возвращаются данные только по своей компании.<br><br>
+        Если в фильтре указаны `company_ids`, к которым у токена нет доступа, они будут проигнорированы без предупреждения.
+      requestBody:
+        required: true
+        description: >
+          `filter.date_from` - начало периода (включительно).<br><br>
+          `filter.date_to` - конец периода (включительно). Должна быть больше или равна `filter.date_from`.
+        content:
+          application/json:
+            schema:
+              example: { "limit": 200, "last_id": 0, "filter": { "date_from": "2026-01-01", "date_to": "2026-12-31", "company_ids": [ 2 ] } }
+              type: object
+              required:
+                - limit
+                - last_id
+                - filter
+              properties:
+                limit:
+                  description: Кол-во элементов в ответе
+                  type: integer
+                  minimum: 1
+                  maximum: 200
+                last_id:
+                  $ref: "#/components/schemas/CursorLastIdRequest"
+                filter:
+                  type: object
+                  required:
+                    - date_from
+                    - date_to
+                  properties:
+                    date_from:
+                      description: Начало периода (включительно)
+                      type: string
+                      format: date
+                    date_to:
+                      description: Конец периода (включительно)
+                      type: string
+                      format: date
+                    company_ids:
+                      description: Идентификаторы компаний. Если в массиве будет указан id компании к которой у токена нет доступа, то id будет проигнорирован без предупреждения.
+                      type: array
+                      items:
+                        type: integer
+                        format: int64
+                        minimum: 1
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                example: { "result": { "data": [ { "id": 8077629, "company_id": 1, "company_name": "ИП ТЕСТ", "service_type_id": 1, "service_type": "по объему товара", "amount": 15000, "date": "2026-02-18" } ], "total": 1, "last_id": 8077629 } }
+                type: object
+                properties:
+                  result:
+                    type: object
+                    properties:
+                      data:
+                        type: array
+                        description: Список записей хранения
+                        items:
+                          type: object
+                          properties:
+                            id:
+                              type: integer
+                              format: int64
+                              description: Уникальный идентификатор записи
+                            company_id:
+                              type: integer
+                              format: int64
+                              description: Идентификатор компании
+                            company_name:
+                              type: string
+                              description: Название компании
+                            service_type_id:
+                              type: integer
+                              format: int64
+                              description: Идентификатор типа услуги хранения
+                            service_type:
+                              type: string
+                              description: Название типа услуги хранения
+                            amount:
+                              type: integer
+                              format: int64
+                              description: Сумма хранения в копейках.
+                            date:
+                              type: string
+                              format: date
+                              description: Дата записи
+                      total:
+                        type: integer
+                        description: Кол-во элементов в свойстве data
+                      last_id:
+                        $ref: "#/components/schemas/CursorLastIdResponse"
+        '401':
+          $ref: "#/components/responses/Message"
+        '422':
+          $ref: "#/components/responses/Message"
+        '429':
+          $ref: "#/components/responses/Message"
+        '500':
+          $ref: "#/components/responses/Message"
+  /v1/cim-codes:
+    post:
+      tags:
+        - КИЗ
+      summary: Список использованных КИЗов
+      description: >
+        Метод возвращает список использованных КИЗов (по заявкам на отгрузку и приемку).<br><br>
+        Связь КИЗа с заказом или приемкой может появиться или измениться после создания КИЗа. `last_id` не позволяет получить такие изменения.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CommonRequest_2"
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                example:
+                  result:
+                    data:
+                      - cim: "1111111111111111111111111111111"
+                        order_id: 1213113
+                        arrival_id: 121334113
+                        product_id: 546465
+                    total: 1
+                    last_id: 999
+                type: object
+                properties:
+                  result:
+                    type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          type: object
+                          required:
+                            - cim
+                            - order_id
+                            - arrival_id
+                            - product_id
+                          properties:
+                            cim:
+                              type: string
+                              description: КИЗ
+                            order_id:
+                              type: integer
+                              format: int64
+                              nullable: true
+                              description: Идентификатор заявки на отгрузку, если КИЗ привязан к отгрузке
+                            arrival_id:
+                              type: integer
+                              format: int64
+                              nullable: true
+                              description: Идентификатор заявки на приемку, если КИЗ привязан к приемке
+                            product_id:
+                              type: integer
+                              format: int64
+                              description: Идентификатор товара
+                      total:
+                        type: integer
+                        description: Кол-во элементов в свойстве data
+                      last_id:
+                        $ref: "#/components/schemas/CursorLastIdResponse"
+        '401':
+          $ref: "#/components/responses/Message"
+        '403':
+          $ref: "#/components/responses/Message"
+        '422':
+          $ref: "#/components/responses/Message"
+        '429':
+          $ref: "#/components/responses/Message"
+        '500':
+          $ref: "#/components/responses/Message"
+  /v1/invoices/{invoice_id}/payment:
+    patch:
+      tags:
+        - Счета
+      summary: Изменение данных об оплате
+      description: >
+        Метод доступен только для компаний с типом 'фулфилмент', позволяет установить значение суммы оплаты по счету. Сумма передается в копейках. В соответствии с переданной суммой меняется статус счета.
+      parameters:
+        - name: invoice_id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Уникальный идентификатор счета
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              example: { "total_paid": 20000 }
+              type: object
+              required:
+                - total_paid
+              properties:
+                total_paid:
+                  description: Сумма оплаты в копейках
+                  type: integer
+                  minimum: 0
+      responses:
+        '200':
+          $ref: "#/components/responses/ResultResponse"
+        '403':
+          $ref: "#/components/responses/Message"
+        '422':
+          $ref: "#/components/responses/Message"
+        '429':
+          $ref: "#/components/responses/Message"
+        '500':
+          $ref: "#/components/responses/Message"
