@@ -194,6 +194,56 @@ async def api_ledger_del(entry_id: str):
     return {"ok": True}
 
 
+@app.get("/api/invoices")
+async def api_invoices():
+    return await _t(report.invoices)
+
+
+@app.post("/api/invoices/{number}/paid")
+async def api_invoice_paid(number: str, payload: dict, request: Request):
+    """Отметить оплату счёта: пишем «Оплата от клиента» в журнал со ссылкой на
+    счёт. В МПФИТ ничего не меняем — только в своём учёте."""
+    inv = {i["number"]: i for i in await _t(report.invoices)}
+    i = inv.get(number)
+    if not i:
+        return JSONResponse({"error": "счёт не найден"}, status_code=404)
+    amount = float(payload.get("amount") or i["debt"])
+    if amount <= 0:
+        return JSONResponse({"error": "по счёту нет долга"}, status_code=400)
+    e = {"date": str(payload.get("date") or "")[:10], "kind": "client_payment", "category": "Прочее",
+         "amount": amount, "method": payload.get("method") or "rs",
+         "note": f"Оплата счёта МПФИТ {number} ({i['company']})", "invoice": number}
+    try:
+        _check_entry(e)
+    except Exception:
+        return JSONResponse({"error": "проверьте дату и сумму"}, status_code=400)
+    return {"id": await _t(store.ledger_add, e, _user(request))}
+
+
+@app.get("/api/recurring")
+async def api_recurring():
+    return await _t(store.recurring_list)
+
+
+@app.post("/api/recurring")
+async def api_recurring_save(payload: dict):
+    from datetime import date
+    try:
+        date.fromisoformat(str(payload.get("start_date")))
+        if payload.get("end_date"):
+            date.fromisoformat(str(payload["end_date"]))
+        assert float(payload.get("amount")) > 0 and payload.get("name")
+    except Exception:
+        return JSONResponse({"error": "название, сумма и дата начала обязательны"}, status_code=400)
+    return {"id": await _t(store.recurring_save, payload)}
+
+
+@app.delete("/api/recurring/{rid}")
+async def api_recurring_del(rid: str):
+    await _t(store.recurring_delete, rid)
+    return {"ok": True}
+
+
 @app.post("/api/sync")
 async def api_sync():
     t = asyncio.create_task(sync.run_once())

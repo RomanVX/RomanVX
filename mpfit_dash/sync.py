@@ -164,16 +164,17 @@ async def sync_invoices():
     rows = await mp.paginate("/v1/invoices/list", limit=200, max_pages=50)
     import json
     db.executemany(
-        "INSERT INTO m_invoices (id, number, company_id, status, date, total, paid, ops, updated_at) "
-        "VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT (id) DO UPDATE SET status = excluded.status, "
-        "total = excluded.total, paid = excluded.paid, ops = excluded.ops, updated_at = excluded.updated_at",
+        "INSERT INTO m_invoices (id, number, company_id, status, date, total, paid, ops, updated_at, created_ts) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT (id) DO UPDATE SET status = excluded.status, "
+        "total = excluded.total, paid = excluded.paid, ops = excluded.ops, updated_at = excluded.updated_at, "
+        "created_ts = excluded.created_ts",
         [(i["id"], i.get("number"), i.get("company_id"), i.get("status"),
           (i.get("date_of_creation") or i.get("created_at") or "")[:10],
           (i.get("total") or 0) / 100, (i.get("total_paid") or 0) / 100,
           json.dumps([{"name": o.get("name"), "qty": o.get("quantity"), "price": (o.get("price") or 0) / 100,
                        "total": (o.get("total") or 0) / 100} for o in i.get("operations") or []],
                      ensure_ascii=False),
-          _utc(i.get("updated_at"))) for i in rows])
+          _utc(i.get("updated_at")), _utc(i.get("created_at"))) for i in rows])
 
 
 async def alert_missing():

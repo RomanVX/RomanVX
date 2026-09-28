@@ -68,13 +68,34 @@ def orders() -> list[dict]:
     return out
 
 
+def _invoice_fbs_price() -> dict:
+    """Последняя цена «Отгрузка FBS» за единицу по клиенту из счетов МПФИТ."""
+    out = {}
+    for cid, ops in db.fetchall("SELECT company_id, ops FROM m_invoices ORDER BY date"):
+        for op in json.loads(ops or "[]"):
+            if "отгрузка" in (op.get("name") or "").lower() and op.get("price"):
+                out[cid] = op["price"]
+    return out
+
+
 def _unit_price(os_: list[dict]) -> dict:
-    """Средняя цена «Отгрузки FBS» за единицу по компании — для оценки потерь."""
+    """Цена «Отгрузки FBS» за единицу по клиенту: медиана по 60 последним
+    проверенным заказам (свежая цена, после ДС она меняется), иначе из счетов."""
     per = defaultdict(list)
-    for o in os_:
-        if o["svc_checked"] and not o["svc_missing"] and o["units"]:
+    for o in sorted(os_, key=lambda o: o["s"] or datetime.min, reverse=True):
+        if o["svc_checked"] and not o["svc_missing"] and o["units"] and len(per[o["company_id"]]) < 60:
             per[o["company_id"]].append(o["svc_revenue"] / o["units"])
-    return {k: statistics.median(v) for k, v in per.items() if v}
+    price = _invoice_fbs_price()
+    price.update({k: statistics.median(v) for k, v in per.items() if v})
+    return price
+
+
+def _value(o: dict, price: dict) -> float:
+    """Стоимость отгрузки заказа для клиента: точная, если карточка проверена,
+    иначе оценка по цене клиента (пока идёт догрузка карточек из МПФИТ)."""
+    if o["svc_checked"]:
+        return o["svc_revenue"]
+    return price.get(o["company_id"], 55) * (o["units"] or 1)
 
 
 def summary() -> dict:
@@ -85,14 +106,14 @@ def summary() -> dict:
     week = today - timedelta(days=7)
     created = Counter(o["c"].date() for o in os_ if o["c"])
     shipped = Counter(o["s"].date() for o in os_ if o["s"])
+    price = _unit_price(os_)
     rev = defaultdict(float)
     for o in os_:
-        if o["s"] and o["svc_checked"]:
-            rev[o["s"].date()] += o["svc_revenue"]
+        if o["s"] and o["status"] in store.SHIPPED:
+            rev[o["s"].date()] += _value(o, price)
     open_ = [o for o in os_ if o["status"] in ("NEW", "PRODUCTS_RESERVED", "EQUIPMENT", "READY_TO_SHIP")]
     age = [(now - o["c"]).total_seconds() / 3600 for o in open_ if o["c"]]
     overdue = sum(1 for o in open_ if o["plan_ok"] and o["p"] < now)
-    price = _unit_price(os_)
     miss = [o for o in os_ if o["svc_missing"]]
     lost = lambda lst: round(sum(price.get(o["company_id"], 55) * (o["units"] or 1) for o in lst))
     miss_today = [o for o in miss if o["s"] and o["s"].date() == today]
@@ -262,8 +283,53 @@ def clients() -> list[dict]:
     return sorted(out, key=lambda r: -r["orders_30"])
 
 
+def _month_days(mk: str) -> tuple[date, date]:
+    d0 = datetime.strptime(mk + "-01", "%Y-%m-%d").date()
+    d1 = (d0.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
+    return d0, d1
+
+
+def recurring_for_month(mk: str, full: bool = False) -> dict:
+    """Начисление постоянных платежей в месяц, пропорционально дням действия.
+    full=True — за весь месяц (для прогноза), иначе по сегодняшний день
+    не ограничиваем: расход месяца признаётся целиком, как по договору."""
+    d0, d1 = _month_days(mk)
+    days_in = (d1 - d0).days + 1
+    out = defaultdict(float)
+    for r in store.recurring_list():
+        s_ = date.fromisoformat(r["start_date"])
+        e_ = date.fromisoformat(r["end_date"]) if r["end_date"] else d1
+        a, b = max(d0, s_), min(d1, e_)
+        if a > b:
+            continue
+        out[r["category"]] += r["amount"] * ((b - a).days + 1) / days_in
+    return out
+
+
+def invoices() -> list[dict]:
+    """Счета МПФИТ с учётом оплат из журнала: если клиент оплатил, а в МПФИТ
+    счёт не отмечен, оплату фиксируют в журнале со ссылкой на номер счёта."""
+    comp = companies()
+    led = defaultdict(float)
+    for e in store.ledger_list():
+        if e["kind"] == "client_payment" and e.get("invoice"):
+            led[e["invoice"]] += e["amount"]
+    out = []
+    for i, num, cid, st, dt_, tot, paid, created in db.fetchall(
+            "SELECT id, number, company_id, status, date, total, paid, created_ts FROM m_invoices "
+            "ORDER BY date DESC"):
+        eff = max(paid or 0, led.get(num, 0))
+        out.append({"id": i, "number": num, "company": _short(comp.get(cid, {}).get("name") or str(cid)),
+                    "company_id": cid, "date": dt_, "created": created, "total": round(tot or 0, 2),
+                    "paid_mpfit": round(paid or 0, 2), "paid": round(min(eff, tot or 0), 2),
+                    "debt": round(max(0, (tot or 0) - eff), 2), "mpfit_status": st,
+                    "paid_by_ledger": led.get(num, 0) > (paid or 0)})
+    return out
+
+
 def finance(months: int = 6) -> dict:
     os_ = orders()
+    comp = companies()
     today = _now_msk().date()
     mks = []
     d = today.replace(day=1)
@@ -271,54 +337,95 @@ def finance(months: int = 6) -> dict:
         mks.append(d.strftime("%Y-%m"))
         d = (d - timedelta(days=1)).replace(day=1)
     mks.reverse()
-    accrued, svc_cost = defaultdict(float), defaultdict(float)
+    price = _unit_price(os_)
+    # выручка по начислению: отгруженные заказы месяца × цена клиента
+    fbs, fbs_est, svc_cost = defaultdict(float), defaultdict(float), defaultdict(float)
     for o in os_:
-        if o["s"] and o["svc_checked"]:
+        if o["s"] and o["status"] in store.SHIPPED:
             mk = o["s"].strftime("%Y-%m")
-            accrued[mk] += o["svc_revenue"]
-            svc_cost[mk] += o["svc_cost"]
+            v = _value(o, price)
+            fbs[mk] += v
+            if not o["svc_checked"]:
+                fbs_est[mk] += v
+            svc_cost[mk] += o["svc_cost"] if o["svc_checked"] else 0
+    inv = invoices()
     billed, paid, other = defaultdict(float), defaultdict(float), defaultdict(float)
-    for dt_, t, p, ops in db.fetchall("SELECT date, total, paid, ops FROM m_invoices"):
-        mk = (dt_ or "")[:7]
-        billed[mk] += t or 0
-        paid[mk] += p or 0
+    for i in inv:
+        mk = (i["date"] or "")[:7]
+        billed[mk] += i["total"]
+        paid[mk] += i["paid"]
+    for dt_, ops in db.fetchall("SELECT date, ops FROM m_invoices"):
         for op in json.loads(ops or "[]"):
-            if "отгрузка fbs" not in (op.get("name") or "").lower():
-                other[mk] += op.get("total") or 0
-    exp = defaultdict(lambda: defaultdict(float))
+            n = (op.get("name") or "").lower()
+            if "отгрузка" not in n:     # приёмка, хранение, разбор коробов и т.п.
+                other[(dt_ or "")[:7]] += op.get("total") or 0
+    # расходы: разовые из журнала + постоянные платежи начислением
+    one_off = defaultdict(lambda: defaultdict(float))
     inv_ = defaultdict(float)
     cash = {"cash": 0.0, "rs": 0.0}
     for e in store.ledger_list():
         mk = e["date"][:7]
-        if e["kind"] == "expense" and e["in_ff"]:
-            exp[mk][e["category"]] += e["amount"]
+        if e["kind"] == "expense" and e["in_ff"] and not e.get("recurring_id"):
+            one_off[mk][e["category"]] += e["amount"]
         if e["kind"] == "investment" and e["in_ff"]:
             inv_[mk] += e["amount"]
         if e["method"] in cash:
-            sign = 1 if e["kind"] in ("funding", "client_payment", "other_income") else -1
             if e["kind"] == "investment" and e["method"] == "personal":
                 continue
+            sign = 1 if e["kind"] in ("funding", "client_payment", "other_income") else -1
             cash[e["method"]] += sign * e["amount"]
-    cats = sorted({c for m in exp.values() for c in m}, key=lambda c: -sum(exp[m][c] for m in exp))
+    rec = {mk: recurring_for_month(mk) for mk in mks}
+    cats = set()
+    for mk in mks:
+        cats |= set(one_off[mk]) | set(rec[mk])
     rows = []
     for mk in mks:
-        e_tot = sum(exp[mk].values())
+        by_cat = defaultdict(float)
+        for c, v in one_off[mk].items():
+            by_cat[c] += v
+        for c, v in rec[mk].items():
+            by_cat[c] += v
+        e_tot = sum(by_cat.values())
+        revenue = fbs[mk] + other[mk]
         rows.append({
-            "month": mk, "accrued": round(accrued[mk]), "billed": round(billed[mk]),
-            "other_billed": round(other[mk]), "paid": round(paid[mk]),
-            "svc_cost": round(svc_cost[mk]), "expenses": round(e_tot),
-            "by_cat": {c: round(exp[mk].get(c, 0)) for c in cats},
+            "month": mk, "revenue": round(revenue), "fbs": round(fbs[mk]), "fbs_est": round(fbs_est[mk]),
+            "other": round(other[mk]), "billed": round(billed[mk]), "paid": round(paid[mk]),
+            "svc_cost": round(svc_cost[mk]),
+            "recurring": round(sum(rec[mk].values())), "one_off": round(sum(one_off[mk].values())),
+            "expenses": round(e_tot), "by_cat": {c: round(by_cat.get(c, 0)) for c in cats},
             "investments": round(inv_[mk]),
-            # выручка по начислению: «Отгрузка FBS» по отгруженным заказам месяца
-            # + ручные строки счетов (короба, разбор, прочее), которые не из заказов
-            "revenue": round(accrued[mk] + other[mk]),
-            "profit": round(accrued[mk] + other[mk] - e_tot),
-            "margin": round(100 * (accrued[mk] + other[mk] - e_tot) / (accrued[mk] + other[mk]))
-            if accrued[mk] + other[mk] else None,
+            "profit": round(revenue - e_tot),
+            "margin": round(100 * (revenue - e_tot) / revenue) if revenue else None,
         })
-    tb, tp = sum(billed.values()), sum(paid.values())
-    return {"months": rows, "categories": cats, "cash": {k: round(v, 2) for k, v in cash.items()},
-            "debt": round(tb - tp), "billed_total": round(tb), "paid_total": round(tp)}
+    # ожидаемая выручка: отгружено после последнего счёта клиента (ещё не выставлено)
+    # + выставлено, но не оплачено
+    last_inv = {}
+    for i in inv:
+        ts = i["created"] or (i["date"] + "T23:59:59")
+        last_inv[i["company_id"]] = max(last_inv.get(i["company_id"], ""), ts)
+    unbilled = defaultdict(float)
+    for o in os_:
+        if o["shipped_at"] and o["status"] in store.SHIPPED:
+            cut = last_inv.get(o["company_id"], "")
+            if o["shipped_at"] > cut:
+                unbilled[o["company_id"]] += _value(o, price)
+    unpaid = defaultdict(float)
+    for i in inv:
+        unpaid[i["company_id"]] += i["debt"]
+    exp_rows = []
+    for cid in set(unbilled) | {k for k, v in unpaid.items() if v}:
+        exp_rows.append({"company": _short(comp.get(cid, {}).get("name") or str(cid)),
+                         "unbilled": round(unbilled[cid]), "unpaid": round(unpaid[cid]),
+                         "total": round(unbilled[cid] + unpaid[cid]),
+                         "since": (last_inv.get(cid) or "")[:10]})
+    exp_rows.sort(key=lambda r: -r["total"])
+    cats_sorted = sorted(cats, key=lambda c: -sum(r["by_cat"].get(c, 0) for r in rows))
+    return {"months": rows, "categories": cats_sorted, "cash": {k: round(v, 2) for k, v in cash.items()},
+            "billed_total": round(sum(i["total"] for i in inv)), "paid_total": round(sum(i["paid"] for i in inv)),
+            "debt": round(sum(i["debt"] for i in inv)),
+            "expected": {"unbilled": round(sum(unbilled.values())), "unpaid": round(sum(unpaid.values())),
+                         "total": round(sum(unbilled.values()) + sum(unpaid.values())), "rows": exp_rows},
+            "estimated_share": round(100 * sum(r["fbs_est"] for r in rows) / max(1, sum(r["fbs"] for r in rows)))}
 
 
 def plan_fact() -> dict:
@@ -331,6 +438,8 @@ def plan_fact() -> dict:
     fin = {r["month"]: r for r in finance(2)["months"]}.get(mk, {})
     fact = {"orders": s["orders_month"], "revenue": fin.get("revenue", 0),
             "expenses": fin.get("expenses", 0)}
+    rec_full = sum(recurring_for_month(mk).values())
+    one_off = fin.get("one_off", 0)
     fact["profit"] = fact["revenue"] - fact["expenses"]
     plan = store.plan_get().get(mk, {})
     rows = []
@@ -338,8 +447,18 @@ def plan_fact() -> dict:
                       ("expenses", "Расходы, ₽"), ("profit", "Прибыль, ₽")):
         f = fact[key]
         forecast = round(f / passed * days_in) if passed else None
+        if key == "expenses":      # постоянные платежи уже начислены за весь месяц
+            forecast = round(one_off / passed * days_in + rec_full) if passed else None
+        if key == "profit":
+            forecast = None        # досчитаем ниже из прогнозов выручки и расходов
         p = plan.get(key)
         rows.append({"key": key, "name": name, "plan": p, "fact": round(f), "forecast": forecast,
                      "done_pct": round(100 * f / p) if p else None,
                      "forecast_pct": round(100 * forecast / p) if p and forecast is not None else None})
+    byk = {r["key"]: r for r in rows}
+    pr = byk["profit"]
+    if byk["revenue"]["forecast"] is not None and byk["expenses"]["forecast"] is not None:
+        pr["forecast"] = byk["revenue"]["forecast"] - byk["expenses"]["forecast"]
+        if pr["plan"]:
+            pr["forecast_pct"] = round(100 * pr["forecast"] / pr["plan"])
     return {"month": mk, "days_passed": passed, "days_in_month": days_in, "rows": rows}

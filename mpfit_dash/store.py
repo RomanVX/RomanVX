@@ -43,7 +43,16 @@ SCHEMA = [
         method TEXT, note TEXT, in_ff INTEGER DEFAULT 1, author TEXT, created_at TEXT)""",
     """CREATE TABLE IF NOT EXISTS plan (
         month TEXT, metric TEXT, value REAL, PRIMARY KEY (month, metric))""",
+    # постоянные платежи: начисляются в расходы каждого месяца по дням действия,
+    # а сама оплата в журнале (с recurring_id) идёт только в движение денег
+    """CREATE TABLE IF NOT EXISTS recurring (
+        id TEXT PRIMARY KEY, name TEXT, category TEXT, amount REAL,
+        start_date TEXT, end_date TEXT, note TEXT)""",
 ]
+
+# колонки, добавленные после первой версии (ALTER без IF NOT EXISTS — для SQLite)
+_ADD_COLUMNS = [("ledger", "invoice", "TEXT"), ("ledger", "recurring_id", "TEXT"),
+                ("m_invoices", "created_ts", "TEXT")]
 
 # статусы, после которых «Отгрузка FBS» уже должна стоять
 SHIPPED = ("SHIPPED", "DELIVERY", "COMPLETE")
@@ -58,7 +67,13 @@ CATEGORIES = ["Аренда", "ФОТ", "Оборудование", "Расхо�
 def init():
     for sql in SCHEMA:
         db.execute(sql)
+    for table, col, typ in _ADD_COLUMNS:
+        try:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
+        except Exception:
+            pass    # колонка уже есть
     seed_ledger()
+    seed_recurring()
 
 
 def kv_get(k, default=None):
@@ -116,18 +131,21 @@ def ledger_add(e: dict, author: str) -> str:
     from datetime import datetime
     i = str(uuid.uuid4())
     db.execute(
-        "INSERT INTO ledger (id, date, kind, category, amount, method, note, in_ff, author, created_at) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO ledger (id, date, kind, category, amount, method, note, in_ff, author, created_at, "
+        "invoice, recurring_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
         (i, e["date"], e["kind"], e.get("category") or "Прочее", float(e["amount"]),
          e.get("method") or "", e.get("note") or "", 1 if e.get("in_ff", True) else 0,
-         author, datetime.utcnow().isoformat(timespec="seconds")))
+         author, datetime.utcnow().isoformat(timespec="seconds"),
+         e.get("invoice") or None, e.get("recurring_id") or None))
     return i
 
 
 def ledger_update(i: str, e: dict):
-    db.execute("UPDATE ledger SET date=?, kind=?, category=?, amount=?, method=?, note=?, in_ff=? WHERE id=?",
+    db.execute("UPDATE ledger SET date=?, kind=?, category=?, amount=?, method=?, note=?, in_ff=?, "
+               "recurring_id=? WHERE id=?",
                (e["date"], e["kind"], e.get("category") or "Прочее", float(e["amount"]),
-                e.get("method") or "", e.get("note") or "", 1 if e.get("in_ff", True) else 0, i))
+                e.get("method") or "", e.get("note") or "", 1 if e.get("in_ff", True) else 0,
+                e.get("recurring_id") or None, i))
 
 
 def ledger_delete(i: str):
@@ -135,9 +153,10 @@ def ledger_delete(i: str):
 
 
 def ledger_list() -> list[dict]:
-    rows = db.fetchall("SELECT id, date, kind, category, amount, method, note, in_ff, author "
-                       "FROM ledger ORDER BY date DESC, created_at DESC")
-    keys = ("id", "date", "kind", "category", "amount", "method", "note", "in_ff", "author")
+    rows = db.fetchall("SELECT id, date, kind, category, amount, method, note, in_ff, author, "
+                       "invoice, recurring_id FROM ledger ORDER BY date DESC, created_at DESC")
+    keys = ("id", "date", "kind", "category", "amount", "method", "note", "in_ff", "author",
+            "invoice", "recurring_id")
     return [dict(zip(keys, r)) for r in rows]
 
 
@@ -155,3 +174,50 @@ def plan_set(month: str, metric: str, value):
         db.execute("INSERT INTO plan (month, metric, value) VALUES (?,?,?) "
                    "ON CONFLICT (month, metric) DO UPDATE SET value = excluded.value",
                    (month, metric, float(value)))
+
+
+# ── постоянные платежи ────────────────────────────────────────────────────────
+# Аренда: счёт № 9325 — 61 456,27 ₽ за 11 дней сентября (с 20.09) →
+# 61 456,27 / 11 × 30 = 167 608 ₽ в месяц. МПФИТ: 24 990 ₽ оплачено 30.08,
+# принято помесячно — период подписки уточнить у владельца.
+_REC_SEED = [
+    ("rec-rent", "Аренда склада, Чехов (Чеховский Печатный Двор)", "Аренда", 167608.01,
+     "2026-09-20", None, "Из счёта № 9325: 61 456,27 ₽ за 11 дней сентября. Проверить ставку по договору аренды № 232",
+     "seed-017"),
+    ("rec-mpfit", "МПФИТ, подписка WMS", "ПО и сервисы", 24990,
+     "2026-08-30", None, "Оплачено 30.08. Принято как ежемесячный платёж — уточнить период подписки",
+     "seed-002"),
+]
+
+
+def seed_recurring():
+    if kv_get("recurring_seeded"):
+        return
+    for rid, name, cat, amt, start, end, note, led in _REC_SEED:
+        db.execute("INSERT INTO recurring (id, name, category, amount, start_date, end_date, note) "
+                   "VALUES (?,?,?,?,?,?,?) ON CONFLICT (id) DO NOTHING",
+                   (rid, name, cat, amt, start, end, note))
+        db.execute("UPDATE ledger SET recurring_id = ? WHERE id = ?", (rid, led))
+    kv_set("recurring_seeded", True)
+
+
+def recurring_list() -> list[dict]:
+    keys = ("id", "name", "category", "amount", "start_date", "end_date", "note")
+    return [dict(zip(keys, r)) for r in db.fetchall(
+        f"SELECT {', '.join(keys)} FROM recurring ORDER BY start_date")]
+
+
+def recurring_save(e: dict) -> str:
+    i = e.get("id") or f"rec-{uuid.uuid4().hex[:8]}"
+    db.execute("INSERT INTO recurring (id, name, category, amount, start_date, end_date, note) "
+               "VALUES (?,?,?,?,?,?,?) ON CONFLICT (id) DO UPDATE SET name = excluded.name, "
+               "category = excluded.category, amount = excluded.amount, start_date = excluded.start_date, "
+               "end_date = excluded.end_date, note = excluded.note",
+               (i, e["name"], e.get("category") or "Прочее", float(e["amount"]),
+                e["start_date"], e.get("end_date") or None, e.get("note") or ""))
+    return i
+
+
+def recurring_delete(i: str):
+    db.execute("DELETE FROM recurring WHERE id = ?", (i,))
+    db.execute("UPDATE ledger SET recurring_id = NULL WHERE recurring_id = ?", (i,))

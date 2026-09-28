@@ -120,7 +120,13 @@ input,select{font:inherit;padding:6px 8px;border:1px solid var(--line);border-ra
   <div class="grid k3" id="finKpi"></div>
   <div class="card" style="margin-top:12px"><h2>Доходы и расходы по месяцам</h2><div class="chart"><canvas id="c-fin"></canvas></div></div>
   <div class="card" style="margin-top:12px"><h2>Отчёт о прибыли</h2><div class="tw"><table id="pnl"></table></div>
-  <div class="note">Выручка по начислению: «Отгрузка FBS» по отгруженным за месяц заказам плюс строки счетов МПФИТ, внесённые вручную (короба, разбор и т.п.). Расходы — из журнала. Вложения в оборудование за счёт партнёров показаны отдельно и в прибыль не входят.</div></div>
+  <div class="note" id="pnlNote"></div></div>
+  <div class="row2">
+    <div class="card"><h2>Счета МПФИТ</h2><div class="tw" style="max-height:420px"><table id="invTbl"></table></div>
+      <div class="note">Если клиент оплатил, а в МПФИТ счёт не отмечен — нажмите «Оплачен». Оплата запишется в журнал со ссылкой на счёт, в МПФИТ ничего не меняется.</div></div>
+    <div class="card"><h2>Ожидаемая выручка</h2><div class="tw"><table id="expTbl"></table></div>
+      <div class="note">Не выставлено — отгрузки клиента после его последнего счёта, по его цене за отгрузку. Не оплачено — выставленные счета без оплаты.</div></div>
+  </div>
 </section>
 
 <section id="t-plan" class="hidden">
@@ -145,11 +151,25 @@ input,select{font:inherit;padding:6px 8px;border:1px solid var(--line);border-ra
       <label>Сумма, ₽<input type="number" name="amount" min="0.01" step="0.01" required></label>
       <label>Оплата<select name="method"><option value="rs">Расчётный счёт</option><option value="cash">Наличные</option><option value="personal">Лично (вложение)</option><option value="">Не указано</option></select></label>
       <label style="flex:1;min-width:200px">Комментарий<input name="note"></label>
+      <label>Постоянный платёж<select name="recurring_id" id="recSel"><option value="">— разовый расход —</option></select></label>
       <label style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" name="in_ff" checked>для ФФ</label>
       <input type="hidden" name="id">
       <button class="btn pri" id="ledSave">Добавить</button>
       <button type="button" class="btn hidden" id="ledCancel">Отмена</button>
     </form></div>
+  <div class="card" style="margin-top:12px"><h2>Постоянные платежи · расходы будущих периодов</h2>
+    <div class="tw"><table id="recTbl"></table></div>
+    <form class="inline" id="recForm" style="margin-top:12px">
+      <label style="flex:1;min-width:180px">Название<input name="name" required></label>
+      <label>Статья<select name="category" id="recCat"></select></label>
+      <label>В месяц, ₽<input type="number" name="amount" min="0.01" step="0.01" required></label>
+      <label>С<input type="date" name="start_date" required></label>
+      <label>По<input type="date" name="end_date"></label>
+      <label style="flex:1;min-width:180px">Комментарий<input name="note"></label>
+      <input type="hidden" name="id">
+      <button class="btn pri" id="recSave">Добавить</button>
+    </form>
+    <div class="note">Постоянный платёж начисляется в расходы каждого месяца пропорционально дням действия, независимо от даты оплаты. Сама оплата в журнале, привязанная к платежу, идёт только в движение денег — так аренда за квартал не «съест» прибыль одного месяца.</div></div>
   <div class="card" style="margin-top:12px"><h2>Журнал</h2><div class="tw"><table id="ledTbl"></table></div>
     <div class="note">Оплаты от клиентов пишутся для остатков по кассе и счёту, в выручку не идут — выручка берётся из счетов МПФИТ.</div></div>
 </section>
@@ -258,27 +278,48 @@ async function loadClients(){
 
 // ── финансы ──
 async function loadFin(){
-  const f=await api('/api/finance?months=12');const first=f.months.findIndex(r=>r.revenue||r.expenses||r.billed);const m=first<0?f.months.slice(-1):f.months.slice(first);const cur=m[m.length-1]||{};
-  $('#finKpi').innerHTML=kpi('Выручка месяца',rub(cur.revenue),'по начислению')+kpi('Расходы месяца',rub(cur.expenses),'из журнала')+
+  const [f,inv]=await Promise.all([api('/api/finance?months=12'),api('/api/invoices')]);
+  const first=f.months.findIndex(r=>r.revenue||r.expenses||r.billed);const m=first<0?f.months.slice(-1):f.months.slice(first);
+  const cur=m[m.length-1]||{};const ex=f.expected;
+  $('#finKpi').innerHTML=
+    kpi('Выручка месяца',rub(cur.revenue),`начислено по отгрузкам${cur.fbs_est?` · из них оценка ${rub(cur.fbs_est)}`:''}`)+
+    kpi('Расходы месяца',rub(cur.expenses),`постоянные ${rub(cur.recurring)} · разовые ${rub(cur.one_off)}`)+
     kpi('Прибыль месяца',rub(cur.profit),cur.margin==null?'':`маржа ${cur.margin}%`,cur.profit<0?'alert':'good')+
-    kpi('Долг клиентов',rub(f.debt),`выставлено ${rub(f.billed_total)}`,f.debt?'':'good')+
-    kpi('Расчётный счёт',rub(f.cash.rs),'по журналу')+kpi('Наличные',rub(f.cash.cash),'по журналу');
+    kpi('Ожидаемая выручка',rub(ex.total),`не выставлено ${rub(ex.unbilled)} · не оплачено ${rub(ex.unpaid)}`)+
+    kpi('Оплачено клиентами',rub(f.paid_total),f.debt?`долг ${rub(f.debt)}`:`все ${inv.length} счетов оплачены`,f.debt?'':'good')+
+    kpi('Деньги',rub(f.cash.rs+f.cash.cash),`счёт ${rub(f.cash.rs)} · наличные ${rub(f.cash.cash)}`);
   chart('c-fin',{type:'bar',data:{labels:m.map(r=>r.month),datasets:[
     {label:'Выручка',data:m.map(r=>r.revenue),backgroundColor:'#93c5fd'},
     {label:'Расходы',data:m.map(r=>r.expenses),backgroundColor:'#fca5a5'},
     {label:'Прибыль',data:m.map(r=>r.profit),type:'line',borderColor:'#059669',tension:.3}]},options:baseOpts()});
   const row=(lab,get,cls='')=>`<tr class="${cls}"><td>${lab}</td>${m.map(r=>`<td>${get(r)}</td>`).join('')}</tr>`;
+  const sub=t=>'&nbsp;&nbsp;&nbsp;'+t;
   $('#pnl').innerHTML=`<tr><th>Статья</th>${m.map(r=>`<th>${r.month}</th>`).join('')}</tr>`+
-    row('<b>Выручка</b>',r=>'<b>'+rub(r.revenue)+'</b>')+
-    row('&nbsp;&nbsp;начислено «Отгрузка FBS»',r=>rub(r.revenue-r.other_billed))+
-    row('&nbsp;&nbsp;прочие услуги из счетов',r=>rub(r.other_billed))+
-    row('Выставлено счетов',r=>rub(r.billed))+row('Оплачено клиентами',r=>rub(r.paid))+
+    row('<b>Выручка (начислено)</b>',r=>'<b>'+rub(r.revenue)+'</b>')+
+    row(sub('Отгрузка FBS'),r=>rub(r.fbs)+(r.fbs_est?` <span class="muted" title="часть по оценке, пока догружаются карточки">*</span>`:''))+
+    row(sub('Приёмка, хранение, коробa и пр. из счетов'),r=>rub(r.other))+
+    row('Выставлено счетов',r=>rub(r.billed))+
+    row('Оплачено клиентами',r=>rub(r.paid))+
     row('<b>Расходы</b>',r=>'<b>'+rub(r.expenses)+'</b>')+
-    f.categories.map(c=>row('&nbsp;&nbsp;'+esc(c),r=>rub(r.by_cat[c]))).join('')+
+    row(sub('постоянные (аренда, МПФИТ)'),r=>rub(r.recurring))+
+    row(sub('разовые'),r=>rub(r.one_off))+
+    f.categories.map(c=>row(sub(sub(esc(c))),r=>rub(r.by_cat[c]))).join('')+
     row('<b>Прибыль</b>',r=>`<b class="${r.profit<0?'down':'up'}">${rub(r.profit)}</b>`)+
     row('Маржа',r=>r.margin==null?'—':r.margin+'%')+
-    row('Вложения (не в прибыли)',r=>rub(r.investments));
+    row('Вложения в оборудование (не в прибыли)',r=>rub(r.investments));
+  $('#pnlNote').innerHTML=`Выручка — по дате отгрузки: «Отгрузка FBS» по цене клиента плюс прочие строки счетов МПФИТ. Расходы — постоянные платежи начислением по дням месяца плюс разовые из журнала.${f.estimated_share?` <b>*</b> ${f.estimated_share}% отгрузок пока посчитаны по цене клиента: карточки заказов ещё догружаются из МПФИТ, цифра уточнится сама.`:''}`;
+  $('#invTbl').innerHTML='<tr><th>Счёт</th><th>Клиент</th><th>Дата</th><th>Сумма</th><th>Статус</th></tr>'+
+    inv.map(i=>`<tr><td>${esc(i.number)}</td><td class="l">${esc(i.company)}</td><td>${esc((i.date||'').split('-').reverse().join('.'))}</td><td>${rub(i.total)}</td>
+    <td>${i.debt>0?`<span class="pill p-warn">долг ${rub(i.debt)}</span> <button class="btn" data-pay="${esc(i.number)}" data-amt="${i.debt}">Оплачен</button>`:
+      `<span class="pill p-ok">оплачен</span>${i.paid_by_ledger?' <span class="muted" title="Отмечено в журнале, в МПФИТ счёт не отмечен">*</span>':''}`}</td></tr>`).join('');
+  $('#expTbl').innerHTML='<tr><th>Клиент</th><th>Не выставлено</th><th>Не оплачено</th><th>Итого</th><th>Посл. счёт</th></tr>'+
+    (ex.rows.length?ex.rows.map(r=>`<tr><td>${esc(r.company)}</td><td>${rub(r.unbilled)}</td><td>${r.unpaid?rub(r.unpaid):'—'}</td><td><b>${rub(r.total)}</b></td><td>${esc((r.since||'').split('-').reverse().join('.'))||'—'}</td></tr>`).join('')
+      +`<tr><td><b>Итого</b></td><td><b>${rub(ex.unbilled)}</b></td><td><b>${rub(ex.unpaid)}</b></td><td><b>${rub(ex.total)}</b></td><td></td></tr>`:'<tr><td class="l muted" colspan="5">Ничего не ожидается</td></tr>');
 }
+$('#invTbl').onclick=async e=>{const n=e.target.dataset.pay;if(!n)return;
+  const d=prompt(`Дата оплаты счёта ${n} (ГГГГ-ММ-ДД):`,new Date().toISOString().slice(0,10));if(!d)return;
+  try{await api(`/api/invoices/${encodeURIComponent(n)}/paid`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:d,amount:e.target.dataset.amt,method:'rs'})});loadFin()}
+  catch(err){alert('Не сохранилось: '+err.message)}};
 
 // ── план/факт ──
 async function loadPlan(){
@@ -298,24 +339,38 @@ $('#planForm').onsubmit=async e=>{e.preventDefault();const f=e.target;const b={m
 
 // ── журнал ──
 let led={rows:[]};
+let recs=[];
+async function loadRecurring(){
+  recs=await api('/api/recurring');
+  if(!$('#recCat').options.length)$('#recCat').innerHTML=led.categories.map(c=>`<option>${c}</option>`).join('');
+  $('#recSel').innerHTML='<option value="">— разовый расход —</option>'+recs.map(r=>`<option value="${r.id}">${esc(r.name)}</option>`).join('');
+  $('#recTbl').innerHTML='<tr><th>Платёж</th><th>Статья</th><th>В месяц</th><th>С</th><th>По</th><th style="text-align:left">Комментарий</th><th></th></tr>'+
+    (recs.map(r=>`<tr><td class="l">${esc(r.name)}</td><td>${esc(r.category)}</td><td>${rub(r.amount)}</td><td>${r.start_date.split('-').reverse().join('.')}</td><td>${r.end_date?r.end_date.split('-').reverse().join('.'):'бессрочно'}</td>
+      <td class="l muted">${esc(r.note)}</td><td><button class="btn" data-red="${r.id}">Изм.</button> <button class="btn" data-rdel="${r.id}" aria-label="Удалить">✕</button></td></tr>`).join('')||'<tr><td class="l muted" colspan="7">Нет</td></tr>');
+}
+$('#recTbl').onclick=async e=>{const d=e.target.dataset;
+  if(d.rdel&&confirm('Удалить постоянный платёж? Привязанные оплаты станут разовыми расходами.')){await api('/api/recurring/'+d.rdel,{method:'DELETE'});loadLedger()}
+  if(d.red){const r=recs.find(x=>x.id===d.red);const f=$('#recForm');['id','name','category','amount','start_date','end_date','note'].forEach(k=>f[k].value=r[k]??'');$('#recSave').textContent='Сохранить'}};
+$('#recForm').onsubmit=async e=>{e.preventDefault();const f=e.target;const b={};['id','name','category','amount','start_date','end_date','note'].forEach(k=>b[k]=f[k].value);
+  try{await api('/api/recurring',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});f.reset();f.id.value='';$('#recSave').textContent='Добавить';loadLedger()}catch(err){alert('Не сохранилось: '+err.message)}};
 async function loadLedger(){
-  led=await api('/api/ledger');
+  led=await api('/api/ledger');await loadRecurring();
   if(!$('#kindSel').options.length){$('#kindSel').innerHTML=Object.entries(led.kinds).map(([k,v])=>`<option value="${k}">${v}</option>`).join('');
     $('#catSel').innerHTML=led.categories.map(c=>`<option>${c}</option>`).join('');$('#ledForm').date.valueAsDate=new Date()}
   const meth={rs:'РС',cash:'Нал',personal:'Лично','':'—'};
   $('#ledTbl').innerHTML='<tr><th>Дата</th><th>Тип</th><th>Статья</th><th>Сумма</th><th>Оплата</th><th style="text-align:left">Комментарий</th><th>Кто</th><th></th></tr>'+
     led.rows.map(r=>`<tr style="${r.in_ff?'':'opacity:.55'}"><td>${r.date.split('-').reverse().join('.')}</td><td>${esc(led.kinds[r.kind]||r.kind)}</td><td>${esc(r.category)}</td>
-    <td class="${['funding','client_payment','other_income'].includes(r.kind)?'up':''}">${rub(r.amount)}</td><td>${meth[r.method]??esc(r.method)}</td><td class="l">${esc(r.note)}${r.in_ff?'':' <span class="pill p-warn">не ФФ</span>'}</td><td>${esc(r.author)}</td>
+    <td class="${['funding','client_payment','other_income'].includes(r.kind)?'up':''}">${rub(r.amount)}</td><td>${meth[r.method]??esc(r.method)}</td><td class="l">${esc(r.note)}${r.in_ff?'':' <span class="pill p-warn">не ФФ</span>'}${r.recurring_id?' <span class="pill p-ok">постоянный</span>':''}${r.invoice?' <span class="pill p-ok">счёт</span>':''}</td><td>${esc(r.author)}</td>
     <td><button class="btn" data-ed="${r.id}">Изм.</button> <button class="btn" data-del="${r.id}" aria-label="Удалить">✕</button></td></tr>`).join('');
 }
 $('#ledTbl').onclick=async e=>{const d=e.target.dataset;
   if(d.del){if(confirm('Удалить запись?')){await api('/api/ledger/'+d.del,{method:'DELETE'});loadLedger()}}
   if(d.ed){const r=led.rows.find(x=>x.id===d.ed);const f=$('#ledForm');
-    ['date','kind','category','amount','method','note','id'].forEach(k=>f[k].value=r[k]??'');f.in_ff.checked=!!r.in_ff;
+    ['date','kind','category','amount','method','note','id','recurring_id'].forEach(k=>f[k].value=r[k]??'');f.in_ff.checked=!!r.in_ff;
     $('#ledSave').textContent='Сохранить';$('#ledCancel').classList.remove('hidden');f.scrollIntoView({behavior:'smooth'})}};
 $('#ledCancel').onclick=()=>{const f=$('#ledForm');f.reset();f.id.value='';f.date.valueAsDate=new Date();$('#ledSave').textContent='Добавить';$('#ledCancel').classList.add('hidden')};
 $('#ledForm').onsubmit=async e=>{e.preventDefault();const f=e.target;
-  const b={date:f.date.value,kind:f.kind.value,category:f.category.value,amount:f.amount.value,method:f.method.value,note:f.note.value,in_ff:f.in_ff.checked};
+  const b={date:f.date.value,kind:f.kind.value,category:f.category.value,amount:f.amount.value,method:f.method.value,note:f.note.value,in_ff:f.in_ff.checked,recurring_id:f.recurring_id.value};
   try{if(f.id.value)await api('/api/ledger/'+f.id.value,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
     else await api('/api/ledger',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
     $('#ledCancel').onclick();loadLedger()}catch(err){alert('Не сохранилось: '+err.message)}};
