@@ -48,7 +48,13 @@ SCHEMA = [
     """CREATE TABLE IF NOT EXISTS recurring (
         id TEXT PRIMARY KEY, name TEXT, category TEXT, amount REAL,
         start_date TEXT, end_date TEXT, note TEXT)""",
+    # хранение по дням (analytics/storage/list) — входит в «К оплате» МПФИТ
+    """CREATE TABLE IF NOT EXISTS m_storage (
+        id BIGINT PRIMARY KEY, company_id INTEGER, date TEXT, amount REAL)""",
 ]
+
+# налог к удержанию с выручки (начисляется расходом месяца)
+TAX_RATE = 0.07
 
 # колонки, добавленные после первой версии (ALTER без IF NOT EXISTS — для SQLite)
 _ADD_COLUMNS = [("ledger", "invoice", "TEXT"), ("ledger", "recurring_id", "TEXT"),
@@ -74,6 +80,22 @@ def init():
             pass    # колонка уже есть
     seed_ledger()
     seed_recurring()
+    fix_v2()
+
+
+def fix_v2():
+    """Уточнения владельца 28.09: 5 расходов от 25.09 — с РС; первый месяц
+    МПФИТ бесплатный (30.08–29.09), платная подписка 24 990 ₽ — с 30.09."""
+    if kv_get("fix_v2"):
+        return
+    for i in range(18, 23):
+        db.execute("UPDATE ledger SET method = 'rs', note = REPLACE(note, ' (способ оплаты не указан)', '') "
+                   "WHERE id = ?", (f"seed-{i:03d}",))
+    db.execute("UPDATE recurring SET start_date = '2026-09-30', note = ? WHERE id = 'rec-mpfit'",
+               ("Первый месяц (30.08–29.09) бесплатно, далее 24 990 ₽/мес",))
+    db.execute("UPDATE recurring SET note = ? WHERE id = 'rec-rent'",
+               ("Из счёта № 9325: 61 456,27 ₽ за 11 дней сентября, ставка подтверждена",))
+    kv_set("fix_v2", True)
 
 
 def kv_get(k, default=None):
@@ -185,7 +207,7 @@ _REC_SEED = [
      "2026-09-20", None, "Из счёта № 9325: 61 456,27 ₽ за 11 дней сентября. Проверить ставку по договору аренды № 232",
      "seed-017"),
     ("rec-mpfit", "МПФИТ, подписка WMS", "ПО и сервисы", 24990,
-     "2026-08-30", None, "Оплачено 30.08. Принято как ежемесячный платёж — уточнить период подписки",
+     "2026-09-30", None, "Первый месяц (30.08–29.09) бесплатно, далее 24 990 ₽/мес",
      "seed-002"),
 ]
 

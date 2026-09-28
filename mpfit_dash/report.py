@@ -398,7 +398,7 @@ def finance(months: int = 6) -> dict:
             sign = 1 if e["kind"] in ("funding", "client_payment", "other_income") else -1
             cash[e["method"]] += sign * e["amount"]
     rec = {mk: recurring_for_month(mk) for mk in mks}
-    cats = set()
+    cats = {"Налоги"}
     for mk in mks:
         cats |= set(one_off[mk]) | set(rec[mk])
     rows = []
@@ -408,13 +408,15 @@ def finance(months: int = 6) -> dict:
             by_cat[c] += v
         for c, v in rec[mk].items():
             by_cat[c] += v
-        e_tot = sum(by_cat.values())
         revenue = fbs[mk] + other[mk]
+        tax = revenue * store.TAX_RATE          # налог к удержанию с выручки
+        by_cat["Налоги"] += tax
+        e_tot = sum(by_cat.values())
         rows.append({
             "month": mk, "revenue": round(revenue), "fbs": round(fbs[mk]), "fbs_est": round(fbs_est[mk]),
             "other": round(other[mk]), "billed": round(billed[mk]), "paid": round(paid[mk]),
             "svc_cost": round(svc_cost[mk]),
-            "recurring": round(sum(rec[mk].values())), "one_off": round(sum(one_off[mk].values())),
+            "recurring": round(sum(rec[mk].values())), "tax": round(tax), "one_off": round(sum(one_off[mk].values())),
             "expenses": round(e_tot), "by_cat": {c: round(by_cat.get(c, 0)) for c in cats},
             "investments": round(inv_[mk]),
             "profit": round(revenue - e_tot),
@@ -432,6 +434,10 @@ def finance(months: int = 6) -> dict:
             cut = last_inv.get(o["company_id"], "")
             if o["shipped_at"] > cut:
                 unbilled[o["company_id"]] += _value(o, price)
+    # хранение после последнего счёта тоже войдёт в следующий счёт
+    for cid, dt_, amt in db.fetchall("SELECT company_id, date, amount FROM m_storage"):
+        if dt_ > (last_inv.get(cid) or "")[:10]:
+            unbilled[cid] += amt or 0
     unpaid = defaultdict(float)
     for i in inv:
         unpaid[i["company_id"]] += i["debt"]
@@ -471,7 +477,8 @@ def plan_fact() -> dict:
         f = fact[key]
         forecast = round(f / passed * days_in) if passed else None
         if key == "expenses":      # постоянные платежи уже начислены за весь месяц
-            forecast = round(one_off / passed * days_in + rec_full) if passed else None
+            forecast = round(one_off / passed * days_in + rec_full
+                             + fact["revenue"] / passed * days_in * store.TAX_RATE) if passed else None
         if key == "profit":
             forecast = None        # досчитаем ниже из прогнозов выручки и расходов
         p = plan.get(key)

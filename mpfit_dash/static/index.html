@@ -283,7 +283,7 @@ async function loadFin(){
   const cur=m[m.length-1]||{};const ex=f.expected;
   $('#finKpi').innerHTML=
     kpi('Выручка месяца',rub(cur.revenue),`начислено по отгрузкам${cur.fbs_est?` · из них оценка ${rub(cur.fbs_est)}`:''}`)+
-    kpi('Расходы месяца',rub(cur.expenses),`постоянные ${rub(cur.recurring)} · разовые ${rub(cur.one_off)}`)+
+    kpi('Расходы месяца',rub(cur.expenses),`постоянные ${rub(cur.recurring)} · разовые ${rub(cur.one_off)} · налог 7% ${rub(cur.tax)}`)+
     kpi('Прибыль месяца',rub(cur.profit),cur.margin==null?'':`маржа ${cur.margin}%`,cur.profit<0?'alert':'good')+
     kpi('Ожидаемая выручка',rub(ex.total),`не выставлено ${rub(ex.unbilled)} · не оплачено ${rub(ex.unpaid)}`)+
     kpi('Оплачено клиентами',rub(f.paid_total),f.debt?`долг ${rub(f.debt)}`:`все ${inv.length} счетов оплачены`,f.debt?'':'good')+
@@ -303,6 +303,7 @@ async function loadFin(){
     row('<b>Расходы</b>',r=>'<b>'+rub(r.expenses)+'</b>')+
     row(sub('постоянные (аренда, МПФИТ)'),r=>rub(r.recurring))+
     row(sub('разовые'),r=>rub(r.one_off))+
+    row(sub('налог 7% к удержанию'),r=>rub(r.tax))+
     f.categories.map(c=>row(sub(sub(esc(c))),r=>rub(r.by_cat[c]))).join('')+
     row('<b>Прибыль</b>',r=>`<b class="${r.profit<0?'down':'up'}">${rub(r.profit)}</b>`)+
     row('Маржа',r=>r.margin==null?'—':r.margin+'%')+

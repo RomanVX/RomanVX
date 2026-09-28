@@ -135,11 +135,29 @@ def _services(detail: dict) -> tuple[float, float, bool]:
 
 async def check_services():
     """Карточки отгруженных заказов: сначала непроверенные (свежие вперёд),
-    затем перепроверка тех, где услуги не было, — вдруг дожали."""
+    затем перепроверка тех, где услуги не было, — вдруг дожали.
+    Заказы после последнего счёта клиента («К оплате») — всегда первыми
+    и повторно раз в сутки: услуги (короба, маркировку) добавляют позже."""
     ph = ",".join("?" * len(store.SHIPPED))
+    last = dict(db.fetchall("SELECT company_id, MAX(created_ts) FROM m_invoices GROUP BY company_id"))
+    cut = min(last.values()) if last else "2000"
     todo = [r[0] for r in db.fetchall(
-        f"SELECT id FROM m_orders WHERE status IN ({ph}) AND svc_checked = 0 "
-        "ORDER BY created_at DESC LIMIT ?", (*store.SHIPPED, SVC_BATCH))]
+        f"SELECT id FROM m_orders WHERE status IN ({ph}) AND svc_checked = 0 AND shipped_at > ? "
+        "ORDER BY shipped_at LIMIT ?", (*store.SHIPPED, cut, SVC_BATCH))]
+    day = datetime.utcnow().strftime("%Y-%m-%d")
+    if store.kv_get("svc_recheck_day") != day and len(todo) < SVC_BATCH:
+        # раз в сутки — перепроверка уже проверенных неоплаченных заказов
+        rows = db.fetchall(
+            f"SELECT id, company_id, shipped_at FROM m_orders WHERE status IN ({ph}) AND svc_checked = 1 "
+            "AND shipped_at > ?", (*store.SHIPPED, cut))
+        db.executemany("UPDATE m_orders SET svc_checked = 0 WHERE id = ?",
+                       [(i,) for i, c, s in rows if s > (last.get(c) or "")])
+        store.kv_set("svc_recheck_day", day)
+    if len(todo) < SVC_BATCH:
+        todo += [r[0] for r in db.fetchall(
+            f"SELECT id FROM m_orders WHERE status IN ({ph}) AND svc_checked = 0 "
+            "ORDER BY created_at DESC LIMIT ?", (*store.SHIPPED, SVC_BATCH - len(todo)))
+                 if r[0] not in todo]
     recheck_from = (datetime.utcnow() - timedelta(days=RECHECK_DAYS)).isoformat()
     left = SVC_BATCH - len(todo)
     if left > 0:
@@ -175,6 +193,17 @@ async def sync_invoices():
                        "total": (o.get("total") or 0) / 100} for o in i.get("operations") or []],
                      ensure_ascii=False),
           _utc(i.get("updated_at")), _utc(i.get("created_at"))) for i in rows])
+
+
+async def sync_storage():
+    """Хранение по дням за 60 дней (суммы в копейках)."""
+    d0 = (datetime.utcnow() - timedelta(days=60)).strftime("%Y-%m-%d")
+    rows = await mp.paginate("/v1/analytics/storage/list", limit=200, max_pages=50,
+                             flt={"date_from": d0, "date_to": datetime.utcnow().strftime("%Y-%m-%d")})
+    db.executemany(
+        "INSERT INTO m_storage (id, company_id, date, amount) VALUES (?,?,?,?) "
+        "ON CONFLICT (id) DO UPDATE SET amount = excluded.amount",
+        [(r["id"], r.get("company_id"), r.get("date"), (r.get("amount") or 0) / 100) for r in rows])
 
 
 async def alert_missing():
@@ -213,6 +242,10 @@ async def run_once():
         await sync_companies()
         await sync_orders()
         await sync_invoices()
+        try:
+            await sync_storage()
+        except Exception as e:
+            _log.warning("storage: %s", e)
         await check_services()
         await alert_missing()
         state["error"] = ""
