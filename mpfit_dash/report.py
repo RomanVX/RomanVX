@@ -87,15 +87,38 @@ def _unit_price(os_: list[dict]) -> dict:
             per[o["company_id"]].append(o["svc_revenue"] / o["units"])
     price = _invoice_fbs_price()
     price.update({k: statistics.median(v) for k, v in per.items() if v})
+    _INV_PRICES.clear()
+    _INV_PRICES.update(_invoice_price_timeline())
     return price
 
 
+_INV_PRICES: dict = {}
+
+
+def _invoice_price_timeline() -> dict:
+    """{клиент: [(создан счёт UTC, цена «Отгрузки FBS» за ед.)]} по возрастанию."""
+    tl = defaultdict(list)
+    for cid, created, dt_, ops in db.fetchall(
+            "SELECT company_id, created_ts, date, ops FROM m_invoices ORDER BY date"):
+        pr = [op["price"] for op in json.loads(ops or "[]")
+              if "отгрузка" in (op.get("name") or "").lower() and op.get("price")]
+        if pr:
+            tl[cid].append((created or (dt_ + "T23:59:59"), statistics.median(pr)))
+    return tl
+
+
 def _value(o: dict, price: dict) -> float:
-    """Стоимость отгрузки заказа для клиента: точная, если карточка проверена,
-    иначе оценка по цене клиента (пока идёт догрузка карточек из МПФИТ)."""
+    """Стоимость отгрузки заказа для клиента: точная, если карточка проверена.
+    Иначе оценка: цена из первого счёта клиента, выставленного после отгрузки
+    (цена того периода — после ДС она меняется), а для ещё не выставленных —
+    текущая цена клиента по свежим проверенным заказам."""
     if o["svc_checked"]:
         return o["svc_revenue"]
-    return price.get(o["company_id"], 55) * (o["units"] or 1)
+    units = o["units"] or 1
+    for ts, p in _INV_PRICES.get(o["company_id"], []):
+        if o["shipped_at"] and ts >= o["shipped_at"]:
+            return p * units
+    return price.get(o["company_id"], 55) * units
 
 
 def summary() -> dict:
