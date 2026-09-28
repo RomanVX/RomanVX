@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>МПФИТ · Аналитика фулфилмента</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --ink:#1b1f24; --muted:#6b7280; --line:#e5e7eb;
+          --ok:#059669; --warn:#d97706; --bad:#dc2626; --acc:#2563eb; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.45 -apple-system, Segoe UI, Roboto, sans-serif; background:var(--bg); color:var(--ink); }
+  header { padding:20px 28px; background:var(--card); border-bottom:1px solid var(--line); }
+  h1 { margin:0; font-size:20px; }
+  .sub { color:var(--muted); font-size:13px; margin-top:4px; }
+  main { max-width:1100px; margin:24px auto; padding:0 20px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:18px 20px; margin-bottom:16px; }
+  .card h2 { margin:0 0 12px; font-size:16px; }
+  .row { display:flex; justify-content:space-between; padding:7px 0; border-top:1px solid var(--line); }
+  .row:first-of-type { border-top:0; }
+  .pill { font-size:12px; padding:2px 10px; border-radius:99px; font-weight:600; }
+  .ok { background:#d1fae5; color:var(--ok); } .warn { background:#fef3c7; color:var(--warn); } .bad { background:#fee2e2; color:var(--bad); }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:12px; }
+  .sec { border:1px dashed var(--line); border-radius:10px; padding:12px 14px; }
+  .sec b { display:block; margin-bottom:4px; }
+  .sec span { color:var(--muted); font-size:13px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>МПФИТ · Аналитика фулфилмента</h1>
+  <div class="sub">Market Partners · среда развёрнута, ждём токен API МПФИТ</div>
+</header>
+<main>
+  <div class="card">
+    <h2>Состояние среды</h2>
+    <div id="status"><div class="row">Проверяю…</div></div>
+  </div>
+  <div class="card">
+    <h2>Разделы (в разработке)</h2>
+    <div class="grid">
+      <div class="sec"><b>Пульс дня</b><span>Заказы, собрано, просрочки, выручка, непрожатые услуги</span></div>
+      <div class="sec"><b>Заказы</b><span>График по дням, маркетплейсы и клиенты, часы и дни недели</span></div>
+      <div class="sec"><b>Скорость и SLA</b><span>Время сборки, отгрузка в срок, очередь, выработка</span></div>
+      <div class="sec"><b>Контроль услуг</b><span>Заказы без услуг, потерянная выручка, Telegram-сигнал</span></div>
+      <div class="sec"><b>Клиенты</b><span>Оборот, дебиторка, падение заказов</span></div>
+      <div class="sec"><b>Склад</b><span>Приёмки, остатки, хранение, неликвид</span></div>
+      <div class="sec"><b>Финансы</b><span>Доходы и расходы по статьям, маржа, оплаты</span></div>
+      <div class="sec"><b>План / факт</b><span>План месяца, отклонение, прогноз</span></div>
+    </div>
+  </div>
+</main>
+<script>
+const pill = (cls, t) => `<span class="pill ${cls}">${t}</span>`;
+const row = (name, val) => `<div class="row"><span>${name}</span>${val}</div>`;
+fetch('/api/status').then(r => r.json()).then(s => {
+  const dbOk = s.db === 'postgres';
+  let mp;
+  if (!s.mpfit_token) mp = pill('warn', 'токен не задан');
+  else if (s.mpfit && s.mpfit.ok) mp = pill('ok', `подключено · компаний: ${s.mpfit.companies}`);
+  else mp = pill('bad', (s.mpfit && s.mpfit.error) || 'ошибка');
+  document.getElementById('status').innerHTML =
+    row('База данных', dbOk ? pill('ok', 'Postgres') : pill(s.db && s.db.startsWith('ошибка') ? 'bad' : 'warn', s.db || '—')) +
+    row('Схема', `<span>${s.schema}</span>`) +
+    row('API МПФИТ', mp);
+}).catch(e => {
+  document.getElementById('status').innerHTML = row('Статус', pill('bad', 'сервер не ответил'));
+});
+</script>
+</body>
+</html>
