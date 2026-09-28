@@ -1,0 +1,157 @@
+"""Хранилище дашборда МПФИТ (схема mpfit в mp-postgres).
+
+Данные МПФИТ копим у себя: история не зависит от API, а отчёты строятся
+запросами к своей базе. Все даты — ISO-строки в UTC, кроме полей *_msk.
+
+Таблицы:
+  m_companies  — компании (ФФ и селлеры)
+  m_orders     — заказы на отгрузку + итог проверки услуг
+  m_status_log — первое появление заказа в каждом статусе (скорость по этапам)
+  m_invoices   — счета МПФИТ: выставлено / оплачено (это и есть выручка)
+  ledger       — ручной журнал: расходы, вложения, поступления (из чата «Финансы ФФ»)
+  plan         — план по месяцам: метрика × месяц
+  kv           — служебные курсоры синхронизации
+"""
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parent.parent / "backend"))  # backend/db.py
+import json
+import uuid
+
+import db
+
+SCHEMA = [
+    "CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT)",
+    """CREATE TABLE IF NOT EXISTS m_companies (
+        id INTEGER PRIMARY KEY, name TEXT, type TEXT, inn TEXT, created_at TEXT)""",
+    """CREATE TABLE IF NOT EXISTS m_orders (
+        id BIGINT PRIMARY KEY, number TEXT, company_id INTEGER, source TEXT,
+        status TEXT, created_at TEXT, plan_at TEXT, shipped_at TEXT,
+        units INTEGER, updated_at TEXT,
+        svc_checked INTEGER DEFAULT 0, svc_revenue REAL DEFAULT 0,
+        svc_cost REAL DEFAULT 0, svc_missing INTEGER DEFAULT 0,
+        svc_alerted INTEGER DEFAULT 0)""",
+    "CREATE INDEX IF NOT EXISTS m_orders_created ON m_orders (created_at)",
+    "CREATE INDEX IF NOT EXISTS m_orders_status ON m_orders (status)",
+    """CREATE TABLE IF NOT EXISTS m_status_log (
+        order_id BIGINT, status TEXT, seen_at TEXT, PRIMARY KEY (order_id, status))""",
+    """CREATE TABLE IF NOT EXISTS m_invoices (
+        id BIGINT PRIMARY KEY, number TEXT, company_id INTEGER, status TEXT,
+        date TEXT, total REAL, paid REAL, ops TEXT, updated_at TEXT)""",
+    """CREATE TABLE IF NOT EXISTS ledger (
+        id TEXT PRIMARY KEY, date TEXT, kind TEXT, category TEXT, amount REAL,
+        method TEXT, note TEXT, in_ff INTEGER DEFAULT 1, author TEXT, created_at TEXT)""",
+    """CREATE TABLE IF NOT EXISTS plan (
+        month TEXT, metric TEXT, value REAL, PRIMARY KEY (month, metric))""",
+]
+
+# статусы, после которых «Отгрузка FBS» уже должна стоять
+SHIPPED = ("SHIPPED", "DELIVERY", "COMPLETE")
+OPEN = ("NEW", "PRODUCTS_RESERVED", "EQUIPMENT", "READY_TO_SHIP", "SHIPPED", "DELIVERY")
+
+KINDS = {"expense": "Расход", "investment": "Вложение", "funding": "Пополнение бюджета",
+         "client_payment": "Оплата от клиента", "other_income": "Прочий доход"}
+CATEGORIES = ["Аренда", "ФОТ", "Оборудование", "Расходники и упаковка", "Логистика",
+              "ПО и сервисы", "Связь", "Хозяйственные", "Налоги", "Прочее"]
+
+
+def init():
+    for sql in SCHEMA:
+        db.execute(sql)
+    seed_ledger()
+
+
+def kv_get(k, default=None):
+    row = db.fetchone("SELECT v FROM kv WHERE k = ?", (k,))
+    return json.loads(row[0]) if row and row[0] else default
+
+
+def kv_set(k, v):
+    db.execute("INSERT INTO kv (k, v) VALUES (?, ?) ON CONFLICT (k) DO UPDATE SET v = excluded.v",
+               (k, json.dumps(v, ensure_ascii=False)))
+
+
+# ── журнал: стартовые записи из чата «Финансы ФФ» (30.08–25.09.2026) ─────────
+# Поступления на РС (39 545 и 208 290) — это оплаты счетов МПФИТ: в выручку
+# их не пишем (выручка идёт из счетов), держим как client_payment для остатков.
+_SEED = [
+    ("2026-08-30", "funding", "Прочее", 43850, "cash", "Поступление из бюджета под отчёт", 1, "Roman V"),
+    ("2026-08-30", "investment", "Оборудование", 7500, "personal", "Сканер (оплатил Андрей лично)", 1, "Андрей"),
+    ("2026-08-30", "expense", "ПО и сервисы", 24990, "cash", "МПФИТ (наличные, завели на РС и оплатили)", 1, "Roman V"),
+    ("2026-08-30", "expense", "Хозяйственные", 1250, "cash", "Ключи", 1, "Roman V"),
+    ("2026-08-30", "expense", "Хозяйственные", 300, "cash", "Подушка на кресло", 1, "Roman V"),
+    ("2026-09-01", "client_payment", "Прочее", 39545, "rs", "Оплата счёта МПФИТ (Субоч Е.П., 31.08)", 1, "Roman V"),
+    ("2026-09-04", "expense", "Оборудование", 4500, "cash", "Тележка", 1, "Roman V"),
+    ("2026-09-04", "expense", "Оборудование", 910, "cash", "Мышь + коврик", 1, "Roman V"),
+    ("2026-09-06", "expense", "Оборудование", 3070, "cash", "Весы и USB-хаб", 1, "Roman V"),
+    ("2026-09-07", "expense", "ПО и сервисы", 710, "cash", "Сервер VDS для сайта", 1, "Roman V"),
+    ("2026-09-08", "expense", "Связь", 500, "cash", "Оформление номера", 1, "Roman V"),
+    ("2026-09-08", "expense", "Хозяйственные", 950, "cash", "Болты, ножки", 1, "Андрей"),
+    ("2026-09-20", "expense", "Расходники и упаковка", 380, "cash", "Резинки", 1, "Roman V"),
+    ("2026-09-20", "expense", "Расходники и упаковка", 350, "cash", "Скотч", 1, "Roman V"),
+    ("2026-09-20", "expense", "Логистика", 350, "cash", "Транспортировка", 1, "Roman V"),
+    ("2026-09-20", "expense", "ПО и сервисы", 2386, "cash", "Токены ИИ (не вложения в ФФ)", 0, "Roman V"),
+    ("2026-09-20", "client_payment", "Прочее", 208290, "rs", "Оплата счетов МПФИТ (6 счетов 06–15.09)", 1, "Roman V"),
+    ("2026-09-20", "expense", "Аренда", 61456.27, "rs", "Аренда помещения за 11 дней сентября, счёт № 9325 Чеховский Печатный Двор", 1, "Андрей"),
+    ("2026-09-25", "expense", "ФОТ", 10000, "", "ЗП Володя (способ оплаты не указан)", 1, "Саша К"),
+    ("2026-09-25", "expense", "Логистика", 4400, "", "Доставка (способ оплаты не указан)", 1, "Андрей"),
+    ("2026-09-25", "expense", "Прочее", 10000, "", "Сертификат, вручён (способ оплаты не указан)", 1, "Андрей"),
+    ("2026-09-25", "expense", "Расходники и упаковка", 13090, "", "Коробки (способ оплаты не указан)", 1, "Андрей"),
+    ("2026-09-25", "expense", "Оборудование", 28650, "", "Камеры (способ оплаты не указан)", 1, "Андрей"),
+]
+
+
+def seed_ledger():
+    if kv_get("ledger_seeded"):
+        return
+    rows = [(f"seed-{i:03d}", d, k, c, a, m, n, ff, au, "2026-09-28T00:00:00")
+            for i, (d, k, c, a, m, n, ff, au) in enumerate(_SEED)]
+    db.executemany(
+        "INSERT INTO ledger (id, date, kind, category, amount, method, note, in_ff, author, created_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT (id) DO NOTHING", rows)
+    kv_set("ledger_seeded", True)
+
+
+def ledger_add(e: dict, author: str) -> str:
+    from datetime import datetime
+    i = str(uuid.uuid4())
+    db.execute(
+        "INSERT INTO ledger (id, date, kind, category, amount, method, note, in_ff, author, created_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (i, e["date"], e["kind"], e.get("category") or "Прочее", float(e["amount"]),
+         e.get("method") or "", e.get("note") or "", 1 if e.get("in_ff", True) else 0,
+         author, datetime.utcnow().isoformat(timespec="seconds")))
+    return i
+
+
+def ledger_update(i: str, e: dict):
+    db.execute("UPDATE ledger SET date=?, kind=?, category=?, amount=?, method=?, note=?, in_ff=? WHERE id=?",
+               (e["date"], e["kind"], e.get("category") or "Прочее", float(e["amount"]),
+                e.get("method") or "", e.get("note") or "", 1 if e.get("in_ff", True) else 0, i))
+
+
+def ledger_delete(i: str):
+    db.execute("DELETE FROM ledger WHERE id = ?", (i,))
+
+
+def ledger_list() -> list[dict]:
+    rows = db.fetchall("SELECT id, date, kind, category, amount, method, note, in_ff, author "
+                       "FROM ledger ORDER BY date DESC, created_at DESC")
+    keys = ("id", "date", "kind", "category", "amount", "method", "note", "in_ff", "author")
+    return [dict(zip(keys, r)) for r in rows]
+
+
+def plan_get() -> dict:
+    out: dict = {}
+    for m, metric, v in db.fetchall("SELECT month, metric, value FROM plan"):
+        out.setdefault(m, {})[metric] = v
+    return out
+
+
+def plan_set(month: str, metric: str, value):
+    if value in (None, ""):
+        db.execute("DELETE FROM plan WHERE month = ? AND metric = ?", (month, metric))
+    else:
+        db.execute("INSERT INTO plan (month, metric, value) VALUES (?,?,?) "
+                   "ON CONFLICT (month, metric) DO UPDATE SET value = excluded.value",
+                   (month, metric, float(value)))

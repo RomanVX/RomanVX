@@ -17,16 +17,21 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "backend"))
 import db  # noqa: E402  (backend/db.py: пул Postgres + схема)
 
 import mpfit_client  # noqa: E402
+import report  # noqa: E402
+import store  # noqa: E402
+import sync  # noqa: E402
 
 logging.basicConfig(level=logging.INFO)
 _log = logging.getLogger("mpfit_dash")
 HERE = Path(__file__).resolve().parent
 app = FastAPI(title="MPFIT Analytics")
+app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
 
 _PUBLIC = ("/health",)
 
@@ -54,6 +59,24 @@ async def basic_auth(request: Request, call_next):
     return await call_next(request)
 
 
+_bg: set = set()
+
+
+@app.on_event("startup")
+async def _startup():
+    await asyncio.to_thread(store.init)
+    t = asyncio.create_task(sync.loop())
+    _bg.add(t)
+
+
+def _user(request: Request) -> str:
+    auth = request.headers.get("authorization", "")
+    try:
+        return base64.b64decode(auth[6:]).decode().partition(":")[0]
+    except Exception:
+        return ""
+
+
 @app.get("/health")
 async def health():
     return {"ok": True}
@@ -75,7 +98,108 @@ async def status():
             out["mpfit"] = await mpfit_client.ping()
         except Exception as e:
             out["mpfit"] = {"ok": False, "error": str(e)[:300]}
+    out["sync"] = {k: v for k, v in sync.state.items()}
     return JSONResponse(out)
+
+
+async def _t(fn, *a):
+    return await asyncio.to_thread(fn, *a)
+
+
+@app.get("/api/summary")
+async def api_summary():
+    return {**await _t(report.summary), "sync": sync.state}
+
+
+@app.get("/api/daily")
+async def api_daily(days: int = 60):
+    return await _t(report.daily, max(7, min(days, 365)))
+
+
+@app.get("/api/speed")
+async def api_speed(days: int = 30):
+    return await _t(report.speed, max(7, min(days, 365)))
+
+
+@app.get("/api/services")
+async def api_services():
+    return await _t(report.services)
+
+
+@app.get("/api/clients")
+async def api_clients():
+    return await _t(report.clients)
+
+
+@app.get("/api/finance")
+async def api_finance(months: int = 6):
+    return await _t(report.finance, max(1, min(months, 24)))
+
+
+@app.get("/api/planfact")
+async def api_planfact():
+    return await _t(report.plan_fact)
+
+
+@app.get("/api/plan")
+async def api_plan():
+    return await _t(store.plan_get)
+
+
+@app.post("/api/plan")
+async def api_plan_set(payload: dict):
+    month = str(payload.get("month") or "")[:7]
+    for metric in ("orders", "revenue", "expenses", "profit"):
+        if metric in payload:
+            await _t(store.plan_set, month, metric, payload[metric])
+    return {"ok": True}
+
+
+@app.get("/api/ledger")
+async def api_ledger():
+    return {"rows": await _t(store.ledger_list), "kinds": store.KINDS, "categories": store.CATEGORIES}
+
+
+def _check_entry(e: dict):
+    from datetime import date
+    date.fromisoformat(str(e.get("date"))[:10])
+    if e.get("kind") not in store.KINDS:
+        raise ValueError("kind")
+    if float(e.get("amount")) <= 0:
+        raise ValueError("amount")
+
+
+@app.post("/api/ledger")
+async def api_ledger_add(payload: dict, request: Request):
+    try:
+        _check_entry(payload)
+    except Exception:
+        return JSONResponse({"error": "проверьте дату, тип и сумму"}, status_code=400)
+    return {"id": await _t(store.ledger_add, payload, _user(request))}
+
+
+@app.put("/api/ledger/{entry_id}")
+async def api_ledger_put(entry_id: str, payload: dict):
+    try:
+        _check_entry(payload)
+    except Exception:
+        return JSONResponse({"error": "проверьте дату, тип и сумму"}, status_code=400)
+    await _t(store.ledger_update, entry_id, payload)
+    return {"ok": True}
+
+
+@app.delete("/api/ledger/{entry_id}")
+async def api_ledger_del(entry_id: str):
+    await _t(store.ledger_delete, entry_id)
+    return {"ok": True}
+
+
+@app.post("/api/sync")
+async def api_sync():
+    t = asyncio.create_task(sync.run_once())
+    _bg.add(t)
+    t.add_done_callback(_bg.discard)
+    return {"scheduled": True}
 
 
 # Разрешены только методы чтения из спеки (list/GET). Создание заказов,

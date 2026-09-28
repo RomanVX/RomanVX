@@ -4,67 +4,329 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>МПФИТ · Аналитика фулфилмента</title>
+<script src="/static/chart.umd.min.js"></script>
 <style>
-  :root { --bg:#f6f7f9; --card:#fff; --ink:#1b1f24; --muted:#6b7280; --line:#e5e7eb;
-          --ok:#059669; --warn:#d97706; --bad:#dc2626; --acc:#2563eb; }
-  * { box-sizing: border-box; }
-  body { margin:0; font:15px/1.45 -apple-system, Segoe UI, Roboto, sans-serif; background:var(--bg); color:var(--ink); }
-  header { padding:20px 28px; background:var(--card); border-bottom:1px solid var(--line); }
-  h1 { margin:0; font-size:20px; }
-  .sub { color:var(--muted); font-size:13px; margin-top:4px; }
-  main { max-width:1100px; margin:24px auto; padding:0 20px; }
-  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:18px 20px; margin-bottom:16px; }
-  .card h2 { margin:0 0 12px; font-size:16px; }
-  .row { display:flex; justify-content:space-between; padding:7px 0; border-top:1px solid var(--line); }
-  .row:first-of-type { border-top:0; }
-  .pill { font-size:12px; padding:2px 10px; border-radius:99px; font-weight:600; }
-  .ok { background:#d1fae5; color:var(--ok); } .warn { background:#fef3c7; color:var(--warn); } .bad { background:#fee2e2; color:var(--bad); }
-  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:12px; }
-  .sec { border:1px dashed var(--line); border-radius:10px; padding:12px 14px; }
-  .sec b { display:block; margin-bottom:4px; }
-  .sec span { color:var(--muted); font-size:13px; }
+:root{--bg:#f5f6f8;--card:#fff;--ink:#16191d;--muted:#6b7280;--line:#e6e8eb;--acc:#2563eb;
+ --ok:#059669;--okb:#d1fae5;--warn:#b45309;--warnb:#fef3c7;--bad:#dc2626;--badb:#fee2e2;--rad:12px}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.45 -apple-system,Segoe UI,Roboto,Inter,sans-serif;background:var(--bg);color:var(--ink)}
+header{position:sticky;top:0;z-index:5;background:var(--card);border-bottom:1px solid var(--line);padding:12px 24px;display:flex;align-items:center;gap:20px;flex-wrap:wrap}
+header h1{font-size:17px;margin:0;white-space:nowrap}
+nav{display:flex;gap:4px;flex-wrap:wrap}
+nav button{border:0;background:none;padding:7px 12px;border-radius:8px;font:inherit;color:var(--muted);cursor:pointer}
+nav button.on{background:#eef2ff;color:var(--acc);font-weight:600}
+nav button:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.sync{margin-left:auto;color:var(--muted);font-size:12px;display:flex;gap:8px;align-items:center}
+.btn{border:1px solid var(--line);background:var(--card);border-radius:8px;padding:6px 12px;font:inherit;cursor:pointer}
+.btn.pri{background:var(--acc);border-color:var(--acc);color:#fff}
+main{max-width:1280px;margin:20px auto;padding:0 20px}
+.grid{display:grid;gap:12px}
+.k4{grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}
+.k3{grid-template-columns:repeat(3,1fr)}
+@media(max-width:760px){.k3{grid-template-columns:1fr 1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--rad);padding:16px 18px}
+.card h2{font-size:15px;margin:0 0 12px}
+.kpi .lab{color:var(--muted);font-size:12.5px}
+.kpi .val{font-size:26px;font-weight:650;margin-top:4px;font-variant-numeric:tabular-nums}
+.kpi .sub{font-size:12.5px;color:var(--muted);margin-top:2px}
+.up{color:var(--ok)}.down{color:var(--bad)}
+.alert{border-color:#fca5a5;background:linear-gradient(0deg,#fff,#fff5f5)}
+.alert .val{color:var(--bad)}
+.good .val{color:var(--ok)}
+.row2{display:grid;grid-template-columns:2fr 1fr;gap:12px;margin-top:12px}
+@media(max-width:900px){.row2{grid-template-columns:1fr}}
+.chart{position:relative;height:300px}
+table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+th,td{padding:7px 8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+th{font-weight:600;color:var(--muted);font-size:12.5px}
+th:first-child,td:first-child{text-align:left}
+td.l{text-align:left;white-space:normal}
+.tw{overflow-x:auto}
+.pill{display:inline-block;font-size:12px;padding:1px 8px;border-radius:99px;font-weight:600}
+.p-ok{background:var(--okb);color:var(--ok)}.p-warn{background:var(--warnb);color:var(--warn)}.p-bad{background:var(--badb);color:var(--bad)}
+.muted{color:var(--muted)}
+.heat td{padding:0;border:0;height:22px;min-width:26px;text-align:center;font-size:11px}
+.heat th{border:0;font-size:11px;padding:2px 4px}
+form.inline{display:flex;gap:8px;flex-wrap:wrap;align-items:end}
+form.inline label{display:flex;flex-direction:column;font-size:12px;color:var(--muted);gap:3px}
+input,select{font:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:#fff;min-width:0}
+.hidden{display:none}
+.note{font-size:12.5px;color:var(--muted);margin-top:8px}
+.bar{height:8px;background:var(--line);border-radius:99px;overflow:hidden;margin-top:6px}
+.bar i{display:block;height:100%;background:var(--acc)}
 </style>
 </head>
 <body>
 <header>
-  <h1>МПФИТ · Аналитика фулфилмента</h1>
-  <div class="sub">Market Partners · среда развёрнута, ждём токен API МПФИТ</div>
+  <h1>МПФИТ · Аналитика</h1>
+  <nav id="nav">
+    <button data-t="pulse" class="on">Пульс</button>
+    <button data-t="orders">Заказы</button>
+    <button data-t="speed">Скорость</button>
+    <button data-t="svc">Услуги</button>
+    <button data-t="clients">Клиенты</button>
+    <button data-t="fin">Финансы</button>
+    <button data-t="plan">План/факт</button>
+    <button data-t="ledger">Журнал</button>
+  </nav>
+  <div class="sync"><span id="syncInfo">…</span><button class="btn" id="syncBtn">Обновить</button></div>
 </header>
 <main>
-  <div class="card">
-    <h2>Состояние среды</h2>
-    <div id="status"><div class="row">Проверяю…</div></div>
+
+<section id="t-pulse">
+  <div class="grid k3" id="kpis"></div>
+  <div class="row2">
+    <div class="card"><h2>Заказы за 30 дней</h2><div class="chart"><canvas id="c-pulse"></canvas></div></div>
+    <div class="card"><h2>Клиенты · 7 дней к прошлым 7</h2><div class="tw"><table id="pulseClients"></table></div></div>
   </div>
-  <div class="card">
-    <h2>Разделы (в разработке)</h2>
-    <div class="grid">
-      <div class="sec"><b>Пульс дня</b><span>Заказы, собрано, просрочки, выручка, непрожатые услуги</span></div>
-      <div class="sec"><b>Заказы</b><span>График по дням, маркетплейсы и клиенты, часы и дни недели</span></div>
-      <div class="sec"><b>Скорость и SLA</b><span>Время сборки, отгрузка в срок, очередь, выработка</span></div>
-      <div class="sec"><b>Контроль услуг</b><span>Заказы без услуг, потерянная выручка, Telegram-сигнал</span></div>
-      <div class="sec"><b>Клиенты</b><span>Оборот, дебиторка, падение заказов</span></div>
-      <div class="sec"><b>Склад</b><span>Приёмки, остатки, хранение, неликвид</span></div>
-      <div class="sec"><b>Финансы</b><span>Доходы и расходы по статьям, маржа, оплаты</span></div>
-      <div class="sec"><b>План / факт</b><span>План месяца, отклонение, прогноз</span></div>
-    </div>
+</section>
+
+<section id="t-orders" class="hidden">
+  <div class="card"><h2>Заказы по дням <span class="muted" style="font-weight:400">· создано, отгружено, отмены, план</span></h2>
+    <div style="margin-bottom:8px"><select id="daysSel"><option value="30">30 дней</option><option value="60" selected>60 дней</option><option value="90">90 дней</option></select>
+    <select id="splitSel"><option value="total">Всего</option><option value="company">По клиентам</option><option value="source">По маркетплейсам</option></select></div>
+    <div class="chart" style="height:340px"><canvas id="c-orders"></canvas></div></div>
+  <div class="card" style="margin-top:12px"><h2>Когда приходят заказы · 28 дней, по часам МСК</h2><div class="tw"><table class="heat" id="heat"></table></div>
+    <div class="note">Помогает ставить смены: темнее — больше заказов в этот час.</div></div>
+</section>
+
+<section id="t-speed" class="hidden">
+  <div class="grid k4" id="speedKpi"></div>
+  <div class="card" style="margin-top:12px"><h2>Время от заказа до отгрузки, часов · и доля в срок</h2><div class="chart"><canvas id="c-speed"></canvas></div>
+    <div class="note">Срок по договору — 24 часа с момента поступления заказа. Считаются только заказы с корректной плановой датой.</div></div>
+  <div class="row2">
+    <div class="card"><h2>По клиентам · 30 дней</h2><div class="tw"><table id="speedComp"></table></div></div>
+    <div class="card"><h2>По этапам</h2><div class="tw"><table id="stages"></table></div>
+      <div class="note">Этапы считаются по смене статусов, которую дашборд видит с момента запуска. Первые данные появятся через сутки.</div></div>
   </div>
+</section>
+
+<section id="t-svc" class="hidden">
+  <div class="grid k4" id="svcKpi"></div>
+  <div class="row2">
+    <div class="card"><h2>Отгружены без «Отгрузки FBS»</h2><div class="tw" style="max-height:520px"><table id="svcRows"></table></div>
+      <div class="note">Галочку «Отгрузка FBS» сотрудник ставит на экране отгрузки. Без неё услуга не попадёт в счёт клиенту. Заказ проверяется ещё 3 дня после отгрузки — если услугу проставят, он уйдёт из списка.</div></div>
+    <div class="card"><h2>Где забывают</h2><div class="tw"><table id="svcComp"></table></div>
+      <h2 style="margin-top:16px">По дням недели</h2><div class="chart" style="height:180px"><canvas id="c-svcwd"></canvas></div></div>
+  </div>
+</section>
+
+<section id="t-clients" class="hidden">
+  <div class="card"><h2>Клиенты</h2><div class="tw"><table id="clientsTbl"></table></div>
+  <div class="note">Красным — заказы за неделю упали больше чем на 30% к прошлой неделе. Долг — выставлено в МПФИТ минус оплачено.</div></div>
+</section>
+
+<section id="t-fin" class="hidden">
+  <div class="grid k3" id="finKpi"></div>
+  <div class="card" style="margin-top:12px"><h2>Доходы и расходы по месяцам</h2><div class="chart"><canvas id="c-fin"></canvas></div></div>
+  <div class="card" style="margin-top:12px"><h2>Отчёт о прибыли</h2><div class="tw"><table id="pnl"></table></div>
+  <div class="note">Выручка по начислению: «Отгрузка FBS» по отгруженным за месяц заказам плюс строки счетов МПФИТ, внесённые вручную (короба, разбор и т.п.). Расходы — из журнала. Вложения в оборудование за счёт партнёров показаны отдельно и в прибыль не входят.</div></div>
+</section>
+
+<section id="t-plan" class="hidden">
+  <div class="card"><h2 id="pfTitle">План / факт</h2><div class="tw"><table id="pfTbl"></table></div></div>
+  <div class="card" style="margin-top:12px"><h2>Задать план</h2>
+    <form class="inline" id="planForm">
+      <label>Месяц<input type="month" name="month" required></label>
+      <label>Заказы, шт<input type="number" name="orders" min="0" step="1"></label>
+      <label>Выручка, ₽<input type="number" name="revenue" min="0" step="100"></label>
+      <label>Расходы, ₽<input type="number" name="expenses" min="0" step="100"></label>
+      <label>Прибыль, ₽<input type="number" name="profit" step="100"></label>
+      <button class="btn pri">Сохранить</button>
+    </form><div class="note">Пустое поле — план не задан. План по заказам делится на дни и рисуется пунктиром на графике заказов.</div></div>
+</section>
+
+<section id="t-ledger" class="hidden">
+  <div class="card"><h2>Добавить запись</h2>
+    <form class="inline" id="ledForm">
+      <label>Дата<input type="date" name="date" required></label>
+      <label>Тип<select name="kind" id="kindSel"></select></label>
+      <label>Статья<select name="category" id="catSel"></select></label>
+      <label>Сумма, ₽<input type="number" name="amount" min="0.01" step="0.01" required></label>
+      <label>Оплата<select name="method"><option value="rs">Расчётный счёт</option><option value="cash">Наличные</option><option value="personal">Лично (вложение)</option><option value="">Не указано</option></select></label>
+      <label style="flex:1;min-width:200px">Комментарий<input name="note"></label>
+      <label style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" name="in_ff" checked>для ФФ</label>
+      <input type="hidden" name="id">
+      <button class="btn pri" id="ledSave">Добавить</button>
+      <button type="button" class="btn hidden" id="ledCancel">Отмена</button>
+    </form></div>
+  <div class="card" style="margin-top:12px"><h2>Журнал</h2><div class="tw"><table id="ledTbl"></table></div>
+    <div class="note">Оплаты от клиентов пишутся для остатков по кассе и счёту, в выручку не идут — выручка берётся из счетов МПФИТ.</div></div>
+</section>
 </main>
+
 <script>
-const pill = (cls, t) => `<span class="pill ${cls}">${t}</span>`;
-const row = (name, val) => `<div class="row"><span>${name}</span>${val}</div>`;
-fetch('/api/status').then(r => r.json()).then(s => {
-  const dbOk = s.db === 'postgres';
-  let mp;
-  if (!s.mpfit_token) mp = pill('warn', 'токен не задан');
-  else if (s.mpfit && s.mpfit.ok) mp = pill('ok', `подключено · компаний: ${s.mpfit.companies}`);
-  else mp = pill('bad', (s.mpfit && s.mpfit.error) || 'ошибка');
-  document.getElementById('status').innerHTML =
-    row('База данных', dbOk ? pill('ok', 'Postgres') : pill(s.db && s.db.startsWith('ошибка') ? 'bad' : 'warn', s.db || '—')) +
-    row('Схема', `<span>${s.schema}</span>`) +
-    row('API МПФИТ', mp);
-}).catch(e => {
-  document.getElementById('status').innerHTML = row('Статус', pill('bad', 'сервер не ответил'));
-});
+const $=s=>document.querySelector(s);
+const rub=v=>v==null?'—':Math.round(v).toLocaleString('ru-RU')+' ₽';
+const num=v=>v==null?'—':Math.round(v).toLocaleString('ru-RU');
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const api=(p,o)=>fetch(p,o).then(async r=>{const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||r.status);return j});
+const charts={};
+function chart(id,cfg){try{charts[id]?.destroy();charts[id]=new Chart(document.getElementById(id),cfg)}catch(e){console.error('chart',id,e)}}
+const PAL=['#2563eb','#059669','#d97706','#7c3aed','#db2777','#0891b2','#65a30d','#dc2626'];
+const baseOpts=(extra={})=>({responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
+  plugins:{legend:{position:'bottom',labels:{boxWidth:12}}},scales:{y:{beginAtZero:true,grid:{color:'#eef0f2'},ticks:{callback:v=>Number(v).toLocaleString('ru-RU')}},x:{grid:{display:false}}},...extra});
+function delta(cur,prev,invert){if(!prev)return '';const p=Math.round((cur-prev)/prev*100);const good=invert?p<0:p>0;
+  return `<span class="${p===0?'':(good?'up':'down')}">${p>0?'+':''}${p}%</span>`}
+function kpi(lab,val,sub='',cls=''){return `<div class="card kpi ${cls}"><div class="lab">${lab}</div><div class="val">${val}</div><div class="sub">${sub}</div></div>`}
+
+// ── навигация ──
+const loaded={};
+function show(t){document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('on',b.dataset.t===t));
+  document.querySelectorAll('main>section').forEach(s=>s.classList.toggle('hidden',s.id!=='t-'+t));
+  try{localStorage.setItem('mp_tab',t)}catch(e){}
+  history.replaceState(null,'','#'+t);
+  (loaders[t]||(()=>{}))();}
+$('#nav').onclick=e=>{const t=e.target.dataset?.t;if(t)show(t)};
+
+// ── пульс ──
+async function loadPulse(){
+  const [s,d,cl]=await Promise.all([api('/api/summary'),api('/api/daily?days=30'),api('/api/clients')]);
+  const sy=s.sync||{};
+  $('#syncInfo').textContent=`Синхр. ${sy.last_run||'—'}${sy.svc_backlog?` · проверка услуг: осталось ${num(sy.svc_backlog)}`:''}${sy.error?' · ошибка: '+sy.error:''}`;
+  const missCls=s.missing_7d?'alert':'good';
+  $('#kpis').innerHTML=
+    kpi('Заказов сегодня',num(s.orders_today),`вчера ${num(s.orders_yesterday)} · неделю назад ${num(s.orders_week_ago)} ${delta(s.orders_today,s.orders_week_ago)}`)+
+    kpi('Отгружено сегодня',num(s.shipped_today),`вчера ${num(s.shipped_yesterday)}`)+
+    kpi('Выручка сегодня',rub(s.revenue_today),`вчера ${rub(s.revenue_yesterday)} · месяц ${rub(s.revenue_month)}`)+
+    kpi('В работе сейчас',num(s.queue),`дольше 12 ч: ${num(s.queue_12h)} · 24 ч: ${num(s.queue_24h)}`,s.queue_24h?'alert':'')+
+    kpi('Просрочено по сроку',num(s.overdue),'план отгрузки маркетплейса уже прошёл',s.overdue?'alert':'good')+
+    kpi('Не прожата «Отгрузка FBS»',num(s.missing_7d),`за 7 дней · потеряно ≈ ${rub(s.lost_7d)}`,missCls);
+  chart('c-pulse',{type:'bar',data:{labels:d.labels,datasets:[
+    {label:'Создано',data:d.total,backgroundColor:'#bfdbfe'},
+    {label:'Отгружено',data:d.shipped,type:'line',borderColor:'#059669',backgroundColor:'#059669',tension:.3,pointRadius:0},
+    ...(d.plan.some(v=>v)?[{label:'План',data:d.plan,type:'line',borderColor:'#9ca3af',borderDash:[5,5],pointRadius:0}]:[])]},options:baseOpts()});
+  $('#pulseClients').innerHTML='<tr><th>Клиент</th><th>7 дн</th><th>пред. 7</th><th>Δ</th></tr>'+
+    cl.map(c=>`<tr><td>${esc(c.name)} ${c.alert?'<span class="pill p-bad">падение</span>':''}</td><td>${num(c.orders_7)}</td><td>${num(c.orders_prev7)}</td><td>${c.change_7==null?'—':delta(c.orders_7,c.orders_prev7)}</td></tr>`).join('');
+}
+
+// ── заказы ──
+let dailyCache={};
+async function loadOrders(){
+  const days=$('#daysSel').value;
+  const d=dailyCache[days]||(dailyCache[days]=await api('/api/daily?days='+days));
+  const split=$('#splitSel').value;
+  let ds;
+  if(split==='total')ds=[{label:'Создано',data:d.total,backgroundColor:'#93c5fd'}];
+  else{const src=split==='company'?d.by_company:d.by_source;ds=Object.entries(src).map(([k,v],i)=>({label:k,data:v,backgroundColor:PAL[i%PAL.length],stack:'s'}))}
+  ds.push({label:'Отгружено',data:d.shipped,type:'line',borderColor:'#059669',tension:.3,pointRadius:0});
+  ds.push({label:'Отмены',data:d.cancel,type:'line',borderColor:'#dc2626',tension:.3,pointRadius:0,borderWidth:1.5});
+  if(d.plan.some(v=>v))ds.push({label:'План',data:d.plan,type:'line',borderColor:'#6b7280',borderDash:[5,5],pointRadius:0});
+  chart('c-orders',{type:'bar',data:{labels:d.labels,datasets:ds},options:baseOpts({scales:{x:{stacked:true,grid:{display:false}},y:{stacked:split!=='total',beginAtZero:true}}})});
+  const mx=Math.max(1,...d.heat.flat());const wd=['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
+  $('#heat').innerHTML='<tr><th></th>'+[...Array(24).keys()].map(h=>`<th>${h}</th>`).join('')+'</tr>'+
+    d.heat.map((r,i)=>`<tr><th>${wd[i]}</th>`+r.map(v=>{const a=v/mx;return `<td title="${wd[i]}, ${v} заказов" style="background:rgba(37,99,235,${a.toFixed(2)});color:${a>.55?'#fff':'#374151'}">${v||''}</td>`}).join('')+'</tr>').join('');
+}
+$('#daysSel').onchange=loadOrders;$('#splitSel').onchange=loadOrders;
+
+// ── скорость ──
+async function loadSpeed(){
+  const s=await api('/api/speed?days=30');const o=s.overall;
+  $('#speedKpi').innerHTML=kpi('Медиана до отгрузки',o.median==null?'—':o.median+' ч','половина заказов быстрее')+
+    kpi('90% заказов',o.p90==null?'—':o.p90+' ч','медленный хвост')+
+    kpi('В срок маркетплейса',o.on_time_pct==null?'—':o.on_time_pct+'%',`опоздали: ${num(o.late)}`,o.on_time_pct>=98?'good':(o.on_time_pct<95?'alert':''))+
+    kpi('Отгружено за 30 дней',num(o.shipped),'');
+  chart('c-speed',{type:'line',data:{labels:s.labels,datasets:[
+    {label:'Медиана, ч',data:s.median,borderColor:'#2563eb',tension:.3,pointRadius:0,yAxisID:'y'},
+    {label:'90%, ч',data:s.p90,borderColor:'#93c5fd',tension:.3,pointRadius:0,yAxisID:'y'},
+    {label:'В срок, %',data:s.sla_pct,borderColor:'#059669',tension:.3,pointRadius:0,yAxisID:'y2'}]},
+    options:baseOpts({scales:{y:{beginAtZero:true,title:{display:true,text:'часов'}},y2:{position:'right',min:70,max:100,grid:{display:false},title:{display:true,text:'%'}},x:{grid:{display:false}}}})});
+  $('#speedComp').innerHTML='<tr><th>Клиент</th><th>Медиана, ч</th><th>90%, ч</th><th>В срок</th><th>Заказов</th></tr>'+
+    s.by_company.map(c=>`<tr><td>${esc(c.name)}</td><td>${c.median??'—'}</td><td>${c.p90??'—'}</td><td>${c.on_time_pct==null?'—':c.on_time_pct+'%'}</td><td>${num(c.n)}</td></tr>`).join('');
+  $('#stages').innerHTML='<tr><th>Этап</th><th>Медиана, ч</th><th>90%, ч</th><th>Заказов</th></tr>'+
+    (s.stages.length?s.stages.map(x=>`<tr><td>${esc(x.name)}</td><td>${x.median}</td><td>${x.p90}</td><td>${num(x.n)}</td></tr>`).join(''):'<tr><td class="l muted" colspan="4">Данных пока нет</td></tr>');
+}
+
+// ── услуги ──
+async function loadSvc(){
+  const s=await api('/api/services');
+  $('#svcKpi').innerHTML=kpi('Без «Отгрузки FBS»',num(s.missing),'за всё время',s.missing?'alert':'good')+
+    kpi('Потеряно, оценка',rub(s.lost),'по средней цене услуги клиента',s.lost?'alert':'good')+
+    kpi('Проверено заказов',num(s.checked),s.backlog?`ещё проверяется: ${num(s.backlog)}`:'все отгруженные проверены');
+  $('#svcRows').innerHTML='<tr><th>Заказ</th><th>Клиент</th><th>Отгружен</th><th>Шт</th><th>≈ ₽</th></tr>'+
+    (s.rows.length?s.rows.map(r=>`<tr><td>${esc(r.number)}</td><td class="l">${esc(r.company)}</td><td>${esc(r.shipped)}</td><td>${num(r.units)}</td><td>${num(r.lost)}</td></tr>`).join(''):'<tr><td class="l" colspan="5"><span class="pill p-ok">Пропусков нет</span></td></tr>');
+  $('#svcComp').innerHTML='<tr><th>Клиент</th><th>Заказов</th></tr>'+(s.by_company.map(c=>`<tr><td>${esc(c.name)}</td><td>${num(c.n)}</td></tr>`).join('')||'<tr><td class="l muted" colspan="2">—</td></tr>');
+  chart('c-svcwd',{type:'bar',data:{labels:['Пн','Вт','Ср','Чт','Пт','Сб','Вс'],datasets:[{label:'Пропусков',data:s.by_weekday,backgroundColor:'#fca5a5'}]},options:baseOpts({plugins:{legend:{display:false}}})});
+}
+
+// ── клиенты ──
+async function loadClients(){
+  const cl=await api('/api/clients');
+  $('#clientsTbl').innerHTML='<tr><th>Клиент</th><th>Заказы 7 дн</th><th>Пред. 7</th><th>Δ</th><th>30 дн</th><th>Доля</th><th>Выручка 30 дн</th><th>Выставлено</th><th>Оплачено</th><th>Долг</th><th>Последний заказ</th></tr>'+
+    cl.map(c=>`<tr style="${c.alert?'background:#fff5f5':''}"><td title="${esc(c.full_name)}">${esc(c.name)} ${c.alert?'<span class="pill p-bad">падение</span>':''}</td><td>${num(c.orders_7)}</td><td>${num(c.orders_prev7)}</td><td>${c.change_7==null?'—':delta(c.orders_7,c.orders_prev7)}</td><td>${num(c.orders_30)}</td><td>${c.share_30}%</td><td>${rub(c.revenue_30)}</td><td>${rub(c.billed)}</td><td>${rub(c.paid)}</td><td>${c.debt?`<span class="pill p-warn">${rub(c.debt)}</span>`:'—'}</td><td>${esc(c.last_order)}</td></tr>`).join('');
+}
+
+// ── финансы ──
+async function loadFin(){
+  const f=await api('/api/finance?months=12');const first=f.months.findIndex(r=>r.revenue||r.expenses||r.billed);const m=first<0?f.months.slice(-1):f.months.slice(first);const cur=m[m.length-1]||{};
+  $('#finKpi').innerHTML=kpi('Выручка месяца',rub(cur.revenue),'по начислению')+kpi('Расходы месяца',rub(cur.expenses),'из журнала')+
+    kpi('Прибыль месяца',rub(cur.profit),cur.margin==null?'':`маржа ${cur.margin}%`,cur.profit<0?'alert':'good')+
+    kpi('Долг клиентов',rub(f.debt),`выставлено ${rub(f.billed_total)}`,f.debt?'':'good')+
+    kpi('Расчётный счёт',rub(f.cash.rs),'по журналу')+kpi('Наличные',rub(f.cash.cash),'по журналу');
+  chart('c-fin',{type:'bar',data:{labels:m.map(r=>r.month),datasets:[
+    {label:'Выручка',data:m.map(r=>r.revenue),backgroundColor:'#93c5fd'},
+    {label:'Расходы',data:m.map(r=>r.expenses),backgroundColor:'#fca5a5'},
+    {label:'Прибыль',data:m.map(r=>r.profit),type:'line',borderColor:'#059669',tension:.3}]},options:baseOpts()});
+  const row=(lab,get,cls='')=>`<tr class="${cls}"><td>${lab}</td>${m.map(r=>`<td>${get(r)}</td>`).join('')}</tr>`;
+  $('#pnl').innerHTML=`<tr><th>Статья</th>${m.map(r=>`<th>${r.month}</th>`).join('')}</tr>`+
+    row('<b>Выручка</b>',r=>'<b>'+rub(r.revenue)+'</b>')+
+    row('&nbsp;&nbsp;начислено «Отгрузка FBS»',r=>rub(r.revenue-r.other_billed))+
+    row('&nbsp;&nbsp;прочие услуги из счетов',r=>rub(r.other_billed))+
+    row('Выставлено счетов',r=>rub(r.billed))+row('Оплачено клиентами',r=>rub(r.paid))+
+    row('<b>Расходы</b>',r=>'<b>'+rub(r.expenses)+'</b>')+
+    f.categories.map(c=>row('&nbsp;&nbsp;'+esc(c),r=>rub(r.by_cat[c]))).join('')+
+    row('<b>Прибыль</b>',r=>`<b class="${r.profit<0?'down':'up'}">${rub(r.profit)}</b>`)+
+    row('Маржа',r=>r.margin==null?'—':r.margin+'%')+
+    row('Вложения (не в прибыли)',r=>rub(r.investments));
+}
+
+// ── план/факт ──
+async function loadPlan(){
+  const p=await api('/api/planfact');
+  $('#pfTitle').textContent=`План / факт · ${p.month} · прошло ${p.days_passed} из ${p.days_in_month} дней`;
+  const fmt=(k,v)=>k==='orders'?num(v):rub(v);
+  $('#pfTbl').innerHTML='<tr><th>Показатель</th><th>План</th><th>Факт</th><th>Выполнено</th><th>Прогноз на конец месяца</th><th>К плану</th></tr>'+
+    p.rows.map(r=>{const fc=r.forecast_pct;const cls=fc==null?'':(r.key==='expenses'?(fc>100?'p-bad':'p-ok'):(fc>=100?'p-ok':fc>=90?'p-warn':'p-bad'));
+      return `<tr><td>${r.name}</td><td>${r.plan==null?'<span class="muted">не задан</span>':fmt(r.key,r.plan)}</td><td>${fmt(r.key,r.fact)}</td>
+      <td>${r.done_pct==null?'—':r.done_pct+'%<div class="bar"><i style="width:'+Math.min(100,r.done_pct)+'%"></i></div>'}</td><td>${fmt(r.key,r.forecast)}</td>
+      <td>${fc==null?'—':`<span class="pill ${cls}">${fc}%</span>`}</td></tr>`}).join('');
+  const f=$('#planForm');if(!f.month.value)f.month.value=p.month;
+}
+$('#planForm').onsubmit=async e=>{e.preventDefault();const f=e.target;const b={month:f.month.value};
+  ['orders','revenue','expenses','profit'].forEach(k=>b[k]=f[k].value);
+  await api('/api/plan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});dailyCache={};loadPlan()};
+
+// ── журнал ──
+let led={rows:[]};
+async function loadLedger(){
+  led=await api('/api/ledger');
+  if(!$('#kindSel').options.length){$('#kindSel').innerHTML=Object.entries(led.kinds).map(([k,v])=>`<option value="${k}">${v}</option>`).join('');
+    $('#catSel').innerHTML=led.categories.map(c=>`<option>${c}</option>`).join('');$('#ledForm').date.valueAsDate=new Date()}
+  const meth={rs:'РС',cash:'Нал',personal:'Лично','':'—'};
+  $('#ledTbl').innerHTML='<tr><th>Дата</th><th>Тип</th><th>Статья</th><th>Сумма</th><th>Оплата</th><th style="text-align:left">Комментарий</th><th>Кто</th><th></th></tr>'+
+    led.rows.map(r=>`<tr style="${r.in_ff?'':'opacity:.55'}"><td>${r.date.split('-').reverse().join('.')}</td><td>${esc(led.kinds[r.kind]||r.kind)}</td><td>${esc(r.category)}</td>
+    <td class="${['funding','client_payment','other_income'].includes(r.kind)?'up':''}">${rub(r.amount)}</td><td>${meth[r.method]??esc(r.method)}</td><td class="l">${esc(r.note)}${r.in_ff?'':' <span class="pill p-warn">не ФФ</span>'}</td><td>${esc(r.author)}</td>
+    <td><button class="btn" data-ed="${r.id}">Изм.</button> <button class="btn" data-del="${r.id}" aria-label="Удалить">✕</button></td></tr>`).join('');
+}
+$('#ledTbl').onclick=async e=>{const d=e.target.dataset;
+  if(d.del){if(confirm('Удалить запись?')){await api('/api/ledger/'+d.del,{method:'DELETE'});loadLedger()}}
+  if(d.ed){const r=led.rows.find(x=>x.id===d.ed);const f=$('#ledForm');
+    ['date','kind','category','amount','method','note','id'].forEach(k=>f[k].value=r[k]??'');f.in_ff.checked=!!r.in_ff;
+    $('#ledSave').textContent='Сохранить';$('#ledCancel').classList.remove('hidden');f.scrollIntoView({behavior:'smooth'})}};
+$('#ledCancel').onclick=()=>{const f=$('#ledForm');f.reset();f.id.value='';f.date.valueAsDate=new Date();$('#ledSave').textContent='Добавить';$('#ledCancel').classList.add('hidden')};
+$('#ledForm').onsubmit=async e=>{e.preventDefault();const f=e.target;
+  const b={date:f.date.value,kind:f.kind.value,category:f.category.value,amount:f.amount.value,method:f.method.value,note:f.note.value,in_ff:f.in_ff.checked};
+  try{if(f.id.value)await api('/api/ledger/'+f.id.value,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
+    else await api('/api/ledger',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
+    $('#ledCancel').onclick();loadLedger()}catch(err){alert('Не сохранилось: '+err.message)}};
+
+const loaders={pulse:loadPulse,orders:loadOrders,speed:loadSpeed,svc:loadSvc,clients:loadClients,fin:loadFin,plan:loadPlan,ledger:loadLedger};
+$('#syncBtn').onclick=async()=>{await api('/api/sync',{method:'POST'});$('#syncInfo').textContent='Синхронизация запущена…';setTimeout(()=>{dailyCache={};show(document.querySelector('nav .on').dataset.t)},15000)};
+let start='pulse';try{start=localStorage.getItem('mp_tab')||'pulse'}catch(e){}
+if(location.hash&&loaders[location.hash.slice(1)])start=location.hash.slice(1);
+show(start);
+if(start!=='pulse')api('/api/summary').then(s=>{const sy=s.sync||{};$('#syncInfo').textContent=`Синхр. ${sy.last_run||'—'}${sy.svc_backlog?` · проверка услуг: осталось ${num(sy.svc_backlog)}`:''}`});
+setInterval(()=>{if(document.querySelector('nav .on')?.dataset.t==='pulse')loadPulse()},120000);
 </script>
 </body>
 </html>
