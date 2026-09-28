@@ -78,6 +78,27 @@ async def status():
     return JSONResponse(out)
 
 
+# Разрешены только методы чтения из спеки (list/GET). Создание заказов,
+# приёмок, пополнение баланса и правка оплаты сюда не пропускаются.
+_READ_POST = {"/v1/services/list", "/v1/products/list", "/v1/products/stocks",
+              "/v1/arrivals/list", "/v1/orders/list", "/v1/orders/types/list",
+              "/v1/companies/list", "/v1/products/categories/list",
+              "/v1/invoices/list", "/v1/analytics/storage/list", "/v1/cim-codes"}
+
+
+@app.post("/api/probe")
+async def probe(payload: dict):
+    """Прокси на чтение к API МПФИТ для разработки: {path, body} или
+    {path} для GET /v1/orders/{id} и /v1/arrivals/{id}."""
+    import re
+    path = str(payload.get("path") or "")
+    if re.fullmatch(r"/v1/(orders|arrivals)/\d+", path):
+        return await mpfit_client.call("GET", path)
+    if path not in _READ_POST:
+        return JSONResponse({"error": "метод не разрешён (только чтение)"}, status_code=400)
+    return await mpfit_client.call("POST", path, payload.get("body") or {"limit": 10, "last_id": 0})
+
+
 @app.get("/")
 async def index():
     return FileResponse(HERE / "static" / "index.html",
