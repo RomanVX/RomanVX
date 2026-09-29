@@ -266,6 +266,127 @@ async def _detail_load_snapshot(cache_key: str) -> None:
         _log.warning("Detail snapshot load failed: %s", e)
 
 
+def _normalize_stat_rows(stat_rows: list[dict]) -> list[dict]:
+    """statistics-api reportDetailByPeriod (v5) → формат finance-api detailed.
+
+    Кабинетная «Финансовая аналитика» строится из этого же отчёта,
+    поэтому цифры сходятся с ЛК.
+    """
+    import sys as _sys
+    _i = _sys.intern   # даты/типы/артикулы повторяются в тысячах строк
+    out = []
+    # деструктивно: pop() освобождает исходные записи по ходу — иначе на
+    # Render free (512 МБ) две копии полугодового отчёта дают OOM
+    stat_rows.reverse()
+    while stat_rows:
+        r = stat_rows.pop()
+        qty = r.get("quantity") or 0
+        # «до СПП»: retail_amount в v5 — фактическая сумма ПОСЛЕ СПП;
+        # цена продавца до СПП — retail_price_withdisc_rub (за единицу)
+        pre_spp = (r.get("retail_price_withdisc_rub") or 0) * (qty or 1)
+        out.append({
+            "rrDate":          _i((r.get("rr_dt") or r.get("sale_dt") or "")[:10]),
+            "saleDate":        _i((r.get("sale_dt") or r.get("rr_dt") or "")[:10]),
+            "docTypeName":     _i(r.get("doc_type_name") or ""),
+            "operName":        _i(r.get("supplier_oper_name") or ""),
+            "retailAmount":    r.get("retail_amount") or 0,
+            "retailPreSpp":    pre_spp,
+            "forPay":          r.get("ppvz_for_pay") or 0,
+            "deliveryService": r.get("delivery_rub") or 0,
+            "paidStorage":     r.get("storage_fee") or 0,
+            "paidAcceptance":  r.get("acceptance") or 0,
+            "penalty":         r.get("penalty") or 0,
+            "deduction":       r.get("deduction") or 0,
+            "cashbackAmount":  0,
+            "acquiringFee":    r.get("acquiring_fee") or 0,
+            "commissionPct":   r.get("commission_percent") or 0,
+            "vendorCode":      _i((r.get("sa_name") or "").strip()),
+            "nmId":            r.get("nm_id"),
+            "quantity":        qty,
+            # схема продажи: у FBS-строк склад = «Маркетплейс» (склад продавца)
+            "isFbs":           "маркетплейс" in str(r.get("office_name") or "").lower(),
+        })
+    return out
+
+
+async def _fetch_detail_bg(date_from: str, date_to: str) -> None:
+    """Фоновая задача: детальные строки для P&L.
+
+    Основной источник — statistics-api reportDetailByPeriod (отдельный
+    rate-limit, весь период за 1-2 запроса). Фолбэк — finance-api
+    detailed (общий лимит 1 req/мин, загрузка занимает минуты).
+    """
+    global _detail_cache, _detail_cache_ts, _detail_fetching, _detail_last_error
+    global _pnl_cache, _pnl_cache_ts
+    if _detail_fetching:
+        return
+    _detail_fetching = True
+    try:
+        cache_key = f"{date_from}_{date_to}"
+        # при ежедневной перекачке в памяти живут ДВА комплекта строк (старый
+        # detail + новый). Если память уже поджата — жертвуем стейлом: старые
+        # строки есть в снапшоте БД, а OOM убил бы всё (17.07: rss 516 → 502)
+        import gc
+        import heavy as _heavy
+        if _detail_cache.get("rows") and _heavy.rss_mb() > 340:
+            _log.info("detail refetch: rss %.0f МБ — освобождаю старый кеш "
+                      "(%d строк) перед перекачкой", _heavy.rss_mb(),
+                      len(_detail_cache.get("rows", [])))
+            _detail_cache = {}
+            gc.collect()
+        async with _detail_lock:
+            rows: list[dict] = []
+            # statistics-api качаем ПОМЕСЯЧНО: один длинный период у WB либо
+            # обрывается, либо отдаёт хвост не целиком (май 2026 выпадал целиком).
+            # Ошибка одного окна не теряет остальные — что скачалось, то в кеше.
+            import wb_client
+            d0 = datetime.strptime(date_from, "%Y-%m-%d")
+            d1 = datetime.strptime(date_to, "%Y-%m-%d")
+            failed: list[str] = []
+            cur = d0
+            while cur < d1:
+                nxt = min((cur.replace(day=1) + timedelta(days=32)).replace(day=1), d1)
+                try:
+                    stat_rows = await wb_client.get_report_detail(cur, nxt - timedelta(days=1))
+                    part = await asyncio.to_thread(_normalize_stat_rows, stat_rows)
+                    del stat_rows
+                    rows.extend(part)
+                    _log.info("Detail via statistics-api %s..%s: %d rows (всего %d)",
+                              cur.date(), (nxt - timedelta(days=1)).date(), len(part), len(rows))
+                except Exception as e:
+                    failed.append(f"{cur.date()}: {str(e)[:120]}")
+                    _log.warning("statistics-api detail %s failed: %s", cur.date(), e)
+                cur = nxt
+                await asyncio.sleep(62)   # лимит 1 req/мин на метод
+            if failed:
+                _detail_last_error = "не скачались окна: " + "; ".join(failed)[:280]
+
+            if not rows:
+                rows = await wb_finance_client.get_detailed_report(date_from, date_to)
+                _log.info("Detail via finance-api: %d rows", len(rows))
+
+            _detail_cache = {"key": cache_key, "rows": rows}
+            _detail_cache_ts = _time.monotonic()
+            if not failed:
+                _detail_last_error = ""
+            try:
+                import snapshot as _snapmod
+                await asyncio.to_thread(
+                    _snapmod.save_rows, "wb_detail",
+                    {"key": cache_key, "ts": _time.time()}, rows)
+            except Exception as e:
+                _log.warning("Detail snapshot save failed: %s", e)
+        # детали готовы → сбрасываем P&L-кэш, чтобы следующий запрос пересобрал
+        # отчёт по точным датам (иначе weekly-версия жила бы до конца TTL)
+        _pnl_cache = {}
+        _pnl_cache_ts = 0.0
+    except Exception as e:
+        _detail_last_error = str(e)[:300]
+        _log.error("Detail report fetch failed: %s", e)
+    finally:
+        _detail_fetching = False
+
+
 async def _fetch_detail_bg(date_from: str, date_to: str) -> None:
     """Фоновая задача: детальные строки для P&L.
 
