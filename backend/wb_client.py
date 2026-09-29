@@ -249,6 +249,18 @@ async def _learn_from_cards() -> None:
         _log.info("WB cards: выучено %d связок nmID→артикул", len(learned))
 
 
+
+# Сгоревшие склады WB (пожары 07-08.2026): WB ещё показывает там остатки,
+# но товара физически нет.
+_BURNED_WH = ("краснодар", "невинномысск", "шушары", "новосаратовка",
+              "электросталь", "котовск", "пенза", "новосемейкино", "тула")
+
+
+def _is_burned_wh(warehouse_name: str) -> bool:
+    w = str(warehouse_name or "").lower()
+    return bool(w) and any(b in w for b in _BURNED_WH)
+
+
 async def get_stocks() -> list[dict]:
     """Остатки на складах WB.
 
@@ -286,11 +298,12 @@ async def get_stocks() -> list[dict]:
 
     # сгоревшие склады: WB ещё показывает этот товар в остатках, но его
     # физически нет — выкидываем, чтобы дни запаса и поставки были честными
+    # ТОЛЬКО точные имена, без городских синонимов: «спб» скрыл бы и живую
+    # Уткину Заводь. «СПБ Шушары» ловится по слову «шушары».
     try:
-        import damage as _dmg
         before = len(items)
         items = [it for it in items
-                 if not _dmg.is_burned(it.get("warehouseName", ""))]
+                 if not _is_burned_wh(it.get("warehouseName", ""))]
         if before != len(items):
             _log.info("WB stocks: скрыто %d строк сгоревших складов",
                       before - len(items))

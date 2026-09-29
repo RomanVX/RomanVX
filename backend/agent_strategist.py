@@ -193,12 +193,6 @@ async def _t_bid_recommend(a: dict) -> str:
                        if str(v).upper() == sku.upper()), None)
         except Exception:
             nm = None
-        if not nm:
-            try:
-                import onboarding
-                nm = (onboarding.load().get(sku) or {}).get("wb_id")
-            except Exception:
-                nm = None
     if nm and not aid:
         try:
             from routers import tools as _tools
@@ -370,14 +364,6 @@ async def _t_save_rule(a: dict) -> str:
     return f"правило #{n} сохранено, теперь оно в каждой сессии"
 
 
-async def _t_price_optimal(a: dict) -> str:
-    """Оптимизатор цен: кривая прибыли × эластичность по каждому SKU.
-    Без heavy.guard — внутренние сборки guard-ятся сами (иначе дедлок)."""
-    import simulator
-    d = await simulator.optimal(int(a.get("max_step") or 15))
-    return json.dumps(d, ensure_ascii=False)
-
-
 async def _t_funnel_wb(a: dict) -> str:
     """Воронка WB из вечной таблицы wb_funnel (nm-report)."""
     import wb_funnel
@@ -444,53 +430,19 @@ async def _t_competitors(_a: dict) -> str:
         + json.dumps(slim, ensure_ascii=False)
 
 
-async def _t_trends(a: dict) -> str:
-    from routers import tools as _tools
-    res = await _tools.trends_get(weeks=12, min_cnt=0, q=str(a.get("filter") or ""))
-    items = res.get("items") or []
-    src = str(a.get("source") or "")
-    if src in ("my", "market"):
-        items = [i for i in items if (src == "my") == (i["source"] == "ozon_my")]
-    slim = [{"q": i["query"], "src": "my" if i["source"] == "ozon_my" else "mkt",
-             "last": i.get("last"), "d28": i.get("d28"), "d7": i.get("d7"),
-             "slope": i.get("slope_pct"), "score": i.get("score"),
-             "stage": i.get("stage"), "items": i.get("items_cnt")}
-            for i in items[:40]]
-    return json.dumps(slim, ensure_ascii=False) if slim else "трендов по фильтру нет"
-
-
 async def _t_ozon_queries(_a: dict) -> str:
     import ozon_client
-    from routers import tools as _tools
-    d_from, d_to = _tools._trend_last_week()
+    from datetime import date as _date, timedelta as _td
+    # последняя завершённая неделя с отступом 3 дня (Ozon досчитывает данные)
+    safe_end = _date.today() - _td(days=3)
+    prev_mon = safe_end - _td(days=safe_end.weekday() + 7)
+    d_from, d_to = prev_mon.isoformat(), (prev_mon + _td(days=6)).isoformat()
     base = await ozon_client.get_product_queries(d_from, d_to)
     slim = [{"art": b.get("offer_id"), "searches": b.get("unique_search_users"),
              "position": b.get("position"), "view_conv": b.get("view_conversion"),
              "gmv": b.get("gmv")} for b in base[:60]]
     return f"поиск Ozon {d_from}—{d_to} по нашим товарам: " \
         + json.dumps(slim, ensure_ascii=False)
-
-
-async def _t_repricer(_a: dict) -> str:
-    import repricer as rp
-    ov = await rp.overview()
-    slim = [{"art": c["art"], "target": c["target"], "min_wb": c["min_wb"],
-             "min_ozon": c["min_ozon"], "active": bool(c["active"]),
-             "wb_seller_now": c.get("wb_seller_now"),
-             "wb_buyer_now": c.get("wb_buyer_now"),
-             "margin_at_target": c.get("margin_at_target"),
-             "profit_at_target": c.get("profit_at_target")}
-            for c in ov["items"]]
-    return json.dumps({"config": slim, "pending_proposals": ov["proposals"],
-                       "presets": ov["presets"]}, ensure_ascii=False)
-
-
-async def _t_repricer_propose(a: dict) -> str:
-    import repricer as rp
-    items = a.get("items") or []
-    reason = str(a.get("reason") or "")
-    n = await asyncio.to_thread(rp.propose, items, reason)
-    return f"предложений сохранено: {n}; владелец увидит их на вкладке Стратегия и решит"
 
 
 async def _t_wb_search(a: dict) -> str:
@@ -586,57 +538,6 @@ async def _t_fbs(_a: dict) -> str:
                        "note": res["note"], "by_sku": slim}, ensure_ascii=False)
 
 
-async def _t_simulate(a: dict) -> str:
-    """Просчитать сценарий: новая цена/ДРР/себес → объём, выручка, прибыль."""
-    import simulator
-    sku = str(a.get("sku") or "")
-    if not sku:
-        return "нужен sku"
-    if a.get("curve"):
-        d = await simulator.curve(sku, drr_pct=a.get("drr"))
-    else:
-        d = await simulator.simulate(
-            sku, price_seller=a.get("price"), drr_pct=a.get("drr"),
-            cogs=a.get("cogs"))
-    return json.dumps(d, ensure_ascii=False, default=str)
-
-
-async def _t_elasticity(a: dict) -> str:
-    """Реакция спроса на прошлые изменения цены — факт вместо спора."""
-    import elasticity
-    d = await elasticity.get(int(a.get("days") or 180))
-    if d.get("error"):
-        return d["error"]
-    return json.dumps({"по_sku": d.get("summary")}, ensure_ascii=False,
-                      default=str)
-
-
-async def _t_money(_a: dict) -> str:
-    """Где деньги: посчитанные утечки и упущенное с суммами и действиями."""
-    import money
-    d = await money.get()
-    slim = [{"сумма_в_месяц": f["amount"], "что": f["title"],
-             "факты": f["evidence"][:250], "действие": f["action"][:200],
-             "sku": f.get("sku"), "есть_кнопка": bool(f.get("act_kind"))}
-            for f in (d.get("findings") or [])[:25]]
-    return json.dumps({"итого_в_месяц": d.get("total"), "находки": slim},
-                      ensure_ascii=False)
-
-
-async def _t_news(a: dict) -> str:
-    """Новости площадок с разбором влияния на нас."""
-    import news as _news
-    days = int(a.get("days") or 30)
-    items = await asyncio.to_thread(_news.listing, days, "", "")
-    slim = [{"дата": i["published"][:10], "источник": i["source"],
-             "важность": i.get("importance"), "заголовок": i["title"][:150],
-             "нас_касается": (i.get("impact") or "")[:300],
-             "вступает": i.get("effective_date")} for i in items[:40]]
-    up = await asyncio.to_thread(_news.upcoming)
-    return json.dumps({"новости": slim, "скоро_вступает_в_силу": up},
-                      ensure_ascii=False)
-
-
 async def _t_dashboard_catalog(_a: dict) -> str:
     """Каталог всех эндпоинтов дашборда (наш же OpenAPI)."""
     import agent_api
@@ -730,20 +631,13 @@ _TOOLS = {
     "funnel": (_t_funnel, "Воронка Ozon по SKU: показы → карточка → корзина → заказ; где теряем продажи"),
     "funnel_wb": (_t_funnel_wb, "Воронка WB по SKU: переходы в карточку → корзина → заказ → выкуп, конверсии и сравнение с прошлым периодом (вечная история nm-report). Аргументы: sku, days, by_day"),
     "save_rule": (_t_save_rule, "Сохранить ПРАВИЛО КАБИНЕТА — тонкость устройства бизнеса, которую сообщил владелец (как работают цены, акции, поставки). Используй, когда владелец объясняет или поправляет, как у него что-то устроено. Аргумент: text"),
-    "price_optimal": (_t_price_optimal, "Оптимальное ценообразование по всем SKU WB: рекомендованная цена, эффект ₽/мес, уверенность (эластичность из нашей истории цен). Используй на вопросы «какие цены ставить / оптимизируй цены». Аргумент: max_step (коридор %, по умолчанию 15)"),
     "clusters": (_t_clusters, "Остатки по кластерам WB и Ozon: где физически кончается товар (аргумент platform: wb|ozon|both)"),
     "pnl_all": (_t_pnl_all, "P&L всех трёх площадок за 3 месяца (WB, Ozon, ЯМ) — инструмент pnl показывает только WB"),
     "history": (_t_history, "Вечная история продаж из БД за любой период (аргумент days, по умолчанию 90) — не ограничена 14 днями и 90 днями API"),
     "prices": (_t_prices, "Текущие цены наших товаров и история изменений за 14 дней"),
     "sales_daily": (_t_sales, "Продажи по дням за 14 дней по площадкам + по SKU за 7 дней"),
     "competitors": (_t_competitors, "Срезы выдачи WB по нашим запросам: позиции, цены и прирост отзывов конкурентов"),
-    "trends": (_t_trends, "Радар трендов Ozon: нарастающие поисковые запросы. Параметры: source='my'|'market', filter='слова'"),
     "ozon_search": (_t_ozon_queries, "Поиск Ozon по нашим товарам: частота, наша позиция, конверсия, GMV из поиска"),
-    "repricer": (_t_repricer, "Репрайсер: целевые цены для покупателя, минималки Ozon/WB, "
-                              "текущие цены WB и маржа при целевой цене"),
-    "repricer_propose": (_t_repricer_propose, "Предложить владельцу изменения репрайсера. "
-                         "Параметры: items [{art, target, min_wb, min_ozon, why}], reason. "
-                         "Это ТОЛЬКО предложение — применяет владелец"),
     "wb_search": (_t_wb_search, "ЖИВАЯ выдача WB по любому поисковому запросу (топ-25: бренды, "
                   "цены, рейтинги, отзывы) — анализ ниши/конкурентов по запросу. Параметр: query. "
                   "Медленный (до 2 мин), работает днём 11-21 МСК; для наших постоянных запросов "
@@ -752,10 +646,6 @@ _TOOLS = {
                "(+флаг автодобавления), календарь акций WB на 30 дней (куда зовут, даты, условия)"),
     "fbs_compare": (_t_fbs, "Переход WB на FBS: дельта прямых затрат на штуку и месяц по каждому "
                     "SKU (комиссия/логистика/хранение по официальным тарифам); конверсию и сроки не моделирует"),
-    "simulate": (_t_simulate, "Симулятор «что если» по SKU: аргументы sku, price (новая цена продавца), drr, cogs — вернёт объём, выручку, прибыль и диапазон неопределённости. С curve=true строит кривую прибыли по цене и находит оптимум. Используй ДО того, как предлагать изменение цены или ставки"),
-    "elasticity": (_t_elasticity, "Эластичность цены по нашей истории: как менялся темп продаж после каждого изменения цены, медианная реакция и вердикт «есть запас поднять / спрос чувствителен». Используй, когда речь о повышении или снижении цены"),
-    "money": (_t_money, "Где деньги: готовый список утечек и упущенной прибыли с суммами в рублях за месяц и действиями — начинай отсюда, когда спрашивают «что делать» или «где теряем»"),
-    "news": (_t_news, "Новости площадок за период (аргумент days) с разбором важности и влияния на нас + календарь вступающих в силу изменений"),
     "dashboard_catalog": (_t_dashboard_catalog, "Каталог ВСЕХ эндпоинтов дашборда с описаниями и параметрами — смотри сюда, если нужных данных нет в готовых инструментах"),
     "dashboard_api": (_t_dashboard_api, "Вызвать любой GET-эндпоинт дашборда напрямую: path (например /api/tools/clusters) и params. Так доступны любые данные проекта, а не только готовые инструменты"),
     "propose_action": (_t_propose_action, "Предложить действие в кабинете владельцу на подтверждение. "
@@ -781,14 +671,7 @@ def _cached_tool_schemas() -> list[dict]:
 # Аргументы инструментов. Без записи здесь модель НЕ МОЖЕТ передать параметр:
 # схема с пустыми properties означает «вызывать без аргументов».
 _TOOL_ARGS: dict[str, dict] = {
-    "trends": {"source": {"type": "string",
-                          "description": "my | market | пусто (все)"},
-               "filter": {"type": "string", "description": "подстрока запроса"}},
     "wb_search": {"query": {"type": "string", "description": "поисковый запрос"}},
-    "repricer_propose": {
-        "items": {"type": "array", "items": {"type": "object"},
-                  "description": "[{art, target, why}]"},
-        "reason": {"type": "string"}},
     "save_memory": {
         "plan": {"type": "string"},
         "new_tasks": {"type": "array", "items": {"type": "object"}},
@@ -797,15 +680,6 @@ _TOOL_ARGS: dict[str, dict] = {
                          "description": "период в днях, по умолчанию 90"}},
     "clusters": {"platform": {"type": "string",
                               "description": "wb | ozon | both"}},
-    "elasticity": {"days": {"type": "integer",
-                            "description": "глубина истории, по умолчанию 180"}},
-    "simulate": {
-        "sku": {"type": "string", "description": "артикул продавца, например AL-01"},
-        "price": {"type": "number", "description": "новая ЦЕНА ПРОДАВЦА, ₽"},
-        "drr": {"type": "number", "description": "новый ДРР, %"},
-        "cogs": {"type": "number", "description": "новая себестоимость, ₽"},
-        "curve": {"type": "boolean",
-                  "description": "true — кривая прибыли по сетке цен"}},
     "adv_daily": {
         "days": {"type": "integer", "description": "период, по умолчанию 14"},
         "advert_id": {"type": "integer", "description": "ID кампании WB"},
@@ -818,15 +692,11 @@ _TOOL_ARGS: dict[str, dict] = {
     "save_rule": {
         "text": {"type": "string",
                  "description": "формулировка правила от владельца, кратко и точно"}},
-    "price_optimal": {
-        "max_step": {"type": "integer",
-                     "description": "коридор изменения цены в %, по умолчанию 15"}},
     "bid_recommend": {
         "sku": {"type": "string",
                 "description": "артикул продавца — кампанию и nmID найду сам"},
         "advert_id": {"type": "integer", "description": "ID кампании WB"},
         "nm_id": {"type": "integer", "description": "артикул WB (nmID)"}},
-    "news": {"days": {"type": "integer", "description": "период, по умолчанию 30"}},
     "dashboard_api": {
         "path": {"type": "string",
                  "description": "путь GET-эндпоинта, например /api/tools/clusters"},
@@ -864,25 +734,14 @@ _SYSTEM = """Ты — стратег-директор по маркетплей�
    (done/failed) с честным выводом, ПОЧЕМУ сработало или нет.
 4. Обнови план и поставь новые задачи через save_memory (обязательно перед
    финальным ответом). Задач в работе держи 3-7, не распыляйся.
-РЕПРАЙСЕР — ТВОЯ ЗОНА ОТВЕТСТВЕННОСТИ ПО ЦЕНАМ: в конфиге целевые цены =
-ФАКТИЧЕСКИЕ цены для покупателя из кабинетов (как есть). Твоя работа —
-регулярно проверять их против юнитки (margin_at_target), цен конкурентов
-(competitors, wb_search), спроса (trends, ozon_search, sales_daily) и класть
-КОРРЕКТИРОВКИ через repricer_propose с числовым обоснованием why по каждому
-артикулу. Владелец одобряет/отклоняет на вкладке Репрайсер; каждое одобренное
-решение автоматически становится твоей задачей «проверить эффект через
-7 дней» — сверяй её честно: не сработало = failed с выводом. Не предлагай
-изменения ради изменений: если цена оптимальна — так и говори.
-ЦЕНА И СПРОС: прежде чем предлагать изменение цены, просчитай сценарий
-инструментом simulate (он покажет объём, выручку и прибыль при новой цене
-и диапазон неопределённости) и проверь инструмент elasticity — там видно, как спрос реально реагировал на прошлые изменения
-у этого SKU. Если реакции почти нет, запас поднять есть; если спрос
-чувствителен, шаги мельче и с проверкой. Без этих данных цену трогать
-не предлагай — это спор вслепую.
+ЦЕНА И СПРОС: прежде чем предлагать изменение цены, сверь юнитку
+(unit_economics), цены конкурентов (competitors, wb_search), спрос
+(ozon_search, sales_daily, history). Не предлагай изменения ради изменений:
+если цена оптимальна — так и говори.
 ИСТОЧНИК ЦЕН: любые числа «цена сейчас/сегодня» бери ТОЛЬКО из блока
 АКТУАЛЬНЫЕ ЦЕНЫ в сообщении сессии (живой API) или инструмента prices.
 Цены внутри unit_economics — средние за окно усреднения, после правок
-владельца/репрайсера они отстают ДНЯМИ; называть их текущими запрещено.
+владельца они отстают ДНЯМИ; называть их текущими запрещено.
 Если живая цена и юнитка расходятся — явно скажи об этом и считай
 экономику от живой цены.
 ЖЕЛЕЗНЫЕ ПРАВИЛА ЦЕН: (1) низкая цена относительно конкурентов может быть
@@ -948,9 +807,8 @@ _SYSTEM = """Ты — стратег-директор по маркетплей�
 Не пересказывай, КАК считал и какие инструменты смотрел. Запрещено писать
 «отвечаю из кеша», «данные в снимке есть», «вопрос — продолжение разговора»
 и любые описания собственной кухни: владельцу нужен ответ, а не отчёт о
-процессе. Названия инструментов (promos, money, adv_bids и прочие) — твоя
-внутренняя кухня, в тексте их не упоминай: пиши «в акциях Ozon», «в разделе
-Где деньги», «в рекламе».
+процессе. Названия инструментов (promos, adv_bids и прочие) — твоя
+внутренняя кухня, в тексте их не упоминай: пиши «в акциях Ozon», «в рекламе».
 НЕ ПРЕДЛАГАЙ ТО, ЧТО МОЖЕШЬ СДЕЛАТЬ САМ. Если для ответа нужно ещё раз
 посмотреть данные — посмотри и ответь. «Хочешь, прогоню…» уместно только
 там, где нужно РЕШЕНИЕ владельца или дорогая операция (живая выдача WB,
@@ -993,8 +851,7 @@ _SYSTEM = """Ты — стратег-директор по маркетплей�
 в целом по кабинету ДРР приемлемый — так и скажи, без общего вердикта
 «всё хорошо».
 ОБЪЁМ ПРОДАЖ: прежде чем считать эффект от цены, сверь объём со свежим
-темпом (инструмент simulate сам подставляет факт последних 14 дней и
-пишет volume_note). Если темп падает, любые расчёты «прибыль вырастет на
+темпом (sales_daily — факт последних 14 дней). Если темп падает, любые расчёты «прибыль вырастет на
 столько-то» бессмысленны — сначала причина падения, потом цена.
 ДЕЙСТВИЯ: сам ничего в кабинете не меняешь. Если нужно поменять ставку,
 поставить минус-фразы, остановить сливающую кампанию или изменить цену —
@@ -1014,11 +871,9 @@ _TOOL_RU = {"unit_economics": "юнитка", "stocks": "остатки", "pnl":
             "clusters": "кластеры", "pnl_all": "P&L площадок",
             "history": "история продаж",
             "propose_action": "заявка на действие",
-            "money": "где деньги", "elasticity": "эластичность цены",
-            "simulate": "симулятор сценария", "news": "новости площадок", "dashboard_catalog": "каталог API", "dashboard_api": "данные дашборда",
-            "competitors": "конкуренты", "trends": "тренды",
-            "ozon_search": "поиск Ozon", "repricer": "репрайсер",
-            "repricer_propose": "предложения цен", "wb_search": "выдача WB",
+            "dashboard_catalog": "каталог API", "dashboard_api": "данные дашборда",
+            "competitors": "конкуренты",
+            "ozon_search": "поиск Ozon", "wb_search": "выдача WB",
             "promos": "акции", "fbs_compare": "FBS-расчёт", "memory": "память",
             "save_memory": "запись памяти"}
 
@@ -1105,20 +960,6 @@ async def _run_session_locked(trigger, focus, light, status_msg_id,
         try:
             import agent_digest as _dg
             _snapshot = await _dg.get()
-            if not light:
-                # «где деньги» — только в полные сессии: в быстрых ответах этот
-                # блок превращался в вечную шарманку про одни и те же утечки
-                try:
-                    import money as _mn
-                    _mm = await _mn.get()
-                    if _mm.get("total"):
-                        _top = "; ".join(f"{f['title']} ({f['amount']} ₽)"
-                                         for f in (_mm.get("findings") or [])[:3])
-                        _snapshot += (f"\nГДЕ ДЕНЬГИ: найдено утечек и упущенного на "
-                                      f"{_mm['total']} ₽/мес. Крупнейшее: {_top}. "
-                                      "Полный список — инструмент money.")
-                except Exception:
-                    pass
             if _snapshot and light and len(_snapshot) > 2500:
                 _snapshot = _snapshot[:2500] + "\n… (полностью — инструментами)"
             if _snapshot:

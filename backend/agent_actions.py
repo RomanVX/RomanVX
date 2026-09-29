@@ -157,12 +157,6 @@ async def _do_wb_price(p: dict) -> tuple[dict, dict]:
         except Exception:
             nm = None
         if not nm:
-            try:
-                import onboarding
-                nm = (onboarding.load().get(art) or {}).get("wb_id")
-            except Exception:
-                nm = None
-        if not nm:
             raise RuntimeError(f"не нашёл nmID для артикула {art}")
     nm = int(nm)
     good: dict = {"nmID": nm}

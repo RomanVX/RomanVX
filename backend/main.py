@@ -49,7 +49,7 @@ async def _accumulate_sales():
 
 
 async def _prefetch_weekly():
-    """Фоновая задача: обновляет кеш weekly_summary каждые 30 минут."""
+    """Фоновая задача: обновляет кеши weekly_orders/stocks_table, отзывы и историю продаж."""
     await asyncio.sleep(5)  # дать серверу подняться
     while True:
         try:
@@ -193,58 +193,6 @@ async def _report_interrupted():
         logging.getLogger("agent").warning("interrupted report: %s", e)
 
 
-async def _damage_autofill():
-    """Пустые склады ущерба заполняются сами из отчётов платного хранения WB.
-
-    Лимит метода — 1 запрос в минуту, поэтому по очереди с паузами.
-    Заполненные склады повторно не трогаем; если отчёт не собрался с первого
-    раза (у WB это бывает) — повторяем каждые полчаса, пока не соберём."""
-    import damage
-    import agent_review as _agent
-    await asyncio.sleep(240)          # дать серверу прогреться
-    log = logging.getLogger("damage")
-    results = []
-    for attempt in range(12):         # ~6 часов попыток максимум
-        if attempt:
-            await asyncio.sleep(1800)
-        try:
-            pend = [w for w in
-                    (await asyncio.to_thread(damage.summary))["pending"]
-                    if w in damage.FIRE_DATES]
-        except Exception as e:
-            log.warning("autofill list: %s", e)
-            continue
-        if not pend:
-            break
-        for wh in pend:
-            try:
-                res = await damage.fetch_from_storage(wh)
-            except Exception as e:
-                res = {"error": str(e)[:200]}
-            if res.get("error"):
-                log.warning("autofill %s: %s", wh, res["error"])
-            else:
-                log.info("autofill %s: %s SKU, %s шт",
-                         wh, res["skus"], res["qty"])
-                results.append(f"{wh}: {res['skus']} SKU, {res['qty']} шт "
-                               f"(срез {res['snap_date']})")
-            await asyncio.sleep(75)   # лимит отчёта хранения: 1 запрос/мин
-    if not results:
-        return
-    try:
-        d = await asyncio.to_thread(damage.summary)
-        t = d["total"]
-        await _agent.tg_send(
-            "<b>Ущерб от пожаров — заполнил сам из отчётов хранения WB</b>\n\n"
-            + "\n".join(results)
-            + f"\n\nИтого по всем складам: {t['qty']} шт, "
-              f"{t['cost_total']:,} ₽ по себестоимости, "
-              f"{t['retail_total']:,} ₽ по рознице.".replace(",", " ")
-            + "\nДетали и Excel — Склад → Ущерб от пожаров.")
-    except Exception as e:
-        log.warning("autofill notify: %s", e)
-
-
 async def _fbs_multi_loop():
     """Мультисклад FBS: синк виртуального остатка на привязанные склады WB
     каждые 15 минут (как FBS-хабы, но своими руками, ключи не уходят наружу)."""
@@ -329,38 +277,6 @@ async def _agent_is_quiet() -> bool:
         return False
 
 
-async def _news_loop():
-    """Новости площадок: сбор и разбор раз в 3 часа, сводка в 10:00 МСК."""
-    import snapshot as _snap
-    import news as _news
-    import agent_review as _agent
-    await asyncio.sleep(900)
-    log = logging.getLogger("news")
-    while True:
-        if await _agent_is_quiet():
-            await asyncio.sleep(3 * 3600)
-            continue
-        try:
-            res = await _news.refresh_all()
-            if res.get("added"):
-                log.info("новостей добавлено %s, разобрано %s",
-                         res["added"], res.get("analyzed"))
-        except Exception as e:
-            log.warning("refresh: %s", e)
-        try:
-            now = datetime.utcnow() + timedelta(hours=3)      # МСК
-            today = now.strftime("%Y-%m-%d")
-            last = await asyncio.to_thread(_snap.load, "news_digest_last", "")
-            if now.hour == 10 and last != today:
-                text = await _news.morning_digest()
-                if text:
-                    await _agent.tg_send(text)
-                await asyncio.to_thread(_snap.save, "news_digest_last", today)
-        except Exception as e:
-            log.warning("digest: %s", e)
-        await asyncio.sleep(1800)
-
-
 async def _agent_watch_loop():
     """Сторожа агента: раз в час проверяет и пишет сам, если что-то горит."""
     import agent_watch
@@ -387,88 +303,6 @@ async def _agent_watch_loop():
         except Exception as e:
             logging.getLogger("agent_watch").warning("tick: %s", e)
         await asyncio.sleep(3600)
-
-
-async def _bid_history_daily():
-    """История рекламных кластеров: суточный срез в БД (13:00 МСК, дедуп)."""
-    import snapshot as _snap
-    from routers import tools as _tools
-    await asyncio.sleep(1500)
-    while True:
-        now = datetime.utcnow() + timedelta(hours=3)
-        today = now.strftime("%Y-%m-%d")
-        if now.hour >= 13:
-            last = await asyncio.to_thread(_snap.load, "bid_history_last", "")
-            if last != today:
-                try:
-                    res = await _tools.bid_collect_daily()
-                    if res.get("rows") is not None:
-                        await asyncio.to_thread(_snap.save, "bid_history_last", today)
-                except Exception as e:
-                    logging.getLogger("bid_history").warning("daily failed: %s", e)
-        await asyncio.sleep(1800)
-
-
-async def _trends_weekly():
-    """Радар трендов: раз в неделю (вторник 12 МСК) снимаем поисковые запросы
-    своих товаров из Ozon Seller API. Дедуп по неделе через kv_cache."""
-    import snapshot as _snap
-    from routers import tools as _tools
-    await asyncio.sleep(900)
-    while True:
-        now = datetime.utcnow() + timedelta(hours=3)
-        if now.weekday() == 1 and now.hour >= 12:
-            wk = now.strftime("%G-W%V")
-            last = await asyncio.to_thread(_snap.load, "trends_last_week", "")
-            if last != wk:
-                try:
-                    res = await _tools.trends_collect_ozon()
-                    if res.get("rows"):
-                        await asyncio.to_thread(_snap.save, "trends_last_week", wk)
-                except Exception as e:
-                    logging.getLogger("trends").warning("weekly failed: %s", e)
-        await asyncio.sleep(3600)
-
-
-async def _strategist_loop():
-    """Стратег: полная сессия по понедельникам в 10 МСК; ежедневно в 10 МСК —
-    проверка задач с подошедшей датой (есть due → сфокусированная сессия).
-    Дедуп по дню через kv_cache."""
-    import agent_strategist as st
-    import agent_review
-    if not agent_review.configured():
-        return
-    import snapshot as _snap
-    await asyncio.sleep(1200)   # даём прогреться юнитке после рестарта
-    while True:
-        if await _agent_is_quiet():
-            await asyncio.sleep(3600)
-            continue
-        now = datetime.utcnow() + timedelta(hours=3)
-        today = now.strftime("%Y-%m-%d")
-        if now.hour >= 10:
-            last = await asyncio.to_thread(_snap.load, "strategist_last_day", "")
-            if last != today:
-                try:
-                    if now.weekday() == 0:
-                        res = await st.run_session(trigger="еженедельная сессия (понедельник)")
-                    else:
-                        due = await asyncio.to_thread(st.due_tasks)
-                        res = {"ok": True, "skipped": "нет задач к проверке"}
-                        if due:
-                            titles = "; ".join(t["title"] for t in due[:5])
-                            res = await st.run_session(
-                                trigger="ежедневная проверка задач",
-                                focus=f"Подошла дата проверки задач: {titles}. "
-                                      f"Сверь план/факт по ним и закрой; полный "
-                                      f"разбор кабинета не нужен.")
-                    if res.get("ok"):
-                        await asyncio.to_thread(_snap.save, "strategist_last_day", today)
-                    else:
-                        logging.getLogger("strategist").warning("session: %s", res)
-                except Exception as e:
-                    logging.getLogger("strategist").warning("loop failed: %s", e)
-        await asyncio.sleep(1800)
 
 
 async def _agent_weekly():
@@ -511,12 +345,7 @@ async def lifespan(app: FastAPI):
     task5 = asyncio.create_task(_agent.bot_loop())
     task6 = asyncio.create_task(_competitors_daily())
     task_watch = asyncio.create_task(_agent_watch_loop())
-    task_news = asyncio.create_task(_news_loop())
-    asyncio.create_task(_damage_autofill())
     asyncio.create_task(_report_interrupted())
-    task7 = asyncio.create_task(_trends_weekly())
-    task8 = asyncio.create_task(_strategist_loop())
-    task9 = asyncio.create_task(_bid_history_daily())
     asyncio.create_task(_funnel_daily())
     asyncio.create_task(_client_prices_loop())
     asyncio.create_task(_fbs_multi_loop())
@@ -575,8 +404,7 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(gist_bridge.loop())
     task10 = asyncio.create_task(_slot_watcher())
     yield
-    for t in (task, task2, task3, task4, task5, task6, task7, task8, task9,
-              task10, task_watch, task_news):
+    for t in (task, task2, task3, task4, task5, task6, task10, task_watch):
         t.cancel()
 
 
