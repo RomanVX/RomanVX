@@ -424,6 +424,11 @@ _FIN_FIELDS = {
     "officeName": "office_name",
 }
 
+# текстовые поля; остальные finance-api отдаёт строками «116.28» — переводим в числа
+_FIN_TEXT = {"vendorCode", "brandName", "subjectName", "techSize", "docTypeName",
+             "sellerOperName", "bonusTypeName", "country", "orderDt", "saleDt", "rrDate",
+             "officeName"}
+
 _REPORT_PAGE = 20_000  # меньше страница → меньше пиковая память при парсинге
 
 
@@ -471,7 +476,14 @@ async def get_report_detail(date_from: datetime, date_to: datetime) -> list[dict
                     v = r.get(k)
                     if v is None:
                         continue
-                    if isinstance(v, str):
+                    if k not in _FIN_TEXT:
+                        try:
+                            f = float(v)
+                            v = int(f) if f.is_integer() and k in ("rrdId", "nmId", "quantity",
+                                                                    "deliveryAmount", "returnAmount") else f
+                        except (TypeError, ValueError):
+                            pass
+                    elif isinstance(v, str):
                         # бренды/артикулы/даты/типы повторяются в тысячах строк —
                         # интернирование хранит каждую строку в памяти один раз
                         v = _sys.intern(v)
