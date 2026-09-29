@@ -185,9 +185,9 @@ async def approve_draft(
 ):
     """Approve a draft (optionally edited). If publish and WB review — post to WB."""
     d = rc.get_draft(id)
-    if not d:
+    if not d and not (body or {}).get("text"):
         return {"error": "Черновик не найден"}
-    text = ((body or {}).get("text") or d["draft"] or "").strip()
+    text = ((body or {}).get("text") or (d or {}).get("draft") or "").strip()
     if not text:
         return {"error": "Текст ответа пустой"}
     published, msg = False, ""
