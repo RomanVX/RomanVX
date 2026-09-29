@@ -404,69 +404,70 @@ async def get_nm_report_weeks(week_ranges: list[tuple[str, str]]) -> list[dict]:
 # Поля детального отчёта, которые реально читаются дальше (finance/analytics).
 # Сырые записи несут 60+ полей (kiz, стикеры, названия офисов, ИНН...) —
 # на 100k строк это сотни МБ и OOM на Render free. Оставляем только нужное.
-_REPORT_KEEP = frozenset({
-    "rrd_id", "nm_id", "sa_name", "brand_name", "subject_name", "ts_name",
-    "doc_type_name", "supplier_oper_name", "bonus_type_name", "site_country",
-    "order_dt", "sale_dt", "rr_dt",
-    "quantity", "retail_price", "retail_amount", "retail_price_withdisc_rub",
-    "sale_percent", "commission_percent", "ppvz_spp_prc",
-    "ppvz_sales_commission", "ppvz_for_pay", "for_pay", "ppvz_vw", "ppvz_vw_nds",
-    "ppvz_reward", "acquiring_fee",
-    "delivery_rub", "delivery_amount", "return_amount",
-    "storage_fee", "acceptance", "penalty", "deduction", "additional_payment",
-    "office_name",   # склад отгрузки: «Маркетплейс» = FBS, иначе FBW
-})
+# reportDetailByPeriod v5 WB выключил (404 с 05.2026) — отчёт теперь в
+# finance-api: POST /api/finance/v1/sales-reports/detailed (docs/wb_api/finances.yaml).
+# Поля там в camelCase — переводим в старые имена, чтобы P&L/юнитка не менялись.
+_FIN_FIELDS = {
+    "rrdId": "rrd_id", "nmId": "nm_id", "vendorCode": "sa_name", "brandName": "brand_name",
+    "subjectName": "subject_name", "techSize": "ts_name", "docTypeName": "doc_type_name",
+    "sellerOperName": "supplier_oper_name", "bonusTypeName": "bonus_type_name",
+    "country": "site_country", "orderDt": "order_dt", "saleDt": "sale_dt", "rrDate": "rr_dt",
+    "quantity": "quantity", "retailPrice": "retail_price", "retailAmount": "retail_amount",
+    "retailPriceWithDisc": "retail_price_withdisc_rub", "salePercent": "sale_percent",
+    "commissionPercent": "commission_percent", "spp": "ppvz_spp_prc",
+    "ppvzSalesCommission": "ppvz_sales_commission", "forPay": "ppvz_for_pay",
+    "vw": "ppvz_vw", "vwNds": "ppvz_vw_nds", "ppvzReward": "ppvz_reward",
+    "acquiringFee": "acquiring_fee", "deliveryService": "delivery_rub",
+    "deliveryAmount": "delivery_amount", "returnAmount": "return_amount",
+    "paidStorage": "storage_fee", "paidAcceptance": "acceptance", "penalty": "penalty",
+    "deduction": "deduction", "additionalPayment": "additional_payment",
+    "officeName": "office_name",
+}
 
-_REPORT_PAGE = 5_000  # меньше страница → меньше пиковая память при парсинге
+_REPORT_PAGE = 20_000  # меньше страница → меньше пиковая память при парсинге
 
 
 async def get_report_detail(date_from: datetime, date_to: datetime) -> list[dict]:
-    """GET /api/v5/supplier/reportDetailByPeriod with auto-pagination via rrdid.
+    """Детальный отчёт реализации (finance-api), пагинация по rrdId до 204.
 
     Returns the full financial report: per-item commission, logistics,
     storage, deductions, penalties, acquiring, for_pay etc.
-    Записи прорежены до _REPORT_KEEP — иначе полугодовой отчёт не влезает
-    в память инстанса.
+    Запрашиваем только нужные поля и интернируем строки — иначе полугодовой
+    отчёт не влезает в память инстанса.
     """
     if USE_MOCK:
         return mock_data.generate_report_detail(date_from, date_to)
+    import wb_finance_client as wfc
 
+    url = f"{wfc.FINANCE_BASE}/api/finance/v1/sales-reports/detailed"
     all_records: list[dict] = []
     rrdid = 0
     df_str = date_from.strftime("%Y-%m-%d")
     dt_str = date_to.strftime("%Y-%m-%d")
 
     while True:
-        # 429-retry: лимит 1 req/мин на метод
-        data = None
-        for attempt in range(4):
-            resp = await _http().get(
-                f"{REPORT_BASE}/api/v5/supplier/reportDetailByPeriod",
-                headers=_headers(),
-                params={"dateFrom": df_str, "dateTo": dt_str, "limit": _REPORT_PAGE, "rrdid": rrdid},
-            )
-            if resp.status_code == 429:
-                _log.warning("reportDetailByPeriod 429 — ждём 62с (%d/3)", attempt + 1)
-                await asyncio.sleep(62)
-                continue
-            if not resp.is_success:
-                _log.error("reportDetailByPeriod → %s %s", resp.status_code, resp.text[:300])
-                resp.raise_for_status()
-            # парсинг в потоке: на 0.1 CPU Render free разбор 20k строк держит
-            # event loop десятки секунд и все запросы получают таймауты
-            data = await asyncio.to_thread(json.loads, resp.text)
+        resp = await wfc._finance_post(url, {
+            "dateFrom": df_str, "dateTo": dt_str, "limit": _REPORT_PAGE, "rrdId": rrdid,
+            "period": "weekly", "fields": list(_FIN_FIELDS)}, timeout=120)
+        if resp.status_code == 204:
             break
-        if not data:
+        if not resp.is_success:
+            _log.error("sales-reports/detailed → %s %s", resp.status_code, resp.text[:300])
+            resp.raise_for_status()
+        # парсинг в потоке: на 0.1 CPU Render free разбор 20k строк держит
+        # event loop десятки секунд и все запросы получают таймауты
+        data = await asyncio.to_thread(json.loads, resp.text)
+        if not isinstance(data, list) or not data:
             break
         got = len(data)
-        rrdid = data[-1]["rrd_id"]
+        rrdid = data[-1].get("rrdId") or 0
 
         def _slim(d):
             import sys as _sys
             out = []
             for r in d:
                 row = {}
-                for k in _REPORT_KEEP:
+                for k, old in _FIN_FIELDS.items():
                     v = r.get(k)
                     if v is None:
                         continue
@@ -474,23 +475,23 @@ async def get_report_detail(date_from: datetime, date_to: datetime) -> list[dict
                         # бренды/артикулы/даты/типы повторяются в тысячах строк —
                         # интернирование хранит каждую строку в памяти один раз
                         v = _sys.intern(v)
-                    row[k] = v
+                    row[old] = v
                 out.append(row)
             return out
 
         all_records.extend(await asyncio.to_thread(_slim, data))
-        del data  # сырые записи с полным набором полей больше не нужны
+        del data  # сырые записи больше не нужны
         import gc
         gc.collect()  # сразу вернуть память сырой страницы (на 512 МБ критично)
         try:
             import heavy
-            _log.info("reportDetailByPeriod: got %d records (total %d, rss %.0f MB)",
+            _log.info("sales-reports/detailed: got %d records (total %d, rss %.0f MB)",
                       got, len(all_records), heavy.rss_mb())
         except Exception:
-            _log.info("reportDetailByPeriod: got %d records (total %d)", got, len(all_records))
-        if got < _REPORT_PAGE or got == 0:
+            _log.info("sales-reports/detailed: got %d records (total %d)", got, len(all_records))
+        if got < _REPORT_PAGE or not rrdid:
             break
-        await asyncio.sleep(62)  # лимит между страницами
+        # пауза между страницами — в _finance_post (лимит 1 запрос/мин)
 
     return all_records
 
