@@ -283,11 +283,13 @@ async function loadFin(){
   const cur=m[m.length-1]||{};const ex=f.expected;
   $('#finKpi').innerHTML=
     kpi('Выручка месяца',rub(cur.revenue),`начислено по отгрузкам${cur.fbs_est?` · из них оценка ${rub(cur.fbs_est)}`:''}`)+
-    kpi('Расходы месяца',rub(cur.expenses),`постоянные ${rub(cur.recurring)} · разовые ${rub(cur.one_off)} · налог 7% ${rub(cur.tax)}`)+
-    kpi('Прибыль месяца',rub(cur.profit),cur.margin==null?'':`маржа ${cur.margin}%`,cur.profit<0?'alert':'good')+
+    kpi('Расходы месяца',rub(cur.expenses),`постоянные ${rub(cur.recurring)} · разовые ${rub(cur.one_off)} · без налога`)+
+    kpi('Прибыль месяца',rub(cur.profit),`${cur.margin==null?'':`маржа ${cur.margin}% · `}после налога ${rub(cur.profit_after_tax)}`,cur.profit<0?'alert':'good')+
     kpi('Ожидаемая выручка',rub(ex.total),`не выставлено ${rub(ex.unbilled)} · не оплачено ${rub(ex.unpaid)}`)+
     kpi('Оплачено клиентами',rub(f.paid_total),f.debt?`долг ${rub(f.debt)}`:`все ${inv.length} счетов оплачены`,f.debt?'':'good')+
-    kpi('Деньги',rub(f.cash.rs+f.cash.cash),`счёт ${rub(f.cash.rs)} · наличные ${rub(f.cash.cash)}`);
+    kpi('Деньги',rub(f.cash.rs+f.cash.cash),`счёт ${rub(f.cash.rs)} · наличные ${rub(f.cash.cash)} · до налога`)+
+    kpi(`Налог ${Math.round(f.tax.rate*100)}% к оплате`,rub(f.tax.due),`начислено ${rub(f.tax.accrued)} · оплачено ${rub(f.tax.paid)}`,f.tax.due>0?'alert':'good')+
+    kpi('Деньги после налога',rub(f.cash.rs+f.cash.cash-f.tax.due),'свободные: остаток минус налог к оплате',(f.cash.rs+f.cash.cash-f.tax.due)<0?'alert':'');
   chart('c-fin',{type:'bar',data:{labels:m.map(r=>r.month),datasets:[
     {label:'Выручка',data:m.map(r=>r.revenue),backgroundColor:'#93c5fd'},
     {label:'Расходы',data:m.map(r=>r.expenses),backgroundColor:'#fca5a5'},
@@ -303,12 +305,13 @@ async function loadFin(){
     row('<b>Расходы</b>',r=>'<b>'+rub(r.expenses)+'</b>')+
     row(sub('постоянные (аренда, МПФИТ)'),r=>rub(r.recurring))+
     row(sub('разовые'),r=>rub(r.one_off))+
-    row(sub('налог 7% к удержанию'),r=>rub(r.tax))+
     f.categories.map(c=>row(sub(sub(esc(c))),r=>rub(r.by_cat[c]))).join('')+
     row('<b>Прибыль</b>',r=>`<b class="${r.profit<0?'down':'up'}">${rub(r.profit)}</b>`)+
     row('Маржа',r=>r.margin==null?'—':r.margin+'%')+
+    row(sub('налог 7% (к оплате, в расходы не входит)'),r=>rub(r.tax))+
+    row('<b>Прибыль после налога</b>',r=>`<b class="${r.profit_after_tax<0?'down':'up'}">${rub(r.profit_after_tax)}</b>`)+
     row('Вложения в оборудование (не в прибыли)',r=>rub(r.investments));
-  $('#pnlNote').innerHTML=`Выручка — по дате отгрузки: «Отгрузка FBS» по цене клиента плюс прочие строки счетов МПФИТ. Расходы — постоянные платежи начислением по дням месяца плюс разовые из журнала.${f.estimated_share?` <b>*</b> ${f.estimated_share}% отгрузок пока посчитаны по цене клиента: карточки заказов ещё догружаются из МПФИТ, цифра уточнится сама.`:''}`;
+  $('#pnlNote').innerHTML=`Выручка — по дате отгрузки: «Отгрузка FBS» по цене клиента плюс прочие строки счетов МПФИТ. Расходы — постоянные платежи начислением по дням месяца плюс разовые из журнала. Налог 7% считается отдельно: это обязательство к оплате; когда заплатите — внесите в журнал расход с категорией «Налоги», он спишется с «к оплате», а не попадёт в расходы.${f.estimated_share?` <b>*</b> ${f.estimated_share}% отгрузок пока посчитаны по цене клиента: карточки заказов ещё догружаются из МПФИТ, цифра уточнится сама.`:''}`;
   $('#invTbl').innerHTML='<tr><th>Счёт</th><th>Клиент</th><th>Дата</th><th>Сумма</th><th>Статус</th></tr>'+
     inv.map(i=>`<tr><td>${esc(i.number)}</td><td class="l">${esc(i.company)}</td><td>${esc((i.date||'').split('-').reverse().join('.'))}</td><td>${rub(i.total)}</td>
     <td>${i.debt>0?`<span class="pill p-warn">долг ${rub(i.debt)}</span> <button class="btn" data-pay="${esc(i.number)}" data-amt="${i.debt}">Оплачен</button>`:
