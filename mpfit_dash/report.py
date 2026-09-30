@@ -391,7 +391,7 @@ def finance(months: int = 6) -> dict:
         mk = e["date"][:7]
         if e["kind"] == "expense" and e["category"] == "Налоги":
             tax_paid += e["amount"]         # оплата налога гасит обязательство, не расход P&L
-        elif e["kind"] == "expense" and e["in_ff"] and not e.get("recurring_id"):
+        elif e["kind"] == "expense" and e["in_ff"] and not e.get("recurring_id") and not e.get("staff_id"):
             one_off[mk][e["category"]] += e["amount"]
         if e["kind"] == "investment" and e["in_ff"]:
             inv_[mk] += e["amount"]
@@ -401,6 +401,11 @@ def finance(months: int = 6) -> dict:
             sign = 1 if e["kind"] in ("funding", "client_payment", "other_income") else -1
             cash[e["method"]] += sign * e["amount"]
     rec = {mk: recurring_for_month(mk) for mk in mks}
+    # ФОТ склада начислением по табелю (выплаты сотрудникам — только движение денег)
+    for mk in mks:
+        pay = staff_month(mk, os_)["total_accrued"]
+        if pay:
+            one_off[mk]["ФОТ (табель)"] += pay
     cats = set()
     for mk in mks:
         cats |= set(one_off[mk]) | set(rec[mk])
@@ -498,3 +503,54 @@ def plan_fact() -> dict:
         if pr["plan"]:
             pr["forecast_pct"] = round(100 * pr["forecast"] / pr["plan"])
     return {"month": mk, "days_passed": passed, "days_in_month": days_in, "rows": rows}
+
+
+def _day_units(os_: list[dict]) -> dict:
+    """Единиц отгружено по дням МСК (отгрузки FBS, в т.ч. потом отменённые МП)."""
+    out = defaultdict(int)
+    for o in os_:
+        if o["s"] and (o["status"] in store.SHIPPED or o["status"] == "REJECT"):
+            out[o["s"].strftime("%Y-%m-%d")] += o["units"] or 0
+    return out
+
+
+def staff_month(mk: str, os_: list[dict] | None = None) -> dict:
+    """Табель и начисления за месяц: выход × ставка смены + единицы × сдельная
+    ставка. Кто собрал заказ, МПФИТ по API не отдаёт — отгрузки дня делим
+    поровну между вышедшими в смену."""
+    os_ = os_ if os_ is not None else orders()
+    d0, d1 = _month_days(mk)
+    staff = store.staff_list()
+    if not staff:
+        return {"month": mk, "days": [], "staff": [], "total_accrued": 0}
+    shifts = defaultdict(set)
+    for d, sid in store.shifts_get(d0.isoformat(), d1.isoformat()):
+        shifts[d].add(sid)
+    units = _day_units(os_)
+    paid = defaultdict(float)
+    for e in store.ledger_list():
+        if e.get("staff_id") and e["date"][:7] == mk:
+            paid[e["staff_id"]] += e["amount"]
+    per = {s["id"]: {**s, "shifts": 0, "units": 0.0, "accrued": 0.0} for s in staff}
+    days = []
+    d = d0
+    while d <= d1:
+        k = d.isoformat()
+        on = [sid for sid in shifts.get(k, ()) if sid in per]
+        u = units.get(k, 0)
+        for sid in on:
+            p = per[sid]
+            p["shifts"] += 1
+            p["units"] += u / len(on)
+        days.append({"date": k, "units": u, "on": on,
+                     "alert": bool(u and not on)})   # отгрузки есть, а смена не отмечена
+        d += timedelta(days=1)
+    rows = []
+    for p in per.values():
+        p["accrued"] = p["shifts"] * p["shift_rate"] + p["units"] * p["unit_rate"]
+        p["paid"] = paid.get(p["id"], 0.0)
+        p["due"] = p["accrued"] - p["paid"]
+        rows.append({k: (round(v, 2) if isinstance(v, float) else v) for k, v in p.items()})
+    return {"month": mk, "days": days, "staff": rows,
+            "total_accrued": round(sum(p["accrued"] for p in per.values()), 2),
+            "unassigned_units": sum(x["units"] for x in days if x["alert"])}

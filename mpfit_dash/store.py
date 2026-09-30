@@ -48,6 +48,14 @@ SCHEMA = [
     """CREATE TABLE IF NOT EXISTS recurring (
         id TEXT PRIMARY KEY, name TEXT, category TEXT, amount REAL,
         start_date TEXT, end_date TEXT, note TEXT)""",
+    # сотрудники склада: оплата = выход за смену + сдельно за единицу отгрузки FBS
+    """CREATE TABLE IF NOT EXISTS staff (
+        id TEXT PRIMARY KEY, name TEXT, shift_rate REAL, unit_rate REAL,
+        active INTEGER DEFAULT 1, since TEXT)""",
+    # табель: кто вышел в смену. МПФИТ по API не отдаёт, кто собрал заказ,
+    # поэтому отгрузки дня делим поровну между вышедшими
+    """CREATE TABLE IF NOT EXISTS shifts (
+        date TEXT, staff_id TEXT, PRIMARY KEY (date, staff_id))""",
     # хранение по дням (analytics/storage/list) — входит в «К оплате» МПФИТ
     """CREATE TABLE IF NOT EXISTS m_storage (
         id BIGINT PRIMARY KEY, company_id INTEGER, date TEXT, amount REAL)""",
@@ -58,7 +66,7 @@ TAX_RATE = 0.07
 
 # колонки, добавленные после первой версии (ALTER без IF NOT EXISTS — для SQLite)
 _ADD_COLUMNS = [("ledger", "invoice", "TEXT"), ("ledger", "recurring_id", "TEXT"),
-                ("m_invoices", "created_ts", "TEXT")]
+                ("m_invoices", "created_ts", "TEXT"), ("ledger", "staff_id", "TEXT")]
 
 # статусы, после которых «Отгрузка FBS» уже должна стоять
 SHIPPED = ("SHIPPED", "DELIVERY", "COMPLETE")
@@ -81,6 +89,7 @@ def init():
     seed_ledger()
     seed_recurring()
     fix_v2()
+    seed_staff()
 
 
 def fix_v2():
@@ -154,11 +163,11 @@ def ledger_add(e: dict, author: str) -> str:
     i = str(uuid.uuid4())
     db.execute(
         "INSERT INTO ledger (id, date, kind, category, amount, method, note, in_ff, author, created_at, "
-        "invoice, recurring_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        "invoice, recurring_id, staff_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (i, e["date"], e["kind"], e.get("category") or "Прочее", float(e["amount"]),
          e.get("method") or "", e.get("note") or "", 1 if e.get("in_ff", True) else 0,
          author, datetime.utcnow().isoformat(timespec="seconds"),
-         e.get("invoice") or None, e.get("recurring_id") or None))
+         e.get("invoice") or None, e.get("recurring_id") or None, e.get("staff_id") or None))
     return i
 
 
@@ -176,9 +185,9 @@ def ledger_delete(i: str):
 
 def ledger_list() -> list[dict]:
     rows = db.fetchall("SELECT id, date, kind, category, amount, method, note, in_ff, author, "
-                       "invoice, recurring_id FROM ledger ORDER BY date DESC, created_at DESC")
+                       "invoice, recurring_id, staff_id FROM ledger ORDER BY date DESC, created_at DESC")
     keys = ("id", "date", "kind", "category", "amount", "method", "note", "in_ff", "author",
-            "invoice", "recurring_id")
+            "invoice", "recurring_id", "staff_id")
     return [dict(zip(keys, r)) for r in rows]
 
 
@@ -243,3 +252,41 @@ def recurring_save(e: dict) -> str:
 def recurring_delete(i: str):
     db.execute("DELETE FROM recurring WHERE id = ?", (i,))
     db.execute("UPDATE ledger SET recurring_id = NULL WHERE recurring_id = ?", (i,))
+
+
+# ── сотрудники ────────────────────────────────────────────────────────────────
+def seed_staff():
+    if kv_get("staff_seeded"):
+        return
+    for sid, name in (("st-vladimir", "Владимир"), ("st-ekaterina", "Екатерина")):
+        db.execute("INSERT INTO staff (id, name, shift_rate, unit_rate, active, since) VALUES (?,?,?,?,1,?) "
+                   "ON CONFLICT (id) DO NOTHING", (sid, name, 1000, 3, "2026-10-01"))
+    kv_set("staff_seeded", True)
+
+
+def staff_list() -> list[dict]:
+    keys = ("id", "name", "shift_rate", "unit_rate", "active", "since")
+    return [dict(zip(keys, r)) for r in db.fetchall(
+        f"SELECT {', '.join(keys)} FROM staff ORDER BY name")]
+
+
+def staff_save(e: dict) -> str:
+    i = e.get("id") or f"st-{uuid.uuid4().hex[:8]}"
+    db.execute("INSERT INTO staff (id, name, shift_rate, unit_rate, active, since) VALUES (?,?,?,?,?,?) "
+               "ON CONFLICT (id) DO UPDATE SET name = excluded.name, shift_rate = excluded.shift_rate, "
+               "unit_rate = excluded.unit_rate, active = excluded.active, since = excluded.since",
+               (i, e["name"], float(e.get("shift_rate") or 0), float(e.get("unit_rate") or 0),
+                1 if e.get("active", True) else 0, e.get("since") or None))
+    return i
+
+
+def shifts_get(d0: str, d1: str) -> list[tuple]:
+    return db.fetchall("SELECT date, staff_id FROM shifts WHERE date BETWEEN ? AND ?", (d0, d1))
+
+
+def shift_set(d: str, staff_id: str, on: bool):
+    if on:
+        db.execute("INSERT INTO shifts (date, staff_id) VALUES (?,?) ON CONFLICT (date, staff_id) DO NOTHING",
+                   (d, staff_id))
+    else:
+        db.execute("DELETE FROM shifts WHERE date = ? AND staff_id = ?", (d, staff_id))

@@ -244,6 +244,28 @@ async def api_recurring_del(rid: str):
     return {"ok": True}
 
 
+@app.get("/api/staff")
+async def api_staff(month: str = ""):
+    from datetime import datetime, timedelta
+    mk = month[:7] or (datetime.utcnow() + timedelta(hours=3)).strftime("%Y-%m")
+    return await _t(report.staff_month, mk)
+
+
+@app.post("/api/staff")
+async def api_staff_save(payload: dict):
+    if not str(payload.get("name") or "").strip():
+        return JSONResponse({"error": "имя"}, status_code=400)
+    return {"id": await _t(store.staff_save, payload)}
+
+
+@app.post("/api/shifts")
+async def api_shift(payload: dict):
+    from datetime import date
+    d = date.fromisoformat(str(payload.get("date"))[:10]).isoformat()
+    await _t(store.shift_set, d, str(payload.get("staff_id")), bool(payload.get("on")))
+    return {"ok": True}
+
+
 @app.post("/api/sync")
 async def api_sync():
     t = asyncio.create_task(sync.run_once())

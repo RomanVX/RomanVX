@@ -54,6 +54,7 @@ input,select{font:inherit;padding:6px 8px;border:1px solid var(--line);border-ra
 .note{font-size:12.5px;color:var(--muted);margin-top:8px}
 .bar{height:8px;background:var(--line);border-radius:99px;overflow:hidden;margin-top:6px}
 .bar i{display:block;height:100%;background:var(--acc)}
+tr.bad td{background:#fef2f2}
 </style>
 </head>
 <body>
@@ -67,6 +68,7 @@ input,select{font:inherit;padding:6px 8px;border:1px solid var(--line);border-ra
     <button data-t="clients">Клиенты</button>
     <button data-t="fin">Финансы</button>
     <button data-t="plan">План/факт</button>
+    <button data-t="staff">Сотрудники</button>
     <button data-t="ledger">Журнал</button>
   </nav>
   <div class="sync"><span id="syncInfo">…</span><button class="btn" id="syncBtn">Обновить</button></div>
@@ -140,6 +142,26 @@ input,select{font:inherit;padding:6px 8px;border:1px solid var(--line);border-ra
       <label>Прибыль, ₽<input type="number" name="profit" step="100"></label>
       <button class="btn pri">Сохранить</button>
     </form><div class="note">Пустое поле — план не задан. План по заказам делится на дни и рисуется пунктиром на графике заказов.</div></div>
+</section>
+
+<section id="t-staff" class="hidden">
+  <div class="card"><div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+    <h2 style="margin:0">Сотрудники · начисления</h2>
+    <input type="month" id="stMonth">
+  </div><div class="grid" id="stKpi" style="margin-top:12px"></div>
+  <div class="tw"><table id="stTbl"></table></div>
+  <div class="note">Начислено = выходы × ставка за смену + отгружено единиц × сдельная ставка. МПФИТ по API не отдаёт, кто собрал заказ, поэтому отгрузки дня (из МПФИТ) делятся поровну между теми, кто отмечен в табеле. Выплата записывается в журнал (статья ФОТ) и уменьшает «к выплате»; в расходы месяца идёт начисление, а не выплата.</div></div>
+  <div class="card" style="margin-top:12px"><h2>Табель</h2><div class="note" style="margin-top:0">Отметьте, кто вышел в смену. Красным — дни, когда были отгрузки, а смена ни у кого не отмечена.</div>
+    <div class="tw"><table id="shTbl"></table></div></div>
+  <div class="card" style="margin-top:12px"><h2>Ставки</h2><div class="tw"><table id="rateTbl"></table></div>
+    <form class="inline" id="stForm" style="margin-top:12px">
+      <label style="min-width:160px">Имя<input name="name" required></label>
+      <label>За смену, ₽<input type="number" name="shift_rate" step="1" value="1000"></label>
+      <label>За ед. отгрузки, ₽<input type="number" name="unit_rate" step="0.1" value="3"></label>
+      <label>Работает с<input type="date" name="since"></label>
+      <input type="hidden" name="id">
+      <button class="btn pri" id="stSave">Добавить</button>
+    </form></div>
 </section>
 
 <section id="t-ledger" class="hidden">
@@ -379,7 +401,44 @@ $('#ledForm').onsubmit=async e=>{e.preventDefault();const f=e.target;
     else await api('/api/ledger',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
     $('#ledCancel').onclick();loadLedger()}catch(err){alert('Не сохранилось: '+err.message)}};
 
-const loaders={pulse:loadPulse,orders:loadOrders,speed:loadSpeed,svc:loadSvc,clients:loadClients,fin:loadFin,plan:loadPlan,ledger:loadLedger};
+// ── сотрудники ──
+let ST=null;
+async function loadStaff(){
+  const m=$('#stMonth');if(!m.value){const d=new Date(Date.now()+3*3600e3);m.value=d.toISOString().slice(0,7)}
+  ST=await api('/api/staff?month='+m.value);
+  const t=ST.staff.reduce((a,p)=>({acc:a.acc+p.accrued,paid:a.paid+p.paid,sh:a.sh+p.shifts}),{acc:0,paid:0,sh:0});
+  const units=ST.days.reduce((a,d)=>a+d.units,0);
+  $('#stKpi').innerHTML=kpi('Начислено за месяц',rub(t.acc),`выходов ${t.sh}`)+kpi('Выплачено',rub(t.paid))+
+    kpi('К выплате',rub(t.acc-t.paid),'',t.acc-t.paid>0?'alert':'good')+
+    kpi('Отгружено единиц',num(units),ST.unassigned_units?`без отметки смены: ${num(ST.unassigned_units)}`:'все дни с отгрузками размечены',ST.unassigned_units?'alert':'');
+  $('#stTbl').innerHTML='<tr><th class="l">Сотрудник</th><th>Выходов</th><th>Единиц</th><th>За смены</th><th>Сдельно</th><th>Начислено</th><th>Выплачено</th><th>К выплате</th><th></th></tr>'+
+    ST.staff.filter(p=>p.active||p.accrued||p.paid).map(p=>`<tr><td class="l">${esc(p.name)}</td><td>${p.shifts}</td><td>${num(p.units)}</td>
+    <td>${rub(p.shifts*p.shift_rate)}</td><td>${rub(p.units*p.unit_rate)}</td><td><b>${rub(p.accrued)}</b></td><td>${rub(p.paid)}</td>
+    <td class="${p.due>0?'down':''}">${rub(p.due)}</td><td>${p.due>0?`<button class="btn" data-pay="${p.id}" data-amt="${Math.round(p.due)}" data-name="${esc(p.name)}">Выплатить</button>`:''}</td></tr>`).join('');
+  const act=ST.staff.filter(p=>p.active);
+  $('#shTbl').innerHTML='<tr><th class="l">Дата</th><th>Отгружено, ед.</th>'+act.map(p=>`<th>${esc(p.name)}</th>`).join('')+'</tr>'+
+    ST.days.map(d=>{const dt=new Date(d.date+'T00:00');const wd=['вс','пн','вт','ср','чт','пт','сб'][dt.getDay()];
+      return `<tr class="${d.alert?'bad':''}"><td class="l">${d.date.slice(8)}.${d.date.slice(5,7)} ${wd}</td><td>${d.units||''}</td>`+
+      act.map(p=>`<td><input type="checkbox" data-d="${d.date}" data-s="${p.id}" ${d.on.includes(p.id)?'checked':''}></td>`).join('')+'</tr>'}).join('');
+  $('#rateTbl').innerHTML='<tr><th class="l">Имя</th><th>За смену</th><th>За ед.</th><th>С</th><th>Статус</th><th></th></tr>'+
+    ST.staff.map(p=>`<tr><td class="l">${esc(p.name)}</td><td>${rub(p.shift_rate)}</td><td>${p.unit_rate} ₽</td><td>${esc(p.since||'')}</td>
+    <td>${p.active?'работает':'<span class="muted">уволен</span>'}</td><td><button class="btn" data-edit="${p.id}">Изменить</button></td></tr>`).join('');
+}
+$('#stMonth')?.addEventListener('change',loadStaff);
+$('#shTbl')?.addEventListener('change',async e=>{const c=e.target;if(!c.dataset.d)return;
+  try{await api('/api/shifts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:c.dataset.d,staff_id:c.dataset.s,on:c.checked})});loadStaff()}
+  catch(err){c.checked=!c.checked;alert('Не сохранилось: '+err.message)}});
+$('#stTbl')?.addEventListener('click',async e=>{const b=e.target.dataset;if(!b.pay)return;
+  const a=prompt(`Выплата ${b.name}, ₽`,b.amt);if(!a)return;const m=confirm('Наличными? (Отмена — с расчётного счёта)')?'cash':'rs';
+  const d=new Date(Date.now()+3*3600e3).toISOString().slice(0,10);
+  await api('/api/ledger',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:d,kind:'expense',category:'ФОТ',amount:+a,method:m,note:'Выплата '+b.name+' за '+$('#stMonth').value,staff_id:b.pay})});loadStaff()});
+$('#rateTbl')?.addEventListener('click',e=>{const id=e.target.dataset.edit;if(!id)return;const p=ST.staff.find(x=>x.id===id);const f=$('#stForm');
+  f.id.value=p.id;f.name.value=p.name;f.shift_rate.value=p.shift_rate;f.unit_rate.value=p.unit_rate;f.since.value=p.since||'';$('#stSave').textContent='Сохранить'});
+$('#stForm')?.addEventListener('submit',async e=>{e.preventDefault();const f=e.target;
+  await api('/api/staff',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:f.id.value,name:f.name.value,shift_rate:f.shift_rate.value,unit_rate:f.unit_rate.value,since:f.since.value,active:true})});
+  f.reset();f.id.value='';$('#stSave').textContent='Добавить';loadStaff()});
+
+const loaders={pulse:loadPulse,orders:loadOrders,speed:loadSpeed,svc:loadSvc,clients:loadClients,fin:loadFin,plan:loadPlan,staff:loadStaff,ledger:loadLedger};
 $('#syncBtn').onclick=async()=>{await api('/api/sync',{method:'POST'});$('#syncInfo').textContent='Синхронизация запущена…';setTimeout(()=>{dailyCache={};show(document.querySelector('nav .on').dataset.t)},15000)};
 let start='pulse';try{start=localStorage.getItem('mp_tab')||'pulse'}catch(e){}
 if(location.hash&&loaders[location.hash.slice(1)])start=location.hash.slice(1);
