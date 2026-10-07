@@ -319,9 +319,12 @@ def recurring_for_month(mk: str, full: bool = False) -> dict:
     d0, d1 = _month_days(mk)
     days_in = (d1 - d0).days + 1
     out = defaultdict(float)
+    today = _now_msk().date()
     for r in store.recurring_list():
         s_ = date.fromisoformat(r["start_date"])
         e_ = date.fromisoformat(r["end_date"]) if r["end_date"] else d1
+        if not full:            # текущий месяц — по сегодняшний день, иначе он выглядит убыточным
+            e_ = min(e_, today)
         a, b = max(d0, s_), min(d1, e_)
         if a > b:
             continue
@@ -479,7 +482,7 @@ def plan_fact() -> dict:
     fin = {r["month"]: r for r in finance(2)["months"]}.get(mk, {})
     fact = {"orders": s["orders_month"], "revenue": fin.get("revenue", 0),
             "expenses": fin.get("expenses", 0)}
-    rec_full = sum(recurring_for_month(mk).values())
+    rec_full = sum(recurring_for_month(mk, full=True).values())
     one_off = fin.get("one_off", 0)
     fact["profit"] = fact["revenue"] - fact["expenses"]
     plan = store.plan_get().get(mk, {})
