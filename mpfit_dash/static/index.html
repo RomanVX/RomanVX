@@ -82,7 +82,6 @@ tr.bad td{background:#fef2f2}
     <button data-t="fin">Финансы</button>
     <button data-t="plan">План/факт</button>
     <button data-t="staff">Сотрудники</button>
-    <button data-t="ledger">Журнал</button>
   </nav>
   <div class="sync"><span id="syncInfo">…</span><button class="btn" id="syncBtn">Обновить</button></div>
 </header>
@@ -142,6 +141,39 @@ tr.bad td{background:#fef2f2}
     <div class="card"><h2>Ожидаемая выручка</h2><div class="tw"><table id="expTbl"></table></div>
       <div class="note">Не выставлено — отгрузки клиента после его последнего счёта, по его цене за отгрузку. Не оплачено — выставленные счета без оплаты.</div></div>
   </div>
+
+  <h2 style="margin:24px 0 0">Журнал · ручные статьи затрат и поступлений</h2>
+  <div style="margin-top:12px">
+  <div class="card"><h2>Добавить запись</h2>
+    <form class="inline" id="ledForm">
+      <label>Дата<input type="date" name="date" required></label>
+      <label>Тип<select name="kind" id="kindSel"></select></label>
+      <label>Статья<select name="category" id="catSel"></select></label>
+      <label>Сумма, ₽<input type="number" name="amount" min="0.01" step="0.01" required></label>
+      <label>Оплата<select name="method"><option value="rs">Расчётный счёт</option><option value="cash">Наличные</option><option value="personal">Лично (вложение)</option><option value="">Не указано</option></select></label>
+      <label style="flex:1;min-width:200px">Комментарий<input name="note"></label>
+      <label>Постоянный платёж<select name="recurring_id" id="recSel"><option value="">— разовый расход —</option></select></label>
+      <label style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" name="in_ff" checked>для ФФ</label>
+      <input type="hidden" name="id">
+      <button class="btn pri" id="ledSave">Добавить</button>
+      <button type="button" class="btn hidden" id="ledCancel">Отмена</button>
+    </form></div>
+  <div class="card" style="margin-top:12px"><h2>Постоянные платежи · расходы будущих периодов</h2>
+    <div class="tw"><table id="recTbl"></table></div>
+    <form class="inline" id="recForm" style="margin-top:12px">
+      <label style="flex:1;min-width:180px">Название<input name="name" required></label>
+      <label>Статья<select name="category" id="recCat"></select></label>
+      <label>В месяц, ₽<input type="number" name="amount" min="0.01" step="0.01" required></label>
+      <label>С<input type="date" name="start_date" required></label>
+      <label>По<input type="date" name="end_date"></label>
+      <label style="flex:1;min-width:180px">Комментарий<input name="note"></label>
+      <input type="hidden" name="id">
+      <button class="btn pri" id="recSave">Добавить</button>
+    </form>
+    <div class="note">Постоянный платёж начисляется в расходы каждого месяца пропорционально дням действия, независимо от даты оплаты. Сама оплата в журнале, привязанная к платежу, идёт только в движение денег — так аренда за квартал не «съест» прибыль одного месяца.</div></div>
+  <div class="card" style="margin-top:12px"><h2>Журнал</h2><div class="tw"><table id="ledTbl"></table></div>
+    <div class="note">Оплаты от клиентов пишутся для остатков по кассе и счёту, в выручку не идут — выручка берётся из счетов МПФИТ.</div></div>
+</div>
 </section>
 
 <section id="t-plan" class="hidden">
@@ -177,37 +209,7 @@ tr.bad td{background:#fef2f2}
     </form></div>
 </section>
 
-<section id="t-ledger" class="hidden">
-  <div class="card"><h2>Добавить запись</h2>
-    <form class="inline" id="ledForm">
-      <label>Дата<input type="date" name="date" required></label>
-      <label>Тип<select name="kind" id="kindSel"></select></label>
-      <label>Статья<select name="category" id="catSel"></select></label>
-      <label>Сумма, ₽<input type="number" name="amount" min="0.01" step="0.01" required></label>
-      <label>Оплата<select name="method"><option value="rs">Расчётный счёт</option><option value="cash">Наличные</option><option value="personal">Лично (вложение)</option><option value="">Не указано</option></select></label>
-      <label style="flex:1;min-width:200px">Комментарий<input name="note"></label>
-      <label>Постоянный платёж<select name="recurring_id" id="recSel"><option value="">— разовый расход —</option></select></label>
-      <label style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" name="in_ff" checked>для ФФ</label>
-      <input type="hidden" name="id">
-      <button class="btn pri" id="ledSave">Добавить</button>
-      <button type="button" class="btn hidden" id="ledCancel">Отмена</button>
-    </form></div>
-  <div class="card" style="margin-top:12px"><h2>Постоянные платежи · расходы будущих периодов</h2>
-    <div class="tw"><table id="recTbl"></table></div>
-    <form class="inline" id="recForm" style="margin-top:12px">
-      <label style="flex:1;min-width:180px">Название<input name="name" required></label>
-      <label>Статья<select name="category" id="recCat"></select></label>
-      <label>В месяц, ₽<input type="number" name="amount" min="0.01" step="0.01" required></label>
-      <label>С<input type="date" name="start_date" required></label>
-      <label>По<input type="date" name="end_date"></label>
-      <label style="flex:1;min-width:180px">Комментарий<input name="note"></label>
-      <input type="hidden" name="id">
-      <button class="btn pri" id="recSave">Добавить</button>
-    </form>
-    <div class="note">Постоянный платёж начисляется в расходы каждого месяца пропорционально дням действия, независимо от даты оплаты. Сама оплата в журнале, привязанная к платежу, идёт только в движение денег — так аренда за квартал не «съест» прибыль одного месяца.</div></div>
-  <div class="card" style="margin-top:12px"><h2>Журнал</h2><div class="tw"><table id="ledTbl"></table></div>
-    <div class="note">Оплаты от клиентов пишутся для остатков по кассе и счёту, в выручку не идут — выручка берётся из счетов МПФИТ.</div></div>
-</section>
+
 </main>
 
 <script>
@@ -407,7 +409,7 @@ async function loadLedger(){
     <td><button class="btn" data-ed="${r.id}">Изм.</button> <button class="btn" data-del="${r.id}" aria-label="Удалить">✕</button></td></tr>`).join('');
 }
 $('#ledTbl').onclick=async e=>{const d=e.target.dataset;
-  if(d.del){if(confirm('Удалить запись?')){await api('/api/ledger/'+d.del,{method:'DELETE'});loadLedger()}}
+  if(d.del){if(confirm('Удалить запись?')){await api('/api/ledger/'+d.del,{method:'DELETE'});loadLedger();loadFin()}}
   if(d.ed){const r=led.rows.find(x=>x.id===d.ed);const f=$('#ledForm');
     ['date','kind','category','amount','method','note','id','recurring_id'].forEach(k=>f[k].value=r[k]??'');f.in_ff.checked=!!r.in_ff;
     $('#ledSave').textContent='Сохранить';$('#ledCancel').classList.remove('hidden');f.scrollIntoView({behavior:'smooth'})}};
@@ -416,7 +418,7 @@ $('#ledForm').onsubmit=async e=>{e.preventDefault();const f=e.target;
   const b={date:f.date.value,kind:f.kind.value,category:f.category.value,amount:f.amount.value,method:f.method.value,note:f.note.value,in_ff:f.in_ff.checked,recurring_id:f.recurring_id.value};
   try{if(f.id.value)await api('/api/ledger/'+f.id.value,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
     else await api('/api/ledger',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
-    $('#ledCancel').onclick();loadLedger()}catch(err){alert('Не сохранилось: '+err.message)}};
+    $('#ledCancel').onclick();loadLedger();loadFin()}catch(err){alert('Не сохранилось: '+err.message)}};
 
 // ── сотрудники ──
 let ST=null;
@@ -455,7 +457,7 @@ $('#stForm')?.addEventListener('submit',async e=>{e.preventDefault();const f=e.t
   await api('/api/staff',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:f.id.value,name:f.name.value,shift_rate:f.shift_rate.value,unit_rate:f.unit_rate.value,since:f.since.value,active:true})});
   f.reset();f.id.value='';$('#stSave').textContent='Добавить';loadStaff()});
 
-const loaders={pulse:loadPulse,orders:loadOrders,speed:loadSpeed,svc:loadSvc,clients:loadClients,fin:loadFin,plan:loadPlan,staff:loadStaff,ledger:loadLedger};
+const loaders={pulse:loadPulse,orders:loadOrders,speed:loadSpeed,svc:loadSvc,clients:loadClients,fin:()=>{loadFin();loadLedger()},plan:loadPlan,staff:loadStaff,ledger:()=>show('fin')};
 $('#syncBtn').onclick=async()=>{await api('/api/sync',{method:'POST'});$('#syncInfo').textContent='Синхронизация запущена…';setTimeout(()=>{dailyCache={};show(document.querySelector('nav .on').dataset.t)},15000)};
 let start='pulse';try{start=localStorage.getItem('mp_tab')||'pulse'}catch(e){}
 if(location.hash&&loaders[location.hash.slice(1)])start=location.hash.slice(1);
