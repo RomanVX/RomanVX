@@ -397,7 +397,7 @@ def finance(months: int = 6, ahead: int = 0) -> dict:
         mk = e["date"][:7]
         if e["kind"] == "expense" and e["category"] == "Налоги":
             tax_paid += e["amount"]         # оплата налога гасит обязательство, не расход P&L
-        elif e["kind"] == "expense" and e["in_ff"] and not e.get("recurring_id") and not e.get("staff_id"):
+        elif e["kind"] == "expense" and e["in_ff"]:      # по факту оплаты, в месяц платежа
             one_off[mk][e["category"]] += e["amount"]
         if e["kind"] == "investment" and e["in_ff"]:
             inv_[mk] += e["amount"]
@@ -406,12 +406,9 @@ def finance(months: int = 6, ahead: int = 0) -> dict:
                 continue
             sign = 1 if e["kind"] in ("funding", "client_payment", "other_income") else -1
             cash[e["method"]] += sign * e["amount"]
-    rec = {mk: recurring_for_month(mk) for mk in mks}
-    # ФОТ склада начислением по табелю (выплаты сотрудникам — только движение денег)
-    for mk in mks:
-        pay = staff_month(mk, os_)["total_accrued"]
-        if pay:
-            one_off[mk]["ФОТ (табель)"] += pay
+    # постоянные платежи — только как план на будущие месяцы; прошлые и текущий — по факту оплат
+    cur_mk = today.strftime("%Y-%m")
+    rec = {mk: (recurring_for_month(mk, full=True) if mk > cur_mk else {}) for mk in mks}
     cats = set()
     for mk in mks:
         cats |= set(one_off[mk]) | set(rec[mk])
@@ -486,7 +483,9 @@ def plan_fact() -> dict:
     fact = {"orders": s["orders_month"], "revenue": fin.get("revenue", 0),
             "expenses": fin.get("expenses", 0)}
     rec_full = sum(recurring_for_month(mk, full=True).values())
-    one_off = fin.get("one_off", 0)
+    rec_paid = sum(e["amount"] for e in store.ledger_list()
+                   if e.get("recurring_id") and e["kind"] == "expense" and e["date"][:7] == mk)
+    one_off = fin.get("one_off", 0) - rec_paid     # разовые без уже оплаченных постоянных
     fact["profit"] = fact["revenue"] - fact["expenses"]
     plan = store.plan_get().get(mk, {})
     rows = []
@@ -495,7 +494,8 @@ def plan_fact() -> dict:
         f = fact[key]
         forecast = round(f / passed * days_in) if passed else None
         if key == "expenses":      # постоянные платежи уже начислены за весь месяц
-            forecast = round(one_off / passed * days_in + rec_full) if passed else None
+            # разовые — по темпу, постоянные — полностью за месяц (оплачены или ещё предстоят)
+            forecast = round(max(one_off, 0) / passed * days_in + max(rec_full, rec_paid)) if passed else None
         if key == "profit":
             forecast = None        # досчитаем ниже из прогнозов выручки и расходов
         p = plan.get(key)
