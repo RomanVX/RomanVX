@@ -323,8 +323,6 @@ def recurring_for_month(mk: str, full: bool = False) -> dict:
     for r in store.recurring_list():
         s_ = date.fromisoformat(r["start_date"])
         e_ = date.fromisoformat(r["end_date"]) if r["end_date"] else d1
-        if not full and d0 <= today <= d1:   # текущий месяц — по сегодняшний день
-            e_ = min(e_, today)
         a, b = max(d0, s_), min(d1, e_)
         if a > b:
             continue
