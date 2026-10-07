@@ -57,6 +57,7 @@ input,select{font:inherit;padding:6px 8px;border:1px solid var(--line);border-ra
 .bar i{display:block;height:100%;background:var(--acc)}
 tr.bad td{background:#fef2f2}
 .k5{grid-template-columns:repeat(auto-fit,minmax(190px,1fr))}
+.k2{grid-template-columns:repeat(auto-fit,minmax(240px,1fr));max-width:640px}
 #pnl td,#pnl th{padding:8px 12px}
 #pnl th{text-align:right}
 #pnl th:first-child{text-align:left}
@@ -131,8 +132,7 @@ tr.bad td{background:#fef2f2}
 </section>
 
 <section id="t-fin" class="hidden">
-  <div class="grid k5" id="finKpi"></div>
-  <div class="card" style="margin-top:12px"><h2>Доходы и расходы по месяцам</h2><div class="chart"><canvas id="c-fin"></canvas></div></div>
+  <div class="grid k2" id="finKpi"></div>
   <div class="card" style="margin-top:12px"><h2>P&amp;L по месяцам</h2><div class="tw"><table id="pnl"></table></div>
   <div class="note" id="pnlNote"></div></div>
   <div class="row2">
@@ -315,24 +315,17 @@ async function loadClients(){
 
 // ── финансы ──
 async function loadFin(){
-  const [f,inv]=await Promise.all([api('/api/finance?months=12'),api('/api/invoices')]);
-  const first=f.months.findIndex(r=>r.revenue||r.expenses||r.billed);const m=first<0?f.months.slice(-1):f.months.slice(first);
-  const cur=m[m.length-1]||{};const ex=f.expected;
+  const [f,inv]=await Promise.all([api('/api/finance?months=12&ahead=3'),api('/api/invoices')]);
+  const first=f.months.findIndex(r=>r.revenue||r.expenses||r.billed||r.plan);const m=first<0?f.months.slice(-1):f.months.slice(first);
+  const cur=m.filter(r=>!r.plan).slice(-1)[0]||{};const ex=f.expected;
   const free=f.cash.rs+f.cash.cash-f.tax.due;
   $('#finKpi').innerHTML=
-    kpi('Выручка месяца',rub(cur.revenue),`начислено по отгрузкам${cur.fbs_est?` · оценка ${rub(cur.fbs_est)}`:''}`)+
-    kpi('Расходы месяца',rub(cur.expenses),'аренда, ФОТ, МПФИТ, закупки')+
-    kpi('Чистая прибыль месяца',rub(cur.profit_after_tax),`после налога 7%${cur.revenue?` · маржа ${Math.round(cur.profit_after_tax/cur.revenue*100)}%`:''}`,cur.profit_after_tax<0?'alert':'good')+
-    kpi('Свободные деньги',rub(free),`на счетах ${rub(f.cash.rs+f.cash.cash)} − налог к оплате ${rub(f.tax.due)}`,free<0?'alert':'')+
-    kpi('Клиенты должны',rub(ex.total),`отгружено без счёта ${rub(ex.unbilled)} · счета без оплаты ${rub(ex.unpaid)}`,ex.unpaid?'alert':'');
-  chart('c-fin',{type:'bar',data:{labels:m.map(r=>r.month),datasets:[
-    {label:'Выручка',data:m.map(r=>r.revenue),backgroundColor:'#93c5fd'},
-    {label:'Расходы',data:m.map(r=>r.expenses),backgroundColor:'#fca5a5'},
-    {label:'Чистая прибыль',data:m.map(r=>r.profit_after_tax),type:'line',borderColor:'#059669',tension:.3}]},options:baseOpts()});
+    kpi('Баланс · расчётный счёт',rub(f.cash.rs),'по журналу, без запланированных платежей')+
+    kpi('Баланс · наличные',rub(f.cash.cash),'по журналу');
   // P&L в стиле WB-дашборда: выручка → статьи затрат → операционная прибыль → налог → чистая прибыль
   const MN=['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'];
   const nowMk=new Date(Date.now()+3*3600e3).toISOString().slice(0,7);
-  const head=r=>`${MN[+r.month.slice(5)-1]} ${r.month.slice(0,4)}${r.month===nowMk?'<div class="muted" style="font-weight:400;font-size:11px">текущий</div>':''}`;
+  const head=r=>`${MN[+r.month.slice(5)-1]} ${r.month.slice(0,4)}${r.month===nowMk?'<div class="muted" style="font-weight:400;font-size:11px">текущий</div>':r.plan?'<div class="muted" style="font-weight:400;font-size:11px">план</div>':''}`;
   const money=v=>v?`<span class="${v<0?'neg':''}">${v<0?'−':''}${Math.abs(Math.round(v)).toLocaleString('ru-RU')}</span>`:'<span class="muted">—</span>';
   const pct=v=>v==null?'<span class="muted">—</span>':`<b class="${v>=20?'up':v>=10?'warn':'down'}">${v}%</b>`;
   const R=(cls,lab,get,fmt=money)=>`<tr class="pl-${cls}"><td>${lab}</td>${m.map(r=>`<td>${fmt(get(r))}</td>`).join('')}</tr>`;

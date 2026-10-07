@@ -132,8 +132,8 @@ async def api_clients():
 
 
 @app.get("/api/finance")
-async def api_finance(months: int = 6):
-    return await _t(report.finance, max(1, min(months, 24)))
+async def api_finance(months: int = 6, ahead: int = 0):
+    return await _t(report.finance, max(1, min(months, 24)), max(0, min(ahead, 6)))
 
 
 @app.get("/api/planfact")

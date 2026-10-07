@@ -323,7 +323,7 @@ def recurring_for_month(mk: str, full: bool = False) -> dict:
     for r in store.recurring_list():
         s_ = date.fromisoformat(r["start_date"])
         e_ = date.fromisoformat(r["end_date"]) if r["end_date"] else d1
-        if not full:            # текущий месяц — по сегодняшний день, иначе он выглядит убыточным
+        if not full and d0 <= today <= d1:   # текущий месяц — по сегодняшний день
             e_ = min(e_, today)
         a, b = max(d0, s_), min(d1, e_)
         if a > b:
@@ -353,7 +353,7 @@ def invoices() -> list[dict]:
     return out
 
 
-def finance(months: int = 6) -> dict:
+def finance(months: int = 6, ahead: int = 0) -> dict:
     os_ = orders()
     comp = companies()
     today = _now_msk().date()
@@ -363,6 +363,11 @@ def finance(months: int = 6) -> dict:
         mks.append(d.strftime("%Y-%m"))
         d = (d - timedelta(days=1)).replace(day=1)
     mks.reverse()
+    # будущие месяцы — для планирования платежей (постоянные + запланированные в журнале)
+    d = today.replace(day=1)
+    for _ in range(ahead):
+        d = (d + timedelta(days=32)).replace(day=1)
+        mks.append(d.strftime("%Y-%m"))
     price = _unit_price(os_)
     # выручка по начислению: отгруженные заказы месяца × цена клиента
     fbs, fbs_est, svc_cost = defaultdict(float), defaultdict(float), defaultdict(float)
@@ -398,7 +403,7 @@ def finance(months: int = 6) -> dict:
             one_off[mk][e["category"]] += e["amount"]
         if e["kind"] == "investment" and e["in_ff"]:
             inv_[mk] += e["amount"]
-        if e["method"] in cash:
+        if e["method"] in cash and e["date"] <= today.isoformat():   # будущие — это план, денег ещё не тронули
             if e["kind"] == "investment" and e["method"] == "personal":
                 continue
             sign = 1 if e["kind"] in ("funding", "client_payment", "other_income") else -1
@@ -424,7 +429,7 @@ def finance(months: int = 6) -> dict:
         tax = revenue * store.TAX_RATE
         e_tot = sum(by_cat.values())
         rows.append({
-            "month": mk, "revenue": round(revenue), "fbs": round(fbs[mk]), "fbs_est": round(fbs_est[mk]),
+            "month": mk, "plan": mk > today.strftime("%Y-%m"), "revenue": round(revenue), "fbs": round(fbs[mk]), "fbs_est": round(fbs_est[mk]),
             "other": round(other[mk]), "billed": round(billed[mk]), "paid": round(paid[mk]),
             "svc_cost": round(svc_cost[mk]),
             "recurring": round(sum(rec[mk].values())), "tax": round(tax), "one_off": round(sum(one_off[mk].values())),
