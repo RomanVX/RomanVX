@@ -328,7 +328,7 @@ async function loadFin(){
   $('#finKpi').innerHTML=
     kpi('Баланс · расчётный счёт ФФ',rub(f.cash.rs),f.bank&&f.bank.owner_funds?`в банке ${rub(f.cash.rs+f.bank.owner_funds)}, из них ${rub(f.bank.owner_funds)} — личные средства владельца`:'по журналу')+
     kpi('Баланс · наличные',rub(f.cash.cash),'по журналу')+
-    kpi('Должны вернуть владельцам',f.owner_debt.total?'−'+rub(f.owner_debt.total):rub(0),f.owner_debt.rows.length?f.owner_debt.rows.map(r=>`${esc(r.note)} ${rub(r.amount)}`).join(' · '):'расходов за свои средства нет',f.owner_debt.total?'alert':'good');
+    kpi('Должны вернуть владельцам',f.owner_debt.total?'−'+rub(f.owner_debt.total):rub(0),f.owner_debt.rows.length?f.owner_debt.rows.map(r=>`${esc(r.label)} ${rub(r.amount)}`).join(' · '):'расходов за свои средства нет',f.owner_debt.total?'alert':'good');
   // P&L в стиле WB-дашборда: выручка → статьи затрат → операционная прибыль → налог → чистая прибыль
   const MN=['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'];
   const nowMk=new Date(Date.now()+3*3600e3).toISOString().slice(0,7);

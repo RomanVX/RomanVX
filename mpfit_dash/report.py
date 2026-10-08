@@ -413,7 +413,7 @@ def finance(months: int = 6, ahead: int = 0) -> dict:
     owner_funds = (float(bm["opening"]) - ff_open) if bank else 0.0
     cash["rs"] = (store.bank_balance() - owner_funds) if bank else 0.0
     cash["cash"] += owner_cash
-    owner_debt, owner_debt_rows = 0.0, []     # расходы ФФ, оплаченные личными деньгами: вернуть владельцам
+    owner_debt, pers_rows, cash_paid = 0.0, [], 0.0   # расходы ФФ из кассы и личных денег — вернуть владельцам
     for e in store.ledger_list():
         mk = e["date"][:7]
         covered = bool(bank) and e["method"] == "rs" and e["date"] <= bank_end
@@ -428,8 +428,10 @@ def finance(months: int = 6, ahead: int = 0) -> dict:
             continue
         if e["method"] == "personal" and e["kind"] in ("expense", "investment") and e["in_ff"]:
             owner_debt += e["amount"]
-            owner_debt_rows.append({"date": e["date"], "amount": e["amount"], "note": e.get("note") or "",
-                                    "author": e.get("author") or ""})
+            pers_rows.append({"label": (e.get("note") or "").replace(" (оплачено личными средствами)", ""),
+                              "amount": e["amount"]})
+        if e["method"] == "cash" and e["kind"] == "expense" and e["in_ff"] and e["date"] <= today.isoformat():
+            cash_paid += e["amount"]
         if e["method"] in cash and e["date"] <= today.isoformat():   # будущие — это план, денег ещё не тронули
             if e["kind"] == "investment" and e["method"] == "personal":
                 continue
@@ -509,7 +511,9 @@ def finance(months: int = 6, ahead: int = 0) -> dict:
                         "expenses": {k: round(v, 2) for k, v in exp.items()},
                         "owner": round(owner, 2), "closing": round(bal, 2)})
     cats_sorted = sorted(cats, key=lambda c: -sum(r["by_cat"].get(c, 0) for r in rows))
-    return {"months": rows, "dds": dds, "owner_debt": {"total": round(owner_debt, 2), "rows": owner_debt_rows}, "bank": {"opening": bm.get("opening"), "owner_funds": round(owner_funds, 2), "start": bm.get("start"),
+    return {"months": rows, "dds": dds, "owner_debt": {"total": round(owner_debt + cash_paid - owner_cash, 2),
+                          "rows": pers_rows + [{"label": "Расходы ФФ наличными", "amount": round(cash_paid, 2)},
+                                               {"label": "минус наличные, снятые с РС (деньги ФФ)", "amount": -round(owner_cash, 2)}]}, "bank": {"opening": bm.get("opening"), "owner_funds": round(owner_funds, 2), "start": bm.get("start"),
                                                "end": bm.get("end"), "closing_stated": bm.get("closing_stated")},
             "categories": cats_sorted, "cash": {k: round(v, 2) for k, v in cash.items()},
             "billed_total": round(sum(i["total"] for i in inv)), "paid_total": round(sum(i["paid"] for i in inv)),
