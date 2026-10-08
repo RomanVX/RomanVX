@@ -408,7 +408,10 @@ def finance(months: int = 6, ahead: int = 0) -> dict:
                 one_off[mk][t["category"]] += -t["amount"]
         elif t["kind"] == "owner" and t["date"] <= today.isoformat():
             owner_cash += -t["amount"]       # снято владельцу → наличные для расчётов
-    cash["rs"] = store.bank_balance() if bank else 0.0
+    # входящий остаток выписки — личные деньги владельца, к бизнесу ФФ не относятся
+    ff_open = float(bm.get("ff_opening") or 0.0)
+    owner_funds = (float(bm["opening"]) - ff_open) if bank else 0.0
+    cash["rs"] = (store.bank_balance() - owner_funds) if bank else 0.0
     cash["cash"] += owner_cash
     for e in store.ledger_list():
         mk = e["date"][:7]
@@ -483,7 +486,7 @@ def finance(months: int = 6, ahead: int = 0) -> dict:
     exp_rows.sort(key=lambda r: -r["total"])
     dds = []
     if bank:
-        bal = float(bm["opening"])
+        bal = ff_open
         by_m = defaultdict(list)
         for t in bank:
             by_m[t["date"][:7]].append(t)
@@ -501,7 +504,7 @@ def finance(months: int = 6, ahead: int = 0) -> dict:
                         "expenses": {k: round(v, 2) for k, v in exp.items()},
                         "owner": round(owner, 2), "closing": round(bal, 2)})
     cats_sorted = sorted(cats, key=lambda c: -sum(r["by_cat"].get(c, 0) for r in rows))
-    return {"months": rows, "dds": dds, "bank": {"opening": bm.get("opening"), "start": bm.get("start"),
+    return {"months": rows, "dds": dds, "bank": {"opening": bm.get("opening"), "owner_funds": round(owner_funds, 2), "start": bm.get("start"),
                                                "end": bm.get("end"), "closing_stated": bm.get("closing_stated")},
             "categories": cats_sorted, "cash": {k: round(v, 2) for k, v in cash.items()},
             "billed_total": round(sum(i["total"] for i in inv)), "paid_total": round(sum(i["paid"] for i in inv)),

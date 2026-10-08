@@ -326,7 +326,7 @@ async function loadFin(){
   const cur=m.filter(r=>!r.plan).slice(-1)[0]||{};const ex=f.expected;
   const free=f.cash.rs+f.cash.cash-f.tax.due;
   $('#finKpi').innerHTML=
-    kpi('Баланс · расчётный счёт',rub(f.cash.rs),'по журналу, без запланированных платежей')+
+    kpi('Баланс · расчётный счёт ФФ',rub(f.cash.rs),f.bank&&f.bank.owner_funds?`в банке ${rub(f.cash.rs+f.bank.owner_funds)}, из них ${rub(f.bank.owner_funds)} — личные средства владельца`:'по журналу')+
     kpi('Баланс · наличные',rub(f.cash.cash),'по журналу');
   // P&L в стиле WB-дашборда: выручка → статьи затрат → операционная прибыль → налог → чистая прибыль
   const MN=['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'];
@@ -355,11 +355,11 @@ async function loadFin(){
   if(dm.length){const dc=[...new Set(dm.flatMap(x=>Object.keys(x.expenses)))].sort((a,b)=>dm.reduce((t,x)=>t+(x.expenses[b]||0),0)-dm.reduce((t,x)=>t+(x.expenses[a]||0),0));
     const dr=(cls,lab,get)=>`<tr class="pl-${cls}"><td>${lab}</td>${dm.map(x=>`<td>${get(x)}</td>`).join('')}</tr>`;
     $('#ddsTbl').innerHTML=`<tr><th>Статья</th>${dm.map(x=>`<th>${MN[+x.month.slice(5)-1]} ${x.month.slice(0,4)}</th>`).join('')}</tr>`+
-      dr('note','Остаток на начало',x=>fm(x.opening))+dr('header','+ Поступления от клиентов',x=>fm(x.income))+
+      dr('note','Остаток ФФ на начало',x=>fm(x.opening))+dr('header','+ Поступления от клиентов',x=>fm(x.income))+
       dc.map(c=>dr('cost','&nbsp;&nbsp;− '+esc(c),x=>fm(-(x.expenses[c]||0)))).join('')+
       dr('cost','&nbsp;&nbsp;− Переводы владельцу (в наличные)',x=>fm(x.owner))+
-      dr('total','Остаток на конец',x=>fm(x.closing));
-    const b=f.bank||{};$('#ddsNote').innerHTML=`По выписке за ${esc((b.start||'').split('-').reverse().join('.'))} – ${esc((b.end||'').split('-').reverse().join('.'))}. Остаток в банке на конец периода ${rub(b.closing_stated)} — ${Math.abs((b.closing_stated||0)-dm[dm.length-1].closing)<0.5?'<b class="up">сходится</b>':'<b class="down">не сходится, загрузите выписку заново</b>'}. Записи журнала по расчётному счёту за этот период выписка заменяет; наличные, ФОТ из кассы и плановые платежи остаются в журнале.`}
+      dr('total','Остаток ФФ на конец',x=>fm(x.closing));
+    const b=f.bank||{};$('#ddsNote').innerHTML=`По выписке за ${esc((b.start||'').split('-').reverse().join('.'))} – ${esc((b.end||'').split('-').reverse().join('.'))}. Остаток в банке на конец периода ${rub(b.closing_stated)} = деньги ФФ ${rub(dm[dm.length-1].closing)} + личные средства владельца на начало ${rub(b.owner_funds)} (не относятся к бизнесу) — ${Math.abs((b.closing_stated||0)-dm[dm.length-1].closing-b.owner_funds)<0.5?'<b class="up">сходится</b>':'<b class="down">не сходится, загрузите выписку заново</b>'}. Записи журнала по расчётному счёту за этот период выписка заменяет; наличные, ФОТ из кассы и плановые платежи остаются в журнале.`}
   else $('#ddsTbl').innerHTML='<tr><td class="l muted">Выписка ещё не загружена</td></tr>';
   $('#pnlNote').innerHTML=`Выручка — по дате отгрузки (цена клиента за «Отгрузку FBS» + прочие строки счетов МПФИТ). Расходы — по факту оплаты, в месяц платежа (журнал). В будущих месяцах — план: постоянные платежи (аренда, МПФИТ) и записи журнала с будущей датой. Налог 7% — к оплате; когда заплатите, внесите в журнал расход «Налоги».${f.estimated_share?` Часть отгрузок (${f.estimated_share}%) пока по оценке — уточнится, когда догрузятся карточки.`:''}`;
   $('#invTbl').innerHTML='<tr><th>Счёт</th><th>Клиент</th><th>Дата</th><th>Сумма</th><th>Статус</th></tr>'+
