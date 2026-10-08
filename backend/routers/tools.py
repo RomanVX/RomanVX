@@ -4758,6 +4758,38 @@ async def adv_sandbox(request: Request, body: dict):
         return {"error": str(e)[:300]}
 
 
+@router.post("/mp/proxy", include_in_schema=False)
+async def mp_proxy(request: Request, body: dict):
+    """Owner-only прокси к контент-API площадок (заведение карточек).
+    body: {mp: "wb"|"ozon", path, method, params?, json?}."""
+    _owner_only(request)
+    import httpx
+    mp = str(body.get("mp") or "wb")
+    path = str(body.get("path") or "")
+    if not path.startswith("/"):
+        return {"error": "path должен начинаться с /"}
+    if mp == "wb":
+        import wb_client
+        base, headers = wb_client.CONTENT_BASE, wb_client._headers()
+    elif mp == "ozon":
+        import ozon_client
+        base, headers = ozon_client._BASE, ozon_client._headers()
+    else:
+        return {"error": "mp: wb | ozon"}
+    method = str(body.get("method") or "GET").upper()
+    try:
+        async with httpx.AsyncClient(timeout=60) as c:
+            r = await c.request(method, base + path, headers=headers,
+                                params=body.get("params"), json=body.get("json"))
+        try:
+            payload = r.json()
+        except Exception:
+            payload = r.text[:4000]
+        return {"status": r.status_code, "body": payload}
+    except Exception as e:
+        return {"error": str(e)[:300]}
+
+
 @router.get("/supply/volumes", include_in_schema=False)
 async def supply_volumes(request: Request):
     """Точный литраж каждой штуки из габаритов карточек Ozon."""
