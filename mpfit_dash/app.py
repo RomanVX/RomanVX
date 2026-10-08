@@ -266,6 +266,22 @@ async def api_shift(payload: dict):
     return {"ok": True}
 
 
+@app.post("/api/bank/import")
+async def api_bank_import(request: Request):
+    """Тело — xlsx-выписка Альфы (как скачана из банка)."""
+    import bank
+    data = await request.body()
+    try:
+        return await _t(bank.import_statement, data)
+    except Exception as e:
+        return JSONResponse({"error": "выписка не прочиталась: " + str(e)[:150]}, status_code=400)
+
+
+@app.get("/api/bank")
+async def api_bank():
+    return {"tx": await _t(store.bank_list), "meta": store.kv_get("bank_meta")}
+
+
 @app.post("/api/sync")
 async def api_sync():
     t = asyncio.create_task(sync.run_once())

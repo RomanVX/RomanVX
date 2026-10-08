@@ -135,6 +135,12 @@ tr.bad td{background:#fef2f2}
   <div class="grid k2" id="finKpi"></div>
   <div class="card" style="margin-top:12px"><h2>P&amp;L по месяцам</h2><div class="tw"><table id="pnl"></table></div>
   <div class="note" id="pnlNote"></div></div>
+  <div class="card" style="margin-top:12px"><h2>Движение денег · расчётный счёт Альфа</h2>
+    <div class="tw"><table id="ddsTbl"></table></div>
+    <div class="note" id="ddsNote"></div>
+    <div style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <label class="btn pri" for="bankFile" style="cursor:pointer">Загрузить выписку Альфы (xlsx)</label>
+      <input type="file" id="bankFile" accept=".xlsx" hidden><span class="muted" id="bankMsg"></span></div></div>
   <div class="row2">
     <div class="card"><h2>Счета МПФИТ</h2><div class="tw" style="max-height:420px"><table id="invTbl"></table></div>
       <div class="note">Если клиент оплатил, а в МПФИТ счёт не отмечен — нажмите «Оплачен». Оплата запишется в журнал со ссылкой на счёт, в МПФИТ ничего не меняется.</div></div>
@@ -345,6 +351,16 @@ async function loadFin(){
     R('note','Выставлено счетов клиентам',r=>r.billed)+
     R('note','Оплачено клиентами',r=>r.paid)+
     R('note','Вложения в оборудование (не в расходах)',r=>r.investments);
+  const dm=f.dds||[];const fm=v=>v?`<span class="${v<0?'neg':''}">${v<0?'−':''}${Math.abs(Math.round(v)).toLocaleString('ru-RU')}</span>`:'<span class="muted">—</span>';
+  if(dm.length){const dc=[...new Set(dm.flatMap(x=>Object.keys(x.expenses)))].sort((a,b)=>dm.reduce((t,x)=>t+(x.expenses[b]||0),0)-dm.reduce((t,x)=>t+(x.expenses[a]||0),0));
+    const dr=(cls,lab,get)=>`<tr class="pl-${cls}"><td>${lab}</td>${dm.map(x=>`<td>${get(x)}</td>`).join('')}</tr>`;
+    $('#ddsTbl').innerHTML=`<tr><th>Статья</th>${dm.map(x=>`<th>${MN[+x.month.slice(5)-1]} ${x.month.slice(0,4)}</th>`).join('')}</tr>`+
+      dr('note','Остаток на начало',x=>fm(x.opening))+dr('header','+ Поступления от клиентов',x=>fm(x.income))+
+      dc.map(c=>dr('cost','&nbsp;&nbsp;− '+esc(c),x=>fm(-(x.expenses[c]||0)))).join('')+
+      dr('cost','&nbsp;&nbsp;− Переводы владельцу (в наличные)',x=>fm(x.owner))+
+      dr('total','Остаток на конец',x=>fm(x.closing));
+    const b=f.bank||{};$('#ddsNote').innerHTML=`По выписке за ${esc((b.start||'').split('-').reverse().join('.'))} – ${esc((b.end||'').split('-').reverse().join('.'))}. Остаток в банке на конец периода ${rub(b.closing_stated)} — ${Math.abs((b.closing_stated||0)-dm[dm.length-1].closing)<0.5?'<b class="up">сходится</b>':'<b class="down">не сходится, загрузите выписку заново</b>'}. Записи журнала по расчётному счёту за этот период выписка заменяет; наличные, ФОТ из кассы и плановые платежи остаются в журнале.`}
+  else $('#ddsTbl').innerHTML='<tr><td class="l muted">Выписка ещё не загружена</td></tr>';
   $('#pnlNote').innerHTML=`Выручка — по дате отгрузки (цена клиента за «Отгрузку FBS» + прочие строки счетов МПФИТ). Расходы — по факту оплаты, в месяц платежа (журнал). В будущих месяцах — план: постоянные платежи (аренда, МПФИТ) и записи журнала с будущей датой. Налог 7% — к оплате; когда заплатите, внесите в журнал расход «Налоги».${f.estimated_share?` Часть отгрузок (${f.estimated_share}%) пока по оценке — уточнится, когда догрузятся карточки.`:''}`;
   $('#invTbl').innerHTML='<tr><th>Счёт</th><th>Клиент</th><th>Дата</th><th>Сумма</th><th>Статус</th></tr>'+
     inv.map(i=>`<tr><td>${esc(i.number)}</td><td class="l">${esc(i.company)}</td><td>${esc((i.date||'').split('-').reverse().join('.'))}</td><td>${rub(i.total)}</td>
@@ -358,6 +374,10 @@ $('#invTbl').onclick=async e=>{const n=e.target.dataset.pay;if(!n)return;
   const d=prompt(`Дата оплаты счёта ${n} (ГГГГ-ММ-ДД):`,new Date().toISOString().slice(0,10));if(!d)return;
   try{await api(`/api/invoices/${encodeURIComponent(n)}/paid`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:d,amount:e.target.dataset.amt,method:'rs'})});loadFin()}
   catch(err){alert('Не сохранилось: '+err.message)}};
+
+$('#bankFile')?.addEventListener('change',async e=>{const fl=e.target.files[0];if(!fl)return;$('#bankMsg').textContent='Загружаю…';
+  try{const r=await fetch('/api/bank/import',{method:'POST',body:await fl.arrayBuffer()});const j=await r.json();if(!r.ok)throw new Error(j.error||r.status);
+    $('#bankMsg').textContent=`Загружено операций: ${j.imported}, остаток ${rub(j.check)}`;loadFin()}catch(err){$('#bankMsg').textContent='Ошибка: '+err.message}e.target.value=''});
 
 // ── план/факт ──
 async function loadPlan(){

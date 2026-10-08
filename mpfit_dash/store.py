@@ -56,6 +56,10 @@ SCHEMA = [
     # поэтому отгрузки дня делим поровну между вышедшими
     """CREATE TABLE IF NOT EXISTS shifts (
         date TEXT, staff_id TEXT, PRIMARY KEY (date, staff_id))""",
+    # выписка Альфы: сумма со знаком (+ приход, − списание)
+    """CREATE TABLE IF NOT EXISTS bank_tx (
+        id TEXT PRIMARY KEY, date TEXT, amount REAL, party TEXT, inn TEXT,
+        purpose TEXT, kind TEXT, category TEXT)""",
     # хранение по дням (analytics/storage/list) — входит в «К оплате» МПФИТ
     """CREATE TABLE IF NOT EXISTS m_storage (
         id BIGINT PRIMARY KEY, company_id INTEGER, date TEXT, amount REAL)""",
@@ -290,3 +294,24 @@ def shift_set(d: str, staff_id: str, on: bool):
                    (d, staff_id))
     else:
         db.execute("DELETE FROM shifts WHERE date = ? AND staff_id = ?", (d, staff_id))
+
+
+# ── банковская выписка ────────────────────────────────────────────────────────
+def bank_upsert(rows: list[tuple]):
+    db.executemany(
+        "INSERT INTO bank_tx (id, date, amount, party, inn, purpose, kind, category) VALUES (?,?,?,?,?,?,?,?) "
+        "ON CONFLICT (id) DO UPDATE SET kind = excluded.kind, category = excluded.category", rows)
+
+
+def bank_list() -> list[dict]:
+    keys = ("id", "date", "amount", "party", "inn", "purpose", "kind", "category")
+    return [dict(zip(keys, r)) for r in db.fetchall(
+        f"SELECT {', '.join(keys)} FROM bank_tx ORDER BY date, id")]
+
+
+def bank_balance() -> float:
+    m = kv_get("bank_meta") or {}
+    if m.get("opening") is None:
+        return 0.0
+    r = db.fetchone("SELECT COALESCE(SUM(amount), 0) FROM bank_tx")
+    return float(m["opening"]) + float(r[0] or 0)

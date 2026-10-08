@@ -393,14 +393,35 @@ def finance(months: int = 6, ahead: int = 0) -> dict:
     inv_ = defaultdict(float)
     cash = {"cash": 0.0, "rs": 0.0}
     tax_paid = 0.0
+    bm = store.kv_get("bank_meta") or {}
+    bank = store.bank_list() if bm.get("opening") is not None else []
+    bank_end = bm.get("end") or ""
+    # выписка — источник правды по РС: расходы по категориям, остаток; записи журнала
+    # с методом «rs» за период выписки перекрыты ею (иначе платежи задвоятся)
+    owner_cash = 0.0
+    for t in bank:
+        mk = t["date"][:7]
+        if t["kind"] == "expense":
+            if t["category"] == "Налоги":
+                tax_paid += -t["amount"]
+            else:
+                one_off[mk][t["category"]] += -t["amount"]
+        elif t["kind"] == "owner" and t["date"] <= today.isoformat():
+            owner_cash += -t["amount"]       # снято владельцу → наличные для расчётов
+    cash["rs"] = store.bank_balance() if bank else 0.0
+    cash["cash"] += owner_cash
     for e in store.ledger_list():
         mk = e["date"][:7]
+        covered = bool(bank) and e["method"] == "rs" and e["date"] <= bank_end
         if e["kind"] == "expense" and e["category"] == "Налоги":
-            tax_paid += e["amount"]         # оплата налога гасит обязательство, не расход P&L
-        elif e["kind"] == "expense" and e["in_ff"]:      # по факту оплаты, в месяц платежа
+            if not covered:
+                tax_paid += e["amount"]     # оплата налога гасит обязательство, не расход P&L
+        elif e["kind"] == "expense" and e["in_ff"] and not covered:   # по факту оплаты, в месяц платежа
             one_off[mk][e["category"]] += e["amount"]
-        if e["kind"] == "investment" and e["in_ff"]:
+        if e["kind"] == "investment" and e["in_ff"] and not covered:
             inv_[mk] += e["amount"]
+        if covered:
+            continue
         if e["method"] in cash and e["date"] <= today.isoformat():   # будущие — это план, денег ещё не тронули
             if e["kind"] == "investment" and e["method"] == "personal":
                 continue
@@ -460,8 +481,29 @@ def finance(months: int = 6, ahead: int = 0) -> dict:
                          "total": round(unbilled[cid] + unpaid[cid]),
                          "since": (last_inv.get(cid) or "")[:10]})
     exp_rows.sort(key=lambda r: -r["total"])
+    dds = []
+    if bank:
+        bal = float(bm["opening"])
+        by_m = defaultdict(list)
+        for t in bank:
+            by_m[t["date"][:7]].append(t)
+        for mk in sorted(by_m):
+            op_bal, inc, owner, exp = bal, 0.0, 0.0, defaultdict(float)
+            for t in by_m[mk]:
+                bal += t["amount"]
+                if t["kind"] in ("client_payment", "income_other"):
+                    inc += t["amount"]
+                elif t["kind"] in ("owner", "owner_in"):
+                    owner += t["amount"]
+                else:
+                    exp[t["category"]] += -t["amount"]
+            dds.append({"month": mk, "opening": round(op_bal, 2), "income": round(inc, 2),
+                        "expenses": {k: round(v, 2) for k, v in exp.items()},
+                        "owner": round(owner, 2), "closing": round(bal, 2)})
     cats_sorted = sorted(cats, key=lambda c: -sum(r["by_cat"].get(c, 0) for r in rows))
-    return {"months": rows, "categories": cats_sorted, "cash": {k: round(v, 2) for k, v in cash.items()},
+    return {"months": rows, "dds": dds, "bank": {"opening": bm.get("opening"), "start": bm.get("start"),
+                                               "end": bm.get("end"), "closing_stated": bm.get("closing_stated")},
+            "categories": cats_sorted, "cash": {k: round(v, 2) for k, v in cash.items()},
             "billed_total": round(sum(i["total"] for i in inv)), "paid_total": round(sum(i["paid"] for i in inv)),
             "debt": round(sum(i["debt"] for i in inv)),
             "tax": {"rate": store.TAX_RATE, "accrued": round(sum(r["tax"] for r in rows)),
