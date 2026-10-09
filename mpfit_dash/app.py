@@ -282,6 +282,30 @@ async def api_bank():
     return {"tx": await _t(store.bank_list), "meta": store.kv_get("bank_meta")}
 
 
+@app.post("/api/arrivals/create")
+async def api_arrival_create(payload: dict):
+    """Создать заявку на приёмку в МПФИТ (запись в боевую систему!).
+    {date: ISO, items: [{product_id, quantity}], confirm: true}. Повтор того же
+    набора товаров блокируется, чтобы не создать дубль (force: true — обойти)."""
+    import hashlib
+    import json as _json
+    if payload.get("confirm") is not True:
+        return JSONResponse({"error": "нужно confirm: true"}, status_code=400)
+    items = [{"product_id": int(i["product_id"]), "quantity": int(i["quantity"])}
+             for i in payload.get("items") or [] if int(i.get("quantity") or 0) > 0]
+    if not items or not payload.get("date"):
+        return JSONResponse({"error": "date и items обязательны"}, status_code=400)
+    key = "arrival_" + hashlib.md5(_json.dumps(sorted(items, key=lambda x: x["product_id"])).encode()).hexdigest()[:12]
+    if store.kv_get(key) and not payload.get("force"):
+        return JSONResponse({"error": "такая заявка уже создана", "arrival": store.kv_get(key)}, status_code=409)
+    try:
+        res = await mpfit_client.call("POST", "/v1/arrivals/create", {"date": payload["date"], "items": items})
+    except Exception as e:
+        return JSONResponse({"error": str(e)[:400]}, status_code=502)
+    store.kv_set(key, res.get("arrival") or res)
+    return res
+
+
 @app.post("/api/sync")
 async def api_sync():
     t = asyncio.create_task(sync.run_once())
