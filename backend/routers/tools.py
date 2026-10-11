@@ -4771,11 +4771,15 @@ async def mp_proxy(request: Request, body: dict):
     if mp == "wb":
         import wb_client
         base, headers = wb_client.CONTENT_BASE, wb_client._headers()
+    elif mp in ("wbc", "wbp"):       # справочники/тарифы и цены WB
+        import wb_client
+        base = wb_client.COMMON_BASE if mp == "wbc" else wb_client.PRICES_BASE
+        headers = wb_client._headers()
     elif mp == "ozon":
         import ozon_client
         base, headers = ozon_client._BASE, ozon_client._headers()
     else:
-        return {"error": "mp: wb | ozon"}
+        return {"error": "mp: wb | wbc | wbp | ozon"}
     method = str(body.get("method") or "GET").upper()
     try:
         async with httpx.AsyncClient(timeout=60) as c:
