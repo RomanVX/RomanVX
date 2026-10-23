@@ -4761,7 +4761,7 @@ async def adv_sandbox(request: Request, body: dict):
 @router.post("/mp/proxy", include_in_schema=False)
 async def mp_proxy(request: Request, body: dict):
     """Owner-only прокси к контент-API площадок (заведение карточек).
-    body: {mp: "wb"|"ozon", path, method, params?, json?}."""
+    body: {mp: "wb"|"wbc"|"wbp"|"wbf"|"ozon"|"ym", path, method, params?, json?}."""
     _owner_only(request)
     import httpx
     mp = str(body.get("mp") or "wb")
@@ -4775,11 +4775,19 @@ async def mp_proxy(request: Request, body: dict):
         import wb_client
         base = wb_client.COMMON_BASE if mp == "wbc" else wb_client.PRICES_BASE
         headers = wb_client._headers()
+    elif mp == "wbf":                # вопросы и отзывы WB
+        import reviews_client
+        base = "https://feedbacks-api.wildberries.ru"
+        headers = {"Authorization": reviews_client.WB_API_KEY}
     elif mp == "ozon":
         import ozon_client
         base, headers = ozon_client._BASE, ozon_client._headers()
+    elif mp == "ym":                 # {business} в path → YM_BUSINESS_ID
+        import ym_client
+        base, headers = "https://api.partner.market.yandex.ru", ym_client._headers()
+        path = path.replace("{business}", str(ym_client.YM_BUSINESS_ID))
     else:
-        return {"error": "mp: wb | wbc | wbp | ozon"}
+        return {"error": "mp: wb | wbc | wbp | wbf | ozon | ym"}
     method = str(body.get("method") or "GET").upper()
     try:
         async with httpx.AsyncClient(timeout=60) as c:
