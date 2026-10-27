@@ -4761,7 +4761,7 @@ async def adv_sandbox(request: Request, body: dict):
 @router.post("/mp/proxy", include_in_schema=False)
 async def mp_proxy(request: Request, body: dict):
     """Owner-only прокси к контент-API площадок (заведение карточек).
-    body: {mp: "wb"|"wbc"|"wbp"|"wbf"|"ozon"|"ym", path, method, params?, json?}."""
+    body: {mp: "wb"|"wbc"|"wbp"|"wbf"|"wba"|"wban"|"wbs"|"ozon"|"ozp"|"ym", path, method, params?, json?}."""
     _owner_only(request)
     import httpx
     mp = str(body.get("mp") or "wb")
@@ -4779,6 +4779,18 @@ async def mp_proxy(request: Request, body: dict):
         import reviews_client
         base = "https://feedbacks-api.wildberries.ru"
         headers = {"Authorization": reviews_client.WB_API_KEY}
+    elif mp == "wba":                # реклама WB
+        import advert_client
+        base, headers = advert_client._BASES[0], advert_client._headers()
+    elif mp in ("wban", "wbs"):      # аналитика и статистика WB
+        import wb_client
+        base = wb_client.ANALYTICS_BASE if mp == "wban" else wb_client.REPORT_BASE
+        headers = wb_client._headers()
+    elif mp == "ozp":                # Ozon Performance (реклама)
+        import ozon_perf_client
+        if not ozon_perf_client.configured():
+            return {"error": "OZON_PERF_CLIENT_ID/SECRET не заданы"}
+        base, headers = ozon_perf_client.BASE, await ozon_perf_client._headers()
     elif mp == "ozon":
         import ozon_client
         base, headers = ozon_client._BASE, ozon_client._headers()
@@ -4787,7 +4799,7 @@ async def mp_proxy(request: Request, body: dict):
         base, headers = "https://api.partner.market.yandex.ru", ym_client._headers()
         path = path.replace("{business}", str(ym_client.YM_BUSINESS_ID))
     else:
-        return {"error": "mp: wb | wbc | wbp | wbf | ozon | ym"}
+        return {"error": "mp: wb | wbc | wbp | wbf | wba | wban | wbs | ozon | ozp | ym"}
     method = str(body.get("method") or "GET").upper()
     try:
         async with httpx.AsyncClient(timeout=60) as c:
