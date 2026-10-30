@@ -89,7 +89,9 @@ _PUBLIC_PREFIXES = ("/api/auth/", "/api/cabinet", "/api/health",
                     "/api/landing/",  # заявки с публичного сайта фулфилмента
                     # эндпоинты локального агента ниши — защищены собственным
                     # токеном WB_AGENT_TOKEN, сессия-cookie им не нужна
-                    "/api/tools/niche/pending", "/api/tools/niche/ingest")
+                    "/api/tools/niche/pending", "/api/tools/niche/ingest",
+                    # JPG-копии фото карточек WB для загрузки в Ozon (только wbbasket.ru)
+                    "/api/tools/img/wb/")
 # менеджеру закрыты деньги: P&L, выплаты, ручные статьи, загрузка себеса.
 # Юнитка (…/unit) — разрешена.
 _MANAGER_BLOCKED = ("/api/finance/", "/api/upload/", "/api/dashboard/finance")

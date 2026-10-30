@@ -5375,3 +5375,28 @@ async def agent_digest_get(request: Request, refresh: bool = Query(default=False
     import agent_digest
     text = await (agent_digest.refresh() if refresh else agent_digest.get())
     return {"digest": text}
+
+
+@router.get("/img/wb/{basket}/{vol}/{part}/{nm}/{n}.jpg", include_in_schema=False)
+async def wb_image_jpg(basket: str, vol: str, part: str, nm: str, n: str):
+    """Публичная JPG-копия фото карточки WB (WB отдаёт только WEBP, а Ozon при
+    создании карточки принимает ссылки только на JPG/PNG). Адрес собирается
+    из проверенных частей — открытым прокси эндпоинт не является."""
+    import io
+    import httpx
+    from fastapi.responses import Response
+    from PIL import Image
+    if not (re.fullmatch(r"basket-\d{1,3}", basket) and re.fullmatch(r"vol\d{1,8}", vol)
+            and re.fullmatch(r"part\d{1,10}", part) and re.fullmatch(r"\d{1,12}", nm)
+            and re.fullmatch(r"\d{1,2}", n)):
+        raise HTTPException(status_code=404)
+    src = f"https://{basket}.wbbasket.ru/{vol}/{part}/{nm}/images/big/{n}.webp"
+    async with httpx.AsyncClient(timeout=30) as c:
+        r = await c.get(src)
+    if r.status_code != 200 or len(r.content) > 15_000_000:
+        raise HTTPException(status_code=404)
+    img = Image.open(io.BytesIO(r.content)).convert("RGB")
+    buf = io.BytesIO()
+    img.save(buf, "JPEG", quality=92)
+    return Response(buf.getvalue(), media_type="image/jpeg",
+                    headers={"Cache-Control": "public, max-age=86400"})
