@@ -3523,7 +3523,7 @@ async def fbs_multi_get():
 
 @router.post("/fbs/multi")
 async def fbs_multi_save(payload: dict):
-    """Сохранение настроек мультисклада: enabled/stock/linked/safety/zero_if_fbo."""
+    """Сохранение настроек мультисклада: enabled/stock/linked/safety/zero_if_fbo/hidden."""
     import wb_fbs
     cfg = await asyncio.to_thread(wb_fbs._multi_load)
     for k in ("enabled", "safety", "zero_if_fbo"):
@@ -3535,6 +3535,8 @@ async def fbs_multi_save(payload: dict):
         cfg["source_wid"] = int(payload.get("source_wid") or 0)
     if "linked" in payload:
         cfg["linked"] = [int(w) for w in payload["linked"] or []]
+    if "hidden" in payload:
+        cfg["hidden"] = sorted({str(h).strip().upper() for h in payload["hidden"] or [] if str(h).strip()})
     if "stock" in payload:
         cfg["stock"] = {str(k).strip().upper(): max(0, int(v or 0))
                         for k, v in (payload["stock"] or {}).items()}

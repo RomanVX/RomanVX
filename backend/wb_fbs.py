@@ -255,7 +255,7 @@ def _multi_load() -> dict:
     import snapshot as _snap
     cfg = _snap.load("fbs_multi", None) or {
         "enabled": False, "stock": {}, "linked": [], "safety": 2,
-        "zero_if_fbo": 0, "seen": [], "last_sync": ""}
+        "zero_if_fbo": 0, "seen": [], "last_sync": "", "hidden": []}
     # mode: manual — виртуальный сток из полей (как раньше);
     #       mirror — читаем остаток склада-источника (его ведёт МПФИТ) и
     #       копируем на остальные привязанные склады; в источник не пишем.
@@ -322,11 +322,16 @@ async def multi_sync(force: bool = False) -> dict:
             _log.warning("multi fbo stocks: %s", str(e)[:120])
     items = []
     zeroed = []
+    # скрытые артикулы: на привязанные склады всегда 0 — карточка уходит из
+    # выдачи WB, даже если склад-источник (МПФИТ) ещё показывает остаток
+    hidden = {str(h).strip().upper() for h in cfg.get("hidden") or []}
     for sku, qty in cfg["stock"].items():
         eff = max(0, int(qty) - safety)
         if zero_n and fbo.get(sku, 0) >= zero_n:
             eff = 0
             zeroed.append(sku)
+        if str(sku).strip().upper() in hidden:
+            eff = 0
         items.append({"sku": sku, "qty": eff})
     # 4. пуш на все склады (в режиме «зеркало» источник пропускаем — в него
     #    пишет только МПФИТ, иначе два робота перетирают друг друга)
