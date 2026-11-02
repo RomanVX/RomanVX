@@ -5189,8 +5189,19 @@ async def supply_labels(request: Request, order_id: int):
     targets = {(b["src"], int(b["box"])): b.get("target") or b["src"]
                for b in plan}
 
+    import httpx as _httpx
+
     async def _label_pdf(supply_id, cargo_ids=None) -> bytes:
-        resp = await ozon_client.cargoes_label_create(supply_id, cargo_ids)
+        # Ozon режет cargoes-label/create по лимиту «в секунду»: на 429 ждём
+        # дольше, чем общий ретрай в ozon_client._post (2–8 с не хватает)
+        for attempt in range(6):
+            try:
+                resp = await ozon_client.cargoes_label_create(supply_id, cargo_ids)
+                break
+            except _httpx.HTTPStatusError as e:
+                if e.response.status_code != 429 or attempt == 5:
+                    raise
+                await asyncio.sleep(5 * (attempt + 1))
         op = resp.get("operation_id")
         if not op:
             raise RuntimeError(str(resp.get("errors") or resp)[:300])
@@ -5220,17 +5231,23 @@ async def supply_labels(request: Request, order_id: int):
                     # PDF на каждый короб: «Короб N (откуда) NEW куда.pdf»;
                     # несколько коробов в кластере — в папке кластера
                     folder = f"{cluster}/" if len(boxes) > 1 else ""
-                    for key in sorted(boxes):
+                    for i, key in enumerate(sorted(boxes)):
                         src, _, num = key.rpartition("-")
                         try:
                             n = int(num)
                         except ValueError:
                             src, n = key, 0
                         target = str(targets.get((src, n), cluster)).strip()
-                        pdf = await _label_pdf(sid, [boxes[key]])
-                        zf.writestr(
-                            f"{folder}Короб {n} ({src.strip()}) NEW {target}.pdf",
-                            pdf)
+                        if i:
+                            await asyncio.sleep(1.5)   # не упираться в лимит Ozon
+                        name = f"{folder}Короб {n} ({src.strip()}) NEW {target}"
+                        try:
+                            pdf = await _label_pdf(sid, [boxes[key]])
+                        except Exception as e:
+                            # один короб не вышел — остальные короба кластера не теряем
+                            zf.writestr(f"{name}_ОШИБКА.txt", _http_err(e))
+                            continue
+                        zf.writestr(f"{name}.pdf", pdf)
                 else:
                     # заливали не через дашборд — общий PDF поставки
                     pdf = await _label_pdf(sid)
