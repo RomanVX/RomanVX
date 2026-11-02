@@ -4763,7 +4763,7 @@ async def adv_sandbox(request: Request, body: dict):
 @router.post("/mp/proxy", include_in_schema=False)
 async def mp_proxy(request: Request, body: dict):
     """Owner-only прокси к контент-API площадок (заведение карточек).
-    body: {mp: "wb"|"wbc"|"wbp"|"wbf"|"wba"|"wban"|"wbs"|"ozon"|"ozp"|"ym", path, method, params?, json?}."""
+    body: {mp: "wb"|"wbc"|"wbp"|"wbf"|"wba"|"wban"|"wbs"|"wbfin"|"ozon"|"ozp"|"ym", path, method, params?, json?}."""
     _owner_only(request)
     import httpx
     mp = str(body.get("mp") or "wb")
@@ -4788,6 +4788,9 @@ async def mp_proxy(request: Request, body: dict):
         import wb_client
         base = wb_client.ANALYTICS_BASE if mp == "wban" else wb_client.REPORT_BASE
         headers = wb_client._headers()
+    elif mp == "wbfin":              # финансы WB: отчёты о реализации
+        import wb_finance_client
+        base, headers = wb_finance_client.FINANCE_BASE, wb_finance_client._headers()
     elif mp == "ozp":                # Ozon Performance (реклама)
         import ozon_perf_client
         if not ozon_perf_client.configured():
@@ -4801,7 +4804,7 @@ async def mp_proxy(request: Request, body: dict):
         base, headers = "https://api.partner.market.yandex.ru", ym_client._headers()
         path = path.replace("{business}", str(ym_client.YM_BUSINESS_ID))
     else:
-        return {"error": "mp: wb | wbc | wbp | wbf | wba | wban | wbs | ozon | ozp | ym"}
+        return {"error": "mp: wb | wbc | wbp | wbf | wba | wban | wbs | wbfin | ozon | ozp | ym"}
     method = str(body.get("method") or "GET").upper()
     try:
         async with httpx.AsyncClient(timeout=60) as c:
