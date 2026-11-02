@@ -314,6 +314,72 @@ async def api_sync():
     return {"scheduled": True}
 
 
+def _stock_snapshot(date: str | None) -> dict:
+    dates = [r[0] for r in db.fetchall(
+        "SELECT DISTINCT snap_date FROM m_stock_snap ORDER BY snap_date DESC")]
+    day = date if date in dates else (dates[0] if dates else None)
+    if not day:
+        return {"date": None, "dates": [], "companies": []}
+    names = dict(db.fetchall("SELECT id, name FROM m_companies"))
+    by: dict = {}
+    taken = ""
+    for cid, art, name, bc, free, booked, ts in db.fetchall(
+            "SELECT company_id, article, name, barcodes, free, booked, taken_at "
+            "FROM m_stock_snap WHERE snap_date = ? ORDER BY article", (day,)):
+        by.setdefault(cid, []).append({"article": art, "name": name, "barcodes": bc,
+                                       "free": free, "booked": booked})
+        taken = max(taken, ts or "")
+    comps = [{"id": cid, "name": names.get(cid, str(cid)), "items": items,
+              "units": sum(i["free"] + i["booked"] for i in items)}
+             for cid, items in sorted(by.items(), key=lambda kv: names.get(kv[0], ""))]
+    return {"date": day, "taken_at": taken, "dates": dates, "companies": comps}
+
+
+@app.get("/api/stocks/snapshot")
+async def api_stock_snapshot(date: str | None = None):
+    """Последний снимок остатков за день (или за ?date=YYYY-MM-DD)."""
+    return await _t(_stock_snapshot, date)
+
+
+@app.post("/api/stocks/snapshot/refresh")
+async def api_stock_snapshot_refresh():
+    await sync.sync_stock_snapshot(force=True)
+    return await _t(_stock_snapshot, None)
+
+
+@app.get("/api/stocks/snapshot.xlsx")
+async def api_stock_snapshot_xlsx(date: str | None = None):
+    """Снимок остатков в Excel: лист на контрагента."""
+    import io
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+    snap = await _t(_stock_snapshot, date)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Сводка"
+    ws.append([f"Остатки ФФ на {snap['date'] or '—'} (снимок {snap.get('taken_at') or '—'} МСК)"])
+    ws["A1"].font = Font(bold=True)
+    for c in snap["companies"]:
+        ws.append([c["name"], len(c["items"]), c["units"]])
+    for c in snap["companies"]:
+        sh = wb.create_sheet(c["name"][:31].replace("/", "-"))
+        sh.append(["Артикул", "Наименование", "Штрихкод", "Свободно", "В брони", "Всего"])
+        for cell in sh[1]:
+            cell.font = Font(bold=True)
+        for i in c["items"]:
+            sh.append([i["article"], i["name"], i["barcodes"], i["free"], i["booked"],
+                       i["free"] + i["booked"]])
+        for col, w in zip("ABCDEF", (28, 60, 18, 10, 10, 10)):
+            sh.column_dimensions[col].width = w
+    buf = io.BytesIO()
+    wb.save(buf)
+    from urllib.parse import quote
+    return Response(buf.getvalue(),
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition":
+                             f"attachment; filename*=UTF-8''{quote('Остатки_' + (snap['date'] or '') + '.xlsx')}"})
+
+
 # Разрешены только методы чтения из спеки (list/GET). Создание заказов,
 # приёмок, пополнение баланса и правка оплаты сюда не пропускаются.
 _READ_POST = {"/v1/services/list", "/v1/products/list", "/v1/products/stocks",

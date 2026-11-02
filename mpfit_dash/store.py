@@ -10,6 +10,7 @@
   m_invoices   — счета МПФИТ: выставлено / оплачено (это и есть выручка)
   ledger       — ручной журнал: расходы, вложения, поступления (из чата «Финансы ФФ»)
   plan         — план по месяцам: метрика × месяц
+  m_stock_snap — снимок остатков по товарам на каждый день (последний за день)
   kv           — служебные курсоры синхронизации
 """
 import sys as _sys
@@ -63,6 +64,12 @@ SCHEMA = [
     # хранение по дням (analytics/storage/list) — входит в «К оплате» МПФИТ
     """CREATE TABLE IF NOT EXISTS m_storage (
         id BIGINT PRIMARY KEY, company_id INTEGER, date TEXT, amount REAL)""",
+    # снимок остатков: последний за день по каждому товару — страховка на
+    # случай падения МПФИТ (знаем, что и чьё лежит на складе)
+    """CREATE TABLE IF NOT EXISTS m_stock_snap (
+        snap_date TEXT, product_id BIGINT, company_id INTEGER, article TEXT,
+        name TEXT, barcodes TEXT, free INTEGER, booked INTEGER, taken_at TEXT,
+        PRIMARY KEY (snap_date, product_id))""",
 ]
 
 # налог к удержанию с выручки (начисляется расходом месяца)

@@ -206,6 +206,44 @@ async def sync_storage():
         [(r["id"], r.get("company_id"), r.get("date"), (r.get("amount") or 0) / 100) for r in rows])
 
 
+SNAP_EVERY_MIN = 30         # как часто обновлять снимок остатков
+SNAP_KEEP_DAYS = 90
+
+
+async def sync_stock_snapshot(force: bool = False):
+    """Остатки всех контрагентов по товарам → m_stock_snap (последний за день)."""
+    now = datetime.utcnow()
+    last = store.kv_get("stock_snap_ts")
+    if not force and last and (now - datetime.fromisoformat(last)).total_seconds() < SNAP_EVERY_MIN * 60:
+        return
+    msk = now + timedelta(hours=3)
+    day, taken = msk.strftime("%Y-%m-%d"), msk.strftime("%Y-%m-%d %H:%M")
+    rows = []
+    for (cid,) in db.fetchall("SELECT id FROM m_companies"):
+        prods = {p["id"]: p for p in await mp.paginate(
+            "/v1/products/list", flt={"company_id": cid}, limit=100, max_pages=100)}
+        for s in await mp.paginate("/v1/products/stocks", flt={"company_id": cid},
+                                   limit=100, max_pages=100):
+            p = prods.get(s.get("product_id")) or {}
+            free = sum(int(x.get("free") or 0) for x in s.get("stocks") or [])
+            booked = sum(int(x.get("booked") or 0) for x in s.get("stocks") or [])
+            if not free and not booked:
+                continue
+            rows.append((day, s["product_id"], cid, s.get("article") or p.get("article"),
+                         p.get("name"), ", ".join(map(str, p.get("barcodes") or [])),
+                         free, booked, taken))
+    if not rows:
+        return
+    # день перезаписываем целиком: товар, который ушёл в ноль, не должен висеть
+    db.execute("DELETE FROM m_stock_snap WHERE snap_date = ?", (day,))
+    db.executemany(
+        "INSERT INTO m_stock_snap (snap_date, product_id, company_id, article, name, "
+        "barcodes, free, booked, taken_at) VALUES (?,?,?,?,?,?,?,?,?)", rows)
+    db.execute("DELETE FROM m_stock_snap WHERE snap_date < ?",
+               ((msk - timedelta(days=SNAP_KEEP_DAYS)).strftime("%Y-%m-%d"),))
+    store.kv_set("stock_snap_ts", now.isoformat())
+
+
 async def alert_missing():
     """Telegram: отгруженные сегодня-вчера заказы без «Отгрузки FBS».
     Нужны env TG_BOT_TOKEN и TG_CHAT_ID; без них просто пропускаем."""
@@ -246,6 +284,10 @@ async def run_once():
             await sync_storage()
         except Exception as e:
             _log.warning("storage: %s", e)
+        try:
+            await sync_stock_snapshot()
+        except Exception as e:
+            _log.warning("stock snapshot: %s", e)
         await check_services()
         await alert_missing()
         state["error"] = ""
