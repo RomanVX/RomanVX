@@ -249,12 +249,14 @@ async def ym_post_answer(feedback_id: str, text: str) -> tuple[bool, str]:
     headers = {"Api-Key": YM_API_KEY, "Content-Type": "application/json"}
     # feedback_id stored as "ym_<id>" — strip prefix
     fid = feedback_id.removeprefix("ym_")
-    url = f"https://api.partner.market.yandex.ru/businesses/{YM_BUSINESS_ID}/goods-feedback/comments"
+    # публикация — .../comments/update; голый .../comments — это СПИСОК комментариев
+    # (отвечает 200 на любой body, поэтому раньше ответы «публиковались» в никуда)
+    url = f"https://api.partner.market.yandex.ru/businesses/{YM_BUSINESS_ID}/goods-feedback/comments/update"
     body = {"feedbackId": int(fid), "comment": {"text": text}}
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             r = await client.post(url, headers=headers, json=body)
-            if r.is_success:
+            if r.is_success and ((r.json().get("result") or {}).get("id")):
                 return True, "опубликовано"
             return False, f"YM {r.status_code}: {r.text[:200]}"
     except Exception as e:
