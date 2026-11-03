@@ -14,7 +14,7 @@ import re
 import time as _time
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Body, File, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Body, File, Form, HTTPException, Query, Request, UploadFile
 
 import db
 from config import ANTHROPIC_API_KEY
@@ -4817,6 +4817,58 @@ async def mp_proxy(request: Request, body: dict):
         return {"status": r.status_code, "body": payload}
     except Exception as e:
         return {"error": str(e)[:300]}
+
+
+@router.post("/ozon/certificate/upload", include_in_schema=False)
+async def ozon_certificate_upload(
+    request: Request,
+    files: list[UploadFile] = File(...),
+    name: str = Form(...), number: str = Form(...),
+    type_code: str = Form("declaration"),
+    accordance_type_code: str = Form("technical_regulations_cu"),
+    issue_date: str = Form(...), expire_date: str = Form(""),
+    product_ids: str = Form(""),
+):
+    """Owner-only: загрузить документ (PDF/JPG/PNG) в Ozon — POST /v1/product/certificate/create
+    (multipart) — и привязать к товарам (product_id через запятую) — /v1/product/certificate/bind.
+    Даты — YYYY-MM-DD или ISO."""
+    _owner_only(request)
+    import httpx
+    import ozon_client
+    def _iso(d):
+        d = (d or "").strip()
+        return d if not d or "T" in d else d + "T00:00:00Z"
+    form = {"name": name[:100], "number": number[:100], "type_code": type_code,
+            "issue_date": _iso(issue_date)}
+    if type_code in ("declaration", "certificate_of_conformity", "safety_data_sheet"):
+        form["accordance_type_code"] = accordance_type_code
+    if expire_date:
+        form["expire_date"] = _iso(expire_date)
+    up = [("files", (f.filename, await f.read(), f.content_type or "application/pdf")) for f in files]
+    headers = {k: v for k, v in ozon_client._headers().items() if k.lower() != "content-type"}
+    out = {}
+    async with httpx.AsyncClient(timeout=120) as c:
+        r = await c.post(ozon_client._BASE + "/v1/product/certificate/create",
+                         headers=headers, data=form, files=up)
+        try:
+            out["create"] = {"status": r.status_code, "body": r.json()}
+        except Exception:
+            out["create"] = {"status": r.status_code, "body": r.text[:2000]}
+        body = out["create"]["body"] if isinstance(out["create"]["body"], dict) else {}
+        cid = body.get("id")
+        if not cid and isinstance(body.get("result"), dict):
+            cid = body["result"].get("id")
+        pids = [int(x) for x in re.findall(r"\d+", product_ids or "")]
+        if r.is_success and cid and pids:
+            rb = await c.post(ozon_client._BASE + "/v1/product/certificate/bind",
+                              headers=ozon_client._headers(),
+                              json={"certificate_id": int(cid), "product_id": pids})
+            try:
+                out["bind"] = {"status": rb.status_code, "body": rb.json()}
+            except Exception:
+                out["bind"] = {"status": rb.status_code, "body": rb.text[:2000]}
+    out["certificate_id"] = cid
+    return out
 
 
 @router.get("/supply/volumes", include_in_schema=False)
