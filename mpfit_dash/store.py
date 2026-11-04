@@ -11,6 +11,8 @@
   ledger       — ручной журнал: расходы, вложения, поступления (из чата «Финансы ФФ»)
   plan         — план по месяцам: метрика × месяц
   m_stock_snap — снимок остатков по товарам на каждый день (последний за день)
+  kiz_expiry   — «Упаковка КИЗ»: срок годности по GTIN, введённый на партию
+  kiz_log      — журнал напечатанных этикеток КИЗ + штрихкод + срок годности
   kv           — служебные курсоры синхронизации
 """
 import sys as _sys
@@ -70,6 +72,15 @@ SCHEMA = [
         snap_date TEXT, product_id BIGINT, company_id INTEGER, article TEXT,
         name TEXT, barcodes TEXT, free INTEGER, booked INTEGER, taken_at TEXT,
         PRIMARY KEY (snap_date, product_id))""",
+    # «Упаковка КИЗ»: срок годности партии по GTIN (если в самом коде его нет)
+    """CREATE TABLE IF NOT EXISTS kiz_expiry (
+        gtin TEXT PRIMARY KEY, expiry TEXT, product TEXT, updated_at TEXT, author TEXT)""",
+    # журнал напечатанных этикеток: какой КИЗ, на какой товар, с каким сроком
+    """CREATE TABLE IF NOT EXISTS kiz_log (
+        id TEXT PRIMARY KEY, ts TEXT, kiz TEXT, gtin TEXT, serial TEXT, barcode TEXT,
+        article TEXT, name TEXT, company TEXT, expiry TEXT, expiry_src TEXT, author TEXT)""",
+    "CREATE INDEX IF NOT EXISTS kiz_log_kiz ON kiz_log (kiz)",
+    "CREATE INDEX IF NOT EXISTS kiz_log_ts ON kiz_log (ts)",
 ]
 
 # налог к удержанию с выручки (начисляется расходом месяца)
@@ -322,3 +333,79 @@ def bank_balance() -> float:
         return 0.0
     r = db.fetchone("SELECT COALESCE(SUM(amount), 0) FROM bank_tx")
     return float(m["opening"]) + float(r[0] or 0)
+
+
+# ── Упаковка КИЗ ───────────────────────────────────────────────────────────
+
+def _companies() -> dict:
+    return {i: n for i, n in db.fetchall("SELECT id, name FROM m_companies")}
+
+
+def kiz_product(barcode: str = "", gtin: str = "") -> dict | None:
+    """Товар по штрихкоду или GTIN из последнего снимка остатков МПФИТ."""
+    keys = [k for k in {barcode, gtin, gtin[1:] if gtin.startswith("0") else ""} if k]
+    if not keys:
+        return None
+    day = db.fetchall("SELECT MAX(snap_date) FROM m_stock_snap")
+    day = day[0][0] if day else None
+    if not day:
+        return None
+    rows = db.fetchall("SELECT product_id, company_id, article, name, barcodes FROM m_stock_snap "
+                       "WHERE snap_date = ?", (day,))
+    comps = _companies()
+    for pid, cid, art, name, bcs in rows:
+        codes = {c.strip() for c in (bcs or "").split(",") if c.strip()}
+        if codes & set(keys):
+            return {"product_id": pid, "article": art, "name": name,
+                    "company": comps.get(cid, str(cid)), "barcodes": sorted(codes)}
+    return None
+
+
+def kiz_expiry_get(gtin: str) -> dict | None:
+    r = db.fetchall("SELECT gtin, expiry, product, updated_at, author FROM kiz_expiry WHERE gtin = ?", (gtin,))
+    if not r:
+        return None
+    g, e, p, u, a = r[0]
+    return {"gtin": g, "expiry": e, "product": p, "updated_at": u, "author": a}
+
+
+def kiz_expiry_set(gtin: str, expiry: str, product: str, author: str):
+    from datetime import datetime
+    now = datetime.utcnow().isoformat(timespec="seconds")
+    if db.fetchall("SELECT 1 FROM kiz_expiry WHERE gtin = ?", (gtin,)):
+        db.execute("UPDATE kiz_expiry SET expiry = ?, product = ?, updated_at = ?, author = ? WHERE gtin = ?",
+                   (expiry, product, now, author, gtin))
+    else:
+        db.execute("INSERT INTO kiz_expiry (gtin, expiry, product, updated_at, author) VALUES (?,?,?,?,?)",
+                   (gtin, expiry, product, now, author))
+
+
+def kiz_log_add(e: dict, author: str) -> dict:
+    """Пишет этикетку в журнал. Возвращает, сколько раз этот КИЗ печатали раньше."""
+    from datetime import datetime
+    kiz = str(e.get("kiz") or "")
+    prev = db.fetchall("SELECT ts FROM kiz_log WHERE kiz = ? ORDER BY ts", (kiz,))
+    i = uuid.uuid4().hex
+    from datetime import timedelta
+    msk = (datetime.utcnow() + timedelta(hours=3)).isoformat(timespec="seconds")
+    db.execute("INSERT INTO kiz_log (id, ts, kiz, gtin, serial, barcode, article, name, company, "
+               "expiry, expiry_src, author) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+               (i, msk, kiz, e.get("gtin"), e.get("serial"),
+                e.get("barcode"), e.get("article"), e.get("name"), e.get("company"),
+                e.get("expiry"), e.get("expiry_src"), author))
+    return {"id": i, "printed_before": len(prev), "first_ts": prev[0][0] if prev else None}
+
+
+def kiz_printed(kiz: str) -> dict | None:
+    """Сколько раз этот КИЗ уже печатали (защита от дублей)."""
+    r = db.fetchall("SELECT COUNT(*), MIN(ts) FROM kiz_log WHERE kiz = ?", (kiz,))
+    return {"count": r[0][0], "first_ts": r[0][1]} if r and r[0][0] else None
+
+
+def kiz_log_list(d0: str, d1: str) -> list[dict]:
+    """Журнал за период (время МСК, даты YYYY-MM-DD включительно)."""
+    cols = ["id", "ts", "kiz", "gtin", "serial", "barcode", "article", "name", "company",
+            "expiry", "expiry_src", "author"]
+    rows = db.fetchall(f"SELECT {', '.join(cols)} FROM kiz_log WHERE ts >= ? AND ts < ? ORDER BY ts DESC",
+                       (d0, d1 + "T99"))
+    return [dict(zip(cols, r)) for r in rows]

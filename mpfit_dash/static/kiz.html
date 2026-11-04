@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Упаковка КИЗ · МПФИТ</title>
+<style id="pageSize">@page{size:58mm 40mm;margin:0}</style>
+<style>
+:root{--bg:#f5f6f8;--card:#fff;--ink:#16191d;--muted:#6b7280;--line:#e6e8eb;--acc:#2563eb;
+ --ok:#059669;--okb:#d1fae5;--warn:#b45309;--warnb:#fef3c7;--bad:#dc2626;--badb:#fee2e2;--rad:12px;
+ --lw:58mm;--lh:40mm}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;font:15px/1.45 -apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--ink)}
+header{background:var(--card);border-bottom:1px solid var(--line);padding:12px 24px;display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+header h1{font-size:18px;margin:0}
+header a{color:var(--acc);text-decoration:none;font-size:14px}
+main{padding:20px 24px;display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:20px;max-width:1300px}
+@media (max-width:900px){main{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--rad);padding:16px 18px;display:flex;flex-direction:column;gap:12px;min-width:0}
+h2{font-size:15px;margin:0}
+.steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.step{border:2px dashed var(--line);border-radius:10px;padding:12px;min-width:0;display:flex;flex-direction:column;gap:4px}
+.step b{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.step .v{font-size:15px;font-weight:600;word-break:break-all}
+.step .s{font-size:12.5px;color:var(--muted)}
+.step.done{border:2px solid var(--ok);background:var(--okb)}
+.step.need{border:2px solid var(--warn);background:var(--warnb)}
+.scan{font-size:18px;padding:12px 14px;border:2px solid var(--acc);border-radius:10px;width:100%;font-family:ui-monospace,Consolas,monospace}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.btn{border:1px solid var(--line);background:var(--card);border-radius:8px;padding:8px 14px;font:inherit;cursor:pointer}
+.btn.pri{background:var(--acc);border-color:var(--acc);color:#fff;font-weight:600}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+input,select{font:inherit;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:#fff}
+label.f{display:flex;flex-direction:column;gap:3px;font-size:12.5px;color:var(--muted)}
+.msg{border-radius:10px;padding:10px 14px;font-size:14px}
+.msg.ok{background:var(--okb);color:#065f46}.msg.warn{background:var(--warnb);color:#7c2d12}.msg.bad{background:var(--badb);color:#7f1d1d}
+.muted{color:var(--muted);font-size:13px}
+table{border-collapse:collapse;width:100%;font-size:13px;font-variant-numeric:tabular-nums}
+th,td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}
+th{color:var(--muted);font-weight:600;font-size:12px}
+.tw{overflow-x:auto}
+.preview{display:flex;justify-content:center;padding:16px;background:repeating-conic-gradient(#eef0f3 0 25%,#fff 0 50%) 0 0/16px 16px;border-radius:10px}
+/* этикетка: размеры в мм, всё внутри масштабируется от высоты */
+.label{width:var(--lw);height:var(--lh);background:#fff;color:#000;box-shadow:0 1px 4px rgba(0,0,0,.25);
+  padding:1.6mm;display:grid;grid-template-columns:auto minmax(0,1fr);grid-template-rows:minmax(0,1fr) auto;gap:1mm 1.6mm;overflow:hidden;font-family:Arial,Helvetica,sans-serif}
+.label .dm{grid-row:1;grid-column:1;display:flex;flex-direction:column;align-items:center;gap:.4mm}
+.label .dm svg{height:calc(var(--lh) * .5);width:auto;display:block}
+.label .hr{font-size:1.45mm;line-height:1.1;max-width:calc(var(--lh) * .5);word-break:break-all;text-align:center}
+.label .txt{grid-row:1;grid-column:2;display:flex;flex-direction:column;gap:.6mm;min-width:0;overflow:hidden}
+.label .nm{font-size:2.3mm;line-height:1.15;font-weight:700;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.label .art{font-size:2mm}
+.label .exp{font-size:2.9mm;font-weight:700;margin-top:auto;white-space:nowrap}
+.label .bc{grid-row:2;grid-column:1 / span 2;display:flex;justify-content:center}
+.label .bc svg{height:calc(var(--lh) * .3);width:auto;max-width:100%;display:block}
+#printArea{display:none}
+@media print{
+  body{background:#fff}
+  header,main{display:none!important}
+  #printArea{display:block}
+  #printArea .label{box-shadow:none;page-break-after:always;break-after:page}
+}
+@media (prefers-reduced-motion:no-preference){.step{transition:background .15s,border-color .15s}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Упаковка КИЗ</h1>
+  <a href="/">← Аналитика МПФИТ</a>
+  <span class="muted" id="todayCount"></span>
+</header>
+<main>
+  <div style="display:flex;flex-direction:column;gap:20px;min-width:0">
+    <section class="card">
+      <h2>Сканируйте КИЗ на товаре и штрихкод — порядок любой</h2>
+      <div class="steps">
+        <div class="step" id="stKiz"><b>КИЗ</b><span class="v">—</span><span class="s">DataMatrix «Честный знак»</span></div>
+        <div class="step" id="stBc"><b>Штрихкод</b><span class="v">—</span><span class="s">EAN-13 или ШК маркетплейса</span></div>
+        <div class="step" id="stExp"><b>Годен до</b><span class="v">—</span><span class="s">из КИЗ или на партию</span></div>
+      </div>
+      <input class="scan" id="scan" autocomplete="off" spellcheck="false" placeholder="Сюда приходит скан. Можно вставить код и нажать Enter">
+      <div id="msg"></div>
+      <div class="row" id="expRow" hidden>
+        <label class="f">Срок годности партии (для этого GTIN)
+          <input type="date" id="expInput"></label>
+        <button class="btn" id="expSave">Сохранить для партии</button>
+        <span class="muted" id="expInfo"></span>
+      </div>
+      <div class="row">
+        <button class="btn pri" id="printBtn" disabled>Печать этикетки</button>
+        <button class="btn" id="bcFromGtin" hidden>Взять ШК из КИЗ</button>
+        <button class="btn" id="resetBtn">Сбросить</button>
+        <label class="row" style="gap:6px"><input type="checkbox" id="auto" checked> печатать сразу после сканов</label>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="row" style="justify-content:space-between">
+        <h2>Журнал за сегодня</h2>
+        <div class="row">
+          <label class="f">с <input type="date" id="d0"></label>
+          <label class="f">по <input type="date" id="d1"></label>
+          <button class="btn" id="logReload">Показать</button>
+          <button class="btn" id="logXlsx">Excel</button>
+        </div>
+      </div>
+      <div class="tw"><table><thead><tr><th>Время</th><th>Контрагент</th><th>Артикул</th><th>Товар</th><th>Серийный №</th><th>Годен до</th><th>Срок из</th><th>Кто</th></tr></thead>
+        <tbody id="logBody"><tr><td colspan="8" class="muted">Загрузка…</td></tr></tbody></table></div>
+    </section>
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:20px;min-width:0">
+    <section class="card">
+      <h2>Этикетка</h2>
+      <div class="preview"><div class="label" id="label"><div class="txt"><div class="nm muted">Отсканируйте КИЗ и штрихкод</div></div></div></div>
+      <div class="row">
+        <label class="f">Размер этикетки
+          <select id="size">
+            <option value="58x40">58 × 40 мм</option>
+            <option value="58x60">58 × 60 мм</option>
+            <option value="75x50">75 × 50 мм</option>
+            <option value="43x25">43 × 25 мм</option>
+          </select></label>
+        <label class="f">Копий <input type="number" id="copies" min="1" max="5" value="1" style="width:70px"></label>
+      </div>
+      <p class="muted">Печать идёт через окно печати браузера. Чтобы этикетки уходили на термопринтер без окна, запустите Chrome с флагом <code>--kiosk-printing</code> и выберите термопринтер принтером по умолчанию.</p>
+    </section>
+  </div>
+</main>
+<div id="printArea"></div>
+
+<script src="/static/bwip-js-min.js"></script>
+<script src="/static/kiz-parse.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const st = { kiz: null, bc: null, product: null, expiry: null, expirySrc: null, saved: null, dup: null, mismatch: false };
+const fmtD = d => d ? d.split('-').reverse().join('.') : '';
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const mskToday = () => new Date(Date.now() + 3 * 3600e3).toISOString().slice(0, 10);
+
+function say(text, kind = 'ok') { $('msg').innerHTML = text ? `<div class="msg ${kind}">${text}</div>` : ''; }
+function beep(ok) {
+  try { const a = new (window.AudioContext || window.webkitAudioContext)(), o = a.createOscillator(), g = a.createGain();
+    o.frequency.value = ok ? 880 : 220; o.connect(g); g.connect(a.destination); g.gain.value = .08;
+    o.start(); o.stop(a.currentTime + (ok ? .08 : .35)); } catch (e) {}
+}
+
+/* ── сканер: собираем символы по физическим клавишам (e.code), чтобы русская
+   раскладка не портила код; GS приходит как Ctrl+] ─────────────────────── */
+const SH = { Digit1:'!',Digit2:'@',Digit3:'#',Digit4:'$',Digit5:'%',Digit6:'^',Digit7:'&',Digit8:'*',Digit9:'(',Digit0:')',
+  Minus:'_',Equal:'+',BracketLeft:'{',BracketRight:'}',Backslash:'|',Semicolon:':',Quote:'"',Comma:'<',Period:'>',Slash:'?',Backquote:'~' };
+const PL = { Minus:'-',Equal:'=',BracketLeft:'[',BracketRight:']',Backslash:'\\',Semicolon:';',Quote:"'",Comma:',',Period:'.',Slash:'/',Backquote:'`',Space:' ',
+  NumpadAdd:'+',NumpadSubtract:'-',NumpadMultiply:'*',NumpadDivide:'/',NumpadDecimal:'.' };
+// Два буфера: по символам (e.key) и по физическим клавишам (e.code + Shift).
+// Если пришёл хоть один нелатинский символ — включена русская раскладка,
+// и код собираем по клавишам; иначе верим символам как есть.
+let buf = '', bufCode = '', nonLatin = false, lastKey = 0;
+function codeChar(e) {
+  const c = e.code || '';
+  const caps = e.getModifierState && e.getModifierState('CapsLock');
+  if (/^Key[A-Z]$/.test(c)) { const ch = c.slice(3); return (e.shiftKey !== !!caps) ? ch : ch.toLowerCase(); }
+  if (/^Digit\d$/.test(c)) return e.shiftKey ? SH[c] : c.slice(5);
+  if (/^Numpad\d$/.test(c)) return c.slice(6);
+  if (e.shiftKey && SH[c]) return SH[c];
+  return PL[c] || null;
+}
+$('scan').addEventListener('keydown', e => {
+  const now = performance.now();
+  if (now - lastKey > 800) { buf = ''; bufCode = ''; nonLatin = false; }
+  lastKey = now;
+  if (e.key === 'Enter' || e.key === 'Tab') {
+    e.preventDefault();
+    const val = $('scan').value;
+    const b = nonLatin ? bufCode : buf;
+    const typed = b.replace(/\x1d/g, '').length >= val.length && b.length >= 4 ? b : val;
+    buf = ''; bufCode = ''; nonLatin = false; $('scan').value = '';
+    if (typed.trim()) onScan(typed);
+    return;
+  }
+  if (e.key === 'Backspace' || e.key === 'Delete') { buf = buf.slice(0, -1); bufCode = bufCode.slice(0, -1); return; }
+  if (e.ctrlKey && (e.code === 'BracketRight' || e.key === ']' || e.key === 'ъ')) {    // GS
+    e.preventDefault(); buf += '\x1d'; bufCode += '\x1d'; return;
+  }
+  if (e.ctrlKey || e.altKey || e.metaKey) return;
+  if (e.key && e.key.length === 1) {
+    if (/[^\x20-\x7e]/.test(e.key)) nonLatin = true;
+    buf += e.key;
+    bufCode += codeChar(e) ?? e.key;
+  }
+});
+$('scan').addEventListener('paste', e => {
+  const t = (e.clipboardData || window.clipboardData).getData('text');
+  if (t && t.trim().length > 6) { e.preventDefault(); buf = ''; onScan(t.trim()); }
+});
+// фокус всегда в поле скана, кроме моментов, когда работают с формой
+document.addEventListener('click', e => { if (!e.target.closest('input,select,button,label,a')) $('scan').focus(); });
+setInterval(() => { const a = document.activeElement; if (!a || a === document.body) $('scan').focus(); }, 1500);
+
+async function api(url, opt) {
+  const r = await fetch(url, opt); if (!r.ok) throw new Error((await r.text()).slice(0, 200)); return r.json();
+}
+
+async function onScan(raw) {
+  const c = KIZ.classify(raw);
+  if (c.type === 'kiz') {
+    const k = c.kiz;
+    if (!k || !k.ok) { beep(false); say('Код маркировки не разобран. Отсканируйте ещё раз.', 'bad'); return; }
+    st.kiz = k; st.expiry = k.expiry; st.expirySrc = k.expirySrc; st.saved = null; st.dup = null;
+    await lookup();
+  } else if (c.type === 'barcode') {
+    st.bc = { code: c.code, bcid: c.bcid };
+    if (!st.product || !st.kiz) await lookup();
+  } else { beep(false); say('Непонятный код. Сканируйте DataMatrix «Честного знака» или штрихкод товара.', 'bad'); return; }
+  checkMismatch();
+  render();
+  beep(true);
+  maybeAutoPrint();
+}
+
+async function lookup() {
+  const q = new URLSearchParams({ gtin: st.kiz?.gtin || '', barcode: st.bc?.code || '', kiz: st.kiz?.canon || '' });
+  try {
+    const r = await api('/api/kiz/lookup?' + q);
+    if (r.product) st.product = r.product;
+    if (st.kiz && !st.kiz.expiry && r.expiry) { st.expiry = r.expiry.expiry; st.expirySrc = 'партия'; st.saved = r.expiry; }
+    st.dup = r.printed || null;
+  } catch (e) { say('Нет связи с сервером: ' + esc(e.message), 'warn'); }
+}
+
+function checkMismatch() {
+  st.mismatch = false;
+  if (!st.kiz || !st.bc) return;
+  const ean = st.kiz.gtin.startsWith('0') ? st.kiz.gtin.slice(1) : st.kiz.gtin;
+  const bcs = st.product?.barcodes || [];
+  const known = bcs.includes(st.bc.code) || st.bc.code === ean;
+  // ШК маркетплейса (20…) может отличаться от GTIN — сверяем по карточке, если она есть
+  if (!known && (bcs.length || st.bc.code.length === 13 && !st.bc.code.startsWith('2'))) st.mismatch = true;
+}
+
+function ready() { return !!(st.kiz && st.bc && st.expiry); }
+
+function render() {
+  const set = (id, done, v, s) => { const el = $(id); el.className = 'step ' + (done ? 'done' : 'need');
+    el.querySelector('.v').textContent = v; if (s !== undefined) el.querySelector('.s').textContent = s; };
+  set('stKiz', !!st.kiz, st.kiz ? st.kiz.serial : 'ждём скан', st.kiz ? 'GTIN ' + st.kiz.gtin : 'DataMatrix «Честный знак»');
+  set('stBc', !!st.bc, st.bc ? st.bc.code : 'ждём скан', st.product ? (st.product.article || '') + ' · ' + (st.product.company || '') : 'EAN-13 или ШК маркетплейса');
+  set('stExp', !!st.expiry, st.expiry ? fmtD(st.expiry) : 'нужно указать', st.expiry ? 'источник: ' + st.expirySrc : 'в этом КИЗ срока нет');
+  $('expRow').hidden = !st.kiz;
+  if (st.kiz && st.expirySrc === 'партия' && document.activeElement !== $('expInput')) $('expInput').value = st.expiry;
+  $('expInfo').textContent = st.saved ? `задан ${st.saved.updated_at?.slice(0, 10).split('-').reverse().join('.') || ''}${st.saved.author ? ', ' + st.saved.author : ''}` :
+    (st.kiz?.expiry ? 'срок взят из самого КИЗ' : '');
+  $('bcFromGtin').hidden = !(st.kiz && !st.bc);
+  const notes = [];
+  if (st.kiz && !st.kiz.expiry && !st.expiry) notes.push(['warn', 'В этом КИЗ нет срока годности (у косметики и БАДов его обычно не кодируют). Укажите срок партии один раз — дальше он подставится для этого товара сам.']);
+  if (st.dup) notes.push(['warn', `Этот КИЗ уже печатали: ${st.dup.count} раз(а), первый — ${esc(st.dup.first_ts?.replace('T', ' ').slice(0, 16))}. Проверьте, не дубль ли.`]);
+  if (st.mismatch) notes.push(['bad', 'Штрихкод не совпадает с товаром из КИЗ. Проверьте, тот ли товар в руках. Печать — только вручную.']);
+  if (st.kiz && !st.product) notes.push(['warn', 'Товар не найден в остатках МПФИТ — на этикетке не будет названия.']);
+  if (!notes.length && ready()) notes.push(['ok', 'Всё готово к печати.']);
+  $('msg').innerHTML = notes.map(([k, t]) => `<div class="msg ${k}">${t}</div>`).join('');
+  $('printBtn').disabled = !ready();
+  $('label').outerHTML = labelHTML('label');
+}
+
+function svg(opts) { try { return bwipjs.toSVG(opts); } catch (e) { return `<span style="font-size:2mm;color:#b00">${esc(e.message)}</span>`; } }
+function labelHTML(id) {
+  const p = st.product || {};
+  const dm = st.kiz ? svg({ bcid: 'datamatrix', text: st.kiz.dm, parsefnc: true, scale: 3 }) : '';
+  const bc = st.bc ? svg(st.bc.bcid === 'ean13'
+    ? { bcid: 'ean13', text: st.bc.code, includetext: true, scale: 2, height: 9, textsize: 9 }
+    : { bcid: 'code128', text: st.bc.code, includetext: true, scale: 2, height: 9, textsize: 9 }) : '';
+  return `<div class="label"${id ? ` id="${id}"` : ''}>
+    <div class="dm">${dm}${st.kiz ? `<div class="hr">${esc(st.kiz.human)}</div>` : ''}</div>
+    <div class="txt">
+      <div class="nm">${esc(p.name || (st.kiz ? '' : 'Отсканируйте КИЗ и штрихкод'))}</div>
+      ${p.article ? `<div class="art">Арт. ${esc(p.article)}</div>` : ''}
+      ${st.expiry ? `<div class="exp">Годен до: ${fmtD(st.expiry)}</div>` : ''}
+    </div>
+    <div class="bc">${bc}</div></div>`;
+}
+
+let printing = false;
+async function doPrint() {
+  if (!ready() || printing) return;
+  printing = true;
+  const p = st.product || {};
+  try {
+    await api('/api/kiz/log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+      kiz: st.kiz.canon, gtin: st.kiz.gtin, serial: st.kiz.serial, barcode: st.bc.code,
+      article: p.article || '', name: p.name || '', company: p.company || '',
+      expiry: st.expiry, expiry_src: st.expirySrc }) });
+  } catch (e) { say('Не записалось в журнал: ' + esc(e.message) + '. Этикетку не печатаю.', 'bad'); printing = false; return; }
+  const n = Math.max(1, Math.min(5, +$('copies').value || 1));
+  $('printArea').innerHTML = Array.from({ length: n }, () => labelHTML('')).join('');
+  window.print();
+  setTimeout(() => { printing = false; reset(true); loadLog(); }, 300);
+}
+function maybeAutoPrint() { if ($('auto').checked && ready() && !st.mismatch && !st.dup) doPrint(); }
+
+function reset(keepMsg) {
+  Object.assign(st, { kiz: null, bc: null, product: null, expiry: null, expirySrc: null, saved: null, dup: null, mismatch: false });
+  $('expInput').value = '';
+  render(); if (keepMsg) say('Напечатано. Сканируйте следующий товар.', 'ok');
+  $('scan').focus();
+}
+
+$('printBtn').onclick = doPrint;
+$('resetBtn').onclick = () => reset(false);
+$('bcFromGtin').onclick = () => {
+  const ean = st.kiz.gtin.startsWith('0') ? st.kiz.gtin.slice(1) : st.kiz.gtin;
+  st.bc = { code: ean, bcid: KIZ.eanCheck(ean) === +ean[12] ? 'ean13' : 'code128' };
+  checkMismatch(); render(); maybeAutoPrint();
+};
+$('expSave').onclick = async () => {
+  const v = $('expInput').value;
+  if (!st.kiz || !/^\d{4}-\d{2}-\d{2}$/.test(v)) { say('Выберите дату срока годности.', 'warn'); return; }
+  try {
+    await api('/api/kiz/expiry', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ gtin: st.kiz.gtin, expiry: v, product: st.product?.name || '' }) });
+    st.expiry = v; st.expirySrc = 'партия'; st.saved = { updated_at: new Date().toISOString(), author: '' };
+    render(); maybeAutoPrint(); $('scan').focus();
+  } catch (e) { say('Не сохранилось: ' + esc(e.message), 'bad'); }
+};
+
+function applySize() {
+  const [w, h] = $('size').value.split('x');
+  document.documentElement.style.setProperty('--lw', w + 'mm');
+  document.documentElement.style.setProperty('--lh', h + 'mm');
+  $('pageSize').textContent = `@page{size:${w}mm ${h}mm;margin:0}`;
+  try { localStorage.setItem('kizSize', $('size').value); localStorage.setItem('kizAuto', $('auto').checked ? '1' : '0'); } catch (e) {}
+}
+$('size').onchange = applySize;
+$('auto').onchange = applySize;
+try { const s = localStorage.getItem('kizSize'); if (s) $('size').value = s; const a = localStorage.getItem('kizAuto'); if (a) $('auto').checked = a === '1'; } catch (e) {}
+applySize();
+
+async function loadLog() {
+  const d0 = $('d0').value, d1 = $('d1').value;
+  try {
+    const r = await api(`/api/kiz/log?d0=${d0}&d1=${d1}`);
+    $('logBody').innerHTML = r.rows.length ? r.rows.map(x => `<tr><td>${esc(x.ts.slice(5, 16).replace('T', ' '))}</td><td>${esc(x.company)}</td><td>${esc(x.article)}</td>
+      <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis">${esc(x.name)}</td><td>${esc(x.serial)}</td><td>${fmtD(x.expiry)}</td><td>${esc(x.expiry_src)}</td><td>${esc(x.author)}</td></tr>`).join('')
+      : '<tr><td colspan="8" class="muted">Пока ничего не печатали</td></tr>';
+    if (d0 === mskToday() && d1 === mskToday()) $('todayCount').textContent = `Сегодня напечатано: ${r.rows.length}`;
+  } catch (e) { $('logBody').innerHTML = `<tr><td colspan="8" class="muted">${esc(e.message)}</td></tr>`; }
+}
+$('d0').value = $('d1').value = mskToday();
+$('logReload').onclick = loadLog;
+$('logXlsx').onclick = () => { location.href = `/api/kiz/log.xlsx?d0=${$('d0').value}&d1=${$('d1').value}`; };
+render(); loadLog(); $('scan').focus();
+</script>
+</body>
+</html>

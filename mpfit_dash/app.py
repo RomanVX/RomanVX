@@ -380,6 +380,76 @@ async def api_stock_snapshot_xlsx(date: str | None = None):
                              f"attachment; filename*=UTF-8''{quote('Остатки_' + (snap['date'] or '') + '.xlsx')}"})
 
 
+# ── Упаковка КИЗ: скан КИЗ + штрихкода → этикетка (DataMatrix, ШК, срок годности)
+
+@app.get("/kiz")
+async def kiz_page():
+    return FileResponse(HERE / "static" / "kiz.html", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/api/kiz/lookup")
+async def kiz_lookup(gtin: str = "", barcode: str = "", kiz: str = ""):
+    """Товар (по ШК/GTIN из снимка остатков), сохранённый срок годности по GTIN
+    и печатали ли уже этот КИЗ."""
+    prod = await _t(store.kiz_product, barcode.strip(), gtin.strip())
+    exp = await _t(store.kiz_expiry_get, gtin.strip()) if gtin else None
+    printed = await _t(store.kiz_printed, kiz) if kiz else None
+    return {"product": prod, "expiry": exp, "printed": printed}
+
+
+@app.post("/api/kiz/expiry")
+async def kiz_expiry_set(request: Request, payload: dict):
+    gtin, expiry = str(payload.get("gtin") or ""), str(payload.get("expiry") or "")
+    import re
+    if not re.fullmatch(r"\d{14}", gtin) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", expiry):
+        return JSONResponse({"error": "нужны gtin (14 цифр) и expiry (ГГГГ-ММ-ДД)"}, status_code=400)
+    await _t(store.kiz_expiry_set, gtin, expiry, str(payload.get("product") or ""), _user(request))
+    return {"ok": True}
+
+
+@app.post("/api/kiz/log")
+async def kiz_log_add(request: Request, payload: dict):
+    if not payload.get("kiz"):
+        return JSONResponse({"error": "нет КИЗ"}, status_code=400)
+    return await _t(store.kiz_log_add, payload, _user(request))
+
+
+@app.get("/api/kiz/log")
+async def kiz_log(d0: str | None = None, d1: str | None = None):
+    from datetime import datetime, timedelta
+    today = (datetime.utcnow() + timedelta(hours=3)).strftime("%Y-%m-%d")
+    return {"rows": await _t(store.kiz_log_list, d0 or today, d1 or today)}
+
+
+@app.get("/api/kiz/log.xlsx")
+async def kiz_log_xlsx(d0: str, d1: str):
+    import io
+    from urllib.parse import quote
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+    rows = await _t(store.kiz_log_list, d0, d1)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Упаковка КИЗ"
+    head = ["Время (МСК)", "Контрагент", "Артикул", "Наименование", "Штрихкод", "GTIN",
+            "Серийный номер", "Годен до", "Откуда срок", "Сотрудник", "КИЗ"]
+    ws.append(head)
+    for c in ws[1]:
+        c.font = Font(bold=True)
+    for r in reversed(rows):
+        ws.append([r["ts"], r["company"], r["article"], r["name"], r["barcode"], r["gtin"],
+                   r["serial"], r["expiry"], r["expiry_src"], r["author"],
+                   (r["kiz"] or "").replace("\x1d", "<GS>")])
+    for col, w in zip("ABCDEFGHIJK", (20, 22, 16, 44, 15, 16, 16, 12, 16, 12, 60)):
+        ws.column_dimensions[col].width = w
+    buf = io.BytesIO()
+    wb.save(buf)
+    return Response(buf.getvalue(),
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition":
+                             f"attachment; filename*=UTF-8''{quote(f'Упаковка_КИЗ_{d0}_{d1}.xlsx')}"})
+
+
 # Разрешены только методы чтения из спеки (list/GET). Создание заказов,
 # приёмок, пополнение баланса и правка оплаты сюда не пропускаются.
 _READ_POST = {"/v1/services/list", "/v1/products/list", "/v1/products/stocks",
