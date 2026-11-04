@@ -1,17 +1,57 @@
+# VPS в РФ (RuVDS, Королёв): сайт фулфилмента + проход к дашбордам на Render.
+#
+# Render из РФ заблокирован по IP (216.24.57.x — таймаут). Но Render стоит за
+# Cloudflare, а Cloudflare отдаёт сайт с ЛЮБОГО своего IP по имени (SNI/Host).
+# Поэтому ходим на открытые из РФ IP Cloudflare с нужным именем сервиса.
+# Проверено с этого VPS 04.11.2026: 9 из 10 адресов отвечают (172.67.0.1 — нет).
+# Если какой-то IP заблокируют, Caddy сам перейдёт на следующий (lb_policy first).
+
+(render_wb) {
+    reverse_proxy 104.16.0.1:443 188.114.96.1:443 104.18.32.1:443 162.159.128.1:443 104.21.0.1:443 {
+        transport http {
+            tls
+            tls_server_name wb-dashboard-6wxf.onrender.com
+        }
+        header_up Host wb-dashboard-6wxf.onrender.com
+        lb_policy first
+        lb_try_duration 10s
+        fail_duration 60s
+    }
+}
+(render_fk) {
+    reverse_proxy 104.16.0.1:443 188.114.96.1:443 104.18.32.1:443 162.159.128.1:443 104.21.0.1:443 {
+        transport http {
+            tls
+            tls_server_name fk-dashboard.onrender.com
+        }
+        header_up Host fk-dashboard.onrender.com
+        lb_policy first
+        lb_try_duration 10s
+        fail_duration 60s
+    }
+}
+(render_mpfit) {
+    reverse_proxy 104.16.0.1:443 188.114.96.1:443 104.18.32.1:443 162.159.128.1:443 104.21.0.1:443 {
+        transport http {
+            tls
+            tls_server_name mpfit-dashboard.onrender.com
+        }
+        header_up Host mpfit-dashboard.onrender.com
+        lb_policy first
+        lb_try_duration 10s
+        fail_duration 60s
+    }
+}
+
 marketpartners.ru, www.marketpartners.ru {
     encode gzip
-    # заявки с сайта: /api/landing/* уходит в бэкенд дашборда (Render
-    # из РФ напрямую недоступен — поэтому через этот VPS)
-    # «Упаковка КИЗ» склада: marketpartners.ru/kiz → сервис МПФИТ на Render
-    # (без VPN из РФ). Отдельные handle с одним путём — Caddy ставит их
-    # раньше общего /api/* по длине пути.
+    # «Упаковка КИЗ» склада: marketpartners.ru/kiz → сервис МПФИТ на Render.
+    # Отдельные handle с одним путём — Caddy ставит их раньше общего /api/*.
     handle /kiz {
-        reverse_proxy https://mpfit-dashboard.onrender.com {
-            header_up Host mpfit-dashboard.onrender.com
-        }
+        import render_mpfit
     }
     # срок годности по КИЗ: публичный сервис «Честного знака» закрыт для
-    # зарубежных IP (451) — ходим к нему с российского VPS
+    # зарубежных IP (451) — ходим к нему с этого российского VPS напрямую
     handle /crpt/* {
         uri strip_prefix /crpt
         reverse_proxy https://mobile.api.crpt.ru {
@@ -22,24 +62,17 @@ marketpartners.ru, www.marketpartners.ru {
         }
     }
     handle /api/kiz/* {
-        reverse_proxy https://mpfit-dashboard.onrender.com {
-            header_up Host mpfit-dashboard.onrender.com
-        }
+        import render_mpfit
     }
     handle /static/kiz-parse.js {
-        reverse_proxy https://mpfit-dashboard.onrender.com {
-            header_up Host mpfit-dashboard.onrender.com
-        }
+        import render_mpfit
     }
     handle /static/bwip-js-min.js {
-        reverse_proxy https://mpfit-dashboard.onrender.com {
-            header_up Host mpfit-dashboard.onrender.com
-        }
+        import render_mpfit
     }
+    # заявки с сайта: /api/landing/* → бэкенд дашборда Biomed
     handle /api/* {
-        reverse_proxy https://wb-dashboard-6wxf.onrender.com {
-            header_up Host wb-dashboard-6wxf.onrender.com
-        }
+        import render_wb
     }
     handle {
         root * /var/www/marketpartners
@@ -47,12 +80,8 @@ marketpartners.ru, www.marketpartners.ru {
     }
 }
 biomed.marketpartners.ru {
-    reverse_proxy https://wb-dashboard-6wxf.onrender.com {
-        header_up Host wb-dashboard-6wxf.onrender.com
-    }
+    import render_wb
 }
 fk.marketpartners.ru {
-    reverse_proxy https://fk-dashboard.onrender.com {
-        header_up Host fk-dashboard.onrender.com
-    }
+    import render_fk
 }
