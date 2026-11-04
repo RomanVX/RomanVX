@@ -2,6 +2,29 @@ marketpartners.ru, www.marketpartners.ru {
     encode gzip
     # заявки с сайта: /api/landing/* уходит в бэкенд дашборда (Render
     # из РФ напрямую недоступен — поэтому через этот VPS)
+    # «Упаковка КИЗ» склада: marketpartners.ru/kiz → сервис МПФИТ на Render
+    # (без VPN из РФ). Отдельные handle с одним путём — Caddy ставит их
+    # раньше общего /api/* по длине пути.
+    handle /kiz {
+        reverse_proxy https://mpfit-dashboard.onrender.com {
+            header_up Host mpfit-dashboard.onrender.com
+        }
+    }
+    handle /api/kiz/* {
+        reverse_proxy https://mpfit-dashboard.onrender.com {
+            header_up Host mpfit-dashboard.onrender.com
+        }
+    }
+    handle /static/kiz-parse.js {
+        reverse_proxy https://mpfit-dashboard.onrender.com {
+            header_up Host mpfit-dashboard.onrender.com
+        }
+    }
+    handle /static/bwip-js-min.js {
+        reverse_proxy https://mpfit-dashboard.onrender.com {
+            header_up Host mpfit-dashboard.onrender.com
+        }
+    }
     handle /api/* {
         reverse_proxy https://wb-dashboard-6wxf.onrender.com {
             header_up Host wb-dashboard-6wxf.onrender.com
