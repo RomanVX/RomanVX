@@ -54,6 +54,9 @@ th{color:var(--muted);font-weight:600;font-size:12px}
 .label .exp{font-size:2.9mm;font-weight:700;margin-top:auto;white-space:nowrap}
 .label .bc{grid-row:2;grid-column:1 / span 2;display:flex;justify-content:center}
 .label .bc svg{height:calc(var(--lh) * .3);width:auto;max-width:100%;display:block}
+#pinGate{position:fixed;inset:0;z-index:50;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:24px}
+#pinGate form{background:var(--card);border:1px solid var(--line);border-radius:var(--rad);padding:28px;display:flex;flex-direction:column;gap:14px;width:min(340px,100%)}
+#pinGate input{font-size:28px;letter-spacing:.4em;text-align:center;padding:10px}
 #printArea{display:none}
 @media print{
   body{background:#fff}
@@ -65,6 +68,15 @@ th{color:var(--muted);font-weight:600;font-size:12px}
 </style>
 </head>
 <body>
+<div id="pinGate" hidden>
+  <form id="pinForm" autocomplete="off">
+    <h2 style="font-size:18px">Упаковка КИЗ</h2>
+    <label class="f" for="pinInput">Введите PIN склада</label>
+    <input id="pinInput" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="8" required>
+    <button class="btn pri" type="submit">Войти</button>
+    <div id="pinMsg" class="muted"></div>
+  </form>
+</div>
 <header>
   <h1>Упаковка КИЗ</h1>
   <label class="row" style="gap:6px;font-size:14px">Упаковщик <input id="who" placeholder="Имя" style="width:140px"></label>
@@ -194,12 +206,24 @@ $('scan').addEventListener('paste', e => {
   if (t && t.trim().length > 6) { e.preventDefault(); buf = ''; onScan(t.trim()); }
 });
 // фокус всегда в поле скана, кроме моментов, когда работают с формой
-document.addEventListener('click', e => { if (!e.target.closest('input,select,button,label,a')) $('scan').focus(); });
-setInterval(() => { const a = document.activeElement; if (!a || a === document.body) $('scan').focus(); }, 1500);
+document.addEventListener('click', e => { if ($('pinGate').hidden && !e.target.closest('input,select,button,label,a')) $('scan').focus(); });
+setInterval(() => { const a = document.activeElement; if ($('pinGate').hidden && (!a || a === document.body)) $('scan').focus(); }, 1500);
 
 async function api(url, opt) {
-  const r = await fetch(url, opt); if (!r.ok) throw new Error((await r.text()).slice(0, 200)); return r.json();
+  const r = await fetch(url, opt);
+  if (r.status === 401 || r.status === 429) { showGate(r.status === 429 ? 'Слишком много неверных PIN. Подождите 15 минут.' : ''); throw new Error('Нужен PIN'); }
+  if (!r.ok) throw new Error((await r.text()).slice(0, 200));
+  return r.json();
 }
+function showGate(msg) { $('pinGate').hidden = false; $('pinMsg').textContent = msg || ''; $('pinInput').value = ''; $('pinInput').focus(); }
+$('pinForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const pin = $('pinInput').value.trim();
+  document.cookie = `kiz_pin=${encodeURIComponent(pin)}; max-age=31536000; path=/; SameSite=Strict${location.protocol === 'https:' ? '; Secure' : ''}`;
+  const r = await fetch('/api/kiz/ping');
+  if (r.ok) { $('pinGate').hidden = true; loadLog(); $('scan').focus(); }
+  else showGate(r.status === 429 ? 'Слишком много неверных PIN. Подождите 15 минут.' : 'Неверный PIN');
+});
 
 async function onScan(raw) {
   const c = KIZ.classify(raw);
@@ -349,7 +373,8 @@ async function loadLog() {
 $('d0').value = $('d1').value = mskToday();
 $('logReload').onclick = loadLog;
 $('logXlsx').onclick = () => { location.href = `/api/kiz/log.xlsx?d0=${$('d0').value}&d1=${$('d1').value}`; };
-render(); loadLog(); $('scan').focus();
+render();
+fetch('/api/kiz/ping').then(r => { if (r.ok) { loadLog(); $('scan').focus(); } else showGate(r.status === 429 ? 'Слишком много неверных PIN. Подождите 15 минут.' : ''); });
 </script>
 </body>
 </html>

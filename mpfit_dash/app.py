@@ -39,25 +39,67 @@ _PUBLIC = ("/health",)
 _PUBLIC_PREFIX = ("/kiz", "/api/kiz/", "/static/kiz-parse.js", "/static/bwip-js-min.js")
 
 
+def _basic_ok(request: Request) -> bool:
+    user = (os.environ.get("DASH_USER") or "admin").strip()
+    pwd = (os.environ.get("DASH_PASSWORD") or "").strip()
+    auth = request.headers.get("authorization", "")
+    if not pwd or not auth.lower().startswith("basic "):
+        return False
+    try:
+        u, _, p = base64.b64decode(auth[6:]).decode().partition(":")
+        return secrets.compare_digest(u, user) and secrets.compare_digest(p, pwd)
+    except Exception:
+        return False
+
+
+# PIN «Упаковки КИЗ»: хеш в kv (ставится из закрытого дашборда) или env KIZ_PIN.
+# Защита от перебора: 10 неверных PIN с одного IP — блок на 15 минут.
+_pin_fail: dict = {}
+
+
+def _pin_hash(pin: str) -> str:
+    import hashlib
+    return hashlib.sha256(("mpfit-kiz:" + pin).encode()).hexdigest()
+
+
+def _kiz_pin_state(request: Request) -> str:
+    """ok | none (PIN не задан) | need | locked"""
+    import time
+    env_pin = (os.environ.get("KIZ_PIN") or "").strip()
+    stored = env_pin and _pin_hash(env_pin) or store.kv_get("kiz_pin_hash")
+    if not stored:
+        return "none"
+    ip = (request.headers.get("x-forwarded-for") or (request.client.host if request.client else "")).split(",")[0].strip()
+    fails, until = _pin_fail.get(ip, (0, 0))
+    if until > time.time():
+        return "locked"
+    pin = request.cookies.get("kiz_pin") or request.headers.get("x-kiz-pin") or ""
+    if pin and secrets.compare_digest(_pin_hash(pin), stored):
+        _pin_fail.pop(ip, None)
+        return "ok"
+    if pin:
+        fails += 1
+        _pin_fail[ip] = (0, time.time() + 900) if fails >= 10 else (fails, 0)
+    return "need"
+
+
 @app.middleware("http")
 async def basic_auth(request: Request, call_next):
     """Финансы внутри — без пароля не пускаем. Пока DASH_PASSWORD не задан,
-    сервис закрыт целиком (кроме /health для проверок Render)."""
-    if request.url.path in _PUBLIC or request.url.path.startswith(_PUBLIC_PREFIX):
+    сервис закрыт целиком (кроме /health для проверок Render).
+    «Упаковка КИЗ»: страница открыта, её API — по PIN (или паролю дашборда)."""
+    path = request.url.path
+    if path in _PUBLIC or path.startswith(_PUBLIC_PREFIX):
+        if path.startswith("/api/kiz/") and not _basic_ok(request):
+            st = await asyncio.to_thread(_kiz_pin_state, request)
+            if st == "locked":
+                return JSONResponse({"error": "pin_locked", "message": "Слишком много неверных PIN. Подождите 15 минут."}, status_code=429)
+            if st == "need":
+                return JSONResponse({"error": "pin", "message": "Нужен PIN"}, status_code=401)
         return await call_next(request)
-    user = (os.environ.get("DASH_USER") or "admin").strip()
-    pwd = (os.environ.get("DASH_PASSWORD") or "").strip()
-    if not pwd:
+    if not (os.environ.get("DASH_PASSWORD") or "").strip():
         return Response("Задайте DASH_PASSWORD в настройках Render", status_code=503)
-    auth = request.headers.get("authorization", "")
-    ok = False
-    if auth.lower().startswith("basic "):
-        try:
-            u, _, p = base64.b64decode(auth[6:]).decode().partition(":")
-            ok = secrets.compare_digest(u, user) and secrets.compare_digest(p, pwd)
-        except Exception:
-            ok = False
-    if not ok:
+    if not _basic_ok(request):
         return Response(status_code=401, headers={"WWW-Authenticate": 'Basic realm="MPFIT"'})
     return await call_next(request)
 
@@ -392,6 +434,23 @@ def _kiz_author(request: Request, payload: dict) -> str:
 @app.get("/kiz")
 async def kiz_page():
     return FileResponse(HERE / "static" / "kiz.html", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/api/kiz/ping")
+async def kiz_ping():
+    """Сюда пускает только с верным PIN (проверка в middleware)."""
+    return {"ok": True}
+
+
+@app.post("/api/kiz-admin/pin")
+async def kiz_set_pin(payload: dict):
+    """Задать PIN «Упаковки КИЗ» (только под паролем дашборда). 4–8 цифр."""
+    import re
+    pin = str(payload.get("pin") or "").strip()
+    if not re.fullmatch(r"\d{4,8}", pin):
+        return JSONResponse({"error": "PIN — от 4 до 8 цифр"}, status_code=400)
+    await _t(store.kv_set, "kiz_pin_hash", _pin_hash(pin))
+    return {"ok": True}
 
 
 @app.get("/api/kiz/lookup")
