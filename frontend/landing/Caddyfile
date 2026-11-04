@@ -10,6 +10,17 @@ marketpartners.ru, www.marketpartners.ru {
             header_up Host mpfit-dashboard.onrender.com
         }
     }
+    # срок годности по КИЗ: публичный сервис «Честного знака» закрыт для
+    # зарубежных IP (451) — ходим к нему с российского VPS
+    handle /crpt/* {
+        uri strip_prefix /crpt
+        reverse_proxy https://mobile.api.crpt.ru {
+            header_up Host mobile.api.crpt.ru
+            header_up -Origin
+            header_up -Referer
+            header_up -Cookie
+        }
+    }
     handle /api/kiz/* {
         reverse_proxy https://mpfit-dashboard.onrender.com {
             header_up Host mpfit-dashboard.onrender.com

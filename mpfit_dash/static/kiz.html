@@ -42,18 +42,25 @@ th,td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left;white-
 th{color:var(--muted);font-weight:600;font-size:12px}
 .tw{overflow-x:auto}
 .preview{display:flex;justify-content:center;padding:16px;background:repeating-conic-gradient(#eef0f3 0 25%,#fff 0 50%) 0 0/16px 16px;border-radius:10px}
-/* этикетка: размеры в мм, всё внутри масштабируется от высоты */
-.label{width:var(--lw);height:var(--lh);background:#fff;color:#000;box-shadow:0 1px 4px rgba(0,0,0,.25);
-  padding:1.6mm;display:grid;grid-template-columns:auto minmax(0,1fr);grid-template-rows:minmax(0,1fr) auto;gap:1mm 1.6mm;overflow:hidden;font-family:Arial,Helvetica,sans-serif}
-.label .dm{grid-row:1;grid-column:1;display:flex;flex-direction:column;align-items:center;gap:.4mm}
-.label .dm svg{height:calc(var(--lh) * .5);width:auto;display:block}
-.label .hr{font-size:1.45mm;line-height:1.1;max-width:calc(var(--lh) * .5);word-break:break-all;text-align:center}
-.label .txt{grid-row:1;grid-column:2;display:flex;flex-direction:column;gap:.6mm;min-width:0;overflow:hidden}
-.label .nm{font-size:2.3mm;line-height:1.15;font-weight:700;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
-.label .art{font-size:2mm}
-.label .exp{font-size:2.9mm;font-weight:700;margin-top:auto;white-space:nowrap}
-.label .bc{grid-row:2;grid-column:1 / span 2;display:flex;justify-content:center}
-.label .bc svg{height:calc(var(--lh) * .3);width:auto;max-width:100%;display:block}
+/* этикетка: всё считается от единицы --u (высота этикетки, но не больше ширины × 0,69),
+   поэтому вёрстка одинаково заполняет и 58×40, и 100×150 */
+.label{--u:min(var(--lh), calc(var(--lw) * .69));width:var(--lw);height:var(--lh);background:#fff;color:#000;box-shadow:0 1px 4px rgba(0,0,0,.25);
+  padding:calc(var(--u) * .04);display:grid;grid-template-columns:auto minmax(0,1fr);grid-template-rows:minmax(0,1fr) auto;
+  gap:calc(var(--u) * .025) calc(var(--u) * .04);overflow:hidden;font-family:Arial,Helvetica,sans-serif}
+.label .dm{grid-row:1;grid-column:1;display:flex;flex-direction:column;align-items:center;gap:calc(var(--u) * .01)}
+.label .dm svg{height:calc(var(--u) * .5);width:auto;display:block}
+.label .hr{font-size:calc(var(--u) * .036);line-height:1.1;max-width:calc(var(--u) * .5);word-break:break-all;text-align:center}
+.label .txt{grid-row:1;grid-column:2;display:flex;flex-direction:column;gap:calc(var(--u) * .015);min-width:0;overflow:hidden}
+.label .nm{font-size:calc(var(--u) * .0575);line-height:1.15;font-weight:700;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
+.label .art{font-size:calc(var(--u) * .05)}
+.label .exp{font-size:calc(var(--u) * .0725);font-weight:700;margin-top:auto;white-space:nowrap}
+.label .bc{grid-row:2;grid-column:1 / span 2;display:flex;justify-content:center;min-width:0}
+.label .bc svg{height:calc(var(--u) * .3);width:auto;max-width:100%;display:block}
+.label.tall{--u:min(var(--lw), calc(var(--lh) * .69));grid-template-columns:minmax(0,1fr);grid-template-rows:auto auto minmax(0,1fr) auto;justify-items:center;text-align:center}
+.label.tall .dm,.label.tall .dm{grid-row:1;grid-column:1}
+.label.tall .txt,.label.tall .txt{grid-row:2;grid-column:1;align-items:center;width:100%}
+.label.tall .exp,.label.tall .exp{margin-top:calc(var(--u) * .02)}
+.label.tall .bc,.label.tall .bc{grid-row:4;grid-column:1;width:100%}
 #pinGate{position:fixed;inset:0;z-index:50;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:24px}
 #pinGate form{background:var(--card);border:1px solid var(--line);border-radius:var(--rad);padding:28px;display:flex;flex-direction:column;gap:14px;width:min(340px,100%)}
 #pinGate input{font-size:28px;letter-spacing:.4em;text-align:center;padding:10px}
@@ -62,7 +69,17 @@ th{color:var(--muted);font-weight:600;font-size:12px}
   body{background:#fff}
   header,main{display:none!important}
   #printArea{display:block}
-  #printArea .label{box-shadow:none;page-break-after:always;break-after:page}
+  html,body{margin:0;padding:0}
+  /* на печати этикетка занимает весь лист, который отдал принтер */
+  #printArea .label{--lw:100vw;--lh:100vh;box-shadow:none;page-break-after:always;break-after:page}
+}
+@media print and (orientation:portrait){
+#printArea .label{--u:min(var(--lw), calc(var(--lh) * .69));grid-template-columns:minmax(0,1fr);grid-template-rows:auto auto minmax(0,1fr) auto;justify-items:center;text-align:center}
+#printArea .label .dm{grid-row:1;grid-column:1}
+#printArea .label .txt{grid-row:2;grid-column:1;align-items:center;width:100%}
+#printArea .label .exp{margin-top:calc(var(--u) * .02)}
+#printArea .label .bc{grid-row:4;grid-column:1;width:100%}
+
 }
 @media (prefers-reduced-motion:no-preference){.step{transition:background .15s,border-color .15s}}
 </style>
@@ -129,14 +146,19 @@ th{color:var(--muted);font-weight:600;font-size:12px}
       <div class="row">
         <label class="f">Размер этикетки
           <select id="size">
+            <option value="auto">По бумаге принтера</option>
             <option value="58x40">58 × 40 мм</option>
+            <option value="58x30">58 × 30 мм</option>
+            <option value="40x30">40 × 30 мм</option>
             <option value="58x60">58 × 60 мм</option>
             <option value="75x50">75 × 50 мм</option>
             <option value="43x25">43 × 25 мм</option>
+            <option value="75x120">75 × 120 мм</option>
+            <option value="100x150">100 × 150 мм</option>
           </select></label>
         <label class="f">Копий <input type="number" id="copies" min="1" max="5" value="1" style="width:70px"></label>
       </div>
-      <p class="muted">Печать идёт через окно печати браузера. Чтобы этикетки уходили на термопринтер без окна, запустите Chrome с флагом <code>--kiosk-printing</code> и выберите термопринтер принтером по умолчанию.</p>
+      <p class="muted">«По бумаге принтера» — этикетка растягивается на весь лист, который выставлен в драйвере термопринтера. Если в окне печати стоят поля — выберите «Поля: нет», масштаб 100%. Печать идёт через окно печати браузера. Чтобы этикетки уходили на термопринтер без окна, запустите Chrome с флагом <code>--kiosk-printing</code> и выберите термопринтер принтером по умолчанию.</p>
     </section>
   </div>
 </main>
@@ -230,8 +252,16 @@ async function onScan(raw) {
   if (c.type === 'kiz') {
     const k = c.kiz;
     if (!k || !k.ok) { beep(false); say('Код маркировки не разобран. Отсканируйте ещё раз.', 'bad'); return; }
-    st.kiz = k; st.expiry = k.expiry; st.expirySrc = k.expirySrc; st.saved = null; st.dup = null;
+    st.kiz = k; st.expiry = k.expiry; st.expirySrc = k.expirySrc; st.saved = null; st.dup = null; st.crpt = null;
     await lookup();
+    if (!k.expiry) {
+      st.crpt = 'loading'; render();
+      const r = await crptExpiry(k);
+      if (st.kiz !== k) return;                       // успели отсканировать другой товар
+      if (r.expiry) { st.expiry = r.expiry; st.expirySrc = 'Честный знак'; st.saved = null; st.crpt = 'ok';
+        if (!st.product && r.name) st.product = { name: r.name, article: '', company: '', barcodes: [] }; }
+      else st.crpt = r.error || 'не получилось';
+    }
   } else if (c.type === 'barcode') {
     st.bc = { code: c.code, bcid: c.bcid };
     if (!st.product || !st.kiz) await lookup();
@@ -240,6 +270,48 @@ async function onScan(raw) {
   render();
   beep(true);
   maybeAutoPrint();
+}
+
+/* Срок годности из «Честного знака» — тот же публичный сервис, что у приложения ЧЗ.
+   С зарубежных серверов он закрыт (451), поэтому запрос идёт из браузера склада:
+   через наш VPS (marketpartners.ru/crpt/…) или напрямую, если сервис пустит. */
+function toISODate(v) {
+  if (v == null || v === '') return null;
+  if (typeof v === 'number' || /^\d{9,13}$/.test(String(v))) {
+    const n = +v, ms = n > 1e12 ? n : n * 1000;
+    const d = new Date(ms + 3 * 3600e3); return isNaN(d) ? null : d.toISOString().slice(0, 10);
+  }
+  let m = String(v).match(/^(\d{4})-(\d{2})-(\d{2})/); if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  m = String(v).match(/^(\d{2})\.(\d{2})\.(\d{4})/); if (m) return `${m[3]}-${m[2]}-${m[1]}`;
+  return null;
+}
+function findKey(obj, re, depth = 0) {
+  if (!obj || typeof obj !== 'object' || depth > 6) return null;
+  for (const [k, v] of Object.entries(obj)) if (re.test(k) && v != null && typeof v !== 'object') return v;
+  for (const v of Object.values(obj)) { const r = findKey(v, re, depth + 1); if (r != null) return r; }
+  return null;
+}
+async function crptExpiry(k) {
+  const bases = [];
+  if (location.hostname.endsWith('marketpartners.ru')) bases.push('/crpt');
+  bases.push('https://mobile.api.crpt.ru');
+  const codes = [k.canon, '01' + k.gtin + '21' + k.serial];
+  let lastErr = '';
+  for (const base of bases) for (const code of codes) {
+    const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 7000);
+    try {
+      const r = await fetch(`${base}/mobile/check?code=${encodeURIComponent(code)}&codeType=datamatrix`, { signal: ctl.signal });
+      clearTimeout(t);
+      if (!r.ok) { lastErr = 'ЧЗ ответил ' + r.status; continue; }
+      const j = await r.json(); window.__crpt = j;
+      const exp = toISODate(findKey(j, /^(expireDate|expirationDate|expiration_date|expDate|expiryDate|expireDateTime|bestBefore)$/i))
+               || toISODate(findKey(j, /expir|годен/i));
+      const name = findKey(j, /^(productName|name|product_name)$/i);
+      if (exp) return { expiry: exp, name: name ? String(name) : '' };
+      lastErr = 'в ответе ЧЗ нет срока';
+    } catch (e) { clearTimeout(t); lastErr = e.name === 'AbortError' ? 'ЧЗ не ответил' : 'ЧЗ недоступен из браузера'; }
+  }
+  return { error: lastErr };
 }
 
 async function lookup() {
@@ -262,7 +334,7 @@ function checkMismatch() {
   if (!known && (bcs.length || st.bc.code.length === 13 && !st.bc.code.startsWith('2'))) st.mismatch = true;
 }
 
-function ready() { return !!(st.kiz && st.bc && st.expiry); }
+function ready() { return !!(st.kiz && st.bc && st.expiry && st.crpt !== 'loading'); }
 
 function render() {
   const set = (id, done, v, s) => { const el = $(id); el.className = 'step ' + (done ? 'done' : 'need');
@@ -273,10 +345,12 @@ function render() {
   $('expRow').hidden = !st.kiz;
   if (st.kiz && st.expirySrc === 'партия' && document.activeElement !== $('expInput')) $('expInput').value = st.expiry;
   $('expInfo').textContent = st.saved ? `задан ${st.saved.updated_at?.slice(0, 10).split('-').reverse().join('.') || ''}${st.saved.author ? ', ' + st.saved.author : ''}` :
-    (st.kiz?.expiry ? 'срок взят из самого КИЗ' : '');
+    (st.kiz?.expiry ? 'срок взят из самого КИЗ' : st.crpt === 'ok' ? 'срок взят из «Честного знака»' : '');
   $('bcFromGtin').hidden = !(st.kiz && !st.bc);
   const notes = [];
-  if (st.kiz && !st.kiz.expiry && !st.expiry) notes.push(['warn', 'В этом КИЗ нет срока годности (у косметики и БАДов его обычно не кодируют). Укажите срок партии один раз — дальше он подставится для этого товара сам.']);
+  if (st.crpt === 'loading') notes.push(['warn', 'Запрашиваю срок годности в «Честном знаке»…']);
+  else if (st.kiz && !st.expiry) notes.push(['warn', `Срок не нашёлся ни в коде, ни в «Честном знаке» (${esc(st.crpt || '')}). Укажите срок партии — дальше он подставится для этого товара сам.`]);
+  else if (st.kiz && st.crpt && st.crpt !== 'ok' && st.expirySrc === 'партия') notes.push(['warn', `«Честный знак» не дал срок (${esc(st.crpt)}), взят срок партии — проверьте дату.`]);
   if (st.dup) notes.push(['warn', `Этот КИЗ уже печатали: ${st.dup.count} раз(а), первый — ${esc(st.dup.first_ts?.replace('T', ' ').slice(0, 16))}. Проверьте, не дубль ли.`]);
   if (st.mismatch) notes.push(['bad', 'Штрихкод не совпадает с товаром из КИЗ. Проверьте, тот ли товар в руках. Печать — только вручную.']);
   if (st.kiz && !st.product) notes.push(['warn', 'Товар не найден в остатках МПФИТ — на этикетке не будет названия.']);
@@ -293,7 +367,8 @@ function labelHTML(id) {
   const bc = st.bc ? svg(st.bc.bcid === 'ean13'
     ? { bcid: 'ean13', text: st.bc.code, includetext: true, scale: 2, height: 9, textsize: 9 }
     : { bcid: 'code128', text: st.bc.code, includetext: true, scale: 2, height: 9, textsize: 9 }) : '';
-  return `<div class="label"${id ? ` id="${id}"` : ''}>
+  const [pw, ph] = ($('size').value === 'auto' ? '58x40' : $('size').value).split('x').map(Number);
+  return `<div class="label${id && ph > pw ? ' tall' : ''}"${id ? ` id="${id}"` : ''}>
     <div class="dm">${dm}${st.kiz ? `<div class="hr">${esc(st.kiz.human)}</div>` : ''}</div>
     <div class="txt">
       <div class="nm">${esc(p.name || (st.kiz ? '' : 'Отсканируйте КИЗ и штрихкод'))}</div>
@@ -322,7 +397,7 @@ async function doPrint() {
 function maybeAutoPrint() { if ($('auto').checked && ready() && !st.mismatch && !st.dup) doPrint(); }
 
 function reset(keepMsg) {
-  Object.assign(st, { kiz: null, bc: null, product: null, expiry: null, expirySrc: null, saved: null, dup: null, mismatch: false });
+  Object.assign(st, { kiz: null, bc: null, product: null, expiry: null, expirySrc: null, saved: null, dup: null, mismatch: false, crpt: null });
   $('expInput').value = '';
   render(); if (keepMsg) say('Напечатано. Сканируйте следующий товар.', 'ok');
   $('scan').focus();
@@ -347,13 +422,14 @@ $('expSave').onclick = async () => {
 };
 
 function applySize() {
-  const [w, h] = $('size').value.split('x');
+  const v = $('size').value;
+  const [w, h] = v === 'auto' ? ['58', '40'] : v.split('x');      // превью для «авто» — 58×40
   document.documentElement.style.setProperty('--lw', w + 'mm');
   document.documentElement.style.setProperty('--lh', h + 'mm');
-  $('pageSize').textContent = `@page{size:${w}mm ${h}mm;margin:0}`;
+  $('pageSize').textContent = v === 'auto' ? '@page{margin:0}' : `@page{size:${w}mm ${h}mm;margin:0}`;
   try { localStorage.setItem('kizSize', $('size').value); localStorage.setItem('kizAuto', $('auto').checked ? '1' : '0'); } catch (e) {}
 }
-$('size').onchange = applySize;
+$('size').onchange = () => { applySize(); render(); };
 $('auto').onchange = applySize;
 $('who').onchange = () => { try { localStorage.setItem('kizWho', $('who').value.trim()); } catch (e) {} $('scan').focus(); };
 try { $('who').value = localStorage.getItem('kizWho') || ''; } catch (e) {}
