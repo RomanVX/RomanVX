@@ -67,7 +67,7 @@ th{color:var(--muted);font-weight:600;font-size:12px}
 <body>
 <header>
   <h1>Упаковка КИЗ</h1>
-  <a href="/">← Аналитика МПФИТ</a>
+  <label class="row" style="gap:6px;font-size:14px">Упаковщик <input id="who" placeholder="Имя" style="width:140px"></label>
   <span class="muted" id="todayCount"></span>
 </header>
 <main>
@@ -288,7 +288,7 @@ async function doPrint() {
     await api('/api/kiz/log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
       kiz: st.kiz.canon, gtin: st.kiz.gtin, serial: st.kiz.serial, barcode: st.bc.code,
       article: p.article || '', name: p.name || '', company: p.company || '',
-      expiry: st.expiry, expiry_src: st.expirySrc }) });
+      expiry: st.expiry, expiry_src: st.expirySrc, author: $('who').value.trim() }) });
   } catch (e) { say('Не записалось в журнал: ' + esc(e.message) + '. Этикетку не печатаю.', 'bad'); printing = false; return; }
   const n = Math.max(1, Math.min(5, +$('copies').value || 1));
   $('printArea').innerHTML = Array.from({ length: n }, () => labelHTML('')).join('');
@@ -316,7 +316,7 @@ $('expSave').onclick = async () => {
   if (!st.kiz || !/^\d{4}-\d{2}-\d{2}$/.test(v)) { say('Выберите дату срока годности.', 'warn'); return; }
   try {
     await api('/api/kiz/expiry', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ gtin: st.kiz.gtin, expiry: v, product: st.product?.name || '' }) });
+      body: JSON.stringify({ gtin: st.kiz.gtin, expiry: v, product: st.product?.name || '', author: $('who').value.trim() }) });
     st.expiry = v; st.expirySrc = 'партия'; st.saved = { updated_at: new Date().toISOString(), author: '' };
     render(); maybeAutoPrint(); $('scan').focus();
   } catch (e) { say('Не сохранилось: ' + esc(e.message), 'bad'); }
@@ -331,6 +331,8 @@ function applySize() {
 }
 $('size').onchange = applySize;
 $('auto').onchange = applySize;
+$('who').onchange = () => { try { localStorage.setItem('kizWho', $('who').value.trim()); } catch (e) {} $('scan').focus(); };
+try { $('who').value = localStorage.getItem('kizWho') || ''; } catch (e) {}
 try { const s = localStorage.getItem('kizSize'); if (s) $('size').value = s; const a = localStorage.getItem('kizAuto'); if (a) $('auto').checked = a === '1'; } catch (e) {}
 applySize();
 

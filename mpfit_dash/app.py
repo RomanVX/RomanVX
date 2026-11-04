@@ -34,13 +34,16 @@ app = FastAPI(title="MPFIT Analytics")
 app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
 
 _PUBLIC = ("/health",)
+# «Упаковка КИЗ» открыта без пароля (рабочее место упаковщика); финансы и
+# остальной дашборд — по-прежнему под Basic Auth
+_PUBLIC_PREFIX = ("/kiz", "/api/kiz/", "/static/kiz-parse.js", "/static/bwip-js-min.js")
 
 
 @app.middleware("http")
 async def basic_auth(request: Request, call_next):
     """Финансы внутри — без пароля не пускаем. Пока DASH_PASSWORD не задан,
     сервис закрыт целиком (кроме /health для проверок Render)."""
-    if request.url.path in _PUBLIC:
+    if request.url.path in _PUBLIC or request.url.path.startswith(_PUBLIC_PREFIX):
         return await call_next(request)
     user = (os.environ.get("DASH_USER") or "admin").strip()
     pwd = (os.environ.get("DASH_PASSWORD") or "").strip()
@@ -382,6 +385,10 @@ async def api_stock_snapshot_xlsx(date: str | None = None):
 
 # ── Упаковка КИЗ: скан КИЗ + штрихкода → этикетка (DataMatrix, ШК, срок годности)
 
+def _kiz_author(request: Request, payload: dict) -> str:
+    return (_user(request) or str(payload.get("author") or "")).strip()[:40]
+
+
 @app.get("/kiz")
 async def kiz_page():
     return FileResponse(HERE / "static" / "kiz.html", headers={"Cache-Control": "no-cache"})
@@ -403,7 +410,7 @@ async def kiz_expiry_set(request: Request, payload: dict):
     import re
     if not re.fullmatch(r"\d{14}", gtin) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", expiry):
         return JSONResponse({"error": "нужны gtin (14 цифр) и expiry (ГГГГ-ММ-ДД)"}, status_code=400)
-    await _t(store.kiz_expiry_set, gtin, expiry, str(payload.get("product") or ""), _user(request))
+    await _t(store.kiz_expiry_set, gtin, expiry, str(payload.get("product") or ""), _kiz_author(request, payload))
     return {"ok": True}
 
 
@@ -411,7 +418,7 @@ async def kiz_expiry_set(request: Request, payload: dict):
 async def kiz_log_add(request: Request, payload: dict):
     if not payload.get("kiz"):
         return JSONResponse({"error": "нет КИЗ"}, status_code=400)
-    return await _t(store.kiz_log_add, payload, _user(request))
+    return await _t(store.kiz_log_add, payload, _kiz_author(request, payload))
 
 
 @app.get("/api/kiz/log")
