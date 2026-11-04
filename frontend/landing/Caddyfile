@@ -1,45 +1,35 @@
-# VPS в РФ (RuVDS, Королёв): сайт фулфилмента + проход к дашбордам на Render.
+# VPS в РФ (RuVDS, Королёв, 45.141.101.104): сайт фулфилмента + проход к дашбордам.
 #
-# Render из РФ заблокирован по IP (216.24.57.x — таймаут). Но Render стоит за
-# Cloudflare, а Cloudflare отдаёт сайт с ЛЮБОГО своего IP по имени (SNI/Host).
-# Поэтому ходим на открытые из РФ IP Cloudflare с нужным именем сервиса.
-# Проверено с этого VPS 04.11.2026: 9 из 10 адресов отвечают (172.67.0.1 — нет).
-# Если какой-то IP заблокируют, Caddy сам перейдёт на следующий (lb_policy first).
+# Render из РФ заблокирован по IP, а через другие IP Cloudflare большие ответы
+# режутся (~20 КБ). Поэтому в Render ходим через локальный туннель Xray
+# (127.0.0.1:10443 → VPN → 216.24.57.16:443), конфиг — scripts/vps/xray_from_link.py.
+# TLS до Render сквозной: Caddy сам делает рукопожатие с нужным SNI.
 
 (render_wb) {
-    reverse_proxy 104.16.0.1:443 188.114.96.1:443 104.18.32.1:443 162.159.128.1:443 104.21.0.1:443 {
+    reverse_proxy 127.0.0.1:10443 {
         transport http {
             tls
             tls_server_name wb-dashboard-6wxf.onrender.com
         }
         header_up Host wb-dashboard-6wxf.onrender.com
-        lb_policy first
-        lb_try_duration 10s
-        fail_duration 60s
     }
 }
 (render_fk) {
-    reverse_proxy 104.16.0.1:443 188.114.96.1:443 104.18.32.1:443 162.159.128.1:443 104.21.0.1:443 {
+    reverse_proxy 127.0.0.1:10443 {
         transport http {
             tls
             tls_server_name fk-dashboard.onrender.com
         }
         header_up Host fk-dashboard.onrender.com
-        lb_policy first
-        lb_try_duration 10s
-        fail_duration 60s
     }
 }
 (render_mpfit) {
-    reverse_proxy 104.16.0.1:443 188.114.96.1:443 104.18.32.1:443 162.159.128.1:443 104.21.0.1:443 {
+    reverse_proxy 127.0.0.1:10443 {
         transport http {
             tls
             tls_server_name mpfit-dashboard.onrender.com
         }
         header_up Host mpfit-dashboard.onrender.com
-        lb_policy first
-        lb_try_duration 10s
-        fail_duration 60s
     }
 }
 
