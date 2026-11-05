@@ -10,6 +10,7 @@
  --ok:#059669;--okb:#d1fae5;--warn:#b45309;--warnb:#fef3c7;--bad:#dc2626;--badb:#fee2e2;--rad:12px;
  --pl-head:#eef4ff;--pl-cost:#fff7f7;--pl-sub:#f3f4f6;--pl-total:#ecfdf5}
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 body{margin:0;font:14px/1.45 -apple-system,Segoe UI,Roboto,Inter,sans-serif;background:var(--bg);color:var(--ink)}
 header{position:sticky;top:0;z-index:5;background:var(--card);border-bottom:1px solid var(--line);padding:12px 24px;display:flex;align-items:center;gap:20px;flex-wrap:wrap}
 header h1{font-size:17px;margin:0;white-space:nowrap}
@@ -83,6 +84,7 @@ tr.bad td{background:#fef2f2}
     <button data-t="fin">Финансы</button>
     <button data-t="plan">План/факт</button>
     <button data-t="staff">Сотрудники</button>
+    <button data-t="mps">Продажи клиентов</button>
     <a href="/kiz" style="padding:7px 12px;border-radius:8px;color:var(--acc);text-decoration:none">Упаковка КИЗ →</a>
   </nav>
   <div class="sync"><span id="syncInfo">…</span><button class="btn" id="syncBtn">Обновить</button></div>
@@ -194,6 +196,32 @@ tr.bad td{background:#fef2f2}
       <label>Прибыль, ₽<input type="number" name="profit" step="100"></label>
       <button class="btn pri">Сохранить</button>
     </form><div class="note">Пустое поле — план не задан. План по заказам делится на дни и рисуется пунктиром на графике заказов.</div></div>
+</section>
+
+<section id="t-mps" class="hidden">
+  <div class="card"><div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+    <h2 style="margin:0">Продажи клиентов по их кабинетам WB/Ozon</h2>
+    <select id="mpsClient"></select>
+    <select id="mpsDays"><option value="7">7 дней</option><option value="30" selected>30 дней</option><option value="90">90 дней</option></select>
+    <button class="btn" id="mpsRefresh">Обновить данные</button>
+    <span class="muted" id="mpsState"></span>
+  </div>
+  <div class="grid k3" id="mpsKpi" style="margin-top:12px"></div></div>
+  <div class="card" style="margin-top:12px"><h2>Заказы по дням: склады WB/Ozon (FBO) и FBS</h2>
+    <div class="chart" style="height:260px"><canvas id="c-mps"></canvas></div></div>
+  <div class="card" style="margin-top:12px"><h2>Откуда уходят заказы</h2>
+    <div class="tw"><table id="mpsWh"></table></div>
+    <div class="note">FBO — отгрузка со складов маркетплейса. FBS — со склада продавца: отметьте галочкой «наш», какие склады наши (Чехов отмечен автоматически). Остальные FBS-склады — другие фулфилменты или склад самого клиента. Суммы — по цене продавца со скидкой продавца, отмены не вычтены.</div></div>
+  <div class="card" style="margin-top:12px"><h2>Ключи API клиентов</h2>
+    <div class="tw"><table id="mpsKeys"></table></div>
+    <form class="inline" id="mpsKeyForm" style="margin-top:12px">
+      <label style="min-width:160px">Клиент<input name="client" required placeholder="Субоч"></label>
+      <label>Площадка<select name="mp"><option value="wb">Wildberries</option><option value="ozon">Ozon</option></select></label>
+      <label id="mpsCidL" hidden>Ozon Client-Id<input name="client_id"></label>
+      <label style="min-width:260px">Ключ API<input name="secret" type="password" required autocomplete="off"></label>
+      <button class="btn pri">Сохранить и собрать</button>
+    </form>
+    <div class="note">WB — токен с доступом «Статистика» (лучше «только чтение»). Ozon — Client-Id и API-ключ (роль только на чтение). Ключи хранятся в базе зашифрованными и не показываются больше нигде. Первый сбор WB — до 90 дней истории, занимает несколько минут.</div></div>
 </section>
 
 <section id="t-staff" class="hidden">
@@ -472,7 +500,45 @@ $('#stForm')?.addEventListener('submit',async e=>{e.preventDefault();const f=e.t
   await api('/api/staff',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:f.id.value,name:f.name.value,shift_rate:f.shift_rate.value,unit_rate:f.unit_rate.value,since:f.since.value,active:true})});
   f.reset();f.id.value='';$('#stSave').textContent='Добавить';loadStaff()});
 
-const loaders={pulse:loadPulse,orders:loadOrders,speed:loadSpeed,svc:loadSvc,clients:loadClients,fin:()=>{loadFin();loadLedger()},plan:loadPlan,staff:loadStaff,ledger:()=>show('fin')};
+// ── продажи клиентов (их кабинеты WB/Ozon) ──
+async function loadMps(){
+  const client=$('#mpsClient').value||'', days=$('#mpsDays').value||30;
+  const [r,k]=await Promise.all([api(`/api/mpsales?client=${encodeURIComponent(client)}&days=${days}`),api('/api/mpkeys')]);
+  const sel=$('#mpsClient'); const cur=client||(r.report&&r.report.client)||'';
+  sel.innerHTML=r.clients.length?r.clients.map(c=>`<option ${c===cur?'selected':''}>${esc(c)}</option>`).join(''):'<option value="">— нет ключей —</option>';
+  const st=r.state||{}; $('#mpsState').textContent=st.running?'идёт сбор…':(st.last_run?`собрано ${st.last_run}`:'');
+  $('#mpsKeys').innerHTML='<tr><th style="text-align:left">Клиент</th><th style="text-align:left">Площадка</th><th>Добавлен</th><th>Последний сбор</th><th style="text-align:left">Ошибка</th><th></th></tr>'+
+    (k.keys.map(x=>`<tr><td style="text-align:left">${esc(x.client)}</td><td style="text-align:left">${x.mp==='wb'?'Wildberries':'Ozon'}${x.client_id?' · '+esc(x.client_id):''}</td><td>${esc((x.created_at||'').slice(0,10))}</td><td>${esc((x.last_ok||'—').replace('T',' ').slice(0,16))}</td><td style="text-align:left;color:var(--bad);white-space:normal">${esc(x.last_error||'')}</td><td><button class="btn" data-del="${x.id}">Удалить</button></td></tr>`).join('')||'<tr><td colspan="6" class="muted" style="text-align:left">Ключей пока нет — добавьте ниже</td></tr>');
+  const rep=r.report;
+  if(!rep||!rep.cur.qty&&!rep.prev.qty){$('#mpsKpi').innerHTML=kpi('Данных пока нет',rep?'—':'',rep?'идёт первый сбор или по ключу ошибка — см. таблицу ключей':'добавьте ключ клиента');$('#mpsWh').innerHTML='';chart('c-mps',{type:'bar',data:{labels:[],datasets:[]}});return}
+  const c=rep.cur,p=rep.prev,d=rep.days, pct=(a,b)=>b?Math.round(a/b*100)+'%':'—';
+  const mpLine=Object.entries(rep.by_mp).map(([m,v])=>`${m}: ${num(v.qty/d)}/день`).join(' · ');
+  $('#mpsKpi').innerHTML=
+    kpi('Заказов в день',num(c.qty/d),`за ${d} дн. ${num(c.qty)} · было ${num(p.qty/d)}/день ${delta(c.qty,p.qty)}<br>${esc(mpLine)}`)+
+    kpi('Сумма заказов в день',rub(c.sum/d),`было ${rub(p.sum/d)} ${delta(c.sum,p.sum)}`)+
+    kpi('Доля FBS',pct(c.fbs,c.qty),`FBS ${num(c.fbs/d)}/день · FBO ${num(c.fbo/d)}/день · было ${pct(p.fbs,p.qty)}`)+
+    kpi('Через наш склад',num(c.ours/d)+' / день',`${pct(c.ours,c.qty)} всех заказов · ${pct(c.ours,c.fbs)} FBS · было ${num(p.ours/d)}/день ${delta(c.ours,p.ours)}`,'good')+
+    kpi('FBS на других складах',num((c.fbs-c.ours)/d)+' / день',`${pct(c.fbs-c.ours,c.qty)} всех заказов — потенциал для нас`)+
+    kpi('Отмены',pct(c.cancels,c.qty),`${num(c.cancels)} шт за период · было ${pct(p.cancels,p.qty)}`);
+  const dl=rep.daily;
+  chart('c-mps',{type:'bar',data:{labels:dl.labels,datasets:[
+    {label:'FBO (склады маркетплейса)',data:dl.fbo,backgroundColor:'#bfdbfe',stack:'s'},
+    {label:'FBS — наш склад',data:dl.fbs_ours,backgroundColor:'#059669',stack:'s'},
+    {label:'FBS — другие склады',data:dl.fbs_other,backgroundColor:'#d97706',stack:'s'}]},options:baseOpts({scales:{x:{stacked:true,grid:{display:false}},y:{stacked:true,beginAtZero:true}}})});
+  $('#mpsWh').innerHTML='<tr><th style="text-align:left">Склад</th><th>Площадка</th><th>Модель</th><th>Заказов</th><th>В день</th><th>Доля</th><th>Сумма</th><th>Отмены</th><th>Наш</th></tr>'+
+    rep.warehouses.map(w=>`<tr><td style="text-align:left">${esc(w.warehouse)}</td><td>${w.mp}</td><td>${w.model}</td><td>${num(w.qty)}</td><td>${w.per_day}</td><td>${w.share}%</td><td>${rub(w.sum)}</td><td>${num(w.cancels)}</td><td>${w.model==='FBS'?`<input type="checkbox" data-wh="${esc(w.warehouse)}" ${w.ours?'checked':''}>`:''}</td></tr>`).join('');
+}
+$('#mpsClient').onchange=loadMps; $('#mpsDays').onchange=loadMps;
+$('#mpsRefresh').onclick=async()=>{await api('/api/mpsales/refresh',{method:'POST'});$('#mpsState').textContent='идёт сбор… обновите через пару минут'};
+$('#mpsWh').onchange=async e=>{const w=e.target.dataset.wh;if(w==null)return;await api('/api/mpsales/warehouse',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({warehouse:w,ours:e.target.checked})});loadMps()};
+$('#mpsKeys').onclick=async e=>{const i=e.target.dataset.del;if(!i)return;if(e.target.dataset.sure!=='1'){e.target.dataset.sure='1';e.target.textContent='Точно удалить?';return}
+  await api('/api/mpkeys/'+i,{method:'DELETE'});loadMps()};
+$('#mpsKeyForm').mp.onchange=e=>{$('#mpsCidL').hidden=e.target.value!=='ozon'};
+$('#mpsKeyForm').onsubmit=async e=>{e.preventDefault();const f=e.target;
+  try{await api('/api/mpkeys',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({client:f.client.value,mp:f.mp.value,client_id:f.client_id.value,secret:f.secret.value})});
+    f.secret.value='';f.client_id.value='';loadMps()}catch(err){alert(err.message)}};
+
+const loaders={pulse:loadPulse,orders:loadOrders,speed:loadSpeed,svc:loadSvc,clients:loadClients,fin:()=>{loadFin();loadLedger()},plan:loadPlan,staff:loadStaff,mps:loadMps,ledger:()=>show('fin')};
 $('#syncBtn').onclick=async()=>{await api('/api/sync',{method:'POST'});$('#syncInfo').textContent='Синхронизация запущена…';setTimeout(()=>{dailyCache={};show(document.querySelector('nav .on').dataset.t)},15000)};
 let start='pulse';try{start=localStorage.getItem('mp_tab')||'pulse'}catch(e){}
 if(location.hash&&loaders[location.hash.slice(1)])start=location.hash.slice(1);

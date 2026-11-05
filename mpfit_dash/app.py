@@ -25,6 +25,7 @@ import db  # noqa: E402  (backend/db.py: пул Postgres + схема)
 import mpfit_client  # noqa: E402
 import report  # noqa: E402
 import store  # noqa: E402
+import clients_mp  # noqa: E402
 import sync  # noqa: E402
 
 logging.basicConfig(level=logging.INFO)
@@ -110,8 +111,11 @@ _bg: set = set()
 @app.on_event("startup")
 async def _startup():
     await asyncio.to_thread(store.init)
+    await asyncio.to_thread(clients_mp.init)
     t = asyncio.create_task(sync.loop())
     _bg.add(t)
+    t2 = asyncio.create_task(clients_mp.loop())
+    _bg.add(t2)
 
 
 def _user(request: Request) -> str:
@@ -423,6 +427,59 @@ async def api_stock_snapshot_xlsx(date: str | None = None):
                     media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     headers={"Content-Disposition":
                              f"attachment; filename*=UTF-8''{quote('Остатки_' + (snap['date'] or '') + '.xlsx')}"})
+
+
+# ── Клиенты ФФ: продажи из их кабинетов WB/Ozon (по их API-ключам) ─────────
+# Под паролем дашборда (Basic Auth). Ключи хранятся зашифрованными, наружу
+# не отдаются никогда — в списке только клиент, площадка и статус сбора.
+
+@app.get("/api/mpkeys")
+async def mpkeys_list():
+    return {"keys": await _t(clients_mp.keys_list), "state": clients_mp.state}
+
+
+@app.post("/api/mpkeys")
+async def mpkeys_add(payload: dict):
+    try:
+        i = await _t(clients_mp.key_add, str(payload.get("client") or ""), str(payload.get("mp") or ""),
+                     str(payload.get("secret") or ""), str(payload.get("client_id") or ""))
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    t = asyncio.create_task(clients_mp.collect_all(only_id=i))
+    _bg.add(t)
+    t.add_done_callback(_bg.discard)
+    return {"ok": True, "id": i}
+
+
+@app.delete("/api/mpkeys/{key_id}")
+async def mpkeys_delete(key_id: str):
+    await _t(clients_mp.key_delete, key_id)
+    return {"ok": True}
+
+
+@app.post("/api/mpsales/refresh")
+async def mpsales_refresh():
+    if clients_mp.state["running"]:
+        return {"ok": True, "running": True}
+    t = asyncio.create_task(clients_mp.collect_all())
+    _bg.add(t)
+    t.add_done_callback(_bg.discard)
+    return {"ok": True, "started": True}
+
+
+@app.get("/api/mpsales")
+async def mpsales(client: str = "", days: int = 30):
+    cl = await _t(clients_mp.clients)
+    if not client and cl:
+        client = cl[0]
+    rep = await _t(clients_mp.report, client, max(7, min(days, 90))) if client else None
+    return {"clients": cl, "report": rep, "state": clients_mp.state}
+
+
+@app.post("/api/mpsales/warehouse")
+async def mpsales_wh(payload: dict):
+    await _t(clients_mp.set_ours, str(payload.get("warehouse") or ""), bool(payload.get("ours")))
+    return {"ok": True}
 
 
 # ── Упаковка КИЗ: скан КИЗ + штрихкода → этикетка (DataMatrix, ШК, срок годности)
