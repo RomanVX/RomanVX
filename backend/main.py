@@ -337,16 +337,29 @@ async def lifespan(app: FastAPI):
     cost_store.init()
     _auth.ensure_bootstrap()
     _wms.ensure_bootstrap()
+    from config import READ_ONLY
+    import catalog_auto
+    catalog_auto.load_snapshot()
+    asyncio.create_task(catalog_auto.loop())
     task = asyncio.create_task(_prefetch_weekly())
     task2 = asyncio.create_task(_warm_finance())
     task3 = asyncio.create_task(_keep_awake())
+    asyncio.create_task(_funnel_daily())
+    if READ_ONLY:
+        # кабинет клиента: только чтение и аналитика. Ничего, что пишет в
+        # кабинеты площадок (автоответы, мультисклад FBS, агент, слоты),
+        # и ничего, что тратит ИИ или домашний агент, не запускаем.
+        logging.getLogger("main").info("READ_ONLY: фоновые задачи записи выключены")
+        yield
+        for t in (task, task2, task3):
+            t.cancel()
+        return
     task4 = asyncio.create_task(_agent_weekly())
     import agent_review as _agent
     task5 = asyncio.create_task(_agent.bot_loop())
     task6 = asyncio.create_task(_competitors_daily())
     task_watch = asyncio.create_task(_agent_watch_loop())
     asyncio.create_task(_report_interrupted())
-    asyncio.create_task(_funnel_daily())
     asyncio.create_task(_client_prices_loop())
     asyncio.create_task(_fbs_multi_loop())
 
@@ -441,7 +454,37 @@ async def _auth_middleware(request, call_next):
     denied = _auth.check_request(request)
     if denied is not None:
         return denied
+    ro = _read_only_block(request)
+    if ro is not None:
+        return ro
     return await call_next(request)
+
+
+# ── Кабинет клиента: только чтение ──────────────────────────────────────────
+# Запросы, которые меняют что-то в кабинетах площадок (ответы на отзывы,
+# остатки FBS, поставки, документы Ozon, действия агента) или тратят ИИ /
+# домашний агент, в режиме READ_ONLY не выполняются. Чтение и выгрузки — можно.
+_RO_DENY = (
+    "/api/reviews/approve", "/api/reviews/auto-pass", "/api/reviews/draft",
+    "/api/reviews/analyze-style", "/api/reviews/decline", "/api/reviews/rules",
+    "/api/tools/fbs/", "/api/tools/supply/", "/api/tools/ozon/certificate/",
+    "/api/tools/adv/sandbox", "/api/tools/agent", "/api/tools/competitors/",
+    "/api/tools/niche", "/api/tools/visuals/", "/api/tools/dimensions/",
+    "/api/tools/mp/proxy", "/api/wms/",
+)
+
+
+def _read_only_block(request):
+    from config import READ_ONLY
+    if not READ_ONLY or request.method in ("GET", "HEAD", "OPTIONS"):
+        return None
+    path = request.url.path
+    if path.startswith(_RO_DENY):
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"detail": "Кабинет в режиме «только чтение»: изменения "
+                                       "в кабинетах площадок отсюда не выполняются."},
+                            status_code=403)
+    return None
 
 
 @app.get("/api/health")
@@ -461,16 +504,34 @@ def get_cabinet():
     from config import (CABINET, CABINET_NAME, CABINET_MARKETPLACES,
                         OTHER_CABINET_URL, OTHER_CABINET_NAME)
     from config import USE_MOCK
+    from config import READ_ONLY, UI_PROFILE, CABINET_MONO, OTHER_CABINET_MONO
     out = {"id": CABINET, "name": CABINET_NAME, "marketplaces": CABINET_MARKETPLACES,
-           "demo": USE_MOCK}
+           "demo": USE_MOCK, "read_only": READ_ONLY, "profile": UI_PROFILE,
+           "mono": CABINET_MONO or _mono(CABINET_NAME)}
+    import catalog_auto
+    if catalog_auto.enabled():
+        out["group_order"] = catalog_auto.group_order()
+        import catalog as _c
+        out["brand_order"] = list(_c.BRAND_ORDER)
+        out["subgroups"] = []
+        out["catalog"] = {k: catalog_auto.state[k] for k in ("items", "updated", "error")}
     if CABINET == "fk":
         import catalog_fk
         out["group_order"] = catalog_fk.GROUP_ORDER
         out["brand_order"] = catalog_fk.BRAND_ORDER
         out["subgroups"] = []
     if OTHER_CABINET_URL:
-        out["other"] = {"name": OTHER_CABINET_NAME, "url": OTHER_CABINET_URL}
+        out["other"] = {"name": OTHER_CABINET_NAME, "url": OTHER_CABINET_URL,
+                        "mono": OTHER_CABINET_MONO or _mono(OTHER_CABINET_NAME)}
     return out
+
+
+def _mono(name: str) -> str:
+    """Монограмма кабинета для карточки выбора: «Biomed Nutrition» → BN, «Аврора» → АВ."""
+    words = [w for w in (name or "").replace("«", " ").replace("»", " ").split() if w[:1].isalnum()]
+    if len(words) >= 2:
+        return (words[0][0] + words[1][0]).upper()
+    return (name or "?")[:2].upper()
 
 FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
 

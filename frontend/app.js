@@ -59,7 +59,7 @@ async function loadCabinetInfo() {
   if (cabName) cabName.textContent = _cab.name;
   // монограмма текущего кабинета (зелёный квадрат в стиле темы)
   const mono = document.querySelector('#cabBiomed .cab-mono');
-  if (mono) mono.textContent = _cab.id === 'fk' ? 'ФК' : 'BN';
+  if (mono) mono.textContent = _cab.mono || (_cab.id === 'fk' ? 'ФК' : 'BN');
   // карточка второго кабинета
   const grid = document.querySelector('.mp-cab-grid');
   if (grid && _cab.other && _cab.other.url && !document.getElementById('cabOther')) {
@@ -67,9 +67,10 @@ async function loadCabinetInfo() {
     div.id = 'cabOther';
     div.className = 'mp-cab-card';
     div.onclick = () => { window.location.href = _cab.other.url.replace(/\/+$/, '') + '/?enter=1'; };
-    div.innerHTML = `<div class="cab-mono">${_cab.id === 'fk' ? 'BN' : 'ФК'}</div><span>${esc(_cab.other.name)}</span>`;
+    div.innerHTML = `<div class="cab-mono">${esc(_cab.other.mono || (_cab.id === 'fk' ? 'BN' : 'ФК'))}</div><span>${esc(_cab.other.name)}</span>`;
     grid.appendChild(div);
   }
+  applyProfile();
   // скрываем площадки, которых нет в кабинете (ЯМ у Фабрики красоты)
   const mps = _cab.marketplaces || [];
   if (!mps.includes('YM')) {
@@ -80,6 +81,34 @@ async function loadCabinetInfo() {
   }
 }
 document.addEventListener('DOMContentLoaded', loadCabinetInfo);
+
+// Кабинет клиента агентства (profile = analytics): только аналитические
+// разделы, без склада Чехов/FBS, ИИ-инструментов, агента и операционки.
+// Изменения в кабинетах площадок сервер в этом режиме и так не выполняет.
+function applyProfile() {
+  if (!_cab || _cab.profile !== 'analytics') return;
+  // заголовок «Wildberries» вёл в Продуктолог (ИИ) — ведём в воронку
+  const wbTitle = document.querySelector('#navWB .mp-menu-title');
+  if (wbTitle) wbTitle.setAttribute('onclick', "goNavTool('tools','wbfunnel','navWB')");
+  const HIDE = ["goNav('fbs'", "'slots'", "'prod'", "'niche'", "'nichecalc'", "'visuals'", "'competitors'"];
+  document.querySelectorAll('#mainMenu a, #mainMenu button').forEach(el => {
+    const oc = el.getAttribute('onclick') || '';
+    if (HIDE.some(h => oc.includes(h))) el.style.display = 'none';
+  });
+  const hideItem = id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; };
+  hideItem('navOps');
+  const mps = _cab.marketplaces || [];
+  if (!mps.includes('OZON')) hideItem('navOzon');
+  if (!mps.includes('WB')) hideItem('navWB');
+  // ИИ-кнопки (тратят наш Anthropic API) в кабинете клиента не показываем
+  document.querySelectorAll('.mp-ai-link').forEach(el => { el.style.display = 'none'; });
+  // разделители, после которых не осталось видимых пунктов, тоже прячем
+  document.querySelectorAll('#mainMenu .mp-drop-sep').forEach(sep => {
+    let n = sep.nextElementSibling, vis = false;
+    while (n && !n.classList.contains('mp-drop-sep')) { if (n.style.display !== 'none') vis = true; n = n.nextElementSibling; }
+    if (!vis) sep.style.display = 'none';
+  });
+}
 
 function articleGroup(r) {
   const sku = r.supplierArticle || r.sku || '';
@@ -4934,7 +4963,7 @@ function initDashboard() {
     { name: 'stocks',  fn: loadStocks },
     { name: 'finance', fn: loadFinance },
     { name: 'reviews', fn: loadReviews },
-  ];
+  ].filter(t => !(_cab && _cab.profile === 'analytics' && t.name === 'reviews'));
   bgTabs.forEach(({ name, fn }, i) => {
     setTimeout(() => {
       if (dirty[name]) { dirty[name] = false; fn(); }

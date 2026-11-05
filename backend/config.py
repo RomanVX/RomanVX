@@ -42,16 +42,29 @@ CABINET: str = os.getenv("CABINET", "biomed").strip().lower()
 _CAB_DEFAULTS = {
     "biomed": {"name": "Biomed Nutrition", "marketplaces": ["WB", "OZON", "YM"]},
     "fk":     {"name": "Фабрика красоты",  "marketplaces": ["WB", "OZON"]},
+    # клиенты агентства: только аналитика, в кабинетах ничего не меняем
+    "tl":     {"name": "Технолюкс", "marketplaces": ["WB", "OZON"], "client": True, "mono": "ТЛ"},
+    "avr":    {"name": "Аврора",    "marketplaces": ["WB"],         "client": True, "mono": "АВ"},
 }
 CABINET_NAME: str = os.getenv("CABINET_NAME", "").strip() \
     or _CAB_DEFAULTS.get(CABINET, {}).get("name", CABINET)
 CABINET_MARKETPLACES: list = _CAB_DEFAULTS.get(CABINET, {}).get("marketplaces", ["WB", "OZON", "YM"])
 if not YM_API_KEY and "YM" in CABINET_MARKETPLACES:
     CABINET_MARKETPLACES = [m for m in CABINET_MARKETPLACES if m != "YM"]
+# Кабинет клиента агентства: только чтение (никаких изменений цен, рекламы,
+# карточек, ответов на отзывы, остатков) и аналитический набор разделов.
+# Можно задать явно: READ_ONLY=1/0 в env.
+IS_CLIENT_CABINET: bool = bool(_CAB_DEFAULTS.get(CABINET, {}).get("client"))
+READ_ONLY: bool = os.getenv("READ_ONLY", "1" if IS_CLIENT_CABINET else "0").strip().lower() \
+    in ("1", "true", "on", "yes")
+CABINET_MONO: str = os.getenv("CABINET_MONO", "").strip() or _CAB_DEFAULTS.get(CABINET, {}).get("mono", "")
+OTHER_CABINET_MONO: str = os.getenv("OTHER_CABINET_MONO", "").strip() \
+    or {"tl": "АВ", "avr": "ТЛ"}.get(CABINET, "")
+UI_PROFILE: str = os.getenv("UI_PROFILE", "analytics" if IS_CLIENT_CABINET else "full").strip().lower()
 # ссылка на второй кабинет (другой деплой) — для карточки на экране выбора
 OTHER_CABINET_URL: str  = os.getenv("OTHER_CABINET_URL", "").strip()
 OTHER_CABINET_NAME: str = os.getenv("OTHER_CABINET_NAME", "").strip() \
-    or ("Biomed Nutrition" if CABINET == "fk" else "Фабрика красоты")
+    or {"fk": "Biomed Nutrition", "tl": "Аврора", "avr": "Технолюкс"}.get(CABINET, "Фабрика красоты")
 
 USE_MOCK: bool = not WB_API_KEY or WB_API_KEY == "your_wildberries_api_key_here"
 USE_ADVERT_MOCK: bool = not WB_ADVERT_KEY or WB_ADVERT_KEY == "your_wildberries_api_key_here"

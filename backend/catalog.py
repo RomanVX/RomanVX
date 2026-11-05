@@ -188,6 +188,15 @@ if _CABINET == "fk":
     CATALOG = _fk.CATALOG
     BRAND_ORDER = _fk.BRAND_ORDER
     SKU_ALIASES = {}
+elif _CABINET != "biomed":
+    # новые кабинеты (Технолюкс, Аврора…): каталог собирается из карточек
+    # площадок — catalog_auto.py; до первой загрузки — пустой
+    WB_ID_TO_ART = {}
+    OZON_ID_TO_ART = {}
+    YM_ID_TO_ART = {}
+    CATALOG = {}
+    BRAND_ORDER = []
+    SKU_ALIASES = {}
 
 
 def _norm(s) -> str:
