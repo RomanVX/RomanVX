@@ -184,6 +184,50 @@ def _agg_wb(rows: list[dict], since_day: str) -> dict:
     return agg
 
 
+# Запасной путь, если у ключа нет «Статистики», а есть «Маркетплейс» (часто
+# клиенты дают фулфилменту именно такой ключ): только FBS-сборочные задания
+# со складов продавца — FBO-заказов так не видно.
+WB_MP = "https://marketplace-api.wildberries.ru"
+
+
+async def _wb_fbs_agg(token: str, since: datetime) -> dict:
+    agg: dict = {}
+    async with httpx.AsyncClient(timeout=90) as cl:
+        h = {"Authorization": token}
+        r = await cl.get(WB_MP + "/api/v3/warehouses", headers=h)
+        if not r.is_success:
+            raise RuntimeError(f"WB warehouses {r.status_code}: {r.text[:150]}")
+        names = {w.get("id"): (w.get("name") or str(w.get("id"))) for w in r.json() or []}
+        now = datetime.utcnow()
+        start = since
+        while start < now:                         # не больше 30 дней за запрос
+            end = min(start + timedelta(days=29), now)
+            nxt = 0
+            for _ in range(200):
+                r = await cl.get(WB_MP + "/api/v3/orders", headers=h, params={
+                    "limit": 1000, "next": nxt,
+                    "dateFrom": int(start.timestamp()), "dateTo": int(end.timestamp())})
+                if r.status_code == 429:
+                    await asyncio.sleep(10)
+                    continue
+                if not r.is_success:
+                    raise RuntimeError(f"WB orders FBS {r.status_code}: {r.text[:150]}")
+                data = r.json() or {}
+                orders = data.get("orders") or []
+                for o in orders:
+                    day = _msk_day(o.get("createdAt") or "")
+                    wh = names.get(o.get("warehouseId"), str(o.get("warehouseId") or "—"))
+                    a = agg.setdefault((day, "FBS", wh), [0, 0.0, 0])
+                    a[0] += 1
+                    a[1] += float(o.get("convertedPrice") or o.get("price") or 0) / 100
+                nxt = data.get("next") or 0
+                if len(orders) < 1000 or not nxt:
+                    break
+                await asyncio.sleep(0.4)
+            start = end
+    return agg
+
+
 # ── сбор: Ozon ──────────────────────────────────────────────────────────────
 
 async def _oz_post(cl, cid, key, path, body):
@@ -283,13 +327,21 @@ async def collect_one(k: dict) -> dict:
     days = REFRESH_DAYS if _has_history(k["client"], k["mp"]) else FIRST_DAYS
     since = datetime.utcnow() - timedelta(days=days)
     since_day = (since + timedelta(hours=3)).strftime("%Y-%m-%d")
+    note = ""
     if k["mp"] == "wb":
-        rows = await _wb_orders(k["secret"], since.strftime("%Y-%m-%dT00:00:00"))
-        agg = _agg_wb(rows, since_day)
+        try:
+            rows = await _wb_orders(k["secret"], since.strftime("%Y-%m-%dT00:00:00"))
+            agg = _agg_wb(rows, since_day)
+        except RuntimeError as e:
+            if "403" not in str(e) and "401" not in str(e):
+                raise
+            agg = await _wb_fbs_agg(k["secret"], since)
+            note = ("частично: у ключа нет категории «Статистика» — собраны только FBS-заказы "
+                    "со складов продавца, заказов со складов WB (FBO) не видно")
     else:
         agg = await _ozon_agg(k["client_id"], k["secret"], since)
     await asyncio.to_thread(_save, k["client"], k["mp"], agg, since_day)
-    return {"days": days, "rows": sum(a[0] for a in agg.values())}
+    return {"days": days, "rows": sum(a[0] for a in agg.values()), "note": note}
 
 
 async def collect_all(only_id: str | None = None):
@@ -303,6 +355,8 @@ async def collect_all(only_id: str | None = None):
             try:
                 res = await collect_one(k)
                 await asyncio.to_thread(_mark, k["id"], True)
+                if res.get("note"):
+                    await asyncio.to_thread(_mark, k["id"], False, "⚠ " + res["note"])
                 state["clients"][f'{k["client"]}/{k["mp"]}'] = res
             except Exception as e:
                 await asyncio.to_thread(_mark, k["id"], False, str(e))
@@ -402,11 +456,13 @@ def report(client: str, days: int = 30) -> dict:
     for m in by_mp.values():
         m["sum"] = round(m["sum"])
     last = db.fetchall("SELECT MAX(day) FROM mp_orders_daily WHERE client = ?", (client,))
+    notes = [f"{mp.upper()}: {err[2:]}" for mp, err in db.fetchall(
+        "SELECT mp, last_error FROM mp_keys WHERE client = ?", (client,)) if (err or "").startswith("⚠")]
     return {"client": client, "days": days, "period": [d0.isoformat(), d1.isoformat()],
             "prev_period": [p0.isoformat(), p1.isoformat()], "cur": cur, "prev": prev,
             "warehouses": wh_list, "by_mp": by_mp,
             "daily": {"labels": labels, "fbo": fbo, "fbs_ours": fbs_ours, "fbs_other": fbs_other},
-            "last_day": last[0][0] if last else None}
+            "last_day": last[0][0] if last else None, "notes": notes}
 
 
 def clients() -> list[str]:

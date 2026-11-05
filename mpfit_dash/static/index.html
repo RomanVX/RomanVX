@@ -512,8 +512,9 @@ async function loadMps(){
   const rep=r.report;
   if(!rep||!rep.cur.qty&&!rep.prev.qty){$('#mpsKpi').innerHTML=kpi('Данных пока нет',rep?'—':'',rep?'идёт первый сбор или по ключу ошибка — см. таблицу ключей':'добавьте ключ клиента');$('#mpsWh').innerHTML='';chart('c-mps',{type:'bar',data:{labels:[],datasets:[]}});return}
   const c=rep.cur,p=rep.prev,d=rep.days, pct=(a,b)=>b?Math.round(a/b*100)+'%':'—';
+  const notes=(rep.notes||[]).map(n=>`<div class="card kpi" style="grid-column:1/-1;background:var(--warnb)"><div class="sub" style="color:var(--warn)">⚠ ${esc(n)}</div></div>`).join('');
   const mpLine=Object.entries(rep.by_mp).map(([m,v])=>`${m}: ${num(v.qty/d)}/день`).join(' · ');
-  $('#mpsKpi').innerHTML=
+  $('#mpsKpi').innerHTML=notes+
     kpi('Заказов в день',num(c.qty/d),`за ${d} дн. ${num(c.qty)} · было ${num(p.qty/d)}/день ${delta(c.qty,p.qty)}<br>${esc(mpLine)}`)+
     kpi('Сумма заказов в день',rub(c.sum/d),`было ${rub(p.sum/d)} ${delta(c.sum,p.sum)}`)+
     kpi('Доля FBS',pct(c.fbs,c.qty),`FBS ${num(c.fbs/d)}/день · FBO ${num(c.fbo/d)}/день · было ${pct(p.fbs,p.qty)}`)+
