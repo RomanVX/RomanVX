@@ -5681,9 +5681,12 @@ async def _ozads2_bg(days: int):
 
 
 @router.get("/ozads2")
-async def get_ozads2(days: int = Query(default=28, ge=7, le=90), refresh: bool = Query(default=False)):
+async def get_ozads2(period: int = Query(default=28, ge=7, le=90), refresh: bool = Query(default=False)):
     """Реклама Ozon: итог и динамика к прошлому периоду, бренды, кампании (тип,
     статус, дата запуска, бюджет, товары), товары, график расхода/выручки."""
+    # параметр называется period, а не days: общий фильтр дат фронта сам
+    # добавляет к запросам свой days и перебивал бы выбранный период
+    days = period
     import ozon_perf_client as pc
     if not pc.configured():
         return {"error": "Не заданы ключи Ozon Performance (OZON_PERF_CLIENT_ID / OZON_PERF_CLIENT_SECRET)."}

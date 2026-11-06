@@ -3833,7 +3833,7 @@ async function loadOzAds(refresh) {
   if (_ozAdsData && _ozAdsData.days === _ozAdsDays && !refresh) { renderOzAds(); return; }
   if (!_ozAdsData || _ozAdsData.days !== _ozAdsDays) wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>Загружаем рекламу Ozon…</div>';
   try {
-    const d = await fetchJSON(`/api/tools/ozads2?days=${_ozAdsDays}` + (refresh ? '&refresh=true' : ''), 120000);
+    const d = await fetchJSON(`/api/tools/ozads2?period=${_ozAdsDays}` + (refresh ? '&refresh=true' : ''), 120000);
     if (d.building && !d.campaigns) {
       wrap.innerHTML = `<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>${esc(d.message || 'Собираю статистику…')}${d.error ? `<div class="text-danger small mt-2">${esc(d.error)}</div>` : ''}</div>`;
       setTimeout(() => { if (_ozTool === 'ads') loadOzAds(); }, 15000);
