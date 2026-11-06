@@ -102,7 +102,19 @@ def _ozon_brand(item: dict) -> str:
 
 async def build() -> dict:
     wb_map, oz_map, cat = {}, {}, {}
-    for c in await _wb_cards():
+    errors = []
+    try:
+        wb_cards = await _wb_cards()
+    except Exception as e:                     # ошибка WB не мешает собрать Ozon
+        wb_cards = []
+        errors.append(str(e)[:200])
+    try:
+        oz_items = await _ozon_products()
+    except Exception as e:
+        oz_items = []
+        errors.append("Ozon: " + str(e)[:200])
+    state["error"] = "; ".join(errors)
+    for c in wb_cards:
         art = str(c.get("vendorCode") or "").strip()
         nm = c.get("nmID")
         if not art or not nm:
@@ -110,7 +122,7 @@ async def build() -> dict:
         wb_map[str(nm)] = art
         cat[art] = {"name": (c.get("title") or art)[:120], "brand": c.get("brand") or "Прочее",
                     "group": c.get("subjectName") or ""}
-    for p in await _ozon_products():
+    for p in oz_items:
         art = str(p.get("offer_id") or "").strip()
         if not art:
             continue
@@ -142,10 +154,9 @@ def load_snapshot() -> None:
 async def refresh() -> dict:
     data = await build()
     if not data["catalog"]:
-        state["error"] = "площадки не вернули ни одной карточки"
+        state["error"] = state["error"] or "площадки не вернули ни одной карточки"
         return state
     _apply(data)
-    state["error"] = ""
     import snapshot
     await asyncio.to_thread(snapshot.save, _SNAP_KEY, data)
     _log.info("автокаталог обновлён: %d артикулов (WB %d, Ozon %d)",

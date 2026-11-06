@@ -526,6 +526,53 @@ def get_cabinet():
     return out
 
 
+@app.get("/api/keys/check")
+async def keys_check():
+    """Проверка ключей кабинета (без раскрытия самих ключей): к каким разделам
+    WB есть доступ, работают ли ключи Ozon Seller и Ozon Performance."""
+    import httpx
+    from config import WB_API_KEY, OZON_CLIENT_ID, OZON_API_KEY
+    out: dict = {"wb": {}, "ozon": None, "ozon_perf": None}
+    tok = (WB_API_KEY or "").strip()
+    if not tok:
+        out["wb"] = {"_": "ключ не задан (WB_API_KEY)"}
+    elif tok.count(".") != 2:
+        out["wb"] = {"_": f"это не похоже на токен WB: в токене должно быть 3 части через точку, "
+                          f"а здесь {tok.count('.') + 1} (длина {len(tok)} симв.). Скопируйте токен заново целиком"}
+    else:
+        cats = {"Контент": "content-api", "Аналитика": "seller-analytics-api", "Цены и скидки": "discounts-prices-api",
+                "Статистика": "statistics-api", "Продвижение": "advert-api", "Вопросы и отзывы": "feedbacks-api",
+                "Финансы": "finance-api", "Маркетплейс": "marketplace-api"}
+        async with httpx.AsyncClient(timeout=15) as cl:
+            for name, host in cats.items():
+                try:
+                    r = await cl.get(f"https://{host}.wildberries.ru/ping", headers={"Authorization": tok})
+                    out["wb"][name] = "есть доступ" if r.is_success else f"нет доступа ({r.status_code})"
+                except Exception as e:
+                    out["wb"][name] = "ошибка: " + str(e)[:80]
+    if OZON_CLIENT_ID and OZON_API_KEY:
+        try:
+            import ozon_client
+            await ozon_client._post("/v3/product/list", {"filter": {"visibility": "ALL"}, "last_id": "", "limit": 1})
+            out["ozon"] = "работает"
+        except Exception as e:
+            out["ozon"] = "не работает: " + str(e)[:150]
+    else:
+        out["ozon"] = "ключи не заданы (OZON_CLIENT_ID / OZON_API_KEY)"
+    try:
+        import ozon_perf_client as _pc
+        if _pc.CLIENT_ID and _pc.CLIENT_SECRET:
+            await _pc._get_token()
+            out["ozon_perf"] = "работает"
+        else:
+            out["ozon_perf"] = "ключи не заданы (OZON_PERF_CLIENT_ID / OZON_PERF_CLIENT_SECRET)"
+    except Exception as e:
+        out["ozon_perf"] = "не работает: " + str(e)[:150]
+    import catalog_auto
+    out["catalog"] = catalog_auto.state
+    return out
+
+
 def _mono(name: str) -> str:
     """Монограмма кабинета для карточки выбора: «Biomed Nutrition» → BN, «Аврора» → АВ."""
     words = [w for w in (name or "").replace("«", " ").replace("»", " ").split() if w[:1].isalnum()]

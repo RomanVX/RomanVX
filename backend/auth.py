@@ -85,6 +85,7 @@ def _session_of(request: Request) -> dict | None:
 # ── Middleware-проверка (вызывается из main) ─────────────────────────────────
 
 _PUBLIC_PREFIXES = ("/api/auth/", "/api/cabinet", "/api/health",
+                    "/api/keys/check",  # только статусы ключей, сами ключи не отдаются
                     "/api/wms/",   # WMS: собственные cookie-сессии (routers/wms.py)
                     "/api/landing/",  # заявки с публичного сайта фулфилмента
                     # эндпоинты локального агента ниши — защищены собственным
