@@ -5484,3 +5484,217 @@ async def wb_image_jpg(basket: str, vol: str, part: str, nm: str, n: str):
     img.save(buf, "JPEG", quality=92)
     return Response(buf.getvalue(), media_type="image/jpeg",
                     headers={"Cache-Control": "public, max-age=86400"})
+
+
+# ══ Реклама Ozon v2: кампании с датами запуска, товары, бренды, динамика ═══════
+# Собирается в фоне (отчёты Performance асинхронные, по 10 кампаний), кэш в БД.
+_OZADS2: dict = {}          # days -> result
+_OZADS2_STATE: dict = {"building": set(), "error": ""}
+_OZADS2_TTL = 3 * 3600
+_STATE_RU = {"RUNNING": "Активна", "ACTIVE": "Активна", "STOPPED": "Остановлена", "INACTIVE": "Остановлена",
+             "ARCHIVED": "В архиве", "FINISHED": "Завершена", "PLANNED": "Запланирована",
+             "MODERATION_DRAFT": "Черновик", "MODERATION_IN_PROGRESS": "На модерации",
+             "MODERATION_FAILED": "Не прошла модерацию"}
+_PAY_RU = {"CPC": "за клики", "CPO": "за заказ", "CPM": "за показы"}
+_ADV_TYPE_RU2 = {**_ADV_TYPE_RU, "SEARCH_PROMO": "Оплата за заказ (поиск)", "SKU": "Оплата за клики",
+                 "REF_VK": "Внешний трафик (VK)", "REF_BLOGGER": "Блогеры"}
+
+
+def _ozads_metrics(a: dict) -> dict:
+    v, c, s, o, m = a.get("views", 0), a.get("clicks", 0), a.get("spent", 0.0), a.get("orders", 0), a.get("orders_money", 0.0)
+    return {"views": v, "clicks": c, "spent": round(s), "orders": o, "orders_money": round(m),
+            "ctr": round(c / v * 100, 2) if v else 0, "cpc": round(s / c, 1) if c else 0,
+            "cpo": round(s / o) if o else 0, "drr": round(s / m * 100, 1) if m else None,
+            "roas": round(m / s, 2) if s else None}
+
+
+async def _build_ozads2(days: int) -> dict:
+    import ozon_perf_client as pc
+    import catalog as _cat
+    from datetime import date
+    d_end = date.today() - timedelta(days=1)
+    d_start = d_end - timedelta(days=days - 1)
+    p_end = d_start - timedelta(days=1)
+    p_start = p_end - timedelta(days=days - 1)
+    camps = await pc.get_campaigns()
+    meta = {str(c.get("id")): c for c in camps}
+    daily = await pc.get_daily(p_start.isoformat(), d_end.isoformat())
+    cur_from = d_start.isoformat()
+
+    agg: dict = {}
+    by_day: dict = {}
+    for r in daily:
+        per = "cur" if r["date"] >= cur_from else "prev"
+        a = agg.setdefault(r["id"], {"cur": {}, "prev": {}, "title": r["title"]})[per]
+        for k in ("views", "clicks", "orders"):
+            a[k] = a.get(k, 0) + r[k]
+        for k in ("spent", "orders_money"):
+            a[k] = a.get(k, 0.0) + r[k]
+        if per == "cur":
+            d = by_day.setdefault(r["date"], {"spent": 0.0, "orders_money": 0.0, "orders": 0})
+            d["spent"] += r["spent"]; d["orders_money"] += r["orders_money"]; d["orders"] += r["orders"]
+
+    # товары: кампании «за клики» с расходом в текущем периоде
+    click_ids = [cid for cid, a in agg.items() if (a["cur"].get("spent") or 0) > 0
+                 and (meta.get(cid, {}).get("advObjectType") == "SKU")]
+    sku_rows = await pc.sku_stats(click_ids, cur_from, d_end.isoformat()) if click_ids else {}
+    promo_rows = []
+    if any(c.get("advObjectType") == "SEARCH_PROMO" for c in camps):
+        try:
+            promo_rows = await pc.orders_report(cur_from, d_end.isoformat())
+        except Exception as e:
+            _log.warning("ozads2 orders report: %s", e)
+
+    def art_of(sku: str, art: str = "") -> str:
+        return _cat.canon(art) if art else _cat.resolve_ozon(sku)
+
+    def brand_of(art: str) -> str:
+        return (_cat.lookup(art) or {}).get("brand") or "Прочее"
+
+    skus: dict = {}
+    camp_skus: dict = {}
+    for cid, rows in sku_rows.items():
+        for r in rows:
+            art = art_of(r["sku"])
+            k = (art, r["sku"])
+            s = skus.setdefault(k, {"art": art, "sku": r["sku"], "title": r["title"], "brand": brand_of(art),
+                                    "views": 0, "clicks": 0, "to_cart": 0, "spent": 0.0, "orders": 0,
+                                    "orders_money": 0.0, "gmv": 0.0, "campaigns": set()})
+            for f in ("views", "clicks", "to_cart", "orders"):
+                s[f] += r[f]
+            for f in ("spent", "orders_money"):
+                s[f] += r[f]
+            s["gmv"] = max(s["gmv"], r["gmv"])          # GMV товара одинаков во всех кампаниях
+            s["campaigns"].add(cid)
+            camp_skus.setdefault(cid, []).append({"art": art, "title": r["title"], "brand": s["brand"],
+                                                  **_ozads_metrics(r), "to_cart": r["to_cart"],
+                                                  "avg_bid": r["avg_bid"]})
+    promo_cid = next((str(c.get("id")) for c in camps if c.get("advObjectType") == "SEARCH_PROMO"), None)
+    for r in promo_rows:
+        art = art_of(r["sku"], r["art"])
+        k = (art, r["sku"])
+        s = skus.setdefault(k, {"art": art, "sku": r["sku"], "title": r["title"], "brand": brand_of(art),
+                                "views": 0, "clicks": 0, "to_cart": 0, "spent": 0.0, "orders": 0,
+                                "orders_money": 0.0, "gmv": 0.0, "campaigns": set()})
+        s["spent"] += r["spent"]; s["orders"] += r["qty"]; s["orders_money"] += r["revenue"]
+        if promo_cid:
+            s["campaigns"].add(promo_cid)
+
+    brands: dict = {}
+    for s in skus.values():
+        b = brands.setdefault(s["brand"], {"brand": s["brand"], "spent": 0.0, "orders": 0, "orders_money": 0.0,
+                                           "views": 0, "clicks": 0, "gmv": 0.0, "skus": 0})
+        for f in ("spent", "orders_money", "gmv"):
+            b[f] += s[f]
+        for f in ("orders", "views", "clicks"):
+            b[f] += s[f]
+        b["skus"] += 1
+    total_spent = sum(b["spent"] for b in brands.values()) or 1
+    brand_list = []
+    for b in sorted(brands.values(), key=lambda x: -x["spent"]):
+        m = _ozads_metrics(b)
+        brand_list.append({"brand": b["brand"], **m, "skus": b["skus"], "gmv": round(b["gmv"]),
+                           "share": round(b["spent"] / total_spent * 100, 1),
+                           "general_drr": round(b["spent"] / b["gmv"] * 100, 1) if b["gmv"] else None})
+
+    sku_list = []
+    for s in sorted(skus.values(), key=lambda x: -x["spent"])[:400]:
+        sku_list.append({"art": s["art"], "sku": s["sku"], "title": s["title"][:90], "brand": s["brand"],
+                         **_ozads_metrics(s), "to_cart": s["to_cart"], "gmv": round(s["gmv"]),
+                         "general_drr": round(s["spent"] / s["gmv"] * 100, 1) if s["gmv"] else None,
+                         "campaigns": len(s["campaigns"])})
+
+    today = date.today()
+    camp_list = []
+    for cid, c in meta.items():
+        a = agg.get(cid, {"cur": {}, "prev": {}})
+        cur, prev = _ozads_metrics(a["cur"]), _ozads_metrics(a["prev"])
+        state = (c.get("state") or "").replace("CAMPAIGN_STATE_", "")
+        if not cur["spent"] and not prev["spent"] and state not in ("RUNNING", "ACTIVE"):
+            continue
+        created = (c.get("createdAt") or "")[:10]
+        start = c.get("fromDate") or created
+        try:
+            running = (today - date.fromisoformat(start)).days
+        except Exception:
+            running = None
+        rows = sorted(camp_skus.get(cid, []), key=lambda x: -x["spent"])
+        cbrands = sorted({r["brand"] for r in rows}) or sorted({s["brand"] for s in skus.values() if cid in s["campaigns"]})
+        typ = c.get("advObjectType") or ""
+        pay = c.get("PaymentType") or ""
+        budget = pc._num(c.get("dailyBudget")) or 0
+        wbudget = pc._num(c.get("weeklyBudget")) or 0
+        camp_list.append({
+            "id": cid, "title": c.get("title") or a.get("title") or f"Кампания {cid}",
+            "type": _ADV_TYPE_RU2.get(typ, typ or "—"), "type_code": typ,
+            "state": _STATE_RU.get(state, state.title() or "—"), "state_code": state,
+            "payment": _PAY_RU.get(pay, ""), "created": created, "from": c.get("fromDate") or "",
+            "to": c.get("toDate") or "", "running_days": running,
+            "daily_budget": round(budget) if budget else None,
+            "weekly_budget": round(wbudget) if 0 < wbudget < 1e9 else None,
+            "strategy": c.get("productAutopilotStrategy") or "",
+            "cur": cur, "prev": prev, "brands": cbrands[:6], "skus": rows[:50],
+            "new_in_period": bool(start and start >= cur_from),
+        })
+    camp_list.sort(key=lambda x: -(x["cur"]["spent"] or 0))
+
+    tc = {"views": 0, "clicks": 0, "spent": 0.0, "orders": 0, "orders_money": 0.0}
+    tp = dict(tc)
+    for a in agg.values():
+        for f in tc:
+            tc[f] += a["cur"].get(f, 0); tp[f] += a["prev"].get(f, 0)
+    gmv_total = sum(s["gmv"] for s in skus.values())
+    total = {"cur": _ozads_metrics(tc), "prev": _ozads_metrics(tp),
+             "general_drr": round(sum(s["spent"] for s in skus.values() if s["gmv"]) / gmv_total * 100, 1) if gmv_total else None}
+    launches = [{"date": c["from"] or c["created"], "title": c["title"], "type": c["type"]}
+                for c in camp_list if c["new_in_period"]]
+    chart = []
+    d = d_start
+    while d <= d_end:
+        v = by_day.get(d.isoformat(), {"spent": 0.0, "orders_money": 0.0, "orders": 0})
+        chart.append({"date": d.isoformat(), "spent": round(v["spent"]), "orders_money": round(v["orders_money"]),
+                      "orders": v["orders"]})
+        d += timedelta(days=1)
+    return {"days": days, "period": [d_start.isoformat(), d_end.isoformat()],
+            "prev_period": [p_start.isoformat(), p_end.isoformat()],
+            "total": total, "brands": brand_list, "campaigns": camp_list, "skus": sku_list,
+            "chart": chart, "launches": launches,
+            "fetched_at": datetime.utcnow().strftime("%d.%m.%Y %H:%M UTC")}
+
+
+async def _ozads2_bg(days: int):
+    import snapshot as _snap
+    try:
+        res = await _build_ozads2(days)
+        res["built_ts"] = _time.time()
+        _OZADS2[days] = res
+        _OZADS2_STATE["error"] = ""
+        await asyncio.to_thread(_snap.save, f"ozads2_{days}", res)
+    except Exception as e:
+        _OZADS2_STATE["error"] = str(e)[:300]
+        _log.warning("ozads2: %s", e)
+    finally:
+        _OZADS2_STATE["building"].discard(days)
+
+
+@router.get("/ozads2")
+async def get_ozads2(days: int = Query(default=28, ge=7, le=90), refresh: bool = Query(default=False)):
+    """Реклама Ozon: итог и динамика к прошлому периоду, бренды, кампании (тип,
+    статус, дата запуска, бюджет, товары), товары, график расхода/выручки."""
+    import ozon_perf_client as pc
+    if not pc.configured():
+        return {"error": "Не заданы ключи Ozon Performance (OZON_PERF_CLIENT_ID / OZON_PERF_CLIENT_SECRET)."}
+    res = _OZADS2.get(days)
+    if res is None:
+        import snapshot as _snap
+        res = await asyncio.to_thread(_snap.load, f"ozads2_{days}", None)
+        if res:
+            _OZADS2[days] = res
+    stale = not res or refresh or _time.time() - (res or {}).get("built_ts", 0) > _OZADS2_TTL
+    if stale and days not in _OZADS2_STATE["building"]:
+        _OZADS2_STATE["building"].add(days)
+        _spawn(_ozads2_bg(days))
+    if not res:
+        return {"building": True, "error": _OZADS2_STATE["error"],
+                "message": "Собираю статистику рекламы Ozon по кампаниям и товарам — 1–3 минуты."}
+    return {**res, "refreshing": days in _OZADS2_STATE["building"], "error": _OZADS2_STATE["error"]}

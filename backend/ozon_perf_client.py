@@ -190,3 +190,102 @@ async def get_daily(date_from: str, date_to: str) -> list[dict]:
             "orders_money": _num(r.get("ordersMoney")),
         })
     return out
+
+
+# ── Отчёты по товарам (для разбора рекламы по брендам/SKU) ──────────────────
+# Проверено на живом API (11.2026):
+#  • POST /api/client/statistics/json {campaigns ≤10, dateFrom, dateTo, groupBy}
+#    → UUID; GET /api/client/statistics/{UUID} → state OK; GET
+#    /api/client/statistics/report?UUID= → {campId: {title, report: {rows, totals}}}.
+#    Строки: sku, title, price, views, clicks, ctr, toCart, avgBid, moneySpent,
+#    orders, ordersMoney, models, modelsMoney, drr, general_drr, product_gmv.
+#    Только кампании «за клики» (SKU); для SEARCH_PROMO — отказ.
+#  • POST /api/client/statistic/orders/generate {from, to} → UUID → CSV
+#    «Отчёт по заказам» (оплата за заказ): дата, SKU, Артикул, кол-во,
+#    стоимость продажи, ставка, расход.
+
+async def _wait_report(uuid: str, tries: int = 45) -> bool:
+    import asyncio
+    for _ in range(tries):
+        await asyncio.sleep(4)
+        st, meta = await api_get(f"/api/client/statistics/{uuid}")
+        state = meta.get("state") if isinstance(meta, dict) else None
+        if state == "OK":
+            return True
+        if state == "ERROR":
+            _log.warning("Ozon Perf report %s ERROR: %s", uuid, str(meta)[:200])
+            return False
+    return False
+
+
+async def sku_stats(campaign_ids: list[str], date_from: str, date_to: str) -> dict[str, list[dict]]:
+    """Статистика по товарам внутри кампаний «за клики». {campaign_id: [rows]}."""
+    out: dict[str, list[dict]] = {}
+    ids = [str(c) for c in campaign_ids]
+    for i in range(0, len(ids), 10):
+        batch = ids[i:i + 10]
+        st, data = await api_post("/api/client/statistics/json", {
+            "campaigns": batch, "dateFrom": date_from, "dateTo": date_to, "groupBy": "NO_GROUP_BY"})
+        uuid = data.get("UUID") if isinstance(data, dict) else None
+        if st != 200 or not uuid:
+            _log.warning("Ozon Perf sku stats: HTTP %s %s", st, str(data)[:200])
+            continue
+        if not await _wait_report(uuid):
+            continue
+        st, rep = await api_get("/api/client/statistics/report", {"UUID": uuid})
+        if st != 200 or not isinstance(rep, dict):
+            continue
+        for cid, v in rep.items():
+            rows = ((v or {}).get("report") or {}).get("rows") or []
+            out[str(cid)] = [{
+                "sku": str(r.get("sku") or ""), "title": r.get("title") or "",
+                "price": _num(r.get("price")), "views": int(_num(r.get("views"))),
+                "clicks": int(_num(r.get("clicks"))), "to_cart": int(_num(r.get("toCart"))),
+                "avg_bid": _num(r.get("avgBid")), "spent": _num(r.get("moneySpent")),
+                "orders": int(_num(r.get("orders"))), "orders_money": _num(r.get("ordersMoney")),
+                "models": int(_num(r.get("models"))), "models_money": _num(r.get("modelsMoney")),
+                "gmv": _num(r.get("product_gmv")),
+            } for r in rows if r.get("sku")]
+    return out
+
+
+async def orders_report(date_from: str, date_to: str) -> list[dict]:
+    """Заказы «оплата за заказ» (Продвижение в поиске) по товарам за период."""
+    import csv as _csv
+    import io
+    st, data = await api_post("/api/client/statistic/orders/generate", {
+        "from": f"{date_from}T00:00:00Z", "to": f"{date_to}T23:59:59Z"})
+    uuid = data.get("UUID") if isinstance(data, dict) else None
+    if st != 200 or not uuid or not await _wait_report(uuid):
+        _log.warning("Ozon Perf orders report: HTTP %s %s", st, str(data)[:200])
+        return []
+    async with httpx.AsyncClient(timeout=120) as c:
+        r = await c.get(f"{BASE}/api/client/statistics/report", headers=await _headers(),
+                        params={"UUID": uuid})
+    if r.status_code != 200:
+        return []
+    text = r.content.decode("utf-8-sig", errors="replace")
+    out, header = [], None
+    for row in _csv.reader(io.StringIO(text), delimiter=";"):
+        low = [c.strip().lower() for c in row]
+        if header is None:
+            if "sku" in low and any("расход" in c for c in low):
+                header = low
+            continue
+        if len(row) < len(header) or not row[0].strip() or row[0].lower().startswith("итог"):
+            continue
+        rec = dict(zip(header, row))
+        def g(*keys):
+            for k in keys:
+                for h, v in rec.items():
+                    if k in h:
+                        return v
+            return ""
+        d = g("дата")
+        out.append({
+            "date": "-".join(reversed(d.split("."))) if "." in d else d,
+            "sku": g("sku продвигаемого") or g("sku"), "art": g("артикул"),
+            "title": g("название"), "qty": int(_num(g("количество")) or 1),
+            "revenue": _num(g("стоимость продажи")), "spent": _num(g("расход")),
+        })
+    return out

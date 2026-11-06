@@ -128,6 +128,7 @@ function applyProfile() {
   });
   const hideItem = id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; };
   hideItem('navOps');
+  hideItem('ozSlots');
   const mps = _cab.marketplaces || [];
   if (!mps.includes('OZON')) hideItem('navOzon');
   if (!mps.includes('WB')) {
@@ -3823,19 +3824,161 @@ function renderFunnel() {
   wrap.innerHTML = html;
 }
 
-// ── Реклама Ozon (Performance) ────────────────────────────────────────────────
-let _ozAdsData = null;
+// ── Реклама Ozon (Performance) v2 ─────────────────────────────────────────────
+// Кампании с датами запуска, товары, бренды, динамика к прошлому периоду.
+let _ozAdsData = null, _ozAdsDays = 28, _ozAdsBrand = '', _ozAdsOpen = new Set(), _ozAdsSort = 'spent';
 async function loadOzAds(refresh) {
   const wrap = document.getElementById('toolsOzWrap');
   if (!wrap || _ozTool !== 'ads') return;
-  if (_ozAdsData && !refresh) { renderOzAds(); return; }
-  if (!_ozAdsData) wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>Загружаем рекламу Ozon…</div>';
+  if (_ozAdsData && _ozAdsData.days === _ozAdsDays && !refresh) { renderOzAds(); return; }
+  if (!_ozAdsData || _ozAdsData.days !== _ozAdsDays) wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>Загружаем рекламу Ozon…</div>';
   try {
-    _ozAdsData = await fetchJSON('/api/tools/ozads' + (refresh ? '?refresh=true' : ''), 120000);
+    const d = await fetchJSON(`/api/tools/ozads2?days=${_ozAdsDays}` + (refresh ? '&refresh=true' : ''), 120000);
+    if (d.building && !d.campaigns) {
+      wrap.innerHTML = `<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>${esc(d.message || 'Собираю статистику…')}${d.error ? `<div class="text-danger small mt-2">${esc(d.error)}</div>` : ''}</div>`;
+      setTimeout(() => { if (_ozTool === 'ads') loadOzAds(); }, 15000);
+      return;
+    }
+    if (d.error && !d.campaigns) { wrap.innerHTML = `<div class="alert alert-warning mt-2">${esc(d.error)}</div>`; return; }
+    _ozAdsData = d;
     renderOzAds();
+    if (d.refreshing) setTimeout(() => { if (_ozTool === 'ads') loadOzAds(); }, 30000);
   } catch (e) {
     wrap.innerHTML = `<div class="alert alert-danger mt-2">Ошибка: ${esc(e.message)}</div>`;
   }
+}
+function setOzAdsDays(n) { _ozAdsDays = n; _ozAdsData = null; loadOzAds(); }
+function setOzAdsBrand(b) { _ozAdsBrand = _ozAdsBrand === b ? '' : b; renderOzAds(); }
+function toggleOzCamp(id) { _ozAdsOpen.has(id) ? _ozAdsOpen.delete(id) : _ozAdsOpen.add(id); renderOzAds(); }
+function setOzAdsSort(k) { _ozAdsSort = k; renderOzAds(); }
+
+function _ozDelta(cur, prev, invert) {
+  if (prev == null || cur == null || !prev) return '';
+  const p = Math.round((cur - prev) / Math.abs(prev) * 100);
+  if (!p) return '<span class="text-secondary small">0%</span>';
+  const good = invert ? p < 0 : p > 0;
+  return `<span class="small" style="color:${good ? 'var(--pos)' : 'var(--neg)'}">${p > 0 ? '▲' : '▼'}${Math.abs(p)}%</span>`;
+}
+function _ozDrrDelta(cur, prev) {
+  if (cur == null || prev == null) return '';
+  const d = Math.round((cur - prev) * 10) / 10;
+  if (!d) return '';
+  return `<span class="small" style="color:${d < 0 ? 'var(--pos)' : 'var(--neg)'}">${d > 0 ? '+' : ''}${d} п.п.</span>`;
+}
+const _ozDate = s => s ? s.slice(8, 10) + '.' + s.slice(5, 7) + '.' + s.slice(2, 4) : '—';
+const _ozPct = v => v == null ? '—' : `<b style="color:${_drrColor(v)}">${v}%</b>`;
+
+function renderOzAds() {
+  if (_ozTool !== 'ads') return;
+  const wrap = document.getElementById('toolsOzWrap');
+  if (!wrap || !_ozAdsData) return;
+  const d = _ozAdsData, c = d.total.cur, p = d.total.prev;
+  const days = [7, 14, 28, 60, 90].map(n => `<button class="btn btn-sm ${n === _ozAdsDays ? 'btn-success' : 'btn-outline-secondary'}" onclick="setOzAdsDays(${n})">${n} дн.</button>`).join('');
+  const tile = (lab, val, sub) => `<div class="col-6 col-md-4 col-xl-2"><div class="p-3 h-100" style="background:var(--surface-2);border:1px solid var(--border);border-radius:12px">
+    <div class="small text-secondary">${lab}</div><div style="font-size:1.35rem;font-weight:700">${val}</div><div class="small">${sub || ''}</div></div></div>`;
+  const kpis = `<div class="row g-2 mb-3">
+    ${tile('Расход на рекламу', fmtRub(c.spent), _ozDelta(c.spent, p.spent, true) + ` <span class="text-secondary">было ${fmtRub(p.spent)}</span>`)}
+    ${tile('Выручка с рекламы', fmtRub(c.orders_money), _ozDelta(c.orders_money, p.orders_money) + ` <span class="text-secondary">было ${fmtRub(p.orders_money)}</span>`)}
+    ${tile('ДРР рекламы', _ozPct(c.drr), _ozDrrDelta(c.drr, p.drr) + ` <span class="text-secondary">было ${p.drr == null ? '—' : p.drr + '%'}</span>`)}
+    ${tile('Общий ДРР товаров', _ozPct(d.total.general_drr), '<span class="text-secondary">расход ÷ все продажи рекламируемых товаров</span>')}
+    ${tile('Заказы с рекламы', fmt(c.orders), _ozDelta(c.orders, p.orders) + ` <span class="text-secondary">цена заказа ${fmtRub(c.cpo)}</span>`)}
+    ${tile('CTR · цена клика', `${c.ctr}% · ${c.cpc} ₽`, `<span class="text-secondary">было ${p.ctr}% · ${p.cpc} ₽</span>`)}
+  </div>`;
+
+  // бренды
+  const brands = d.brands || [];
+  const brandRows = brands.map(b => `<tr style="cursor:pointer;${_ozAdsBrand === b.brand ? 'background:var(--brand-soft)' : ''}" onclick="setOzAdsBrand('${esc(b.brand).replace(/'/g, "\\'")}')">
+    <td class="text-start"><b>${esc(b.brand)}</b> <span class="text-secondary small">${b.skus} тов.</span></td>
+    <td>${fmtRub(b.spent)}</td><td>${b.share}%</td><td>${fmtRub(b.orders_money)}</td><td>${fmt(b.orders)}</td>
+    <td>${_ozPct(b.drr)}</td><td>${_ozPct(b.general_drr)}</td><td>${b.ctr}%</td><td>${fmtRub(b.cpo)}</td></tr>`).join('');
+  const brandTbl = brands.length ? `<div class="mb-3" style="background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:12px 14px">
+    <div class="fw-bold mb-2">По брендам <span class="text-secondary small fw-normal">— нажмите на бренд, чтобы отфильтровать кампании и товары</span></div>
+    <div class="table-responsive"><table class="table table-sm mb-0 align-middle" style="font-size:.85rem"><thead><tr class="text-secondary small">
+    <th class="text-start">Бренд</th><th>Расход</th><th>Доля</th><th>Выручка с рекламы</th><th>Заказы</th><th>ДРР</th><th>Общий ДРР</th><th>CTR</th><th>Цена заказа</th></tr></thead>
+    <tbody>${brandRows}</tbody></table></div></div>` : '';
+
+  // кампании
+  let camps = (d.campaigns || []).filter(x => !_ozAdsBrand || (x.brands || []).includes(_ozAdsBrand));
+  const sk = _ozAdsSort;
+  camps = [...camps].sort((a, b) => sk === 'drr' ? ((b.cur.drr ?? -1) - (a.cur.drr ?? -1))
+    : sk === 'launch' ? ((b.from || b.created) > (a.from || a.created) ? 1 : -1)
+    : sk === 'orders' ? (b.cur.orders - a.cur.orders) : (b.cur.spent - a.cur.spent));
+  const stateCls = st => st === 'RUNNING' || st === 'ACTIVE' ? 'var(--pos)' : st === 'ARCHIVED' || st === 'FINISHED' ? 'var(--muted)' : 'var(--warn-c)';
+  const campRows = camps.map(x => {
+    const open = _ozAdsOpen.has(x.id);
+    const budget = x.daily_budget ? `${fmtRub(x.daily_budget)}/день` : x.weekly_budget ? `${fmtRub(x.weekly_budget)}/нед` : '—';
+    let row = `<tr style="cursor:pointer" onclick="toggleOzCamp('${x.id}')">
+      <td class="text-start" style="max-width:320px"><span style="color:var(--gold)">${x.skus && x.skus.length ? (open ? '▾' : '▸') : ' '}</span> <b>${esc(x.title)}</b>
+        <div class="small text-secondary">${esc(x.type)}${x.payment ? ' · ' + x.payment : ''}${(x.brands || []).length ? ' · ' + esc(x.brands.join(', ')) : ''}</div></td>
+      <td><span style="color:${stateCls(x.state_code)}">●</span> ${esc(x.state)}</td>
+      <td style="white-space:nowrap">${_ozDate(x.from || x.created)}${x.new_in_period ? ' <span class="badge" style="background:var(--gold-soft);color:var(--gold)">новая</span>' : ''}
+        <div class="small text-secondary">${x.running_days != null ? x.running_days + ' дн.' : ''}${x.to ? ' · до ' + _ozDate(x.to) : ''}</div></td>
+      <td>${budget}</td>
+      <td>${fmtRub(x.cur.spent)}<div>${_ozDelta(x.cur.spent, x.prev.spent, true)}</div></td>
+      <td>${fmtRub(x.cur.orders_money)}<div>${_ozDelta(x.cur.orders_money, x.prev.orders_money)}</div></td>
+      <td>${fmt(x.cur.orders)}</td>
+      <td>${_ozPct(x.cur.drr)}<div>${_ozDrrDelta(x.cur.drr, x.prev.drr)}</div></td>
+      <td>${x.cur.ctr}%</td><td>${x.cur.cpc} ₽</td><td>${fmtRub(x.cur.cpo)}</td></tr>`;
+    if (open && x.skus && x.skus.length) {
+      row += x.skus.filter(r => !_ozAdsBrand || r.brand === _ozAdsBrand).map(r => `<tr style="background:var(--surface-2);font-size:.8rem">
+        <td class="text-start ps-4" colspan="3"><span class="text-secondary">${esc(r.art)}</span> ${esc(r.title)} <span class="text-secondary">· ${esc(r.brand)}</span></td>
+        <td class="text-secondary">ставка ${r.avg_bid} ₽</td><td>${fmtRub(r.spent)}</td><td>${fmtRub(r.orders_money)}</td><td>${fmt(r.orders)}</td>
+        <td>${_ozPct(r.drr)}</td><td>${r.ctr}%</td><td>${r.cpc} ₽</td><td>${fmtRub(r.cpo)}</td></tr>`).join('');
+    }
+    return row;
+  }).join('');
+  const sortBtn = (k, lab) => `<button class="btn btn-sm ${_ozAdsSort === k ? 'btn-success' : 'btn-outline-secondary'}" onclick="setOzAdsSort('${k}')">${lab}</button>`;
+  const campTbl = `<div class="mb-3" style="background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:12px 14px">
+    <div class="d-flex flex-wrap gap-2 align-items-center mb-2"><div class="fw-bold me-2">Кампании${_ozAdsBrand ? ' · ' + esc(_ozAdsBrand) : ''}</div>
+      <span class="small text-secondary">сортировка:</span>${sortBtn('spent', 'расход')}${sortBtn('drr', 'ДРР')}${sortBtn('orders', 'заказы')}${sortBtn('launch', 'дата запуска')}
+      <span class="small text-secondary ms-auto">▸ — нажмите на кампанию, чтобы увидеть товары · стрелки — к прошлым ${d.days} дн.</span></div>
+    <div class="table-responsive"><table class="table table-sm mb-0 align-middle" style="font-size:.85rem"><thead><tr class="text-secondary small">
+      <th class="text-start">Кампания</th><th>Статус</th><th>Запуск</th><th>Бюджет</th><th>Расход</th><th>Выручка</th><th>Заказы</th><th>ДРР</th><th>CTR</th><th>Клик</th><th>Цена заказа</th></tr></thead>
+      <tbody>${campRows || '<tr><td colspan="11" class="text-secondary">Нет кампаний с расходом за период</td></tr>'}</tbody></table></div></div>`;
+
+  // товары
+  const skus = (d.skus || []).filter(r => !_ozAdsBrand || r.brand === _ozAdsBrand).slice(0, 100);
+  const skuTbl = `<div class="mb-3" style="background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:12px 14px">
+    <div class="fw-bold mb-2">Товары в рекламе${_ozAdsBrand ? ' · ' + esc(_ozAdsBrand) : ''} <span class="text-secondary small fw-normal">топ-100 по расходу · общий ДРР — расход ÷ все продажи товара (реклама + органика)</span></div>
+    <div class="table-responsive" style="max-height:520px"><table class="table table-sm mb-0 align-middle" style="font-size:.82rem"><thead style="position:sticky;top:0;background:var(--surface-2)"><tr class="text-secondary small">
+      <th class="text-start">Товар</th><th>Бренд</th><th>Расход</th><th>Показы</th><th>Клики</th><th>В корзину</th><th>Заказы</th><th>Выручка</th><th>ДРР</th><th>Все продажи</th><th>Общий ДРР</th></tr></thead>
+      <tbody>${skus.map(r => `<tr><td class="text-start" style="max-width:340px"><span class="text-secondary">${esc(r.art)}</span> ${esc(r.title)}</td><td>${esc(r.brand)}</td>
+        <td>${fmtRub(r.spent)}</td><td>${fmt(r.views)}</td><td>${fmt(r.clicks)}</td><td>${fmt(r.to_cart)}</td><td>${fmt(r.orders)}</td><td>${fmtRub(r.orders_money)}</td>
+        <td>${_ozPct(r.drr)}</td><td>${r.gmv ? fmtRub(r.gmv) : '—'}</td><td>${_ozPct(r.general_drr)}</td></tr>`).join('')}</tbody></table></div></div>`;
+
+  const launches = (d.launches || []);
+  wrap.innerHTML = `
+    <div class="d-flex flex-wrap gap-2 align-items-center mb-3">${days}
+      <span class="small text-secondary ms-2">${_ozDate(d.period[0])} — ${_ozDate(d.period[1])} · сравнение с ${_ozDate(d.prev_period[0])} — ${_ozDate(d.prev_period[1])}</span>
+      <span class="small text-secondary ms-auto">обновлено ${esc(d.fetched_at || '')}${d.refreshing ? ' · обновляется…' : ''}</span></div>
+    ${kpis}
+    <div class="mb-3" style="background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:12px 14px">
+      <div class="fw-bold mb-2">Расход и выручка с рекламы по дням <span class="text-secondary small fw-normal">${launches.length ? '· пунктир — запуск кампании' : ''}</span></div>
+      <div style="height:260px"><canvas id="ozAdsChart"></canvas></div>
+      ${launches.length ? `<div class="small text-secondary mt-2">Запуски за период: ${launches.map(l => `${_ozDate(l.date)} — ${esc(l.title)}`).join(' · ')}</div>` : ''}</div>
+    ${brandTbl}${campTbl}${skuTbl}`;
+
+  const ch = d.chart || [];
+  const launchIdx = new Set(launches.map(l => ch.findIndex(x => x.date === l.date)).filter(i => i >= 0));
+  const css = getComputedStyle(document.documentElement);
+  if (charts.ozAds) charts.ozAds.destroy();
+  charts.ozAds = new Chart(document.getElementById('ozAdsChart').getContext('2d'), {
+    type: 'bar',
+    data: { labels: ch.map(x => _ozDate(x.date).slice(0, 5)), datasets: [
+      { label: 'Расход', data: ch.map(x => x.spent), backgroundColor: '#f59e0b', yAxisID: 'y' },
+      { label: 'Выручка с рекламы', data: ch.map(x => x.orders_money), type: 'line', borderColor: '#22c55e', backgroundColor: '#22c55e', tension: .3, pointRadius: 0, yAxisID: 'y' },
+      { label: 'ДРР, %', data: ch.map(x => x.orders_money ? Math.round(x.spent / x.orders_money * 1000) / 10 : null), type: 'line', borderColor: '#60a5fa', borderDash: [4, 4], pointRadius: 0, yAxisID: 'y2' }] },
+    options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { position: 'bottom', labels: { color: css.getPropertyValue('--ink-2') } } },
+      scales: { x: { ticks: { color: css.getPropertyValue('--muted') }, grid: { display: false } },
+        y: { beginAtZero: true, ticks: { color: css.getPropertyValue('--muted'), callback: v => fmt(v) } },
+        y2: { position: 'right', beginAtZero: true, grid: { display: false }, ticks: { color: '#60a5fa', callback: v => v + '%' } } } },
+    plugins: [{ id: 'launches', afterDraw(chart) {
+      const { ctx, chartArea, scales } = chart;
+      launchIdx.forEach(i => { const x = scales.x.getPixelForValue(i);
+        ctx.save(); ctx.strokeStyle = '#c9a84c'; ctx.setLineDash([4, 4]); ctx.beginPath(); ctx.moveTo(x, chartArea.top); ctx.lineTo(x, chartArea.bottom); ctx.stroke(); ctx.restore(); });
+    } }],
+  });
 }
 
 function _drrColor(drr) {
@@ -3843,7 +3986,7 @@ function _drrColor(drr) {
   return drr <= 10 ? 'var(--pos)' : drr <= 20 ? 'var(--warn-c)' : 'var(--neg)';
 }
 
-function renderOzAds() {
+function renderOzAdsLegacy() {
   if (_ozTool !== 'ads') return;
   const wrap = document.getElementById('toolsOzWrap');
   if (!wrap || !_ozAdsData) return;
