@@ -439,6 +439,8 @@ app.include_router(reviews.router)
 app.include_router(finance.router)
 app.include_router(tools.router)
 app.include_router(docs.router)
+from routers import promo as _promo
+app.include_router(_promo.router)
 from routers import wms as _wms
 app.include_router(_wms.router)
 from routers import landing as _landing

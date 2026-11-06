@@ -66,6 +66,7 @@
       <div class="mp-menu-drop">
         <a href="#" onclick="goNavTool('tools','margin','navAnalytics');return false">Калькулятор маржи</a>
         <div class="mp-drop-sep"></div>
+        <a href="#" onclick="goNav('promo','navAnalytics');return false">Календарь акций</a>
         <a href="#" onclick="goNav('salesan','navAnalytics');return false">Заказы</a>
         <a href="#" id="navFinance" onclick="goNav('finance','navAnalytics');return false">Финансы</a>
         <a href="#" onclick="goNav('unit','navAnalytics');return false">Юнитка</a>
@@ -513,6 +514,15 @@
   </div><!-- /pane-toolsoz -->
 
   <!-- ── Юнит-экономика WB ── -->
+  <div id="pane-promo" style="display:none">
+    <div class="d-flex gap-2 mb-3 flex-wrap align-items-center">
+      <h5 class="mb-0 me-2">Календарь акций</h5>
+      <span id="promoInfo" class="text-secondary small"></span>
+      <button class="btn btn-sm btn-outline-secondary ms-auto" onclick="loadPromo(true)"><i class="bi bi-arrow-clockwise"></i> Обновить</button>
+    </div>
+    <div id="promoWrap"><div class="text-center text-secondary py-4"><span class="spinner-border"></span></div></div>
+  </div>
+
   <div id="pane-unit" style="display:none">
     <div class="d-flex gap-2 mb-3 flex-wrap align-items-center">
       <div id="unitMpWB" class="mp-selector-bloc active" style="--mp-color:#c026d3" onclick="setUnitMp('WB')">
@@ -549,6 +559,6 @@
 
 <script src="vendor/bootstrap.bundle.min.js"></script>
 <script src="vendor/chart.umd.min.js"></script>
-<script src="app.js?v=251"></script>
+<script src="app.js?v=252"></script>
 </body>
 </html>

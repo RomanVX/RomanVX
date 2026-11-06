@@ -25,7 +25,7 @@ document.addEventListener('DOMContentLoaded', _initThemeBtn);
 const API = '';
 let charts = {};
 let sortState = {};
-const dirty = { salesan: true, stocks: true, reviews: true, finance: true, unit: true, tools: true, toolsoz: true, docs: true, fbs: true, dims: true };
+const dirty = { salesan: true, stocks: true, reviews: true, finance: true, unit: true, tools: true, toolsoz: true, docs: true, fbs: true, dims: true, promo: true };
 let _advertData = [];
 let currentTab = 'finance';
 let prodAllData = [];
@@ -309,7 +309,7 @@ function goNavTool(tab, tool, navId) {
 function switchTab(name, linkEl) {
   document.querySelectorAll('#mainTabs .nav-link').forEach(a => a.classList.remove('active'));
   if (linkEl) linkEl.classList.add('active');
-  ['salesan', 'stocks', 'reviews', 'finance', 'unit', 'tools', 'toolsoz', 'docs', 'fbs', 'dims'].forEach(t => {
+  ['salesan', 'stocks', 'reviews', 'finance', 'unit', 'tools', 'toolsoz', 'docs', 'fbs', 'dims', 'promo'].forEach(t => {
     const el = document.getElementById('pane-' + t);
     if (el) el.style.display = t === name ? 'block' : 'none';
   });
@@ -318,7 +318,7 @@ function switchTab(name, linkEl) {
     dirty[name] = false;
     ({ salesan: loadSalesAnalytics, stocks: loadStocks,
        reviews: loadReviews, finance: loadFinance, tools: loadTools, toolsoz: loadOzTool, docs: loadDocs,
-       unit: loadUnitEconomics, fbs: loadFbs, dims: loadDims })[name]();
+       unit: loadUnitEconomics, fbs: loadFbs, dims: loadDims, promo: loadPromo })[name]();
   }
 }
 
@@ -6376,4 +6376,113 @@ async function fbsImportStocks(inp) {
       (r.pushed && r.pushed.pushed ? `\nСинк по складам: ${JSON.stringify(r.pushed.pushed)}` : ''));
     loadFbs(true);
   } catch (e) { alert('Ошибка: ' + e.message); }
+}
+
+
+// ── Календарь акций Ozon / WB с рекомендациями ──────────────────────────────
+let _promo = null, _promoOpen = null, _promoItems = null, _promoRec = '', _promoBrand = '';
+const _PROMO_REC = { yes: ['Участвовать', 'var(--pos)'], clear: ['Распродать залежи', '#60a5fa'],
+                     maybe: ['Можно', 'var(--warn-c)'], no: ['Не участвовать', 'var(--neg)'] };
+const _pd = s => s ? s.slice(8, 10) + '.' + s.slice(5, 7) : '—';
+
+async function loadPromo(refresh) {
+  const wrap = document.getElementById('promoWrap');
+  if (!wrap) return;
+  try {
+    const d = await fetchJSON('/api/promo/calendar' + (refresh ? '?refresh=true' : ''), 60000);
+    if (!d.actions) {
+      wrap.innerHTML = `<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>${esc(d.progress || 'Собираю акции площадок…')}${d.error ? `<div class="text-danger small mt-2">${esc(d.error)}</div>` : ''}</div>`;
+      setTimeout(() => { if (currentTab === 'promo') loadPromo(); }, 8000);
+      return;
+    }
+    _promo = d;
+    renderPromo();
+    if (d.building) setTimeout(() => { if (currentTab === 'promo') loadPromo(); }, 10000);
+  } catch (e) { wrap.innerHTML = `<div class="alert alert-danger">Ошибка: ${esc(e.message)}</div>`; }
+}
+
+function renderPromo() {
+  const wrap = document.getElementById('promoWrap');
+  const d = _promo; if (!wrap || !d) return;
+  document.getElementById('promoInfo').textContent = `обновлено ${d.built}${d.building ? ' · обновляется: ' + (d.progress || '') : ''}`;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const t0 = new Date(today.getTime() - 7 * 864e5), t1 = new Date(today.getTime() + 45 * 864e5), span = t1 - t0;
+  const pos = s => { const t = new Date(s + 'T00:00:00'); return Math.max(0, Math.min(100, (t - t0) / span * 100)); };
+  const acts = d.actions.filter(a => a.end && new Date(a.end + 'T23:59:59') >= today);
+  const status = a => { const s = new Date(a.start + 'T00:00:00'); const days = Math.round((s - today) / 864e5);
+    return days > 0 ? `<span style="color:var(--warn-c)">через ${days} дн.</span>` : '<span style="color:var(--pos)">идёт</span>'; };
+  // шкала: недели
+  const ticks = []; for (let t = new Date(t0); t <= t1; t = new Date(t.getTime() + 7 * 864e5)) ticks.push(t);
+  const scale = `<div style="position:relative;height:18px;margin-left:34%;font-size:.7rem" class="text-secondary">${ticks.map(t => `<span style="position:absolute;left:${(t - t0) / span * 100}%">${String(t.getDate()).padStart(2, '0')}.${String(t.getMonth() + 1).padStart(2, '0')}</span>`).join('')}
+    <span style="position:absolute;left:${(today - t0) / span * 100}%;top:14px;height:${acts.length * 34 + 6}px;border-left:2px solid var(--brand);opacity:.6"></span></div>`;
+  const rows = acts.map(a => {
+    const l = pos(a.start), r = pos(a.end), col = a.mp === 'OZON' ? '#3b82f6' : '#c026d3';
+    const c = a.counts || {};
+    const chips = Object.entries(_PROMO_REC).filter(([k]) => c[k]).map(([k, [lab, color]]) => `<span class="small" style="color:${color}">● ${c[k]}</span>`).join(' ');
+    return `<div class="d-flex align-items-center" style="height:34px;cursor:pointer;border-bottom:1px solid var(--border)" onclick="openPromo('${a.mp}','${a.id}')">
+      <div style="width:34%;padding-right:8px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:.82rem">
+        <b style="color:${col}">${a.mp === 'OZON' ? 'Ozon' : 'WB'}</b> ${esc(a.title)}</div>
+      <div style="position:relative;flex:1;height:18px">
+        <div title="${esc(a.title)} ${_pd(a.start)}–${_pd(a.end)}" style="position:absolute;left:${l}%;width:${Math.max(r - l, 1)}%;height:100%;background:${col};opacity:${_promoOpen && _promoOpen.id === a.id ? 1 : .55};border-radius:5px"></div>
+        <span class="small" style="position:absolute;left:${Math.min(l + 1, 70)}%;top:0;color:#fff;font-size:.7rem;white-space:nowrap">${_pd(a.start)}–${_pd(a.end)} ${chips}</span></div></div>`;
+  }).join('');
+  const cards = acts.map(a => {
+    const c = a.counts || {};
+    const recs = Object.entries(_PROMO_REC).map(([k, [lab, color]]) => `<span class="badge me-1" style="background:transparent;border:1px solid ${color};color:${color}">${lab}: ${c[k] || 0}</span>`).join('');
+    return `<tr style="cursor:pointer" onclick="openPromo('${a.mp}','${a.id}')"><td class="text-start"><b>${esc(a.title)}</b><div class="small text-secondary">${a.mp === 'OZON' ? 'Ozon' : 'WB'} · ${esc(a.type)}</div></td>
+      <td style="white-space:nowrap">${_pd(a.start)} — ${_pd(a.end)}<div class="small">${status(a)}</div></td>
+      <td class="small">${(a.auto_add_dates || []).length ? `<span style="color:var(--warn-c)">автодобавление ${esc(a.auto_add_dates.map(x => _pd(x.slice(0, 10)) + ' ' + x.slice(11, 16)).join(', '))}</span>` : '—'}</td>
+      <td>${fmt(a.participating)} / ${fmt(a.candidates)}</td><td class="text-start">${recs}</td></tr>`;
+  }).join('');
+  const autoWarn = d.ozon_auto_add_on ? `<div class="alert alert-warning py-2 small">На Ozon у <b>${fmt(d.ozon_auto_add_on)}</b> товаров включено <b>автодобавление в акции</b>: Ozon сам добавляет их в акции в даты автодобавления (колонка ниже). Если товар не должен идти со скидкой — уберите его из акции до этой даты или отключите автодобавление в карточке товара.</div>` : '';
+  wrap.innerHTML = `${(d.errors || []).length ? `<div class="alert alert-warning py-2 small">${esc(d.errors.join('; '))}</div>` : ''}${autoWarn}
+    <div class="mb-3" style="background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:12px 14px">
+      <div class="fw-bold mb-2">Ближайшие 6 недель <span class="text-secondary small fw-normal">— нажмите на акцию, чтобы увидеть товары и рекомендации</span></div>
+      ${acts.length ? scale + rows : '<div class="text-secondary">Активных и будущих акций нет</div>'}</div>
+    <div class="mb-3" style="background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:12px 14px">
+      <div class="table-responsive"><table class="table table-sm mb-0 align-middle" style="font-size:.85rem"><thead><tr class="text-secondary small">
+      <th class="text-start">Акция</th><th>Даты</th><th>Дедлайн</th><th>Участвуют / можно</th><th class="text-start">Рекомендации по товарам</th></tr></thead><tbody>${cards}</tbody></table></div></div>
+    <div id="promoDetail"></div>`;
+  if (_promoOpen) renderPromoDetail();
+}
+
+async function openPromo(mp, id) {
+  _promoOpen = { mp, id }; _promoItems = null; _promoRec = ''; _promoBrand = '';
+  renderPromo();
+  const box = document.getElementById('promoDetail');
+  box.innerHTML = '<div class="text-center text-secondary py-3"><span class="spinner-border me-2"></span>Загружаю товары…</div>';
+  try { _promoItems = await fetchJSON(`/api/promo/action?mp=${mp}&id=${id}`, 60000); renderPromoDetail(); box.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+  catch (e) { box.innerHTML = `<div class="alert alert-danger">${esc(e.message)}</div>`; }
+}
+function setPromoRec(k) { _promoRec = _promoRec === k ? '' : k; renderPromoDetail(); }
+function setPromoBrand(b) { _promoBrand = b; renderPromoDetail(); }
+
+function renderPromoDetail() {
+  const box = document.getElementById('promoDetail');
+  const a = _promoItems; if (!box || !a || !a.items) return;
+  const brands = [...new Set(a.items.map(i => i.brand).filter(Boolean))].sort();
+  let items = a.items.filter(i => (!_promoRec || i.rec === _promoRec) && (!_promoBrand || i.brand === _promoBrand));
+  const order = { yes: 0, clear: 1, maybe: 2, no: 3 };
+  items = items.sort((x, y) => (order[x.rec] - order[y.rec]) || ((y.stock || 0) - (x.stock || 0))).slice(0, 500);
+  const recBtns = Object.entries(_PROMO_REC).map(([k, [lab, color]]) => {
+    const n = a.items.filter(i => i.rec === k && (!_promoBrand || i.brand === _promoBrand)).length;
+    return `<button class="btn btn-sm" style="border:1px solid ${color};color:${_promoRec === k ? '#fff' : color};background:${_promoRec === k ? color : 'transparent'}" onclick="setPromoRec('${k}')">${lab} · ${n}</button>`;
+  }).join('');
+  const brandSel = brands.length > 1 ? `<select class="form-select form-select-sm" style="width:auto" onchange="setPromoBrand(this.value)"><option value="">Все бренды</option>${brands.map(b => `<option ${b === _promoBrand ? 'selected' : ''}>${esc(b)}</option>`).join('')}</select>` : '';
+  const pill = i => { const [lab, color] = _PROMO_REC[i.rec]; return `<b style="color:${color}">${lab}</b><div class="small text-secondary">${esc(i.why)}</div>`; };
+  box.innerHTML = `<div style="background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:12px 14px">
+    <div class="d-flex flex-wrap gap-2 align-items-center mb-2"><div class="fw-bold me-2">${a.mp === 'OZON' ? 'Ozon' : 'WB'} · ${esc(a.title)} <span class="text-secondary fw-normal small">${_pd(a.start)} — ${_pd(a.end)}</span></div>
+      ${recBtns}${brandSel}
+      <a class="btn btn-sm btn-success ms-auto" href="${API}/api/promo/export.xlsx?mp=${a.mp}&id=${a.id}"><i class="bi bi-file-earmark-excel"></i> Excel для клиента</a></div>
+    ${a.description ? `<div class="small text-secondary mb-2" style="max-width:1100px">${esc(a.description)}</div>` : ''}
+    ${(a.advantages || []).length ? `<div class="small mb-2">Что даёт: ${esc(a.advantages.join(' · '))}</div>` : ''}
+    <div class="table-responsive" style="max-height:640px"><table class="table table-sm mb-0 align-middle" style="font-size:.82rem"><thead style="position:sticky;top:0;background:var(--surface-2)"><tr class="text-secondary small">
+      <th class="text-start">Товар</th><th class="text-start">Рекомендация</th><th>Цена</th><th>В акции</th><th>Скидка</th><th>Остаток</th><th>Продаж/день</th><th>Запас, дн.</th><th>Себест.</th><th>К выплате</th><th>Прибыль/шт</th><th>Маржа</th><th>Уже участвует</th></tr></thead>
+      <tbody>${items.map(i => `<tr><td class="text-start" style="max-width:320px"><span class="text-secondary">${esc(i.art)}</span> ${esc(i.name)}<div class="small text-secondary">${esc(i.brand)}${i.auto_add ? ' · <span style="color:var(--warn-c)">автодобавление вкл.</span>' : ''}</div></td>
+        <td class="text-start" style="max-width:260px">${pill(i)}</td><td>${fmtRub(i.price)}</td><td>${i.action_price ? fmtRub(i.action_price) : '—'}</td>
+        <td>${i.discount != null ? i.discount + '%' : '—'}</td><td>${fmt(i.stock)}</td><td>${i.per_day ?? 0}</td><td>${i.stock_days == null ? '—' : i.stock_days >= 999 ? '∞' : i.stock_days}</td>
+        <td>${i.cost ? fmtRub(i.cost) : '—'}</td><td>${i.payout != null ? fmtRub(i.payout) : '—'}</td>
+        <td>${i.profit != null ? `<b style="color:${i.profit < 0 ? 'var(--neg)' : 'var(--pos)'}">${fmtRub(i.profit)}</b>` : '—'}</td><td>${i.margin != null ? i.margin + '%' : '—'}</td>
+        <td>${i.in_action ? '✓' : ''}</td></tr>`).join('') || '<tr><td colspan="13" class="text-secondary">Нет товаров по фильтру</td></tr>'}</tbody></table></div>
+    <div class="small text-secondary mt-2">Себестоимость — из загруженной в дашборд или из карточки Ozon (поле «себестоимость»). Без неё прибыль и маржа не считаются, рекомендация строится по остатку, скорости продаж и глубине скидки. «К выплате» — цена в акции минус комиссия Ozon FBO, логистика и эквайринг.</div></div>`;
 }
