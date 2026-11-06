@@ -32,6 +32,15 @@
         header_up Host mpfit-dashboard.onrender.com
     }
 }
+(render_tl) {
+    reverse_proxy 127.0.0.1:10443 {
+        transport http {
+            tls
+            tls_server_name tl-dashboard-huqh.onrender.com
+        }
+        header_up Host tl-dashboard-huqh.onrender.com
+    }
+}
 
 marketpartners.ru, www.marketpartners.ru {
     encode gzip
@@ -74,4 +83,7 @@ biomed.marketpartners.ru {
 }
 fk.marketpartners.ru {
     import render_fk
+}
+tl.marketpartners.ru {
+    import render_tl
 }
