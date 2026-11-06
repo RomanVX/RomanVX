@@ -201,6 +201,7 @@ async def _build_ozon() -> list[dict]:
                 "stock": stock, "per_day": per_day, "cost": round(cost) if cost else None,
                 "payout": round(payout) if payout is not None else None,
                 "auto_add": pr.get("auto_add"), "auto_action": pr.get("auto_action"),
+                "commission_pct": pr.get("commission_pct"),
                 "rec": code, "rec_text": REC[code], "why": why, **eco,
             })
         counts = {k: sum(1 for i in items if i["rec"] == k) for k in REC}
@@ -371,7 +372,11 @@ async def calendar(refresh: bool = Query(default=False)):
     d = _state["data"]
     if not d:
         return {"building": True, "progress": _state["progress"], "error": _state["error"]}
-    acts = [{k: v for k, v in a.items() if k != "items"} for a in d["actions"]]
+    acts = []
+    ads_by_mp = {mp: _ad_map(mp) for mp in ("OZON", "WB")}
+    for a in d["actions"]:
+        e = _with_drr(a, ads_by_mp[a["mp"]][0])
+        acts.append({k: v for k, v in e.items() if k != "items"})
     auto_add = None
     for a in d["actions"]:
         if a["mp"] == "OZON" and a["items"]:
@@ -381,7 +386,90 @@ async def calendar(refresh: bool = Query(default=False)):
             auto_add = (auto_add or {}) | seen
     return {"actions": acts, "built": d["built"], "errors": d.get("errors") or [],
             "building": _state["building"], "progress": _state["progress"],
-            "ozon_auto_add_on": sum(1 for v in (auto_add or {}).values() if v)}
+            "ozon_auto_add_on": sum(1 for v in (auto_add or {}).values() if v),
+            "ozon_ads": ads_by_mp["OZON"][1]}
+
+
+# ── Акция как рекламная кампания: ДРР скидки против ДРР рекламы ─────────────
+# Скидка для входа в акцию — это деньги, которые мы «тратим» с каждой продажи,
+# как ставку в рекламе. ДРР акции = скидка в рублях ÷ цена в акции (выручка
+# с продажи) — та же формула, что ДРР рекламы (расход ÷ выручка с рекламы).
+# «С учётом комиссии»: со скидки Ozon берёт меньше комиссии, поэтому реальная
+# потеря выплаты = скидка × (1 − комиссия%).
+
+def _ad_map(mp: str) -> tuple[dict, dict]:
+    """art → ДРР рекламы товара (Ozon Performance, последние 28 дн.) и итог кабинета."""
+    if mp != "OZON":
+        return {}, {}
+    try:
+        from routers import tools as _t
+        res = _t._OZADS2.get(28) or next(iter(_t._OZADS2.values()), None)
+        if not res:
+            import snapshot
+            res = snapshot.load("ozads2_28", None)
+        if not res:
+            # реклама ещё не собиралась — запускаем сборку, к следующему открытию будет
+            import ozon_perf_client as _pc
+            if _pc.configured() and 28 not in _t._OZADS2_STATE["building"]:
+                _t._OZADS2_STATE["building"].add(28)
+                _t._spawn(_t._ozads2_bg(28))
+            return {}, {}
+        m = {}
+        for r in res.get("skus") or []:
+            a = m.setdefault(r["art"], {"spent": 0.0, "money": 0.0, "gmv": 0.0})
+            a["spent"] += r.get("spent") or 0
+            a["money"] += r.get("orders_money") or 0
+            a["gmv"] = max(a["gmv"], r.get("gmv") or 0)
+        out = {art: {"ad_drr": round(v["spent"] / v["money"] * 100, 1) if v["money"] else None,
+                     "ad_general_drr": round(v["spent"] / v["gmv"] * 100, 1) if v["gmv"] else None,
+                     "ad_spent": round(v["spent"])} for art, v in m.items()}
+        return out, {"drr": (res.get("total") or {}).get("cur", {}).get("drr"),
+                     "period": res.get("period")}
+    except Exception as e:
+        _log.warning("promo ad map: %s", e)
+        return {}, {}
+
+
+def _with_drr(a: dict, ads: dict) -> dict:
+    """Добавляет к товарам акции ДРР скидки и сравнение с рекламой, к акции — итог."""
+    items = []
+    sw_disc = sw_rev = sw_net = 0.0
+    ad_spent = ad_money = 0.0
+    for i in a.get("items") or []:
+        i = dict(i)
+        price, ap = i.get("price") or 0, i.get("action_price") or 0
+        disc_rub = price - ap if price and ap and price > ap else 0
+        i["discount_rub"] = round(disc_rub) if ap else None
+        i["promo_drr"] = round(disc_rub / ap * 100, 1) if ap else None
+        comm = i.get("commission_pct")
+        i["promo_drr_net"] = round(disc_rub * (1 - comm / 100) / ap * 100, 1) if ap and comm is not None else None
+        ad = ads.get(i["art"]) or {}
+        i["ad_drr"], i["ad_general_drr"], i["ad_spent"] = ad.get("ad_drr"), ad.get("ad_general_drr"), ad.get("ad_spent")
+        if i["promo_drr"] is None:
+            i["vs_ad"] = ""
+        elif i["ad_drr"] is None:
+            i["vs_ad"] = "нет рекламы товара"
+        else:
+            diff = round(i["promo_drr"] - i["ad_drr"], 1)
+            i["vs_ad"] = "дешевле рекламы" if diff <= 0 else f"дороже рекламы на {diff} п.п."
+        items.append(i)
+        # итог акции: взвешиваем по ожидаемым продажам (продажи в день), товары без остатка не считаем
+        q = i.get("per_day") or 0
+        if ap and (i.get("stock") or 0) > 0 and q:
+            sw_disc += disc_rub * q
+            sw_rev += ap * q
+            if comm is not None:
+                sw_net += disc_rub * (1 - comm / 100) * q
+            if i["ad_drr"] is not None and ad.get("ad_spent"):
+                ad_spent += ad["ad_spent"]
+                ad_money += ad["ad_spent"] / (i["ad_drr"] / 100) if i["ad_drr"] else 0
+    out = dict(a)
+    out["items"] = items
+    out["promo_drr"] = round(sw_disc / sw_rev * 100, 1) if sw_rev else None
+    out["promo_drr_net"] = round(sw_net / sw_rev * 100, 1) if sw_rev and sw_net else None
+    out["promo_cost_day"] = round(sw_disc) if sw_rev else None      # ₽ в день при текущем темпе продаж
+    out["ad_drr_same"] = round(ad_spent / ad_money * 100, 1) if ad_money else None
+    return out
 
 
 def _find(mp: str, aid: str) -> dict | None:
@@ -394,7 +482,8 @@ async def action(mp: str, id: str):
     a = _find(mp, id)
     if not a:
         return {"error": "Акция не найдена — обновите календарь"}
-    return a
+    ads, total = _ad_map(a["mp"])
+    return {**_with_drr(a, ads), "ads_total": total}
 
 
 @router.get("/export.xlsx")
@@ -407,6 +496,7 @@ async def export(mp: str, id: str):
     a = _find(mp, id)
     if not a:
         return Response("Акция не найдена", status_code=404)
+    a = _with_drr(a, _ad_map(a["mp"])[0])
     wb = Workbook()
     ws = wb.active
     ws.title = "Акция"
@@ -416,7 +506,8 @@ async def export(mp: str, id: str):
     ws.append([])
     head = ["Артикул", "Товар", "Бренд", "Рекомендация", "Причина", "Цена сейчас", "Цена в акции", "Скидка, %",
             "Остаток", "Продаж в день", "Запас, дн.", "Себестоимость", "К выплате со штуки", "Прибыль со штуки",
-            "Маржа, %", "Уже в акции"]
+            "Маржа, %", "Уже в акции", "Скидка, ₽", "ДРР акции, %", "ДРР акции с учётом комиссии, %",
+            "ДРР рекламы товара, %", "Акция против рекламы"]
     ws.append(head)
     for c in ws[4]:
         c.font = Font(bold=True)
@@ -426,9 +517,14 @@ async def export(mp: str, id: str):
     for i in sorted(a["items"], key=lambda x: (order.get(x["rec"], 9), -(x["stock"] or 0))):
         ws.append([i["art"], i["name"], i["brand"], i["rec_text"], i["why"], i["price"], i["action_price"],
                    i["discount"], i["stock"], i["per_day"], i["stock_days"], i["cost"], i["payout"],
-                   i["profit"], i["margin"], "да" if i["in_action"] else ""])
+                   i["profit"], i["margin"], "да" if i["in_action"] else "", i["discount_rub"], i["promo_drr"],
+                   i["promo_drr_net"], i["ad_drr"], i["vs_ad"]])
         ws.cell(ws.max_row, 4).fill = PatternFill("solid", fgColor=fills.get(i["rec"], "FFFFFF"))
-    for col, w in zip("ABCDEFGHIJKLMNOP", (16, 50, 16, 18, 48, 11, 11, 9, 9, 10, 9, 12, 12, 12, 9, 9)):
+    if a.get("promo_drr") is not None:
+        ws["A2"].value = (ws["A2"].value or "") + (f" · ДРР акции {a['promo_drr']}%"
+                          + (f" (с учётом комиссии {a['promo_drr_net']}%)" if a.get("promo_drr_net") is not None else "")
+                          + (f" · ДРР рекламы этих товаров {a['ad_drr_same']}%" if a.get("ad_drr_same") is not None else ""))
+    for col, w in zip("ABCDEFGHIJKLMNOPQRSTU", (16, 50, 16, 18, 48, 11, 11, 9, 9, 10, 9, 12, 12, 12, 9, 9, 10, 11, 14, 12, 24)):
         ws.column_dimensions[col].width = w
     ws.freeze_panes = "B5"
     buf = io.BytesIO()

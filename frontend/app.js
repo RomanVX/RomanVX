@@ -6401,6 +6401,13 @@ async function loadPromo(refresh) {
   } catch (e) { wrap.innerHTML = `<div class="alert alert-danger">Ошибка: ${esc(e.message)}</div>`; }
 }
 
+function _promoDrrCell(promo, ad) {
+  if (promo == null) return '<span class="text-secondary">—</span>';
+  const cheaper = ad != null && promo <= ad;
+  return `<b style="color:${ad == null ? 'var(--ink)' : cheaper ? 'var(--pos)' : 'var(--neg)'}">${promo}%</b>` +
+    (ad != null ? ` <span class="text-secondary">/ ${ad}%</span>` : ' <span class="text-secondary small">/ нет рекламы</span>');
+}
+
 function renderPromo() {
   const wrap = document.getElementById('promoWrap');
   const d = _promo; if (!wrap || !d) return;
@@ -6432,7 +6439,8 @@ function renderPromo() {
     return `<tr style="cursor:pointer" onclick="openPromo('${a.mp}','${a.id}')"><td class="text-start"><b>${esc(a.title)}</b><div class="small text-secondary">${a.mp === 'OZON' ? 'Ozon' : 'WB'} · ${esc(a.type)}</div></td>
       <td style="white-space:nowrap">${_pd(a.start)} — ${_pd(a.end)}<div class="small">${status(a)}</div></td>
       <td class="small">${(a.auto_add_dates || []).length ? `<span style="color:var(--warn-c)">автодобавление ${esc(a.auto_add_dates.map(x => _pd(x.slice(0, 10)) + ' ' + x.slice(11, 16)).join(', '))}</span>` : '—'}</td>
-      <td>${fmt(a.participating)} / ${fmt(a.candidates)}</td><td class="text-start">${recs}</td></tr>`;
+      <td>${fmt(a.participating)} / ${fmt(a.candidates)}</td>
+      <td style="white-space:nowrap">${_promoDrrCell(a.promo_drr, a.ad_drr_same)}</td><td class="text-start">${recs}</td></tr>`;
   }).join('');
   const autoWarn = d.ozon_auto_add_on ? `<div class="alert alert-warning py-2 small">На Ozon у <b>${fmt(d.ozon_auto_add_on)}</b> товаров включено <b>автодобавление в акции</b>: Ozon сам добавляет их в акции в даты автодобавления (колонка ниже). Если товар не должен идти со скидкой — уберите его из акции до этой даты или отключите автодобавление в карточке товара.</div>` : '';
   wrap.innerHTML = `${(d.errors || []).length ? `<div class="alert alert-warning py-2 small">${esc(d.errors.join('; '))}</div>` : ''}${autoWarn}
@@ -6441,7 +6449,8 @@ function renderPromo() {
       ${acts.length ? scale + rows : '<div class="text-secondary">Активных и будущих акций нет</div>'}</div>
     <div class="mb-3" style="background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:12px 14px">
       <div class="table-responsive"><table class="table table-sm mb-0 align-middle" style="font-size:.85rem"><thead><tr class="text-secondary small">
-      <th class="text-start">Акция</th><th>Даты</th><th>Дедлайн</th><th>Участвуют / можно</th><th class="text-start">Рекомендации по товарам</th></tr></thead><tbody>${cards}</tbody></table></div></div>
+      <th class="text-start">Акция</th><th>Даты</th><th>Дедлайн</th><th>Участвуют / можно</th><th title="Скидка для входа в акцию как рекламный расход: скидка ÷ цена в акции. Рядом — ДРР рекламы этих же товаров">ДРР акции / рекламы</th><th class="text-start">Рекомендации по товарам</th></tr></thead><tbody>${cards}</tbody></table></div>
+      <div class="small text-secondary mt-2">ДРР акции — скидка для входа в акцию, посчитанная как рекламный расход: скидка в ₽ ÷ цена в акции (средневзвешенно по продажам товаров с остатком). Рядом — ДРР рекламы Ozon по этим же товарам за 28 дней${d.ozon_ads && d.ozon_ads.drr != null ? `; по всему кабинету — ${d.ozon_ads.drr}%` : ''}. Зелёный — акция дешевле рекламы.</div></div>
     <div id="promoDetail"></div>`;
   if (_promoOpen) renderPromoDetail();
 }
@@ -6475,15 +6484,25 @@ function renderPromoDetail() {
       ${recBtns}${brandSel}
       <a class="btn btn-sm btn-success ms-auto" href="${API}/api/promo/export.xlsx?mp=${a.mp}&id=${a.id}"><i class="bi bi-file-earmark-excel"></i> Excel для клиента</a></div>
     ${a.note ? `<div class="alert alert-info py-2 small">${esc(a.note)}</div>` : ''}
+    ${a.promo_drr != null ? `<div class="d-flex flex-wrap gap-3 mb-2 p-2" style="border:1px solid var(--border);border-radius:10px">
+      <div><div class="small text-secondary">ДРР акции</div><div style="font-size:1.25rem;font-weight:700">${_promoDrrCell(a.promo_drr, a.ad_drr_same)}</div></div>
+      <div><div class="small text-secondary">с учётом комиссии</div><div style="font-size:1.25rem;font-weight:700">${a.promo_drr_net != null ? a.promo_drr_net + '%' : '—'}</div></div>
+      <div><div class="small text-secondary">ДРР рекламы этих товаров</div><div style="font-size:1.25rem;font-weight:700">${a.ad_drr_same != null ? a.ad_drr_same + '%' : '—'}</div></div>
+      <div><div class="small text-secondary">ДРР рекламы кабинета</div><div style="font-size:1.25rem;font-weight:700">${a.ads_total && a.ads_total.drr != null ? a.ads_total.drr + '%' : '—'}</div></div>
+      <div><div class="small text-secondary">Скидка обойдётся в день</div><div style="font-size:1.25rem;font-weight:700">${a.promo_cost_day != null ? fmtRub(a.promo_cost_day) : '—'}</div><div class="small text-secondary">при нынешнем темпе продаж</div></div>
+      <div class="small text-secondary" style="max-width:420px">Скидка для входа в акцию считается как рекламный расход: скидка в ₽ ÷ цена в акции. Например, цена 1000 ₽, скидка 100 ₽ → ДРР 11,1% (100 ÷ 900). С учётом комиссии — дешевле: с меньшей цены Ozon берёт меньше комиссии.</div></div>` : ''}
     ${a.description ? `<div class="small text-secondary mb-2" style="max-width:1100px">${esc(a.description)}</div>` : ''}
     ${(a.advantages || []).length ? `<div class="small mb-2">Что даёт: ${esc(a.advantages.join(' · '))}</div>` : ''}
     <div class="table-responsive" style="max-height:640px"><table class="table table-sm mb-0 align-middle" style="font-size:.82rem"><thead style="position:sticky;top:0;background:var(--surface-2)"><tr class="text-secondary small">
-      <th class="text-start">Товар</th><th class="text-start">Рекомендация</th><th>Цена</th><th>В акции</th><th>Скидка</th><th>Остаток</th><th>Продаж/день</th><th>Запас, дн.</th><th>Себест.</th><th>К выплате</th><th>Прибыль/шт</th><th>Маржа</th><th>Уже участвует</th></tr></thead>
+      <th class="text-start">Товар</th><th class="text-start">Рекомендация</th><th>Цена</th><th>В акции</th><th>Скидка</th><th>Остаток</th><th>Продаж/день</th><th>Запас, дн.</th><th>Себест.</th><th>К выплате</th><th>Прибыль/шт</th><th>Маржа</th><th>Скидка, ₽</th><th>ДРР акции</th><th>ДРР рекламы</th><th>Уже участвует</th></tr></thead>
       <tbody>${items.map(i => `<tr><td class="text-start" style="max-width:320px"><span class="text-secondary">${esc(i.art)}</span> ${esc(i.name)}<div class="small text-secondary">${esc(i.brand)}${i.auto_add ? ' · <span style="color:var(--warn-c)">автодобавление вкл.</span>' : ''}</div></td>
         <td class="text-start" style="max-width:260px">${pill(i)}</td><td>${fmtRub(i.price)}</td><td>${i.action_price ? fmtRub(i.action_price) : '—'}</td>
         <td>${i.discount != null ? i.discount + '%' : '—'}</td><td>${fmt(i.stock)}</td><td>${i.per_day ?? 0}</td><td>${i.stock_days == null ? '—' : i.stock_days >= 999 ? '∞' : i.stock_days}</td>
         <td>${i.cost ? fmtRub(i.cost) : '—'}</td><td>${i.payout != null ? fmtRub(i.payout) : '—'}</td>
         <td>${i.profit != null ? `<b style="color:${i.profit < 0 ? 'var(--neg)' : 'var(--pos)'}">${fmtRub(i.profit)}</b>` : '—'}</td><td>${i.margin != null ? i.margin + '%' : '—'}</td>
-        <td>${i.in_action ? '✓' : ''}</td></tr>`).join('') || '<tr><td colspan="13" class="text-secondary">Нет товаров по фильтру</td></tr>'}</tbody></table></div>
+        <td>${i.discount_rub != null ? fmtRub(i.discount_rub) : '—'}</td>
+        <td>${_promoDrrCell(i.promo_drr, i.ad_drr).split(' <span')[0]}${i.promo_drr_net != null ? `<div class="small text-secondary">с комис. ${i.promo_drr_net}%</div>` : ''}</td>
+        <td>${i.ad_drr != null ? i.ad_drr + '%' : '<span class="text-secondary small">нет рекламы</span>'}${i.vs_ad && i.ad_drr != null ? `<div class="small" style="color:${i.vs_ad.startsWith('дешевле') ? 'var(--pos)' : 'var(--neg)'}">${esc(i.vs_ad)}</div>` : ''}</td>
+        <td>${i.in_action ? '✓' : ''}</td></tr>`).join('') || '<tr><td colspan="16" class="text-secondary">Нет товаров по фильтру</td></tr>'}</tbody></table></div>
     <div class="small text-secondary mt-2">Себестоимость — из загруженной в дашборд или из карточки Ozon (поле «себестоимость»). Без неё прибыль и маржа не считаются, рекомендация строится по остатку, скорости продаж и глубине скидки. «К выплате» — цена в акции минус комиссия Ozon FBO, логистика и эквайринг.</div></div>`;
 }
