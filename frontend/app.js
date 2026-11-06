@@ -6449,8 +6449,8 @@ function renderPromo() {
       ${acts.length ? scale + rows : '<div class="text-secondary">Активных и будущих акций нет</div>'}</div>
     <div class="mb-3" style="background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:12px 14px">
       <div class="table-responsive"><table class="table table-sm mb-0 align-middle" style="font-size:.85rem"><thead><tr class="text-secondary small">
-      <th class="text-start">Акция</th><th>Даты</th><th>Дедлайн</th><th>Участвуют / можно</th><th title="Скидка для входа в акцию как рекламный расход: скидка ÷ цена в акции. Рядом — ДРР рекламы этих же товаров">ДРР акции / рекламы</th><th class="text-start">Рекомендации по товарам</th></tr></thead><tbody>${cards}</tbody></table></div>
-      <div class="small text-secondary mt-2">ДРР акции — скидка для входа в акцию, посчитанная как рекламный расход: скидка в ₽ ÷ цена в акции (средневзвешенно по продажам товаров с остатком). Рядом — ДРР рекламы Ozon по этим же товарам за 28 дней${d.ozon_ads && d.ozon_ads.drr != null ? `; по всему кабинету — ${d.ozon_ads.drr}%` : ''}. Зелёный — акция дешевле рекламы.</div></div>
+      <th class="text-start">Акция</th><th>Даты</th><th>Дедлайн</th><th>Участвуют / можно</th><th title="Скидка для входа в акцию как рекламный расход: скидка ÷ исходная цена. Рядом — ДРР рекламы этих же товаров">ДРР акции / рекламы</th><th class="text-start">Рекомендации по товарам</th></tr></thead><tbody>${cards}</tbody></table></div>
+      <div class="small text-secondary mt-2">ДРР акции — скидка для входа в акцию, посчитанная как рекламный расход: скидка в ₽ ÷ исходная цена (средневзвешенно по продажам товаров с остатком). Рядом — ДРР рекламы Ozon по этим же товарам за 28 дней${d.ozon_ads && d.ozon_ads.drr != null ? `; по всему кабинету — ${d.ozon_ads.drr}%` : ''}. Зелёный — акция дешевле рекламы.</div></div>
     <div id="promoDetail"></div>`;
   if (_promoOpen) renderPromoDetail();
 }
@@ -6490,7 +6490,7 @@ function renderPromoDetail() {
       <div><div class="small text-secondary">ДРР рекламы этих товаров</div><div style="font-size:1.25rem;font-weight:700">${a.ad_drr_same != null ? a.ad_drr_same + '%' : '—'}</div></div>
       <div><div class="small text-secondary">ДРР рекламы кабинета</div><div style="font-size:1.25rem;font-weight:700">${a.ads_total && a.ads_total.drr != null ? a.ads_total.drr + '%' : '—'}</div></div>
       <div><div class="small text-secondary">Скидка обойдётся в день</div><div style="font-size:1.25rem;font-weight:700">${a.promo_cost_day != null ? fmtRub(a.promo_cost_day) : '—'}</div><div class="small text-secondary">при нынешнем темпе продаж</div></div>
-      <div class="small text-secondary" style="max-width:420px">Скидка для входа в акцию считается как рекламный расход: скидка в ₽ ÷ цена в акции. Например, цена 1000 ₽, скидка 100 ₽ → ДРР 11,1% (100 ÷ 900). С учётом комиссии — дешевле: с меньшей цены Ozon берёт меньше комиссии.</div></div>` : ''}
+      <div class="small text-secondary" style="max-width:420px">Скидка для входа в акцию считается как рекламный расход: скидка в ₽ ÷ исходная цена. Например, цена 1000 ₽, скидка 100 ₽ → ДРР 10%. С учётом комиссии — дешевле: с меньшей цены Ozon берёт меньше комиссии.</div></div>` : ''}
     ${a.description ? `<div class="small text-secondary mb-2" style="max-width:1100px">${esc(a.description)}</div>` : ''}
     ${(a.advantages || []).length ? `<div class="small mb-2">Что даёт: ${esc(a.advantages.join(' · '))}</div>` : ''}
     <div class="table-responsive" style="max-height:640px"><table class="table table-sm mb-0 align-middle" style="font-size:.82rem"><thead style="position:sticky;top:0;background:var(--surface-2)"><tr class="text-secondary small">

@@ -392,7 +392,8 @@ async def calendar(refresh: bool = Query(default=False)):
 
 # ── Акция как рекламная кампания: ДРР скидки против ДРР рекламы ─────────────
 # Скидка для входа в акцию — это деньги, которые мы «тратим» с каждой продажи,
-# как ставку в рекламе. ДРР акции = скидка в рублях ÷ цена в акции (выручка
+# как ставку в рекламе. ДРР акции = скидка в рублях ÷ исходная цена (по решению
+# владельца — равен скидке в %; раньше было ÷ цена в акции, как выручка
 # с продажи) — та же формула, что ДРР рекламы (расход ÷ выручка с рекламы).
 # «С учётом комиссии»: со скидки Ozon берёт меньше комиссии, поэтому реальная
 # потеря выплаты = скидка × (1 − комиссия%).
@@ -440,9 +441,10 @@ def _with_drr(a: dict, ads: dict) -> dict:
         price, ap = i.get("price") or 0, i.get("action_price") or 0
         disc_rub = price - ap if price and ap and price > ap else 0
         i["discount_rub"] = round(disc_rub) if ap else None
-        i["promo_drr"] = round(disc_rub / ap * 100, 1) if ap else None
+        # ДРР акции считаем от исходной цены (решение владельца 06.11): совпадает со скидкой, %
+        i["promo_drr"] = round(disc_rub / price * 100, 1) if ap and price else None
         comm = i.get("commission_pct")
-        i["promo_drr_net"] = round(disc_rub * (1 - comm / 100) / ap * 100, 1) if ap and comm is not None else None
+        i["promo_drr_net"] = round(disc_rub * (1 - comm / 100) / price * 100, 1) if ap and price and comm is not None else None
         ad = ads.get(i["art"]) or {}
         i["ad_drr"], i["ad_general_drr"], i["ad_spent"] = ad.get("ad_drr"), ad.get("ad_general_drr"), ad.get("ad_spent")
         if i["promo_drr"] is None:
@@ -457,7 +459,7 @@ def _with_drr(a: dict, ads: dict) -> dict:
         q = i.get("per_day") or 0
         if ap and (i.get("stock") or 0) > 0 and q:
             sw_disc += disc_rub * q
-            sw_rev += ap * q
+            sw_rev += price * q
             if comm is not None:
                 sw_net += disc_rub * (1 - comm / 100) * q
             if i["ad_drr"] is not None and ad.get("ad_spent"):
