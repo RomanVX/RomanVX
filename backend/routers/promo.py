@@ -35,6 +35,14 @@ _bg: set = set()
 REC = {"yes": "Участвовать", "maybe": "Можно", "no": "Не участвовать", "clear": "Распродать залежи"}
 
 
+def _plain(html: str) -> str:
+    """Описания акций Ozon приходят с HTML-тегами — оставляем текст."""
+    import re as _re
+    t = _re.sub(r"<br\s*/?>|</p>|</li>", " · ", html or "")
+    t = _re.sub(r"<[^>]+>", "", t)
+    return _re.sub(r"\s*·\s*(·\s*)+", " · ", _re.sub(r"[ \t]+", " ", t)).strip(" ·")
+
+
 def _num(v):
     try:
         return float(str(v).replace(",", ".").replace(" ", ""))
@@ -199,7 +207,7 @@ async def _build_ozon() -> list[dict]:
         out.append({
             "mp": "OZON", "id": str(aid), "title": a.get("title") or "",
             "type": _OZ_TYPE_RU.get(a.get("action_type") or "", a.get("action_type") or ""),
-            "description": (a.get("description") or "")[:600],
+            "description": _plain(a.get("description") or "")[:700],
             "start": (a.get("date_start") or "")[:10], "end": (a.get("date_end") or "")[:10],
             "freeze": (a.get("freeze_date") or "")[:10],
             "auto_add_dates": [d[:16].replace("T", " ") for d in (a.get("auto_add_dates") or [])],
@@ -306,7 +314,7 @@ async def _build_wb() -> list[dict]:
         out.append({
             "mp": "WB", "id": str(p["id"]), "title": p.get("name") or "",
             "type": "Автоакция" if p.get("type") == "auto" else "Акция",
-            "description": (det.get("description") or "")[:600],
+            "description": _plain(det.get("description") or "")[:700],
             "advantages": det.get("advantages") or [],
             "start": (p.get("startDateTime") or "")[:10], "end": (p.get("endDateTime") or "")[:10],
             "freeze": "", "auto_add_dates": [],
