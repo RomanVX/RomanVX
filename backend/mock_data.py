@@ -322,3 +322,32 @@ def generate_stocks() -> list[dict]:
                 "quantity": qty,
             })
     return records
+
+
+# ── Кабинет клиента агентства: никаких демо-цифр ────────────────────────────
+# Если у клиента нет ключа площадки (например, WB ещё не прислали), вместо
+# выдуманных данных — пусто: клиент не должен увидеть ненастоящие цифры.
+try:
+    from config import IS_CLIENT_CABINET as _CLIENT
+except Exception:
+    _CLIENT = False
+if _CLIENT:
+    PRICES, STOCKS, COSTS, NAMES = {}, {}, {}, {}
+
+    def generate_sales(date_from, date_to):
+        return []
+
+    def generate_orders(date_from, date_to):
+        return []
+
+    def generate_report_detail(date_from, date_to):
+        return []
+
+    def generate_reviews(platform=None, limit=500):
+        return []
+
+    def generate_stocks():
+        return []
+
+    def generate_productolog():
+        return {"items": [], "building": False, "progress": "", "error": ""}

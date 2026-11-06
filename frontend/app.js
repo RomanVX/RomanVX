@@ -79,6 +79,21 @@ async function loadCabinetInfo() {
       if (el) el.style.display = 'none';
     });
   }
+  // кабинет без WB (ключ ещё не подключён) — прячем WB и открываем Ozon
+  if (!mps.includes('WB') && mps.includes('OZON')) {
+    ['ordMpWB', 'finMpWB', 'unitMpWB'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.style.display = 'none';
+    });
+    _ordersMp = 'OZON'; _financeMp = 'OZON'; _unitMp = 'OZON';
+    try { _marginMp = 'OZON'; } catch (e) {}
+    [['ordMp', 'OZON'], ['finMp', 'OZON'], ['unitMp', 'OZON']].forEach(([p, m]) => {
+      ['WB', 'OZON', 'YM', 'TOTAL'].forEach(k => {
+        const el = document.getElementById(p + k);
+        if (el) el.classList.toggle('active', k === m);
+      });
+    });
+  }
 }
 document.addEventListener('DOMContentLoaded', loadCabinetInfo);
 
@@ -99,7 +114,15 @@ function applyProfile() {
   hideItem('navOps');
   const mps = _cab.marketplaces || [];
   if (!mps.includes('OZON')) hideItem('navOzon');
-  if (!mps.includes('WB')) hideItem('navWB');
+  if (!mps.includes('WB')) {
+    hideItem('navWB');
+    // WB-инструменты в «Складе» (кластеры, склады, география) — тоже прочь;
+    // калькулятор маржи общий, его оставляем
+    document.querySelectorAll('#mainMenu a').forEach(el => {
+      const oc = el.getAttribute('onclick') || '';
+      if (oc.includes("goNavTool('tools',") && !oc.includes("'margin'")) el.style.display = 'none';
+    });
+  }
   // ИИ-кнопки (тратят наш Anthropic API) в кабинете клиента не показываем
   document.querySelectorAll('.mp-ai-link').forEach(el => { el.style.display = 'none'; });
   // разделители, после которых не осталось видимых пунктов, тоже прячем

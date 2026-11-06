@@ -61,6 +61,12 @@ CABINET_MONO: str = os.getenv("CABINET_MONO", "").strip() or _CAB_DEFAULTS.get(C
 OTHER_CABINET_MONO: str = os.getenv("OTHER_CABINET_MONO", "").strip() \
     or {"tl": "АВ", "avr": "ТЛ"}.get(CABINET, "")
 UI_PROFILE: str = os.getenv("UI_PROFILE", "analytics" if IS_CLIENT_CABINET else "full").strip().lower()
+# у кабинета клиента площадка без ключа просто не показывается (без демо-данных)
+if IS_CLIENT_CABINET:
+    if not WB_API_KEY:
+        CABINET_MARKETPLACES = [m for m in CABINET_MARKETPLACES if m != "WB"]
+    if not OZON_CLIENT_ID:
+        CABINET_MARKETPLACES = [m for m in CABINET_MARKETPLACES if m != "OZON"]
 # ссылка на второй кабинет (другой деплой) — для карточки на экране выбора
 OTHER_CABINET_URL: str  = os.getenv("OTHER_CABINET_URL", "").strip()
 OTHER_CABINET_NAME: str = os.getenv("OTHER_CABINET_NAME", "").strip() \

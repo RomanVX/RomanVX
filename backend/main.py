@@ -504,9 +504,9 @@ def get_cabinet():
     from config import (CABINET, CABINET_NAME, CABINET_MARKETPLACES,
                         OTHER_CABINET_URL, OTHER_CABINET_NAME)
     from config import USE_MOCK
-    from config import READ_ONLY, UI_PROFILE, CABINET_MONO, OTHER_CABINET_MONO
+    from config import READ_ONLY, UI_PROFILE, CABINET_MONO, OTHER_CABINET_MONO, IS_CLIENT_CABINET
     out = {"id": CABINET, "name": CABINET_NAME, "marketplaces": CABINET_MARKETPLACES,
-           "demo": USE_MOCK, "read_only": READ_ONLY, "profile": UI_PROFILE,
+           "demo": USE_MOCK and not IS_CLIENT_CABINET, "read_only": READ_ONLY, "profile": UI_PROFILE,
            "mono": CABINET_MONO or _mono(CABINET_NAME)}
     import catalog_auto
     if catalog_auto.enabled():
