@@ -282,6 +282,9 @@ async def orders_report(date_from: str, date_to: str) -> list[dict]:
                         return v
             return ""
         d = g("дата")
+        sku = (g("sku продвигаемого") or g("sku")).strip()
+        if not sku.isdigit():              # строка «Всего/Итого» и прочие служебные
+            continue
         out.append({
             "date": "-".join(reversed(d.split("."))) if "." in d else d,
             "sku": g("sku продвигаемого") or g("sku"), "art": g("артикул"),

@@ -5610,7 +5610,10 @@ async def _build_ozads2(days: int) -> dict:
         a = agg.get(cid, {"cur": {}, "prev": {}})
         cur, prev = _ozads_metrics(a["cur"]), _ozads_metrics(a["prev"])
         state = (c.get("state") or "").replace("CAMPAIGN_STATE_", "")
-        if not cur["spent"] and not prev["spent"] and state not in ("RUNNING", "ACTIVE"):
+        typ0 = c.get("advObjectType") or ""
+        # пустые кампании (внешний трафик VK/блогеры без расхода, архив) не показываем
+        if not cur["spent"] and not prev["spent"] and not (
+                state in ("RUNNING", "ACTIVE") and typ0 in ("SKU", "SEARCH_PROMO")):
             continue
         created = (c.get("createdAt") or "")[:10]
         start = c.get("fromDate") or created
@@ -5647,7 +5650,7 @@ async def _build_ozads2(days: int) -> dict:
     total = {"cur": _ozads_metrics(tc), "prev": _ozads_metrics(tp),
              "general_drr": round(sum(s["spent"] for s in skus.values() if s["gmv"]) / gmv_total * 100, 1) if gmv_total else None}
     launches = [{"date": c["from"] or c["created"], "title": c["title"], "type": c["type"]}
-                for c in camp_list if c["new_in_period"]]
+                for c in camp_list if c["new_in_period"] and (c["cur"]["spent"] or c["type_code"] in ("SKU", "SEARCH_PROMO"))]
     chart = []
     d = d_start
     while d <= d_end:
