@@ -470,7 +470,7 @@ _RO_DENY = (
     "/api/tools/fbs/", "/api/tools/supply/", "/api/tools/ozon/certificate/",
     "/api/tools/adv/sandbox", "/api/tools/agent", "/api/tools/competitors/",
     "/api/tools/niche", "/api/tools/visuals/", "/api/tools/dimensions/",
-    "/api/tools/mp/proxy", "/api/wms/",
+    "/api/wms/",                                  # mp/proxy сам пускает только чтение
 )
 
 

@@ -4770,6 +4770,16 @@ async def mp_proxy(request: Request, body: dict):
     path = str(body.get("path") or "")
     if not path.startswith("/"):
         return {"error": "path должен начинаться с /"}
+    from config import READ_ONLY
+    if READ_ONLY:
+        # кабинет клиента: через прокси — только чтение (GET и POST-методы
+        # выборок/отчётов, которые у Ozon и Performance все POST)
+        method = str(body.get("method") or "GET").upper()
+        low = path.lower()
+        read_post = any(k in low for k in ("/list", "/info", "/statistics", "/analytics", "/report",
+                                           "/attributes", "/get/", "/token"))
+        if method != "GET" and not read_post:
+            return {"error": "кабинет «только чтение»: через прокси разрешены только выборки"}
     if mp == "wb":
         import wb_client
         base, headers = wb_client.CONTENT_BASE, wb_client._headers()

@@ -97,6 +97,22 @@ async function loadCabinetInfo() {
 }
 document.addEventListener('DOMContentLoaded', loadCabinetInfo);
 
+// Выпадающие меню не должны уезжать за край экрана: меню аккаунта
+// выровнено вправо, но если шапка перенеслась и кнопка оказалась слева —
+// раскрываем его вправо от кнопки.
+document.addEventListener('mouseover', e => {
+  const item = e.target.closest && e.target.closest('.mp-menu-item');
+  if (!item) return;
+  const drop = item.querySelector('.mp-menu-drop');
+  if (!drop) return;
+  drop.style.left = ''; drop.style.right = '';
+  requestAnimationFrame(() => {
+    const r = drop.getBoundingClientRect();
+    if (r.left < 4) { drop.style.left = '0'; drop.style.right = 'auto'; }
+    else if (r.right > window.innerWidth - 4) { drop.style.left = 'auto'; drop.style.right = '0'; }
+  });
+});
+
 // Кабинет клиента агентства (profile = analytics): только аналитические
 // разделы, без склада Чехов/FBS, ИИ-инструментов, агента и операционки.
 // Изменения в кабинетах площадок сервер в этом режиме и так не выполняет.

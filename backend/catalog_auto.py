@@ -120,8 +120,10 @@ async def build() -> dict:
         if not art or not nm:
             continue
         wb_map[str(nm)] = art
-        cat[art] = {"name": (c.get("title") or art)[:120], "brand": c.get("brand") or "Прочее",
-                    "group": c.get("subjectName") or ""}
+        brand = c.get("brand") or "Прочее"
+        # group = бренд: многие разделы группируют товары по полю group
+        cat[art] = {"name": (c.get("title") or art)[:120], "brand": brand, "group": brand,
+                    "subject": c.get("subjectName") or ""}
     for p in oz_items:
         art = str(p.get("offer_id") or "").strip()
         if not art:
@@ -130,8 +132,9 @@ async def build() -> dict:
             if key:
                 oz_map[str(key)] = art
         if art not in cat:
-            cat[art] = {"name": (p.get("name") or art)[:120], "brand": _ozon_brand(p) or "Прочее",
-                        "group": ""}
+            brand = _ozon_brand(p) or "Прочее"
+            cat[art] = {"name": (p.get("name") or art)[:120], "brand": brand, "group": brand,
+                        "subject": ""}
     from datetime import datetime
     return {"wb": wb_map, "ozon": oz_map, "catalog": cat,
             "updated": datetime.utcnow().strftime("%Y-%m-%d %H:%M")}
