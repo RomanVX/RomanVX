@@ -6474,6 +6474,7 @@ function renderPromoDetail() {
     <div class="d-flex flex-wrap gap-2 align-items-center mb-2"><div class="fw-bold me-2">${a.mp === 'OZON' ? 'Ozon' : 'WB'} · ${esc(a.title)} <span class="text-secondary fw-normal small">${_pd(a.start)} — ${_pd(a.end)}</span></div>
       ${recBtns}${brandSel}
       <a class="btn btn-sm btn-success ms-auto" href="${API}/api/promo/export.xlsx?mp=${a.mp}&id=${a.id}"><i class="bi bi-file-earmark-excel"></i> Excel для клиента</a></div>
+    ${a.note ? `<div class="alert alert-info py-2 small">${esc(a.note)}</div>` : ''}
     ${a.description ? `<div class="small text-secondary mb-2" style="max-width:1100px">${esc(a.description)}</div>` : ''}
     ${(a.advantages || []).length ? `<div class="small mb-2">Что даёт: ${esc(a.advantages.join(' · '))}</div>` : ''}
     <div class="table-responsive" style="max-height:640px"><table class="table table-sm mb-0 align-middle" style="font-size:.82rem"><thead style="position:sticky;top:0;background:var(--surface-2)"><tr class="text-secondary small">

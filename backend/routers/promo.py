@@ -100,6 +100,24 @@ async def _oz_prices() -> dict:
     return out
 
 
+async def _oz_stocks_all() -> dict:
+    """offer_id → свободный остаток на всех складах (FBO + FBS) — /v4/product/info/stocks."""
+    import ozon_client as oz
+    out, cursor = {}, ""
+    for _ in range(50):
+        body = {"filter": {"visibility": "ALL"}, "limit": 1000, "cursor": cursor}
+        data = await oz._post("/v4/product/info/stocks", body)
+        items = data.get("items") or []
+        for it in items:
+            free = sum(max(int(x.get("present") or 0) - int(x.get("reserved") or 0), 0)
+                       for x in it.get("stocks") or [])
+            out[str(it.get("offer_id") or "").strip()] = free
+        cursor = data.get("cursor") or ""
+        if not cursor or not items:
+            break
+    return out
+
+
 async def _oz_paged(path: str, action_id) -> list[dict]:
     import ozon_client as oz
     out, last = [], None
@@ -134,7 +152,11 @@ async def _build_ozon() -> list[dict]:
     _state["progress"] = "Ozon: цены, остатки, продажи…"
     prices = await _oz_prices()
     by_pid = {v["product_id"]: k for k, v in prices.items() if v["product_id"]}
-    stocks = await oz.get_stocks()
+    try:
+        stocks = await _oz_stocks_all()          # FBO + FBS — у многих селлеров часть товара на своём складе
+    except Exception as e:
+        _log.warning("promo ozon stocks v4: %s", e)
+        stocks = await oz.get_stocks()
     sales = await oz.get_sales_28d()
     costs = cost_store.get_costs()
     out = []
@@ -291,6 +313,8 @@ async def _build_wb() -> list[dict]:
             "candidates": det.get("inPromoActionTotal", 0) + det.get("notInPromoActionTotal", 0) if det else len(items),
             "participating": det.get("inPromoActionTotal", sum(1 for i in items if i["in_action"])) if det else 0,
             "counts": counts, "items": items,
+            "note": "По автоакциям WB список товаров API не отдаёт — смотрите в кабинете WB, "
+                    "в «Календаре акций»." if p.get("type") == "auto" else "",
         })
     return out
 
