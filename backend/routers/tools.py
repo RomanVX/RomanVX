@@ -4837,48 +4837,53 @@ async def ozon_certificate_upload(
     type_code: str = Form("declaration"),
     accordance_type_code: str = Form("technical_regulations_cu"),
     issue_date: str = Form(...), expire_date: str = Form(""),
-    product_ids: str = Form(""),
+    product_ids: str = Form(""), skus: str = Form(""), country: str = Form("RU"),
 ):
-    """Owner-only: загрузить документ (PDF/JPG/PNG) в Ozon — POST /v1/product/certificate/create
-    (multipart) — и привязать к товарам (product_id через запятую) — /v1/product/certificate/bind.
-    Даты — YYYY-MM-DD или ISO."""
+    """Owner-only: загрузить документ (PDF/JPG/PNG) в Ozon и привязать к товарам.
+
+    Старый multipart-метод /v1/product/certificate/create Ozon отключил (404 к 11.2026).
+    Работает недокументированный JSON-метод POST /v2/product/certificate/create
+    (формат подобран на живом кабинете):
+      {"params": {"certificate_type": "DECLARATION", "certificate_country": "RU",
+                  "accordance_type": "EAEU", "name", "number", "issue_date": ISO,
+                  "expired_date": {"date": {"year","month","day"}} | {"infinite": true},
+                  "skus": [int], "files": [{"name", "file_content": base64}]}}
+    Ответ: params[] с state VALID/INVALID/MISSING по каждому полю + certificate_id,
+    status COMPLETED/INCOMPLETE. Номер проверяется по реестру ФСА сразу.
+    skus — SKU Ozon; product_ids — product_id (переводятся в SKU). Даты — YYYY-MM-DD."""
     _owner_only(request)
-    import httpx
+    import base64
     import ozon_client
-    def _iso(d):
-        d = (d or "").strip()
-        return d if not d or "T" in d else d + "T00:00:00Z"
-    form = {"name": name[:100], "number": number[:100], "type_code": type_code,
-            "issue_date": _iso(issue_date)}
-    if type_code in ("declaration", "certificate_of_conformity", "safety_data_sheet"):
-        form["accordance_type_code"] = accordance_type_code
-    if expire_date:
-        form["expire_date"] = _iso(expire_date)
-    up = [("files", (f.filename, await f.read(), f.content_type or "application/pdf")) for f in files]
-    headers = {k: v for k, v in ozon_client._headers().items() if k.lower() != "content-type"}
-    out = {}
-    async with httpx.AsyncClient(timeout=120) as c:
-        r = await c.post(ozon_client._BASE + "/v1/product/certificate/create",
-                         headers=headers, data=form, files=up)
-        try:
-            out["create"] = {"status": r.status_code, "body": r.json()}
-        except Exception:
-            out["create"] = {"status": r.status_code, "body": r.text[:2000]}
-        body = out["create"]["body"] if isinstance(out["create"]["body"], dict) else {}
-        cid = body.get("id")
-        if not cid and isinstance(body.get("result"), dict):
-            cid = body["result"].get("id")
-        pids = [int(x) for x in re.findall(r"\d+", product_ids or "")]
-        if r.is_success and cid and pids:
-            rb = await c.post(ozon_client._BASE + "/v1/product/certificate/bind",
-                              headers=ozon_client._headers(),
-                              json={"certificate_id": int(cid), "product_id": pids})
-            try:
-                out["bind"] = {"status": rb.status_code, "body": rb.json()}
-            except Exception:
-                out["bind"] = {"status": rb.status_code, "body": rb.text[:2000]}
-    out["certificate_id"] = cid
-    return out
+    d_iss = (issue_date or "").strip()[:10]
+    d_exp = (expire_date or "").strip()[:10]
+    sku_list = [int(x) for x in re.findall(r"\d+", skus or "")]
+    pids = [str(x) for x in re.findall(r"\d+", product_ids or "")]
+    if pids:
+        info = await ozon_client._post("/v3/product/info/list", {"product_id": pids})
+        for it in info.get("items") or []:
+            s = it.get("sku") or next((x.get("sku") for x in it.get("sources") or [] if x.get("sku")), None)
+            if s:
+                sku_list.append(int(s))
+    params = {
+        "certificate_type": type_code.upper(),
+        "certificate_country": (country or "RU")[:2].upper(),
+        "accordance_type": "EAEU" if accordance_type_code in ("technical_regulations_cu", "EAEU")
+                           else accordance_type_code.upper(),
+        "name": name[:100], "number": number[:100],
+        "issue_date": d_iss + "T00:00:00Z",
+        "expired_date": ({"date": {"year": int(d_exp[:4]), "month": int(d_exp[5:7]),
+                                   "day": int(d_exp[8:10])}} if d_exp else {"infinite": True}),
+        "skus": sorted(set(sku_list)),
+        "files": [{"name": f.filename or "doc.pdf",
+                   "file_content": base64.b64encode(await f.read()).decode()} for f in files],
+    }
+    try:
+        res = await ozon_client._post("/v2/product/certificate/create", {"params": params})
+    except Exception as e:
+        return {"error": str(e)[:500]}
+    bad = [p for p in res.get("params") or [] if p.get("state") != "VALID"]
+    return {"certificate_id": res.get("certificate_id"), "status": res.get("status"),
+            "invalid": bad, "skus": params["skus"]}
 
 
 @router.get("/supply/volumes", include_in_schema=False)
