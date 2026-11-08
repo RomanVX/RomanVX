@@ -124,6 +124,10 @@ def _mark(i: str, ok: bool = False, err: str = ""):
     if ok:
         db.execute("UPDATE mp_keys SET last_ok = ?, last_error = '' WHERE id = ?", (now, i))
     else:
+        if "X-Client-Secret" in err:
+            err = ("WB: это сервисный токен (выпущен для стороннего сервиса), без секрета сервиса "
+                   "он не работает. Нужен обычный токен: ЛК WB → Доступ к API → «Базовый» "
+                   "(или «Персональный»), категории Маркетплейс, Контент, Статистика, Цены — только чтение")
         db.execute("UPDATE mp_keys SET last_error = ? WHERE id = ?", (err[:300], i))
 
 
