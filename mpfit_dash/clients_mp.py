@@ -634,6 +634,7 @@ async def wb_stock_recon(key_id: str, company_id: int | None = None) -> dict:
         f = free.get(pid, 0)
         bcs = [str(b) for b in ((p.get("external_barcodes") or {}).get("wb") or [])] + \
               [str(b) for b in p.get("barcodes") or []]
+        bcs = list(dict.fromkeys(bcs))
         hit = next((by_bc[b] for b in bcs if b in by_bc), None)
         st = wb_st.get(hit["chrt"], {}) if hit else {}
         our_wb = sum(v for n, v in st.items() if n in ours)
