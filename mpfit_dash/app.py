@@ -464,6 +464,45 @@ async def mpkeys_wbdiag(key_id: str, q: str):
     return await clients_mp.wb_stock_diag(key_id, q)
 
 
+@app.get("/api/mpkeys/{key_id}/stock_recon")
+async def mpkeys_stock_recon(key_id: str, company_id: int = 0, xlsx: int = 0):
+    """Сверка остатков МПФИТ ↔ склады продавца клиента в WB (только чтение)."""
+    res = await clients_mp.wb_stock_recon(key_id, company_id or None)
+    if not xlsx or res.get("error"):
+        return res
+    from io import BytesIO
+    from urllib.parse import quote
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+    wb = Workbook(); ws = wb.active; ws.title = "Сверка остатков"
+    ws.append([f"Сверка остатков: {res['client']} — МПФИТ против WB, {res['at']}"])
+    ws["A1"].font = Font(bold=True, size=12)
+    ws.append([f"Наш склад в WB: {', '.join(res['our_warehouses']) or 'не найден'}"])
+    ws.append([])
+    hdr = ["Артикул", "Наименование", "Баркод", "nmID WB", "Остаток МПФИТ (свободно)",
+           "Остаток WB на нашем складе", "Разница WB − МПФИТ", "Остатки на других складах продавца", "Статус"]
+    ws.append(hdr)
+    for c in ws[4]:
+        c.font = Font(bold=True, color="FFFFFF"); c.fill = PatternFill("solid", fgColor="1F3864")
+    bad = PatternFill("solid", fgColor="F8CBAD"); warn = PatternFill("solid", fgColor="FFE699")
+    for r in res["rows"]:
+        ws.append([r["article"], r["name"], r["barcode"], r["nm"], r["mpfit_free"], r["wb_ours"], r["diff"],
+                   ", ".join(f"{k}: {v}" for k, v in (r["wb_other"] or {}).items()), r["status"]])
+        fill = bad if r["status"] in ("нет карточки WB с таким баркодом", "остаток в WB не загружен") \
+            else warn if r["status"] == "расходится" else None
+        if fill:
+            for c in ws[ws.max_row]:
+                c.fill = fill
+    for col, w in zip("ABCDEFGHI", (12, 46, 16, 12, 12, 12, 12, 30, 30)):
+        ws.column_dimensions[col].width = w
+    ws.freeze_panes = "A5"
+    buf = BytesIO(); wb.save(buf)
+    name = f"Сверка_остатков_{res['client'][:30]}.xlsx"
+    return Response(buf.getvalue(),
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}"})
+
+
 @app.post("/api/mpsales/refresh")
 async def mpsales_refresh():
     if clients_mp.state["running"]:

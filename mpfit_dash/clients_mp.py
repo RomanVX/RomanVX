@@ -547,3 +547,112 @@ async def wb_stock_diag(key_id: str, q: str) -> dict:
             else:
                 step("цена", False, f"{r.status_code}: {r.text[:120]}")
     return out
+
+
+# ── Сверка остатков: МПФИТ (наш склад) ↔ склады продавца клиента в WB ───────
+
+def _company_for(client: str) -> int | None:
+    """Компания МПФИТ по ИНН или названию из подписи ключа."""
+    import re as _re
+    rows = db.fetchall("SELECT id, name, inn FROM m_companies")
+    for inn in _re.findall(r"\d{10,12}", client or ""):
+        for i, n, ci in rows:
+            if (ci or "") == inn:
+                return i
+    low = (client or "").lower()
+    for i, n, ci in rows:
+        if n and (n.lower() in low or low in n.lower()):
+            return i
+    return None
+
+
+async def wb_stock_recon(key_id: str, company_id: int | None = None) -> dict:
+    """Все товары клиента: свободный остаток в МПФИТ против остатка, который
+    видит WB на складах продавца (по chrtID). Только чтение с обеих сторон."""
+    import mpfit_client as mp
+    k = next((x for x in _keys_full() if x["id"] == key_id), None)
+    if not k or k["mp"] != "wb":
+        return {"error": "нет такого WB-ключа"}
+    cid = company_id or await asyncio.to_thread(_company_for, k["client"])
+    if not cid:
+        return {"error": "не нашёл компанию МПФИТ для ключа — передайте company_id"}
+    # МПФИТ
+    prods = {p["id"]: p for p in await mp.paginate("/v1/products/list", flt={"company_id": cid},
+                                                    limit=100, max_pages=200)}
+    free: dict[int, int] = {}
+    for s in await mp.paginate("/v1/products/stocks", flt={"company_id": cid}, limit=100, max_pages=200):
+        free[s["product_id"]] = sum(int(x.get("free") or 0) for x in s.get("stocks") or [])
+    h = {"Authorization": k["secret"]}
+    async with httpx.AsyncClient(timeout=90) as cl:
+        # WB: все карточки → баркод → (chrtID, nmID, артикул)
+        by_bc: dict[str, dict] = {}
+        cursor: dict = {"limit": 100}
+        for _ in range(200):
+            r = await cl.post("https://content-api.wildberries.ru/content/v2/get/cards/list", headers=h,
+                              json={"settings": {"cursor": cursor, "filter": {"withPhoto": -1}}})
+            if r.status_code == 429:
+                await asyncio.sleep(10); continue
+            if not r.is_success:
+                return {"error": f"WB content {r.status_code}: {r.text[:150]}"}
+            d = r.json() or {}
+            cards = d.get("cards") or []
+            for c in cards:
+                for z in c.get("sizes") or []:
+                    for bc in z.get("skus") or []:
+                        by_bc[str(bc)] = {"chrt": z.get("chrtID"), "nm": c.get("nmID"),
+                                          "vc": c.get("vendorCode")}
+            cur = d.get("cursor") or {}
+            if len(cards) < 100 or not cur.get("nmID"):
+                break
+            cursor = {"limit": 100, "updatedAt": cur.get("updatedAt"), "nmID": cur.get("nmID")}
+            await asyncio.sleep(0.7)
+        r = await cl.get(WB_MP + "/api/v3/warehouses", headers=h)
+        if not r.is_success:
+            return {"error": f"WB warehouses {r.status_code}: {r.text[:150]}"}
+        whs = r.json() or []
+        chrts = sorted({v["chrt"] for v in by_bc.values() if v.get("chrt")})
+        wb_st: dict[int, dict[str, int]] = {}      # chrt → {склад: остаток}
+        for w in whs:
+            for i in range(0, len(chrts), 1000):
+                for _ in range(3):
+                    rs = await cl.post(f"{WB_MP}/api/v3/stocks/{w['id']}", headers=h,
+                                       json={"chrtIds": chrts[i:i + 1000]})
+                    if rs.status_code != 429:
+                        break
+                    await asyncio.sleep(5)
+                if rs.is_success:
+                    for s in (rs.json() or {}).get("stocks") or []:
+                        wb_st.setdefault(s["chrtId"], {})[w["name"]] = int(s.get("amount") or 0)
+                await asyncio.sleep(0.25)
+    ours = [w["name"] for w in whs if any(x in w["name"].lower() for x in OURS_HINTS)]
+    rows = []
+    for pid, p in prods.items():
+        f = free.get(pid, 0)
+        bcs = [str(b) for b in ((p.get("external_barcodes") or {}).get("wb") or [])] + \
+              [str(b) for b in p.get("barcodes") or []]
+        hit = next((by_bc[b] for b in bcs if b in by_bc), None)
+        st = wb_st.get(hit["chrt"], {}) if hit else {}
+        our_wb = sum(v for n, v in st.items() if n in ours)
+        other = {n: v for n, v in st.items() if n not in ours and v}
+        if not hit:
+            status = "нет карточки WB с таким баркодом" if f else ""
+        elif not any(n in ours for n in st):
+            status = "остаток в WB не загружен" if f else ""
+        elif our_wb != f:
+            status = "расходится"
+        else:
+            status = "ок"
+        if not f and not our_wb and not other and status in ("", "ок"):
+            continue                                    # пусто с обеих сторон
+        rows.append({"article": p.get("article"), "name": p.get("name"), "barcode": ", ".join(bcs[:2]),
+                     "nm": hit and hit["nm"], "wb_vendor": hit and hit["vc"], "mpfit_free": f,
+                     "wb_ours": our_wb if hit and any(n in ours for n in st) else None,
+                     "wb_other": other, "diff": (our_wb - f) if hit else None, "status": status})
+    order = {"нет карточки WB с таким баркодом": 0, "остаток в WB не загружен": 1, "расходится": 2, "ок": 3, "": 4}
+    rows.sort(key=lambda r: (order.get(r["status"], 9), -(r["mpfit_free"] or 0)))
+    summary: dict[str, int] = {}
+    for r in rows:
+        summary[r["status"] or "—"] = summary.get(r["status"] or "—", 0) + 1
+    return {"client": k["client"], "company_id": cid, "our_warehouses": ours,
+            "all_warehouses": [w["name"] for w in whs], "summary": summary, "rows": rows,
+            "at": (datetime.utcnow() + timedelta(hours=3)).strftime("%d.%m.%Y %H:%M МСК")}
