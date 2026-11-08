@@ -477,23 +477,24 @@ async def mpkeys_stock_recon(key_id: str, company_id: int = 0, xlsx: int = 0):
     wb = Workbook(); ws = wb.active; ws.title = "Сверка остатков"
     ws.append([f"Сверка остатков: {res['client']} — МПФИТ против WB, {res['at']}"])
     ws["A1"].font = Font(bold=True, size=12)
-    ws.append([f"Наш склад в WB: {', '.join(res['our_warehouses']) or 'не найден'}"])
+    ws.append([f"Наши склады продавца в WB (сумма сравнивается с МПФИТ): {', '.join(res['our_warehouses']) or 'не найдены'}"])
     ws.append([])
     hdr = ["Артикул", "Наименование", "Баркод", "nmID WB", "Остаток МПФИТ (свободно)",
-           "Остаток WB на нашем складе", "Разница WB − МПФИТ", "Остатки на других складах продавца", "Статус"]
+           "Остаток WB на наших складах (сумма)", "Разница WB − МПФИТ", "Раскладка по складам WB", "Чужие склады продавца", "Статус"]
     ws.append(hdr)
     for c in ws[4]:
         c.font = Font(bold=True, color="FFFFFF"); c.fill = PatternFill("solid", fgColor="1F3864")
     bad = PatternFill("solid", fgColor="F8CBAD"); warn = PatternFill("solid", fgColor="FFE699")
     for r in res["rows"]:
         ws.append([r["article"], r["name"], r["barcode"], r["nm"], r["mpfit_free"], r["wb_ours"], r["diff"],
+                   ", ".join(f"{k}: {v}" for k, v in (r.get("wb_split") or {}).items()),
                    ", ".join(f"{k}: {v}" for k, v in (r["wb_other"] or {}).items()), r["status"]])
         fill = bad if r["status"] in ("нет карточки WB с таким баркодом", "остаток в WB не загружен") \
             else warn if r["status"] == "расходится" else None
         if fill:
             for c in ws[ws.max_row]:
                 c.fill = fill
-    for col, w in zip("ABCDEFGHI", (12, 46, 16, 12, 12, 12, 12, 30, 30)):
+    for col, w in zip("ABCDEFGHIJ", (12, 46, 16, 12, 12, 12, 12, 60, 20, 30)):
         ws.column_dimensions[col].width = w
     ws.freeze_panes = "A5"
     buf = BytesIO(); wb.save(buf)

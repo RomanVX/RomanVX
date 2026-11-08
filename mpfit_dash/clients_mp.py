@@ -624,7 +624,11 @@ async def wb_stock_recon(key_id: str, company_id: int | None = None) -> dict:
                     for s in (rs.json() or {}).get("stocks") or []:
                         wb_st.setdefault(s["chrtId"], {})[w["name"]] = int(s.get("amount") or 0)
                 await asyncio.sleep(0.25)
-    ours = [w["name"] for w in whs if any(x in w["name"].lower() for x in OURS_HINTS)]
+    # Клиенты часто раскидывают остаток нашего склада по нескольким складам
+    # продавца в WB (Казань, СПб, Коледино… — все отгружаются от нас). Поэтому
+    # в сверке «наши» — все склады, кроме явно помеченных чужими (mp_wh_flags).
+    flags = await asyncio.to_thread(_ours_map)
+    ours = [w["name"] for w in whs if flags.get(w["name"], True)]
     rows = []
     for pid, p in prods.items():
         f = free.get(pid, 0)
@@ -634,6 +638,7 @@ async def wb_stock_recon(key_id: str, company_id: int | None = None) -> dict:
         st = wb_st.get(hit["chrt"], {}) if hit else {}
         our_wb = sum(v for n, v in st.items() if n in ours)
         other = {n: v for n, v in st.items() if n not in ours and v}
+        split = {n: v for n, v in st.items() if n in ours and v}
         if not hit:
             status = "нет карточки WB с таким баркодом" if f else ""
         elif not any(n in ours for n in st):
@@ -647,7 +652,8 @@ async def wb_stock_recon(key_id: str, company_id: int | None = None) -> dict:
         rows.append({"article": p.get("article"), "name": p.get("name"), "barcode": ", ".join(bcs[:2]),
                      "nm": hit and hit["nm"], "wb_vendor": hit and hit["vc"], "mpfit_free": f,
                      "wb_ours": our_wb if hit and any(n in ours for n in st) else None,
-                     "wb_other": other, "diff": (our_wb - f) if hit else None, "status": status})
+                     "wb_split": split, "wb_other": other, "diff": (our_wb - f) if hit else None,
+                     "status": status})
     order = {"нет карточки WB с таким баркодом": 0, "остаток в WB не загружен": 1, "расходится": 2, "ок": 3, "": 4}
     rows.sort(key=lambda r: (order.get(r["status"], 9), -(r["mpfit_free"] or 0)))
     summary: dict[str, int] = {}
