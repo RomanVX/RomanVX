@@ -202,7 +202,8 @@ tr.bad td{background:#fef2f2}
   <div class="card"><div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
     <h2 style="margin:0">Продажи клиентов по их кабинетам WB/Ozon</h2>
     <select id="mpsClient"></select>
-    <select id="mpsDays"><option value="7">7 дней</option><option value="30" selected>30 дней</option><option value="90">90 дней</option></select>
+    <select id="mpsDays"><option value="0" selected>С начала работы</option><option value="7">7 дней</option><option value="30">30 дней</option><option value="90">90 дней</option></select>
+    <label class="muted" style="display:flex;gap:6px;align-items:center">начало работы <input type="date" id="mpsStart"></label>
     <button class="btn" id="mpsRefresh">Обновить данные</button>
     <span class="muted" id="mpsState"></span>
   </div>
@@ -502,7 +503,7 @@ $('#stForm')?.addEventListener('submit',async e=>{e.preventDefault();const f=e.t
 
 // ── продажи клиентов (их кабинеты WB/Ozon) ──
 async function loadMps(){
-  const client=$('#mpsClient').value||'', days=$('#mpsDays').value||30;
+  const client=$('#mpsClient').value||'', days=$('#mpsDays').value??'0';
   const [r,k]=await Promise.all([api(`/api/mpsales?client=${encodeURIComponent(client)}&days=${days}`),api('/api/mpkeys')]);
   const sel=$('#mpsClient'); const cur=client||(r.report&&r.report.client)||'';
   sel.innerHTML=r.clients.length?r.clients.map(c=>`<option ${c===cur?'selected':''}>${esc(c)}</option>`).join(''):'<option value="">— нет ключей —</option>';
@@ -511,25 +512,43 @@ async function loadMps(){
     (k.keys.map(x=>`<tr><td style="text-align:left">${esc(x.client)}</td><td style="text-align:left">${x.mp==='wb'?'Wildberries':'Ozon'}${x.client_id?' · '+esc(x.client_id):''}</td><td>${esc((x.created_at||'').slice(0,10))}</td><td>${esc((x.last_ok||'—').replace('T',' ').slice(0,16))}</td><td style="text-align:left;color:var(--bad);white-space:normal">${esc(x.last_error||'')}</td><td><button class="btn" data-del="${x.id}">Удалить</button></td></tr>`).join('')||'<tr><td colspan="6" class="muted" style="text-align:left">Ключей пока нет — добавьте ниже</td></tr>');
   const rep=r.report;
   if(!rep||!rep.cur.qty&&!rep.prev.qty){$('#mpsKpi').innerHTML=kpi('Данных пока нет',rep?'—':'',rep?'идёт первый сбор или по ключу ошибка — см. таблицу ключей':'добавьте ключ клиента');$('#mpsWh').innerHTML='';chart('c-mps',{type:'bar',data:{labels:[],datasets:[]}});return}
-  const c=rep.cur,p=rep.prev,d=rep.days, pct=(a,b)=>b?Math.round(a/b*100)+'%':'—';
+  $('#mpsStart').value=rep.start||'';
+  const c=rep.cur,p=rep.prev,d=rep.days, pd=rep.prev_days||d, pct=(a,b)=>b?Math.round(a/b*100)+'%':'—';
+  const fromStart=String(days)==='0'&&rep.start, was=fromStart?'до начала работы':'было';
+  const dd=s=>s.slice(8,10)+'.'+s.slice(5,7);
+  const perTxt=`${dd(rep.period[0])}–${dd(rep.period[1])}, ${d} дн.`;
   const notes=(rep.notes||[]).map(n=>`<div class="card kpi" style="grid-column:1/-1;background:var(--warnb)"><div class="sub" style="color:var(--warn)">⚠ ${esc(n)}</div></div>`).join('');
   const mpLine=Object.entries(rep.by_mp).map(([m,v])=>`${m}: ${num(v.qty/d)}/день`).join(' · ');
   $('#mpsKpi').innerHTML=notes+
-    kpi('Заказов в день',num(c.qty/d),`за ${d} дн. ${num(c.qty)} · было ${num(p.qty/d)}/день ${delta(c.qty,p.qty)}<br>${esc(mpLine)}`)+
-    kpi('Сумма заказов в день',rub(c.sum/d),`было ${rub(p.sum/d)} ${delta(c.sum,p.sum)}`)+
-    kpi('Доля FBS',pct(c.fbs,c.qty),`FBS ${num(c.fbs/d)}/день · FBO ${num(c.fbo/d)}/день · было ${pct(p.fbs,p.qty)}`)+
-    kpi('Через наш склад',num(c.ours/d)+' / день',`${pct(c.ours,c.qty)} всех заказов · ${pct(c.ours,c.fbs)} FBS · было ${num(p.ours/d)}/день ${delta(c.ours,p.ours)}`,'good')+
+    kpi('Заказов в день',num(c.qty/d),`${perTxt}: ${num(c.qty)} · ${was} ${num(p.qty/pd)}/день ${delta(c.qty/d,p.qty/pd)}<br>${esc(mpLine)}`)+
+    kpi('Сумма заказов в день',rub(c.sum/d),`${was} ${rub(p.sum/pd)} ${delta(c.sum/d,p.sum/pd)}`)+
+    kpi('Доля FBS',pct(c.fbs,c.qty),`FBS ${num(c.fbs/d)}/день · FBO ${num(c.fbo/d)}/день · ${was} ${pct(p.fbs,p.qty)}`)+
+    kpi('Через наш склад',num(c.ours/d)+' / день',`${pct(c.ours,c.qty)} всех заказов · <b>${pct(c.ours,c.fbs)} FBS</b> · ${was} ${num(p.ours/pd)}/день (${pct(p.ours,p.fbs)} FBS) ${delta(c.ours/d,p.ours/pd)}`,'good')+
     kpi('FBS на других складах',num((c.fbs-c.ours)/d)+' / день',`${pct(c.fbs-c.ours,c.qty)} всех заказов — потенциал для нас`)+
-    kpi('Отмены',pct(c.cancels,c.qty),`${num(c.cancels)} шт за период · было ${pct(p.cancels,p.qty)}`);
+    kpi('Отмены',pct(c.cancels,c.qty),`${num(c.cancels)} шт за период · ${was} ${pct(p.cancels,p.qty)}`);
   const dl=rep.daily;
   chart('c-mps',{type:'bar',data:{labels:dl.labels,datasets:[
     {label:'FBO (склады маркетплейса)',data:dl.fbo,backgroundColor:'#bfdbfe',stack:'s'},
     {label:'FBS — наш склад',data:dl.fbs_ours,backgroundColor:'#059669',stack:'s'},
-    {label:'FBS — другие склады',data:dl.fbs_other,backgroundColor:'#d97706',stack:'s'}]},options:baseOpts({scales:{x:{stacked:true,grid:{display:false}},y:{stacked:true,beginAtZero:true}}})});
+    {label:'FBS — другие склады',data:dl.fbs_other,backgroundColor:'#d97706',stack:'s'}]},
+    options:baseOpts({layout:{padding:{top:28}},scales:{x:{stacked:true,grid:{display:false}},y:{stacked:true,beginAtZero:true}},
+      plugins:{legend:{position:'bottom',labels:{boxWidth:12}},
+        tooltip:{callbacks:{footer:it=>{const v=(dl.ours_share||[])[it[0].dataIndex];return v==null?'':`Наша доля FBS: ${v}%`}}}}}),
+    plugins:[{id:'oursShare',afterDatasetsDraw(ch){
+      // над каждым столбиком — наша доля от всех FBS-заказов дня
+      const sh=dl.ours_share||[], meta=ch.getDatasetMeta(2), ctx=ch.ctx; if(!meta||!meta.data)return;
+      ctx.save(); ctx.fillStyle='#047857'; ctx.font='600 10px system-ui,sans-serif'; ctx.textAlign='center';
+      meta.data.forEach((bar,i)=>{const v=sh[i]; if(v==null)return;
+        const tops=[0,1,2].map(k=>ch.getDatasetMeta(k).data[i]).filter(b=>b&&!b.hidden&&b.height>0).map(b=>b.y);
+        const y=(tops.length?Math.min(...tops):bar.y)-4, txt=v+'%';
+        if(bar.width<ctx.measureText(txt).width+2){ctx.save();ctx.translate(bar.x+3,y);ctx.rotate(-Math.PI/2);ctx.textAlign='left';ctx.fillText(txt,0,0);ctx.restore()}
+        else ctx.fillText(txt,bar.x,y)});
+      ctx.restore()}}]});
   $('#mpsWh').innerHTML='<tr><th style="text-align:left">Склад</th><th>Площадка</th><th>Модель</th><th>Заказов</th><th>В день</th><th>Доля</th><th>Сумма</th><th>Отмены</th><th>Наш</th></tr>'+
     rep.warehouses.map(w=>`<tr><td style="text-align:left">${esc(w.warehouse)}</td><td>${w.mp}</td><td>${w.model}</td><td>${num(w.qty)}</td><td>${w.per_day}</td><td>${w.share}%</td><td>${rub(w.sum)}</td><td>${num(w.cancels)}</td><td>${w.model==='FBS'?`<input type="checkbox" data-wh="${esc(w.warehouse)}" ${w.ours?'checked':''}>`:''}</td></tr>`).join('');
 }
 $('#mpsClient').onchange=loadMps; $('#mpsDays').onchange=loadMps;
+$('#mpsStart').onchange=async e=>{await api('/api/mpsales/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({client:$('#mpsClient').value,start:e.target.value})});$('#mpsDays').value='0';loadMps()};
 $('#mpsRefresh').onclick=async()=>{await api('/api/mpsales/refresh',{method:'POST'});$('#mpsState').textContent='идёт сбор… обновите через пару минут'};
 $('#mpsWh').onchange=async e=>{const w=e.target.dataset.wh;if(w==null)return;await api('/api/mpsales/warehouse',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({warehouse:w,ours:e.target.checked})});loadMps()};
 $('#mpsKeys').onclick=async e=>{const i=e.target.dataset.del;if(!i)return;if(e.target.dataset.sure!=='1'){e.target.dataset.sure='1';e.target.textContent='Точно удалить?';return}

@@ -48,6 +48,7 @@ SCHEMA = [
         qty INTEGER, sum REAL, cancels INTEGER,
         PRIMARY KEY (client, mp, day, model, warehouse))""",
     "CREATE TABLE IF NOT EXISTS mp_wh_flags (warehouse TEXT PRIMARY KEY, ours INTEGER)",
+    "CREATE TABLE IF NOT EXISTS mp_client_start (client TEXT PRIMARY KEY, start TEXT)",
 ]
 
 
@@ -399,13 +400,41 @@ def _is_ours(model: str, wh: str, flags: dict) -> bool:
     return any(h in wh.lower() for h in OURS_HINTS)
 
 
+def get_start(client: str) -> str | None:
+    r = db.fetchall("SELECT start FROM mp_client_start WHERE client = ?", (client,))
+    return r[0][0] if r and r[0][0] else None
+
+
+def set_start(client: str, start: str):
+    db.execute("DELETE FROM mp_client_start WHERE client = ?", (client,))
+    if start:
+        datetime.strptime(start, "%Y-%m-%d")
+        db.execute("INSERT INTO mp_client_start (client, start) VALUES (?, ?)", (client, start))
+
+
 def report(client: str, days: int = 30) -> dict:
-    """Период — последние N полных дней (без сегодняшнего) + такой же период до него."""
+    """Период — последние N полных дней (без сегодняшнего) + такой же период до него.
+    days=0 — «с начала работы»: от даты старта клиента (mp_client_start) до вчера,
+    сравнение — с таким же отрезком до старта (сколько его есть в данных)."""
     today = (datetime.utcnow() + timedelta(hours=3)).date()
     d1 = today - timedelta(days=1)
-    d0 = d1 - timedelta(days=days - 1)
+    start = get_start(client)
+    if days <= 0:
+        if start:
+            d0 = min(datetime.strptime(start, "%Y-%m-%d").date(), d1)
+            days = (d1 - d0).days + 1
+        else:
+            days = 30
+            d0 = d1 - timedelta(days=days - 1)
+    else:
+        d0 = d1 - timedelta(days=days - 1)
     p1 = d0 - timedelta(days=1)
     p0 = p1 - timedelta(days=days - 1)
+    first = db.fetchall("SELECT MIN(day) FROM mp_orders_daily WHERE client = ?", (client,))
+    first = first[0][0] if first and first[0][0] else None
+    if first and p0.isoformat() < first:          # до начала истории данных нет
+        p0 = min(datetime.strptime(first, "%Y-%m-%d").date(), p1)
+    prev_days = max((p1 - p0).days + 1, 0)
     rows = db.fetchall("SELECT mp, day, model, warehouse, qty, sum, cancels FROM mp_orders_daily "
                        "WHERE client = ? AND day >= ? AND day <= ?", (client, p0.isoformat(), d1.isoformat()))
     flags = _ours_map()
@@ -462,10 +491,13 @@ def report(client: str, days: int = 30) -> dict:
     last = db.fetchall("SELECT MAX(day) FROM mp_orders_daily WHERE client = ?", (client,))
     notes = [f"{mp.upper()}: {err[2:]}" for mp, err in db.fetchall(
         "SELECT mp, last_error FROM mp_keys WHERE client = ?", (client,)) if (err or "").startswith("⚠")]
-    return {"client": client, "days": days, "period": [d0.isoformat(), d1.isoformat()],
-            "prev_period": [p0.isoformat(), p1.isoformat()], "cur": cur, "prev": prev,
+    share = [round(o / (o + x) * 100) if (o + x) else None for o, x in zip(fbs_ours, fbs_other)]
+    return {"client": client, "days": days, "start": start, "period": [d0.isoformat(), d1.isoformat()],
+            "prev_period": [p0.isoformat(), p1.isoformat()], "prev_days": prev_days,
+            "cur": cur, "prev": prev,
             "warehouses": wh_list, "by_mp": by_mp,
-            "daily": {"labels": labels, "fbo": fbo, "fbs_ours": fbs_ours, "fbs_other": fbs_other},
+            "daily": {"labels": labels, "fbo": fbo, "fbs_ours": fbs_ours, "fbs_other": fbs_other,
+                      "ours_share": share},
             "last_day": last[0][0] if last else None, "notes": notes}
 
 

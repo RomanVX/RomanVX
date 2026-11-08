@@ -516,11 +516,22 @@ async def mpsales_refresh():
 
 @app.get("/api/mpsales")
 async def mpsales(client: str = "", days: int = 30):
+    """days=0 — с начала работы с клиентом (дата старта — POST /api/mpsales/start)."""
     cl = await _t(clients_mp.clients)
     if not client and cl:
         client = cl[0]
-    rep = await _t(clients_mp.report, client, max(7, min(days, 90))) if client else None
+    days = 0 if days <= 0 else max(7, min(days, 90))
+    rep = await _t(clients_mp.report, client, days) if client else None
     return {"clients": cl, "report": rep, "state": clients_mp.state}
+
+
+@app.post("/api/mpsales/start")
+async def mpsales_start(payload: dict):
+    try:
+        await _t(clients_mp.set_start, str(payload.get("client") or ""), str(payload.get("start") or ""))
+    except ValueError:
+        return JSONResponse({"error": "дата в формате ГГГГ-ММ-ДД"}, status_code=400)
+    return {"ok": True}
 
 
 @app.post("/api/mpsales/warehouse")
