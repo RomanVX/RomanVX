@@ -457,6 +457,13 @@ async def mpkeys_delete(key_id: str):
     return {"ok": True}
 
 
+@app.get("/api/mpkeys/{key_id}/wbdiag")
+async def mpkeys_wbdiag(key_id: str, q: str):
+    """Почему на WB нет остатка: карточка, склады продавца, остатки FBS/FBO, цена.
+    Только чтение из кабинета клиента."""
+    return await clients_mp.wb_stock_diag(key_id, q)
+
+
 @app.post("/api/mpsales/refresh")
 async def mpsales_refresh():
     if clients_mp.state["running"]:

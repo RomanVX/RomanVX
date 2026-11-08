@@ -467,3 +467,79 @@ def report(client: str, days: int = 30) -> dict:
 
 def clients() -> list[str]:
     return [c for (c,) in db.fetchall("SELECT DISTINCT client FROM mp_keys ORDER BY client")]
+
+
+# ── Диагностика «почему на WB нет остатка» (только чтение) ──────────────────
+
+async def wb_stock_diag(key_id: str, q: str) -> dict:
+    """По ключу клиента: карточка (nmID/баркод → chrtID), склады продавца и
+    остаток товара на каждом, плюс остаток на складах WB (если есть «Статистика»).
+    Ничего не меняет в кабинете — только GET/POST-методы чтения."""
+    k = next((x for x in _keys_full() if x["id"] == key_id), None)
+    if not k or k["mp"] != "wb":
+        return {"error": "нет такого WB-ключа"}
+    h = {"Authorization": k["secret"]}
+    q = (q or "").strip()
+    out: dict = {"client": k["client"], "q": q, "steps": []}
+
+    def step(name, ok, info):
+        out["steps"].append({"step": name, "ok": ok, "info": info})
+
+    async with httpx.AsyncClient(timeout=60) as cl:
+        # 1. карточка
+        card = None
+        r = await cl.post("https://content-api.wildberries.ru/content/v2/get/cards/list", headers=h,
+                          json={"settings": {"cursor": {"limit": 100},
+                                             "filter": {"textSearch": q, "withPhoto": -1}}})
+        if r.is_success:
+            cards = (r.json() or {}).get("cards") or []
+            for c in cards:
+                skus = [s for z in c.get("sizes") or [] for s in z.get("skus") or []]
+                if q in (str(c.get("nmID")), c.get("vendorCode")) or q in skus:
+                    card = c
+                    break
+            card = card or (cards[0] if cards else None)
+            if card:
+                step("карточка", True, {
+                    "nmID": card.get("nmID"), "vendorCode": card.get("vendorCode"),
+                    "title": card.get("title"), "subject": card.get("subjectName"),
+                    "sizes": [{"chrtID": z.get("chrtID"), "skus": z.get("skus")} for z in card.get("sizes") or []],
+                    "updatedAt": card.get("updatedAt")})
+            else:
+                step("карточка", False, "в контенте не найдена по " + q)
+        else:
+            step("карточка", False, f"content-api {r.status_code}: {r.text[:150]}")
+        chrts = [z.get("chrtID") for z in (card or {}).get("sizes") or [] if z.get("chrtID")]
+        # 2. склады продавца
+        r = await cl.get(WB_MP + "/api/v3/warehouses", headers=h)
+        whs = r.json() if r.is_success else []
+        step("склады продавца", r.is_success, whs if r.is_success else f"{r.status_code}: {r.text[:150]}")
+        # 3. остаток на каждом складе продавца
+        if chrts and r.is_success:
+            res = []
+            for w in whs or []:
+                rs = await cl.post(f"{WB_MP}/api/v3/stocks/{w['id']}", headers=h, json={"chrtIds": chrts})
+                res.append({"warehouse": w.get("name"), "id": w.get("id"), "status": rs.status_code,
+                            "stocks": (rs.json() or {}).get("stocks") if rs.is_success else rs.text[:150]})
+                await asyncio.sleep(0.3)
+            step("остатки на складах продавца (FBS)", True, res)
+        # 4. остаток на складах WB (FBO)
+        if card:
+            r = await cl.get("https://statistics-api.wildberries.ru/api/v1/supplier/stocks", headers=h,
+                             params={"dateFrom": "2020-01-01T00:00:00"})
+            if r.is_success:
+                rows = [x for x in r.json() or [] if x.get("nmId") == card.get("nmID")]
+                step("остатки на складах WB (FBO)", True,
+                     [{"warehouse": x.get("warehouseName"), "qty": x.get("quantity"),
+                       "inWay": (x.get("inWayToClient") or 0) + (x.get("inWayFromClient") or 0)} for x in rows])
+            else:
+                step("остатки на складах WB (FBO)", False, f"{r.status_code}: {r.text[:120]}")
+            # 5. цена (без цены товар на витрине не показывается)
+            r = await cl.get("https://discounts-prices-api.wildberries.ru/api/v2/list/goods/filter",
+                             headers=h, params={"limit": 10, "filterNmID": card.get("nmID")})
+            if r.is_success:
+                g = ((r.json() or {}).get("data") or {}).get("listGoods") or []
+                step("цена", bool(g), g[0] if g else "цены нет")
+            else:
+                step("цена", False, f"{r.status_code}: {r.text[:120]}")
+    return out
