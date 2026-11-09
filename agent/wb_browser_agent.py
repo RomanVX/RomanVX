@@ -308,6 +308,7 @@ async def main():
             pass
 
         done: dict = {}
+        last_err = "?"
         while True:
             issued = {}
             try:
@@ -321,6 +322,17 @@ async def main():
                 else:
                     r = _HTTP.get(f"{DASHBOARD}/api/tools/niche/pending",
                                   params={"token": TOKEN})
+                    if r.status_code != 200:
+                        # 401 bad token — частая причина «агент молчит»
+                        msg = f"дашборд ответил {r.status_code}: {r.text[:100]}"
+                        if msg != last_err:
+                            print(msg + ("  ← проверьте WB_AGENT_TOKEN" if r.status_code == 401 else ""))
+                            last_err = msg
+                        await asyncio.sleep(POLL_SEC * 3)
+                        continue
+                    if last_err:
+                        print("связь с дашбордом есть, токен принят")
+                        last_err = ""
                     queries = r.json().get("queries") or []
             except Exception as e:
                 print("нет связи:", str(e)[:120])
