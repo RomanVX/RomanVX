@@ -1041,10 +1041,15 @@ async def get_wb_pnl(
         deductions_full = (m.get("deduction", 0.0) + m.get("cashbackAmount", 0.0)
                            + m.get("cashbackCommission", 0.0))
         if mk in promo_ded_known:
-            # точно: вычитаем сами удержания «WB Продвижение» этого месяца.
-            # Вычитать расход рекламы месяца нельзя — оплата идёт с недельным
-            # лагом, и на стыке месяцев неделя рекламы задваивалась/терялась
-            m["deductions"] = max(deductions_full - promo_ded_by_month.get(mk, 0.0), 0.0)
+            # Реклама с баланса продаж — в затраты того месяца, когда WB её
+            # УДЕРЖАЛ (документы «WB Продвижение», раз в неделю за прошлую
+            # неделю: 01.11 удержана реклама 26.10–01.11 — это затраты ноября).
+            # Плюс то, что оплачено со счёта (в удержания не попадает).
+            promo = promo_ded_by_month.get(mk, 0.0)
+            from_account = max(adv_total - adv_bonus - adv_balance, 0.0)
+            m["advert"] = promo + from_account
+            advert_balance_by_month[mk] = promo
+            m["deductions"] = max(deductions_full - promo, 0.0)
         else:
             m["deductions"] = max(deductions_full - adv_balance, 0.0)
 
@@ -1058,7 +1063,7 @@ async def get_wb_pnl(
             ("paidAcceptance", "  − Приёмка",                   "cost"),
             ("penalty",        "  − Штрафы",                    "cost"),
             ("deductions",     "  − Прочие удержания (Джем, Витрина, отзывы и др.)", "cost"),
-            ("advert",         "  − Продвижение (за вычетом бонусов)", "cost"),
+            ("advert",         "  − Продвижение (удержано WB в месяце)", "cost"),
         ],
     )
 
