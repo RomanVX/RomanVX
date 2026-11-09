@@ -297,6 +297,9 @@ def _normalize_stat_rows(stat_rows: list[dict]) -> list[dict]:
             "paidAcceptance":  r.get("acceptance") or 0,
             "penalty":         r.get("penalty") or 0,
             "deduction":       r.get("deduction") or 0,
+            # тип удержания нужен только строкам-удержаниям: по нему отделяем
+            # оплату рекламы («WB Продвижение») от Джема/Витрины/отзывов
+            "bonusType":       _i(r.get("bonus_type_name") or "") if r.get("deduction") else "",
             "cashbackAmount":  0,
             "acquiringFee":    r.get("acquiring_fee") or 0,
             "commissionPct":   r.get("commission_percent") or 0,
@@ -825,6 +828,11 @@ async def get_wb_pnl(
         try: return float(str(v).replace(",", ".") or 0)
         except: return 0.0
 
+    # удержания «WB Продвижение» по месяцу ОПЕРАЦИИ (WB выставляет их раз
+    # в неделю за прошлую неделю — 01.11 приходит оплата рекламы 26–31.10)
+    promo_ded_by_month: dict[str, float] = {}
+    promo_ded_known: set = set()
+
     if detail_rows:
         detail_totals: dict[str, dict] = {}
 
@@ -923,6 +931,10 @@ async def get_wb_pnl(
             m["penalty"]         += _f(row.get("penalty"))
             m["deduction"]       += _f(row.get("deduction"))
             m["cashbackAmount"]  += _f(row.get("cashbackAmount"))
+            if row.get("bonusType"):
+                promo_ded_known.add(mk)
+                if "продвижение" in row["bonusType"].lower():
+                    promo_ded_by_month[mk] = promo_ded_by_month.get(mk, 0.0) + _f(row.get("deduction"))
             # SKU-разрез операционных затрат (строки несут артикул)
             if any(_f(row.get(k)) for k in ("deliveryService", "paidStorage", "paidAcceptance", "penalty")):
                 sd = s_ensure(_canon_sku(row), mk)
@@ -1028,7 +1040,13 @@ async def get_wb_pnl(
         # списания за отзывы и прочие удержания.
         deductions_full = (m.get("deduction", 0.0) + m.get("cashbackAmount", 0.0)
                            + m.get("cashbackCommission", 0.0))
-        m["deductions"] = max(deductions_full - adv_balance, 0.0)
+        if mk in promo_ded_known:
+            # точно: вычитаем сами удержания «WB Продвижение» этого месяца.
+            # Вычитать расход рекламы месяца нельзя — оплата идёт с недельным
+            # лагом, и на стыке месяцев неделя рекламы задваивалась/терялась
+            m["deductions"] = max(deductions_full - promo_ded_by_month.get(mk, 0.0), 0.0)
+        else:
+            m["deductions"] = max(deductions_full - adv_balance, 0.0)
 
     pnl_rows = _build_pnl_rows(
         month_totals, cogs_by_month,
@@ -1039,7 +1057,7 @@ async def get_wb_pnl(
             ("paidStorage",    "  − Хранение",                  "cost"),
             ("paidAcceptance", "  − Приёмка",                   "cost"),
             ("penalty",        "  − Штрафы",                    "cost"),
-            ("deductions",     "  − Прочие удержания (Джем, отзывы и др.)", "cost"),
+            ("deductions",     "  − Прочие удержания (Джем, Витрина, отзывы и др.)", "cost"),
             ("advert",         "  − Продвижение (за вычетом бонусов)", "cost"),
         ],
     )
