@@ -7,7 +7,8 @@
 
 Установка (один раз, PowerShell):
     py -m pip install playwright httpx
-    py -m playwright install chromium
+    (браузер ставить не нужно: агент сам возьмёт установленный Chrome или Edge;
+     «py -m playwright install chromium» — только если нет ни того, ни другого)
 
 Запуск:
     set DASHBOARD_URL=https://wb-dashboard-6wxf.onrender.com
@@ -275,8 +276,23 @@ async def main():
     print(f"WB браузер-агент запущен. Дашборд: {DASHBOARD}")
     print("Держу браузер, опрашиваю очередь. Не закрывай это окно.\n")
     async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=True, args=[
-            "--disable-blink-features=AutomationControlled", "--no-sandbox"])
+        # Свой Chromium Playwright качает с cdn.playwright.dev — из РФ он
+        # часто недоступен. Поэтому сначала пробуем уже установленные Chrome
+        # и Edge (Edge есть на любой Windows), и только потом скачанный.
+        args = ["--disable-blink-features=AutomationControlled", "--no-sandbox"]
+        pref = os.getenv("WB_BROWSER_CHANNEL", "").strip()
+        browser = None
+        for ch in ([pref] if pref else []) + ["chrome", "msedge", ""]:
+            try:
+                browser = await pw.chromium.launch(headless=True, args=args,
+                                                   **({"channel": ch} if ch else {}))
+                print(f"Браузер: {ch or 'chromium Playwright'}")
+                break
+            except Exception as e:
+                print(f"  {ch or 'chromium'} не запустился: {str(e).splitlines()[0][:120]}")
+        if browser is None:
+            raise SystemExit("Нет ни Chrome, ни Edge, ни Chromium Playwright — "
+                             "поставьте Chrome или выполните «py -m playwright install chromium» с VPN")
         ctx = await browser.new_context(
             locale="ru-RU", timezone_id="Europe/Moscow", user_agent=UA,
             viewport={"width": 1366, "height": 900})
