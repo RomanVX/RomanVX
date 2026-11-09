@@ -107,7 +107,7 @@ async def _dismiss_adult(page):
 async def _page_debug(page, tag):
     """Диагностика пустой выдачи: что за страница на самом деле."""
     try:
-        info = await page.evaluate("""() => ({
+        info = await page.evaluate(r"""() => ({
             title: document.title,
             cards: document.querySelectorAll('[data-nm-id], .product-card').length,
             text: (document.body.innerText || '').slice(0, 180).replace(/\s+/g, ' '),
