@@ -268,12 +268,16 @@ def _public_base() -> str:
 
 
 def _jpg_links(big_urls: list[str]) -> list[str]:
+    # ?v=<время> — Ozon пропускает фото со ссылкой, которую уже загружал
+    # (status «skipped»), даже если прошлая загрузка не удалась; метка версии
+    # заставляет его скачать заново
+    v = datetime.utcnow().strftime("%Y%m%d%H%M")
     out = []
     for u in big_urls[:30]:
         m = _WB_IMG.match(u or "")
         if m:
             b, vol, part, nm, n = m.groups()
-            out.append(f"{_public_base()}/api/tools/img/wb/{b}/{vol}/{part}/{nm}/{n}.jpg")
+            out.append(f"{_public_base()}/api/tools/img/wb/{b}/{vol}/{part}/{nm}/{n}.jpg?v={v}")
     return out
 
 
