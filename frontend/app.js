@@ -6809,7 +6809,7 @@ function renderGrowth() {
   charts.growth = new Chart(document.getElementById('grChart'), {
     data: { labels: lbl, datasets: [
       { type: 'bar', label: 'Факт', data: s.map(x => x.revenue), backgroundColor: barCol, borderRadius: 4, order: 2 },
-      { type: 'line', label: 'План', data: s.map(x => x.plan), borderColor: CHART_C.pos, borderDash: [6, 4], pointRadius: 0, borderWidth: 2, order: 1 },
+      { type: 'line', label: 'План', data: s.map(x => x.plan), borderColor: CHART_C.pos, backgroundColor: CHART_C.pos, borderDash: [6, 4], pointRadius: 3, borderWidth: 2, order: 1 },
     ] },
     options: { ...base, plugins: { ...base.plugins, tooltip: { callbacks: { label: c => `${c.dataset.label}: ${c.raw == null ? '—' : fmt(c.raw) + ' ₽'}` } } },
       scales: { x: { ticks: { color: CHART_C.tick2 }, grid: { display: false } },
