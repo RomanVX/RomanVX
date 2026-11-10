@@ -25,7 +25,7 @@ document.addEventListener('DOMContentLoaded', _initThemeBtn);
 const API = '';
 let charts = {};
 let sortState = {};
-const dirty = { salesan: true, stocks: true, reviews: true, finance: true, unit: true, tools: true, toolsoz: true, docs: true, fbs: true, dims: true, promo: true, cardsync: true };
+const dirty = { salesan: true, stocks: true, reviews: true, finance: true, unit: true, tools: true, toolsoz: true, docs: true, fbs: true, dims: true, promo: true, cardsync: true, growth: true };
 let _advertData = [];
 let currentTab = 'finance';
 let prodAllData = [];
@@ -121,7 +121,7 @@ function applyProfile() {
   // заголовок «Wildberries» вёл в Продуктолог (ИИ) — ведём в воронку
   const wbTitle = document.querySelector('#navWB .mp-menu-title');
   if (wbTitle) wbTitle.setAttribute('onclick', "goNavTool('tools','wbfunnel','navWB')");
-  const HIDE = ["goNav('fbs'", "'slots'", "'prod'", "'niche'", "'nichecalc'", "'visuals'", "'competitors'", "goNav('cardsync'"];
+  const HIDE = ["goNav('fbs'", "'slots'", "'prod'", "'niche'", "'nichecalc'", "'visuals'", "'competitors'", "goNav('cardsync'", "goNav('growth'"];
   document.querySelectorAll('#mainMenu a, #mainMenu button').forEach(el => {
     const oc = el.getAttribute('onclick') || '';
     if (HIDE.some(h => oc.includes(h))) el.style.display = 'none';
@@ -309,7 +309,7 @@ function goNavTool(tab, tool, navId) {
 function switchTab(name, linkEl) {
   document.querySelectorAll('#mainTabs .nav-link').forEach(a => a.classList.remove('active'));
   if (linkEl) linkEl.classList.add('active');
-  ['salesan', 'stocks', 'reviews', 'finance', 'unit', 'tools', 'toolsoz', 'docs', 'fbs', 'dims', 'promo', 'cardsync'].forEach(t => {
+  ['salesan', 'stocks', 'reviews', 'finance', 'unit', 'tools', 'toolsoz', 'docs', 'fbs', 'dims', 'promo', 'cardsync', 'growth'].forEach(t => {
     const el = document.getElementById('pane-' + t);
     if (el) el.style.display = t === name ? 'block' : 'none';
   });
@@ -318,7 +318,7 @@ function switchTab(name, linkEl) {
     dirty[name] = false;
     ({ salesan: loadSalesAnalytics, stocks: loadStocks,
        reviews: loadReviews, finance: loadFinance, tools: loadTools, toolsoz: loadOzTool, docs: loadDocs,
-       unit: loadUnitEconomics, fbs: loadFbs, dims: loadDims, promo: loadPromo, cardsync: loadCardSync })[name]();
+       unit: loadUnitEconomics, fbs: loadFbs, dims: loadDims, promo: loadPromo, cardsync: loadCardSync, growth: loadGrowth })[name]();
   }
 }
 
@@ -6660,4 +6660,101 @@ async function csTasks(ids) {
       (bad.length ? `<div class="mt-1 text-danger fw-bold">Ошибки модерации:</div>${bad.map(line).join('<br>')}` : '') +
       (warn.length ? `<div class="mt-1 fw-bold">Предупреждения:</div>${warn.map(line).join('<br>')}` : '');
   } catch (e) { el.innerHTML = `<span class="text-danger">Ошибка: ${e.message}</span>`; }
+}
+
+
+// ══ План роста Ozon: точка старта → цели → факт ══════════════════════════════
+let _gr = null, _grGroup = '';
+
+async function loadGrowth(refresh) {
+  const wrap = document.getElementById('grWrap');
+  if (!wrap) return;
+  try {
+    const d = await fetchJSON('/api/growth/state' + (refresh ? '?refresh=true' : ''), 90000);
+    if (!d.series) {
+      wrap.innerHTML = `<div class="text-center text-secondary py-4"><span class="spinner-border spinner-border-sm"></span> Собираю факт: ${d.progress || ''}${d.error ? '<br><span class="text-danger">' + d.error + '</span>' : ''}</div>`;
+      setTimeout(() => { if (currentTab === 'growth') loadGrowth(); }, 6000);
+      return;
+    }
+    _gr = d; renderGrowth();
+    if (d.building) setTimeout(() => { if (currentTab === 'growth') loadGrowth(); }, 10000);
+  } catch (e) { wrap.innerHTML = `<div class="alert alert-danger">Ошибка: ${e.message}</div>`; }
+}
+
+function _grKpi(title, now, start, target, unit, good) {
+  // good: 'up' — больше лучше, 'down' — меньше лучше
+  const ok = now == null ? null : (good === 'up' ? now >= target : now <= target);
+  const col = ok == null ? 'var(--ink)' : ok ? 'var(--pos)' : (good === 'up' ? (now >= start ? '#d97706' : 'var(--neg)') : (now <= start ? '#d97706' : 'var(--neg)'));
+  const f = v => v == null ? '—' : (unit === '₽' ? fmt(v) + ' ₽' : v + unit);
+  return `<div class="card p-2 flex-fill" style="min-width:150px"><div class="small text-secondary">${title}</div>
+    <div style="font-size:1.35rem;font-weight:700;color:${col}">${f(now)}</div>
+    <div class="small text-secondary">старт ${f(start)} · цель <b>${f(target)}</b></div></div>`;
+}
+
+function renderGrowth() {
+  const d = _gr, wrap = document.getElementById('grWrap');
+  if (!d || !wrap) return;
+  const b = d.base, k = b.kpi, t = b.targets, cw = d.current_week || {};
+  document.getElementById('grInfo').textContent = `старт ${b.start} → цель к ${b.horizon_end} · данные ${d.built}${d.building ? ' · обновляю…' : ''}`;
+  const wkRevStart = Math.round(k.revenue_month / 30 * 7);
+  let h = `<div class="d-flex flex-wrap gap-2 mb-3">
+    ${_grKpi('Оборот за неделю', cw.revenue, wkRevStart, Math.round(wkRevStart * t.revenue_x), '₽', 'up')}
+    ${_grKpi('План этой недели', cw.plan, null, null, '₽', 'up').replace('старт — · цель <b>—</b>', 'по линии роста ×' + t.revenue_x)}
+    ${_grKpi('К выводу', cw.payout, k.payout, t.payout, '%', 'up')}
+    ${_grKpi('Маржа', cw.margin, k.margin, t.margin, '%', 'up')}
+    ${_grKpi('Реклама (ДРР)', cw.drr, k.drr, t.drr, '%', 'down')}
+    ${_grKpi('Локализация', cw.local, k.local, t.local, '%', 'up')}
+  </div>
+  <div class="card p-2 mb-3"><canvas id="grChart" height="90"></canvas>
+    <div class="small text-secondary">Столбцы — оборот Ozon по товарам в работе за неделю (цена продавца, без отмен); линия — план роста ×${t.revenue_x} к ${b.horizon_end}. К выводу и маржа — оценка по экономике товаров с фактическими ценами и рекламой (сверяется с реализацией раз в месяц).</div></div>`;
+  // группы
+  h += `<h6>Группы товаров: заказы в день — 14 дней до старта → последние 7 дней</h6><div class="d-flex flex-wrap gap-2 mb-3">` +
+    d.groups.map(g => {
+      const dl = g.orders_day_base ? Math.round((g.orders_day_now / g.orders_day_base - 1) * 100) : null;
+      return `<div class="card p-2 flex-fill" style="min-width:170px;cursor:pointer;${_grGroup === g.group ? 'outline:2px solid var(--accent)' : ''}" onclick="_grGroup=_grGroup==='${g.group}'?'':'${g.group}';renderGrowth()">
+        <div class="small fw-bold">${g.group}${g.flags ? ` <span class="badge bg-danger">${g.flags}</span>` : ''}</div>
+        <div>${g.orders_day_base} → <b>${g.orders_day_now}</b> <span class="small" style="color:${dl == null ? 'inherit' : dl >= 0 ? 'var(--pos)' : 'var(--neg)'}">${dl == null ? '' : (dl > 0 ? '+' : '') + dl + '%'}</span></div>
+        <div class="small text-secondary">${fmt(g.revenue_7d)} ₽ за 7 дн.</div></div>`;
+    }).join('') + '</div>';
+  // товары
+  const rows = d.rows.filter(r => !_grGroup || r.group === _grGroup);
+  const pc = (v, lim, inv) => v == null ? '—' : `<span style="color:${(inv ? v <= lim : v >= lim) ? 'var(--pos)' : 'var(--neg)'}">${v}%</span>`;
+  h += `<h6>Товары${_grGroup ? ': ' + _grGroup : ''}</h6><div class="table-responsive"><table class="table table-sm align-middle small">
+    <thead><tr><th>Артикул</th><th>Заказов/день<br>старт → сейчас</th><th>Выручка 7д</th><th>Цена продавца<br>старт → сейчас</th><th>Мин. цена</th><th>Ставка «за заказ»<br>видимость</th><th>Позиция в поиске<br>старт → сейчас</th><th>К выводу</th><th>Маржа</th><th>Акции</th><th>Флаги</th></tr></thead><tbody>` +
+    rows.map(r => `<tr${r.flags.length ? ' style="background:rgba(220,38,38,.07)"' : ''}>
+      <td><b>${r.art}</b><div class="text-secondary">${r.group}</div></td>
+      <td>${r.orders_day_base} → <b>${r.orders_day_now}</b> ${r.delta == null ? '' : `<span style="color:${r.delta >= 0 ? 'var(--pos)' : 'var(--neg)'}">${r.delta > 0 ? '+' : ''}${r.delta}%</span>`}</td>
+      <td>${fmt(r.revenue_7d)} ₽${r.ad_7d ? `<div class="text-secondary">реклама ${fmt(r.ad_7d)} ₽</div>` : ''}</td>
+      <td>${r.price_base ? fmt(r.price_base) : '—'} → <b>${r.price_now ? fmt(r.price_now) : '—'}</b>${r.marketing_price && r.marketing_price !== r.price_now ? `<div class="text-secondary">в акции ${fmt(r.marketing_price)}</div>` : ''}</td>
+      <td>${r.min_price ? fmt(r.min_price) : '—'}</td>
+      <td>${r.bid != null ? r.bid + '%' : '—'}${r.bid_on === false ? ' <span class="text-secondary">(выкл)</span>' : ''}<div class="text-secondary">${r.visibility ? 'видимость ' + r.visibility : ''}</div></td>
+      <td>${r.pos_base ?? '—'} → <b>${r.pos_now ?? '—'}</b></td>
+      <td>${pc(r.payout, 30)}</td><td>${pc(r.margin, 20)}</td>
+      <td>${(r.actions || []).length ? r.actions.map(a => `<div>${a}</div>`).join('') : '<span class="text-secondary">нет</span>'}${r.auto_action ? '<div class="text-secondary">автоакции вкл</div>' : ''}</td>
+      <td class="text-danger">${r.flags.join('<br>')}</td></tr>`).join('') + '</tbody></table></div>';
+  // кампании
+  h += `<h6>Рекламные кампании — последние 7 дней</h6><div class="table-responsive"><table class="table table-sm small"><thead><tr><th>Кампания</th><th>Группа</th><th>Статус</th><th>Бюджет/нед</th><th>Расход 7д</th><th>Заказы</th><th>ДРР</th></tr></thead><tbody>` +
+    d.campaigns.map(c => `<tr><td>${c.title}<div class="text-secondary">${c.id}</div></td><td>${c.group || ''}</td><td>${(c.state || '').replace('CAMPAIGN_STATE_', '')}</td><td>${c.weekly_budget ? fmt(c.weekly_budget) + ' ₽' : '—'}</td><td>${fmt(c.spent_7d)} ₽</td><td>${c.orders_7d}</td><td>${c.drr_7d == null ? '—' : pc(c.drr_7d, t.drr, true)}</td></tr>`).join('') + '</tbody></table></div>';
+  // журнал
+  h += `<h6>Журнал действий</h6><div class="small mb-4">` + (d.journal || []).slice().reverse().map(j => `<div><span class="text-secondary">${j.date}</span> ${j.group ? '<b>[' + j.group + ']</b> ' : ''}${j.text}</div>`).join('') + '</div>';
+  wrap.innerHTML = h;
+  // график
+  const ctx = document.getElementById('grChart').getContext('2d');
+  if (charts.growth) charts.growth.destroy();
+  const s = d.series;
+  charts.growth = new Chart(ctx, {
+    data: { labels: s.map(x => x.week.slice(8, 10) + '.' + x.week.slice(5, 7) + (x.is_start ? ' ▶' : '') + (x.days < 7 ? ' *' : '')),
+      datasets: [
+        { type: 'bar', label: 'Оборот за неделю', data: s.map(x => x.revenue), backgroundColor: s.map(x => x.is_start ? 'rgba(56,189,248,.6)' : 'rgba(201,168,76,.5)'), yAxisID: 'y' },
+        { type: 'line', label: 'План', data: s.map(x => x.plan), borderColor: CHART_C.pos, borderDash: [6, 4], pointRadius: 0, yAxisID: 'y' },
+        { type: 'line', label: 'К выводу %', data: s.map(x => x.payout), borderColor: '#38bdf8', pointRadius: 2, yAxisID: 'y1' },
+        { type: 'line', label: 'Маржа %', data: s.map(x => x.margin), borderColor: '#a78bfa', pointRadius: 2, yAxisID: 'y1' },
+        { type: 'line', label: 'ДРР %', data: s.map(x => x.drr), borderColor: '#f87171', pointRadius: 2, yAxisID: 'y1' },
+      ] },
+    options: { responsive: true, interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { labels: { color: CHART_C.tick } } },
+      scales: { x: { ticks: { color: CHART_C.tick2 }, grid: { color: CHART_C.grid } },
+        y: { position: 'left', ticks: { color: CHART_C.tick, callback: v => fmt(v) + ' ₽' }, grid: { color: CHART_C.grid } },
+        y1: { position: 'right', ticks: { color: CHART_C.tick, callback: v => v + '%' }, grid: { drawOnChartArea: false } } } },
+  });
 }

@@ -117,6 +117,7 @@
         <a href="#" onclick="goNavTool('toolsoz','ads','navOzon');return false">Реклама (Performance)</a>
         <a href="#" onclick="goNavTool('toolsoz','phrases','navOzon');return false">Запросы</a>
         <div class="mp-drop-sep"></div>
+        <a href="#" onclick="goNav('growth','navOzon');return false"><b>План роста Ozon</b></a>
         <a href="#" onclick="goNav('cardsync','navOzon');return false">Карточки WB → Ozon</a>
       </div>
     </div>
@@ -525,6 +526,16 @@
     <div id="promoWrap"><div class="text-center text-secondary py-4"><span class="spinner-border"></span></div></div>
   </div>
 
+  <!-- ── План роста Ozon: старт → цели → факт ── -->
+  <div id="pane-growth" style="display:none">
+    <div class="d-flex gap-2 mb-2 flex-wrap align-items-center">
+      <h5 class="mb-0 me-2">План роста Ozon</h5>
+      <span id="grInfo" class="text-secondary small"></span>
+      <button class="btn btn-sm btn-outline-secondary ms-auto" onclick="loadGrowth(true)"><i class="bi bi-arrow-clockwise"></i> Обновить</button>
+    </div>
+    <div id="grWrap"><div class="text-center text-secondary py-4"><span class="spinner-border"></span></div></div>
+  </div>
+
   <!-- ── Карточки WB → Ozon: фото и описание ── -->
   <div id="pane-cardsync" style="display:none">
     <div class="d-flex gap-2 mb-2 flex-wrap align-items-center">
@@ -572,6 +583,6 @@
 
 <script src="vendor/bootstrap.bundle.min.js"></script>
 <script src="vendor/chart.umd.min.js"></script>
-<script src="app.js?v=258"></script>
+<script src="app.js?v=259"></script>
 </body>
 </html>
