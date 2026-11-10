@@ -10,8 +10,8 @@
   описание — текст WB против характеристики Ozon 4191 «Аннотация».
 
 Перенос (только по команде владельца или в автосинхронизации):
-  фото     — POST /v1/product/pictures/import: ВСЕ фото WB в том же порядке
-             (первое — главное). Ozon берёт только JPG/PNG по публичной ссылке,
+  фото     — POST /v2/product/pictures/import (v1 выключен): ВСЕ фото WB в том
+             же порядке (первое — главное). Ozon берёт только JPG/PNG по публичной ссылке,
              а WB отдаёт WEBP — поэтому ссылки ведут на наш конвертер
              /api/tools/img/wb/… (JPG-копия фото WB);
   описание — POST /v1/product/attributes/update, характеристика 4191.
@@ -272,49 +272,68 @@ def _jpg_links(big_urls: list[str]) -> list[str]:
     return out
 
 
-async def _apply(rows: list[dict], what: set) -> list[dict]:
+async def _oz(path: str, body: dict) -> tuple[int, dict]:
+    """Запрос в Ozon с телом ответа даже при ошибке (ozon_client._post его теряет)."""
     import ozon_client as oz
-    res = []
-    last = await asyncio.to_thread(_kv, _LAST_KEY, {})
-    desc_items = []
-    for r in rows:
-        one = {"art": r["art"], "photos": None, "desc": None}
-        if "photos" in what:
+    for attempt in range(4):
+        r = await oz._http().post(oz._BASE + path, headers=oz._headers(), json=body)
+        if r.status_code == 429:
+            await asyncio.sleep(3 * (attempt + 1))
+            continue
+        try:
+            return r.status_code, r.json()
+        except Exception:
+            return r.status_code, {"message": r.text[:300]}
+    return 429, {"message": "лимит запросов Ozon"}
+
+
+async def _send_batches(path: str, items: list[dict], per: list[dict], field: str):
+    """items ↔ per (результаты по товарам): шлём пачками по 100, пишем № задачи."""
+    for i in range(0, len(items), 100):
+        st, d = await _oz(path, {"items": items[i:i + 100]})
+        tid = d.get("task_id") or (d.get("result") or {}).get("task_id")
+        for one in per[i:i + 100]:
+            if st == 200 and tid:
+                one[field] = f"отправлено (задача {tid})"
+                one.setdefault("tasks", []).append(int(tid))
+            else:
+                one[field] = f"ошибка {st}: {str(d.get('message') or d)[:200]}"
+        await asyncio.sleep(0.5)
+
+
+async def _apply(rows: list[dict], what: set) -> list[dict]:
+    # Фото: POST /v2/product/pictures/import (v1 Ozon выключил — «obsolete method»).
+    # Метода нет в спеке; формат подобран на живом кабинете:
+    #   {"items": [{"offer_id", "primary_image", "images": [...]}]} (до 100) → {"task_id"};
+    # статус по товарам — /v1/product/import/info.
+    res = [{"art": r["art"], "photos": None, "desc": None} for r in rows]
+    if "photos" in what:
+        items, per = [], []
+        for r, one in zip(rows, res):
             links = _jpg_links(r["wb_big"])
             if not links:
                 one["photos"] = "нет фото WB"
-            else:
-                try:
-                    d = await oz._post("/v1/product/pictures/import",
-                                       {"product_id": int(r["product_id"]), "images": links})
-                    pics = ((d.get("result") or {}).get("pictures")) or []
-                    bad = [p.get("state") for p in pics if p.get("state") not in ("imported", "uploaded", "pending", None)]
-                    one["photos"] = f"отправлено {len(links)} фото" + (f", ошибки: {bad[:3]}" if bad else "")
-                except Exception as e:
-                    one["photos"] = "ошибка: " + str(e)[:150]
-                await asyncio.sleep(0.5)
-        if "desc" in what and _norm(r.get("desc_wb")):
-            desc_items.append({"offer_id": r.get("offer_id") or r["art"], "attributes": [
+                continue
+            items.append({"offer_id": r.get("offer_id") or r["art"],
+                          "primary_image": links[0], "images": links[1:]})
+            per.append(one)
+        await _send_batches("/v2/product/pictures/import", items, per, "photos")
+    if "desc" in what:
+        items, per = [], []
+        for r, one in zip(rows, res):
+            if not _norm(r.get("desc_wb")):
+                one["desc"] = "на WB нет описания"
+                continue
+            items.append({"offer_id": r.get("offer_id") or r["art"], "attributes": [
                 {"complex_id": 0, "id": _ATTR_DESC,
                  "values": [{"dictionary_value_id": 0, "value": r["desc_wb"]}]}]})
-            one["desc"] = "в очереди"
-        res.append(one)
-    if desc_items:
-        try:
-            for i in range(0, len(desc_items), 100):
-                d = await oz._post("/v1/product/attributes/update", {"items": desc_items[i:i + 100]})
-                tid = d.get("task_id") or (d.get("result") or {}).get("task_id")
-                for one in res:
-                    if one["desc"] == "в очереди":
-                        one["desc"] = f"отправлено (задача {tid})" if tid else "отправлено"
-        except Exception as e:
-            for one in res:
-                if one["desc"] == "в очереди":
-                    one["desc"] = "ошибка: " + str(e)[:150]
+            per.append(one)
+        await _send_batches("/v1/product/attributes/update", items, per, "desc")
+    last = await asyncio.to_thread(_kv, _LAST_KEY, {})
     now = _msk()
     for r, one in zip(rows, res):
-        ok_p = one["photos"] and not str(one["photos"]).startswith(("ошибка", "нет"))
-        ok_d = one["desc"] and not str(one["desc"]).startswith("ошибка")
+        ok_p = str(one["photos"] or "").startswith("отправлено")
+        ok_d = str(one["desc"] or "").startswith("отправлено")
         if ok_p or ok_d:
             prev = last.get(r["art"]) or {}
             last[r["art"]] = {"sig": r["sig"], "at": now,
@@ -322,6 +341,22 @@ async def _apply(rows: list[dict], what: set) -> list[dict]:
                               or prev.get("what", "")}
     await asyncio.to_thread(_kv_save, _LAST_KEY, last)
     return res
+
+
+@router.get("/tasks")
+async def tasks(ids: str):
+    """Статус задач Ozon по товарам: imported / failed + ошибки и предупреждения модерации."""
+    out = []
+    for tid in [int(x) for x in re.findall(r"\d+", ids)][:10]:
+        st, d = await _oz("/v1/product/import/info", {"task_id": tid})
+        r = d.get("result") or {}
+        for it in r.get("items") or []:
+            errs = [{"level": e.get("level"), "attr": e.get("attribute_name") or "",
+                     "text": e.get("description") or e.get("message") or e.get("code")}
+                    for e in it.get("errors") or []]
+            out.append({"task": tid, "offer_id": it.get("offer_id"), "status": it.get("status"),
+                        "errors": errs})
+    return {"items": out}
 
 
 @router.post("/apply")

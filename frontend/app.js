@@ -6618,8 +6618,11 @@ async function csApply(what) {
   box().innerHTML = '<div class="alert alert-info py-2 small"><span class="spinner-border spinner-border-sm"></span> Отправляю в Ozon…</div>';
   try {
     const d = await _csPost('/api/cardsync/apply', { arts, what });
-    box().innerHTML = `<div class="alert alert-success py-2 small"><b>Отправлено в Ozon.</b> Фото Ozon скачивает и публикует несколько минут — потом нажмите «Сравнить заново».<br>` +
-      d.results.map(x => `${x.art}: ${x.photos ? 'фото — ' + x.photos : ''}${x.photos && x.desc ? '; ' : ''}${x.desc ? 'описание — ' + x.desc : ''}`).join('<br>') + '</div>';
+    const tids = [...new Set(d.results.flatMap(x => x.tasks || []))];
+    box().innerHTML = `<div class="alert alert-success py-2 small"><b>Отправлено в Ozon.</b> Ozon обрабатывает задачи 1–5 минут, фото публикует до 15–30 минут — потом нажмите «Сравнить заново».` +
+      (tids.length ? ` <button class="btn btn-sm btn-outline-success ms-2" onclick="csTasks('${tids.join(',')}')">Проверить статус в Ozon</button>` : '') + '<br>' +
+      d.results.map(x => `${x.art}: ${x.photos ? 'фото — ' + x.photos : ''}${x.photos && x.desc ? '; ' : ''}${x.desc ? 'описание — ' + x.desc : ''}`).join('<br>') +
+      '<div id="csTaskBox" class="mt-2"></div></div>';
     _csSel = new Set();
   } catch (e) {
     box().innerHTML = `<div class="alert alert-danger py-2 small">Ошибка: ${e.message}</div>`;
@@ -6632,4 +6635,20 @@ async function csSetAuto(on) {
   if (on && !confirm('Включить автосинхронизацию?\nТекущие карточки WB считаются исходными — на Ozon будут переноситься только их будущие изменения (фото и описание), проверка раз в 6 часов. Уже существующие отличия перенесите кнопками.')) { renderCardSync(); return; }
   try { const st = await _csPost('/api/cardsync/auto', { on }); _cs.auto = st; } catch (e) { alert('Ошибка: ' + e.message); }
   renderCardSync();
+}
+
+async function csTasks(ids) {
+  const el = document.getElementById('csTaskBox');
+  if (!el) return;
+  el.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Спрашиваю Ozon…';
+  try {
+    const d = await fetchJSON('/api/cardsync/tasks?ids=' + ids, 60000);
+    const items = d.items || [];
+    const bad = items.filter(i => i.status !== 'imported' || (i.errors || []).some(e => e.level === 'error'));
+    const warn = items.filter(i => i.status === 'imported' && (i.errors || []).length && !bad.includes(i));
+    const line = i => `<b>${i.offer_id}</b> — ${i.status}${(i.errors || []).map(e => `<br><span class="${e.level === 'error' ? 'text-danger' : 'text-secondary'}">• ${e.attr ? e.attr + ': ' : ''}${e.text}</span>`).join('')}`;
+    el.innerHTML = `<div>Принято без замечаний: <b>${items.length - bad.length - warn.length}</b> из ${items.length}${items.length ? '' : ' (задачи ещё обрабатываются — проверьте через минуту)'}</div>` +
+      (bad.length ? `<div class="mt-1 text-danger fw-bold">Ошибки модерации:</div>${bad.map(line).join('<br>')}` : '') +
+      (warn.length ? `<div class="mt-1 fw-bold">Предупреждения:</div>${warn.map(line).join('<br>')}` : '');
+  } catch (e) { el.innerHTML = `<span class="text-danger">Ошибка: ${e.message}</span>`; }
 }
