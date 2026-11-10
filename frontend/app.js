@@ -6681,80 +6681,153 @@ async function loadGrowth(refresh) {
   } catch (e) { wrap.innerHTML = `<div class="alert alert-danger">Ошибка: ${e.message}</div>`; }
 }
 
-function _grKpi(title, now, start, target, unit, good) {
-  // good: 'up' — больше лучше, 'down' — меньше лучше
-  const ok = now == null ? null : (good === 'up' ? now >= target : now <= target);
-  const col = ok == null ? 'var(--ink)' : ok ? 'var(--pos)' : (good === 'up' ? (now >= start ? '#d97706' : 'var(--neg)') : (now <= start ? '#d97706' : 'var(--neg)'));
-  const f = v => v == null ? '—' : (unit === '₽' ? fmt(v) + ' ₽' : v + unit);
-  return `<div class="card p-2 flex-fill" style="min-width:150px"><div class="small text-secondary">${title}</div>
-    <div style="font-size:1.35rem;font-weight:700;color:${col}">${f(now)}</div>
-    <div class="small text-secondary">старт ${f(start)} · цель <b>${f(target)}</b></div></div>`;
+// статус метрики: up — больше лучше, down — меньше лучше
+function _grStatus(now, start, target, good) {
+  if (now == null) return { cls: '', txt: 'нет данных', p: 0 };
+  const better = (a, b) => good === 'up' ? a >= b : a <= b;
+  const span = target - start;
+  let p = span ? (now - start) / span : (better(now, target) ? 1 : 0);
+  p = Math.max(0, Math.min(1, p));
+  if (better(now, target)) return { cls: 'gr-ok', txt: 'в цели', p: 1 };
+  if (start != null && better(now, start)) return { cls: 'gr-mid', txt: 'движемся', p };
+  return { cls: 'gr-bad', txt: 'хуже старта', p: 0 };
 }
+
+function _grGoal(title, now, start, target, unit, good, extra) {
+  const f = v => v == null ? '—' : (unit === '₽' ? fmt(v) + ' ₽' : v + '%');
+  const st = _grStatus(now, start, target, good);
+  const col = st.cls === 'gr-ok' ? 'var(--pos)' : st.cls === 'gr-mid' ? 'var(--warn-c)' : 'var(--neg)';
+  return `<div class="gr-goal">
+    <div class="t"><span>${title}</span><span class="gr-pill ${st.cls}">${st.txt}</span></div>
+    <div class="v ${st.cls}">${f(now)}${extra ? ` <small>${extra}</small>` : ''}</div>
+    <div class="gr-bar"><i style="width:${Math.round(st.p * 100)}%;background:${col}"></i></div>
+    <div class="s"><span>старт ${f(start)}</span><span>цель <b>${f(target)}</b></span></div></div>`;
+}
+
+const _grOpen = new Set();
+function _grToggle(g) { _grOpen.has(g) ? _grOpen.delete(g) : _grOpen.add(g); renderGrowth(); }
 
 function renderGrowth() {
   const d = _gr, wrap = document.getElementById('grWrap');
   if (!d || !wrap) return;
-  const b = d.base, k = b.kpi, t = b.targets, cw = d.current_week || {};
-  document.getElementById('grInfo').textContent = `старт ${b.start} → цель к ${b.horizon_end} · данные ${d.built}${d.building ? ' · обновляю…' : ''}`;
-  const wkRevStart = Math.round(k.revenue_month / 30 * 7);
-  let h = `<div class="d-flex flex-wrap gap-2 mb-3">
-    ${_grKpi('Оборот за неделю', cw.revenue, wkRevStart, Math.round(wkRevStart * t.revenue_x), '₽', 'up')}
-    ${_grKpi('План этой недели', cw.plan, null, null, '₽', 'up').replace('старт — · цель <b>—</b>', 'по линии роста ×' + t.revenue_x)}
-    ${_grKpi('К выводу', cw.payout, k.payout, t.payout, '%', 'up')}
-    ${_grKpi('Маржа', cw.margin, k.margin, t.margin, '%', 'up')}
-    ${_grKpi('Реклама (ДРР)', cw.drr, k.drr, t.drr, '%', 'down')}
-    ${_grKpi('Локализация', cw.local, k.local, t.local, '%', 'up')}
+  const b = d.base, k = b.kpi, t = b.targets;
+  const n = d.kpi_now || { ...(d.current_week || {}), plan: (d.current_week || {}).plan };
+  const dd = s => s ? s.slice(8, 10) + '.' + s.slice(5, 7) : '';
+  const totalDays = Math.round((new Date(b.horizon_end) - new Date(b.start)) / 864e5) + 1;
+  document.getElementById('grInfo').textContent = `данные ${d.built}${d.building ? ' · обновляю…' : ''}`;
+  const wkStart = Math.round(k.revenue_month / 30 * 7);
+  const wkFinal = Math.round(wkStart * t.revenue_x);
+  const pctCls = (v, lim, inv) => v == null ? '' : (inv ? v <= lim : v >= lim) ? 'gr-ok' : 'gr-bad';
+  const pct = (v, lim, inv) => v == null ? '<span class="text-secondary">—</span>' : `<span class="${pctCls(v, lim, inv)}">${v}%</span>`;
+  const dlt = (a, b0) => { if (!b0) return ''; const x = Math.round((a / b0 - 1) * 100); return `<span class="gr-d ${x >= 0 ? 'gr-ok' : 'gr-bad'}">${x > 0 ? '+' : ''}${x}%</span>`; };
+
+  let h = `<div class="gr-head">
+    <span>Старт <b>${dd(b.start)}</b> → финиш <b>${dd(b.horizon_end)}</b>${n.days_since_start ? ` · день <b>${n.days_since_start}</b> из ${totalDays}` : ''}</span>
+    <span>Цель: оборот ×${t.revenue_x}, к выводу ≥${t.payout}%, маржа ≥${t.margin}%</span>
+    <span>Окно факта: <b>${dd(n.from || n.week)}–${dd(n.to || '')}</b> (последние 7 полных дней)</span></div>`;
+
+  // 1. Цели
+  h += `<div class="gr-sec">Где мы сейчас</div><div class="gr-goals">
+    ${_grGoal('Оборот за 7 дней', n.revenue, wkStart, n.plan || wkFinal, '₽', 'up')}
+    ${_grGoal('К выводу', n.payout, k.payout, t.payout, '%', 'up')}
+    ${_grGoal('Маржа', n.margin, k.margin, t.margin, '%', 'up')}
+    ${_grGoal('Реклама, ДРР', n.drr, k.drr, t.drr, '%', 'down')}
+    ${_grGoal('Локализация', n.local, k.local, t.local, '%', 'up')}
   </div>
-  <div class="card p-2 mb-3"><canvas id="grChart" height="90"></canvas>
-    <div class="small text-secondary">Столбцы — оборот Ozon по товарам в работе за неделю (цена продавца, без отмен); линия — план роста ×${t.revenue_x} к ${b.horizon_end}. К выводу и маржа — оценка по экономике товаров с фактическими ценами и рекламой (сверяется с реализацией раз в месяц).</div></div>`;
-  // группы
-  h += `<h6>Группы товаров: заказы в день — 14 дней до старта → последние 7 дней</h6><div class="d-flex flex-wrap gap-2 mb-3">` +
-    d.groups.map(g => {
-      const dl = g.orders_day_base ? Math.round((g.orders_day_now / g.orders_day_base - 1) * 100) : null;
-      return `<div class="card p-2 flex-fill" style="min-width:170px;cursor:pointer;${_grGroup === g.group ? 'outline:2px solid var(--accent)' : ''}" onclick="_grGroup=_grGroup==='${g.group}'?'':'${g.group}';renderGrowth()">
-        <div class="small fw-bold">${g.group}${g.flags ? ` <span class="badge bg-danger">${g.flags}</span>` : ''}</div>
-        <div>${g.orders_day_base} → <b>${g.orders_day_now}</b> <span class="small" style="color:${dl == null ? 'inherit' : dl >= 0 ? 'var(--pos)' : 'var(--neg)'}">${dl == null ? '' : (dl > 0 ? '+' : '') + dl + '%'}</span></div>
-        <div class="small text-secondary">${fmt(g.revenue_7d)} ₽ за 7 дн.</div></div>`;
-    }).join('') + '</div>';
-  // товары
-  const rows = d.rows.filter(r => !_grGroup || r.group === _grGroup);
-  const pc = (v, lim, inv) => v == null ? '—' : `<span style="color:${(inv ? v <= lim : v >= lim) ? 'var(--pos)' : 'var(--neg)'}">${v}%</span>`;
-  h += `<h6>Товары${_grGroup ? ': ' + _grGroup : ''}</h6><div class="table-responsive"><table class="table table-sm align-middle small">
-    <thead><tr><th>Артикул</th><th>Заказов/день<br>старт → сейчас</th><th>Выручка 7д</th><th>Цена продавца<br>старт → сейчас</th><th>Мин. цена</th><th>Ставка «за заказ»<br>видимость</th><th>Позиция в поиске<br>старт → сейчас</th><th>К выводу</th><th>Маржа</th><th>Акции</th><th>Флаги</th></tr></thead><tbody>` +
-    rows.map(r => `<tr${r.flags.length ? ' style="background:rgba(220,38,38,.07)"' : ''}>
-      <td><b>${r.art}</b><div class="text-secondary">${r.group}</div></td>
-      <td>${r.orders_day_base} → <b>${r.orders_day_now}</b> ${r.delta == null ? '' : `<span style="color:${r.delta >= 0 ? 'var(--pos)' : 'var(--neg)'}">${r.delta > 0 ? '+' : ''}${r.delta}%</span>`}</td>
-      <td>${fmt(r.revenue_7d)} ₽${r.ad_7d ? `<div class="text-secondary">реклама ${fmt(r.ad_7d)} ₽</div>` : ''}</td>
-      <td>${r.price_base ? fmt(r.price_base) : '—'} → <b>${r.price_now ? fmt(r.price_now) : '—'}</b>${r.marketing_price && r.marketing_price !== r.price_now ? `<div class="text-secondary">в акции ${fmt(r.marketing_price)}</div>` : ''}</td>
-      <td>${r.min_price ? fmt(r.min_price) : '—'}</td>
-      <td>${r.bid != null ? r.bid + '%' : '—'}${r.bid_on === false ? ' <span class="text-secondary">(выкл)</span>' : ''}<div class="text-secondary">${r.visibility ? 'видимость ' + r.visibility : ''}</div></td>
-      <td>${r.pos_base ?? '—'} → <b>${r.pos_now ?? '—'}</b></td>
-      <td>${pc(r.payout, 30)}</td><td>${pc(r.margin, 20)}</td>
-      <td>${(r.actions || []).length ? r.actions.map(a => `<div>${a}</div>`).join('') : '<span class="text-secondary">нет</span>'}${r.auto_action ? '<div class="text-secondary">автоакции вкл</div>' : ''}</td>
-      <td class="text-danger">${r.flags.join('<br>')}</td></tr>`).join('') + '</tbody></table></div>';
-  // кампании
-  h += `<h6>Рекламные кампании — последние 7 дней</h6><div class="table-responsive"><table class="table table-sm small"><thead><tr><th>Кампания</th><th>Группа</th><th>Статус</th><th>Бюджет/нед</th><th>Расход 7д</th><th>Заказы</th><th>ДРР</th></tr></thead><tbody>` +
-    d.campaigns.map(c => `<tr><td>${c.title}<div class="text-secondary">${c.id}</div></td><td>${c.group || ''}</td><td>${(c.state || '').replace('CAMPAIGN_STATE_', '')}</td><td>${c.weekly_budget ? fmt(c.weekly_budget) + ' ₽' : '—'}</td><td>${fmt(c.spent_7d)} ₽</td><td>${c.orders_7d}</td><td>${c.drr_7d == null ? '—' : pc(c.drr_7d, t.drr, true)}</td></tr>`).join('') + '</tbody></table></div>';
-  // журнал
-  h += `<h6>Журнал действий</h6><div class="small mb-4">` + (d.journal || []).slice().reverse().map(j => `<div><span class="text-secondary">${j.date}</span> ${j.group ? '<b>[' + j.group + ']</b> ' : ''}${j.text}</div>`).join('') + '</div>';
+  <div class="small text-secondary mt-1">Оборот сравнивается с планом на сегодня (линия роста к ×${t.revenue_x}: финиш ${fmt(wkFinal)} ₽/нед). Шкала — путь от старта к цели.</div>`;
+
+  // 2. Что требует внимания
+  const al = d.rows.filter(r => r.flags.length);
+  h += `<div class="gr-sec">Требует внимания</div>` + (al.length
+    ? `<div class="gr-alerts">${al.map(r => `<div><b>${r.art}</b> <span class="text-secondary">${esc(r.name || '')}</span> — ${r.flags.join('; ')}</div>`).join('')}</div>`
+    : `<div class="gr-alerts ok">Всё в норме: просадок заказов, цен ниже минимальной и низкого «к выводу» нет.</div>`);
+
+  // 3. Графики
+  h += `<div class="gr-sec">Динамика по неделям</div><div class="gr-charts">
+    <div class="gr-card"><h6>Оборот за неделю против плана</h6><div class="note">▶ — неделя старта, * — неделя ещё идёт</div><div style="height:240px"><canvas id="grChart"></canvas></div></div>
+    <div class="gr-card"><h6>Доходность и реклама, %</h6><div class="note">пунктир — цели</div><div style="height:240px"><canvas id="grChart2"></canvas></div></div>
+  </div>`;
+
+  // 4. Группы → товары
+  h += `<div class="gr-sec">Группы товаров <span class="text-secondary" style="text-transform:none;letter-spacing:0;font-weight:400">— нажмите на группу, чтобы раскрыть товары</span></div>
+  <div class="gr-card" style="padding:4px 6px"><div class="table-responsive"><table class="gr-tbl">
+    <thead><tr><th>Группа / товар</th><th>Заказов в день<br>старт → сейчас</th><th>Выручка 7 дн.</th><th>Реклама 7 дн.</th><th>ДРР</th><th>К выводу</th><th>Маржа</th></tr></thead><tbody>`;
+  for (const g of d.groups) {
+    const open = _grOpen.has(g.group);
+    h += `<tr class="g${open ? ' open' : ''}" onclick="_grToggle('${g.group}')">
+      <td><span class="caret">▸</span>${g.group}${g.flags ? ` <span class="gr-chip bad">${g.flags} ⚠</span>` : ''}</td>
+      <td>${g.orders_day_base} → <b>${g.orders_day_now}</b>${dlt(g.orders_day_now, g.orders_day_base)}</td>
+      <td>${fmt(g.revenue_7d)} ₽</td><td>${g.ad_7d != null ? fmt(g.ad_7d) + ' ₽' : '—'}</td>
+      <td>${pct(g.drr, t.drr, true)}</td><td>${pct(g.payout, t.payout)}</td><td>${pct(g.margin, t.margin)}</td></tr>`;
+    if (!open) continue;
+    for (const r of d.rows.filter(x => x.group === g.group)) {
+      const drr = r.revenue_7d ? Math.round(r.ad_7d / r.revenue_7d * 1000) / 10 : null;
+      const acts = r.actions || [];
+      const info = [
+        r.price_now ? `цена ${fmt(r.price_now)} ₽${r.price_base && r.price_base !== r.price_now ? ` (было ${fmt(r.price_base)})` : ''}` : '',
+        r.marketing_price && r.marketing_price !== r.price_now ? `в акции ${fmt(r.marketing_price)} ₽` : '',
+        r.bid != null ? `за заказ ${r.bid}%${r.bid_on === false ? ' (выкл)' : ''}` : 'за заказ — нет',
+        r.pos_now != null || r.pos_base != null ? `позиция ${r.pos_base ?? '—'} → ${r.pos_now ?? '—'}` : '',
+      ].filter(Boolean).join(' · ');
+      h += `<tr class="sku"><td><b>${r.art}</b> ${esc(r.name || '')}
+          <div class="sub">${info}</div>
+          <div>${acts.length ? `<span class="gr-chip" title="${esc(acts.join('\n')).replace(/"/g, '&quot;')}">акции: ${acts.length}</span>` : ''}${r.auto_action ? '<span class="gr-chip">автоакции</span>' : ''}${r.flags.map(f => `<span class="gr-chip bad">${f}</span>`).join('')}</div></td>
+        <td>${r.orders_day_base} → <b>${r.orders_day_now}</b>${dlt(r.orders_day_now, r.orders_day_base)}</td>
+        <td>${fmt(r.revenue_7d)} ₽</td><td>${r.ad_7d ? fmt(r.ad_7d) + ' ₽' : '—'}</td>
+        <td title="только «оплата за заказ»; клики учтены в строке группы">${pct(drr, t.drr, true)}</td>
+        <td>${pct(r.payout, t.payout)}</td><td>${pct(r.margin, t.margin)}</td></tr>`;
+    }
+  }
+  h += `</tbody></table></div></div>`;
+
+  // 5. Кампании (свернуто)
+  const camps = d.campaigns.slice().sort((a, b2) => (b2.spent_7d || 0) - (a.spent_7d || 0));
+  const camSp = camps.reduce((s, c) => s + (c.spent_7d || 0), 0);
+  h += `<details class="gr-more"><summary>Рекламные кампании · ${camps.length} шт. · ${fmt(camSp)} ₽ за 7 дней</summary>
+    <div class="gr-card mt-2" style="padding:4px 6px"><div class="table-responsive"><table class="gr-tbl">
+    <thead><tr><th>Кампания</th><th>Статус</th><th>Бюджет в неделю</th><th>Расход 7 дн.</th><th>Заказы</th><th>ДРР</th></tr></thead><tbody>` +
+    camps.map(c => { const on = /RUNNING|ACTIVE/.test(c.state || '');
+      return `<tr><td>${esc(c.title)}<div class="sub">${c.group || ''} · ${c.id}</div></td>
+      <td><span class="gr-chip${on ? '' : ' bad'}">${on ? 'идёт' : (c.state || '').replace('CAMPAIGN_STATE_', '').toLowerCase()}</span></td>
+      <td>${c.weekly_budget ? fmt(c.weekly_budget) + ' ₽' : '—'}</td><td>${fmt(c.spent_7d)} ₽</td><td>${c.orders_7d}</td><td>${pct(c.drr_7d, t.drr, true)}</td></tr>`; }).join('') +
+    `</tbody></table></div></div></details>`;
+
+  // 6. Журнал (свернуто)
+  const jr = (d.journal || []).slice().reverse();
+  h += `<details class="gr-more mb-4"><summary>Журнал действий · ${jr.length} записей</summary><div class="gr-jr">` +
+    jr.map(j => `<div><span class="dt">${j.date}</span>${j.group ? `<span class="gr-chip">${j.group}</span>` : ''}${esc(j.text)}</div>`).join('') + '</div></details>';
   wrap.innerHTML = h;
-  // график
-  const ctx = document.getElementById('grChart').getContext('2d');
+
+  // графики
+  const s = d.series, startIdx = s.findIndex(x => x.is_start);
+  const lbl = s.map(x => dd(x.week) + (x.is_start ? ' ▶' : '') + (x.days < 7 ? ' *' : ''));
+  const C = { pos: CHART_C.pos, neg: '#f87171', blue: '#38bdf8', vio: '#a78bfa', gold: 'rgba(201,168,76,.75)', pre: 'rgba(148,163,184,.35)' };
+  const barCol = s.map((x, i) => i < startIdx ? C.pre : x.days < 7 ? 'rgba(201,168,76,.35)' : x.plan && x.revenue >= x.plan ? 'rgba(74,222,128,.7)' : C.gold);
+  const base = { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+    plugins: { legend: { position: 'bottom', labels: { color: CHART_C.legend, boxWidth: 12, usePointStyle: true } } } };
   if (charts.growth) charts.growth.destroy();
-  const s = d.series;
-  charts.growth = new Chart(ctx, {
-    data: { labels: s.map(x => x.week.slice(8, 10) + '.' + x.week.slice(5, 7) + (x.is_start ? ' ▶' : '') + (x.days < 7 ? ' *' : '')),
-      datasets: [
-        { type: 'bar', label: 'Оборот за неделю', data: s.map(x => x.revenue), backgroundColor: s.map(x => x.is_start ? 'rgba(56,189,248,.6)' : 'rgba(201,168,76,.5)'), yAxisID: 'y' },
-        { type: 'line', label: 'План', data: s.map(x => x.plan), borderColor: CHART_C.pos, borderDash: [6, 4], pointRadius: 0, yAxisID: 'y' },
-        { type: 'line', label: 'К выводу %', data: s.map(x => x.payout), borderColor: '#38bdf8', pointRadius: 2, yAxisID: 'y1' },
-        { type: 'line', label: 'Маржа %', data: s.map(x => x.margin), borderColor: '#a78bfa', pointRadius: 2, yAxisID: 'y1' },
-        { type: 'line', label: 'ДРР %', data: s.map(x => x.drr), borderColor: '#f87171', pointRadius: 2, yAxisID: 'y1' },
-      ] },
-    options: { responsive: true, interaction: { mode: 'index', intersect: false },
-      plugins: { legend: { labels: { color: CHART_C.tick } } },
-      scales: { x: { ticks: { color: CHART_C.tick2 }, grid: { color: CHART_C.grid } },
-        y: { position: 'left', ticks: { color: CHART_C.tick, callback: v => fmt(v) + ' ₽' }, grid: { color: CHART_C.grid } },
-        y1: { position: 'right', ticks: { color: CHART_C.tick, callback: v => v + '%' }, grid: { drawOnChartArea: false } } } },
+  charts.growth = new Chart(document.getElementById('grChart'), {
+    data: { labels: lbl, datasets: [
+      { type: 'bar', label: 'Факт', data: s.map(x => x.revenue), backgroundColor: barCol, borderRadius: 4, order: 2 },
+      { type: 'line', label: 'План', data: s.map(x => x.plan), borderColor: CHART_C.pos, borderDash: [6, 4], pointRadius: 0, borderWidth: 2, order: 1 },
+    ] },
+    options: { ...base, plugins: { ...base.plugins, tooltip: { callbacks: { label: c => `${c.dataset.label}: ${c.raw == null ? '—' : fmt(c.raw) + ' ₽'}` } } },
+      scales: { x: { ticks: { color: CHART_C.tick2 }, grid: { display: false } },
+        y: { ticks: { color: CHART_C.tick, callback: v => v >= 1e6 ? (v / 1e6).toFixed(1) + ' млн' : Math.round(v / 1e3) + ' тыс' }, grid: { color: CHART_C.grid } } } },
+  });
+  if (charts.growth2) charts.growth2.destroy();
+  const tgt = (v, col) => ({ type: 'line', label: '', data: s.map(() => v), borderColor: col, borderDash: [3, 4], borderWidth: 1, pointRadius: 0, pointHitRadius: 0 });
+  charts.growth2 = new Chart(document.getElementById('grChart2'), {
+    type: 'line',
+    data: { labels: lbl, datasets: [
+      { label: 'К выводу', data: s.map(x => x.payout), borderColor: C.blue, backgroundColor: C.blue, pointRadius: 2, borderWidth: 2 },
+      { label: 'Маржа', data: s.map(x => x.margin), borderColor: C.vio, backgroundColor: C.vio, pointRadius: 2, borderWidth: 2 },
+      { label: 'ДРР', data: s.map(x => x.drr), borderColor: C.neg, backgroundColor: C.neg, pointRadius: 2, borderWidth: 2 },
+      tgt(t.payout, C.blue), tgt(t.margin, C.vio), tgt(t.drr, C.neg),
+    ] },
+    options: { ...base, plugins: { legend: { ...base.plugins.legend, labels: { ...base.plugins.legend.labels, filter: i => !!i.text } },
+        tooltip: { filter: i => !!i.dataset.label, callbacks: { label: c => `${c.dataset.label}: ${c.raw == null ? '—' : c.raw + '%'}` } } },
+      scales: { x: { ticks: { color: CHART_C.tick2 }, grid: { display: false } },
+        y: { ticks: { color: CHART_C.tick, callback: v => v + '%' }, grid: { color: CHART_C.grid } } } },
   });
 }

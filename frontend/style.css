@@ -857,3 +857,47 @@ html[data-theme="light"] .text-info { color: #0369a1 !important; }
   text-align: center;
   vertical-align: 1px;
 }
+
+/* ── План роста Ozon ─────────────────────────────────────────────── */
+.gr-head { display:flex; flex-wrap:wrap; gap:6px 18px; align-items:baseline; margin-bottom:12px; color:var(--ink-2); font-size:.85rem; }
+.gr-head b { color:var(--ink); }
+.gr-sec { font-size:.78rem; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); margin:18px 0 8px; }
+.gr-goals { display:grid; grid-template-columns:repeat(auto-fit, minmax(190px, 1fr)); gap:10px; }
+.gr-goal { background:var(--surface-2); border:1px solid var(--border); border-radius:var(--radius-sm); padding:12px 14px; }
+.gr-goal .t { font-size:.8rem; color:var(--ink-2); display:flex; justify-content:space-between; gap:6px; align-items:center; }
+.gr-goal .v { font-size:1.6rem; font-weight:700; line-height:1.2; margin:4px 0 8px; font-variant-numeric:tabular-nums; color:var(--ink); }
+.gr-goal .v small { font-size:.8rem; font-weight:500; color:var(--muted); }
+.gr-bar { position:relative; height:6px; border-radius:3px; background:var(--surface-3); overflow:hidden; }
+.gr-bar i { position:absolute; left:0; top:0; bottom:0; border-radius:3px; }
+.gr-goal .s { display:flex; justify-content:space-between; font-size:.75rem; color:var(--muted); margin-top:5px; font-variant-numeric:tabular-nums; }
+.gr-pill { font-size:.7rem; font-weight:600; padding:1px 8px; border-radius:999px; white-space:nowrap; }
+.gr-ok   { color:var(--pos); }  .gr-pill.gr-ok   { background:color-mix(in srgb, var(--pos) 15%, transparent); }
+.gr-mid  { color:var(--warn-c); } .gr-pill.gr-mid  { background:color-mix(in srgb, var(--warn-c) 15%, transparent); }
+.gr-bad  { color:var(--neg); }  .gr-pill.gr-bad  { background:color-mix(in srgb, var(--neg) 15%, transparent); }
+.gr-alerts { background:var(--surface-2); border:1px solid var(--border); border-left:3px solid var(--neg); border-radius:var(--radius-sm); padding:10px 14px; font-size:.85rem; }
+.gr-alerts.ok { border-left-color:var(--pos); color:var(--ink-2); }
+.gr-alerts div + div { margin-top:3px; }
+.gr-charts { display:grid; grid-template-columns:minmax(0,3fr) minmax(0,2fr); gap:10px; }
+@media (max-width: 900px) { .gr-charts { grid-template-columns:minmax(0,1fr); } }
+.gr-card { background:var(--surface-2); border:1px solid var(--border); border-radius:var(--radius-sm); padding:12px 14px; }
+.gr-card h6 { font-size:.85rem; margin:0 0 2px; }
+.gr-card .note { font-size:.75rem; color:var(--muted); margin-bottom:6px; }
+.gr-tbl { width:100%; font-size:.85rem; border-collapse:collapse; font-variant-numeric:tabular-nums; }
+.gr-tbl th { font-size:.72rem; font-weight:600; color:var(--muted); text-align:right; padding:6px 8px; border-bottom:1px solid var(--border); white-space:nowrap; }
+.gr-tbl td { padding:7px 8px; text-align:right; border-bottom:1px solid var(--border); vertical-align:top; }
+.gr-tbl th:first-child, .gr-tbl td:first-child { text-align:left; }
+.gr-tbl tr.g { cursor:pointer; background:var(--surface-2); }
+.gr-tbl tr.g:hover { background:var(--surface-3); }
+.gr-tbl tr.g td:first-child { font-weight:600; }
+.gr-tbl tr.sku td:first-child { padding-left:28px; }
+.gr-tbl .sub { font-size:.75rem; color:var(--muted); font-weight:400; }
+.gr-tbl .caret { display:inline-block; width:14px; color:var(--muted); transition:transform .15s; }
+.gr-tbl tr.g.open .caret { transform:rotate(90deg); }
+.gr-chip { display:inline-block; font-size:.7rem; padding:0 7px; border-radius:999px; background:var(--surface-3); color:var(--ink-2); margin:2px 4px 0 0; white-space:nowrap; }
+.gr-chip.bad { background:color-mix(in srgb, var(--neg) 15%, transparent); color:var(--neg); }
+.gr-d { font-size:.75rem; margin-left:4px; }
+details.gr-more { margin-top:14px; }
+details.gr-more > summary { cursor:pointer; font-size:.78rem; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); }
+.gr-jr { font-size:.82rem; border-left:2px solid var(--border-2); padding-left:12px; margin:8px 0 0 4px; }
+.gr-jr div { margin-bottom:5px; }
+.gr-jr .dt { color:var(--muted); font-variant-numeric:tabular-nums; margin-right:6px; }

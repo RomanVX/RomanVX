@@ -263,6 +263,7 @@ async def _build() -> dict:
             o = orders.get((str(d), a), [0, 0]); q += o[0]; r += o[1]; s += sku_ad.get((str(d), a), 0)
             d += timedelta(days=1)
         return q, r, s
+    import catalog as _cat
     rows = []
     for g, ga in GROUPS.items():
         for a in ga:
@@ -283,7 +284,9 @@ async def _build() -> dict:
             if x.get("payout") is not None and x["payout"] < 25 and r1:
                 flags.append(f"к выводу {x['payout']}%")
             rows.append({
-                "art": a, "group": g, "orders_day_base": round(od0, 2), "orders_day_now": round(od1, 2),
+                "art": a, "name": _cat.lookup(a).get("name") or "", "group": g,
+                "orders_day_base": round(od0, 2), "orders_day_now": round(od1, 2),
+                "payout_rub": x.get("payout_rub", 0), "gross_rub": x.get("gross_rub", 0),
                 "delta": delta, "revenue_7d": round(r1), "ad_7d": round(s1),
                 "price_base": round(e["P"]) if e else None, "price_now": pr.get("price"),
                 "marketing_price": mp, "min_price": mn,
@@ -295,13 +298,40 @@ async def _build() -> dict:
                 **{k: x.get(k) for k in ("payout", "margin")},
                 "flags": flags,
             })
+    d7s = {str(n0 + timedelta(days=i)) for i in range(7)}
     groups = []
     for g, ga in GROUPS.items():
         rr = [r for r in rows if r["group"] == g]
         rev = sum(r["revenue_7d"] for r in rr)
+        cpc = sum(v for (d, gg), v in grp_ad.items() if gg == g and d in d7s)
+        ad = sum(r["ad_7d"] for r in rr) + cpc
+        pay = sum(r["payout_rub"] or 0 for r in rr) - cpc
+        gross = sum(r["gross_rub"] or 0 for r in rr) - cpc
         groups.append({"group": g, "orders_day_base": round(sum(r["orders_day_base"] for r in rr), 1),
                        "orders_day_now": round(sum(r["orders_day_now"] for r in rr), 1),
-                       "revenue_7d": rev, "flags": sum(len(r["flags"]) for r in rr)})
+                       "revenue_7d": rev, "ad_7d": round(ad),
+                       "drr": round(ad / rev * 100, 1) if rev else None,
+                       "payout": round(pay / rev * 100, 1) if rev else None,
+                       "margin": round(gross / rev * 100, 1) if rev else None,
+                       "flags": sum(len(r["flags"]) for r in rr)})
+    # итог «последние 7 дней» — скользящее окно, а не календарная неделя
+    tot = {k: sum(gx[k] or 0 for gx in groups) for k in ("revenue_7d", "ad_7d")}
+    pay7 = sum(r["payout_rub"] or 0 for r in rows) - sum(v for (d, _), v in grp_ad.items() if d in d7s)
+    gross7 = sum(r["gross_rub"] or 0 for r in rows) - sum(v for (d, _), v in grp_ad.items() if d in d7s)
+    lt = [loc.get(d, [0, 0]) for d in d7s]
+    ltot = sum(x[1] for x in lt)
+    days_in = max(0, (n1 - start).days + 1)
+    k_plan = min(1.0, days_in / max(1, (horizon - start).days))
+    rev7 = tot["revenue_7d"]
+    kpi_now = {"from": str(n0), "to": str(n1),
+               "revenue": round(rev7), "orders": int(sum(r["orders_day_now"] for r in rows) * 7),
+               "plan": round(base_week_rev * (1 + k_plan * (base["targets"]["revenue_x"] - 1))),
+               "ad": round(tot["ad_7d"]),
+               "drr": round(tot["ad_7d"] / rev7 * 100, 1) if rev7 else None,
+               "payout": round(pay7 / rev7 * 100, 1) if rev7 else None,
+               "margin": round(gross7 / rev7 * 100, 1) if rev7 else None,
+               "local": round(sum(x[0] for x in lt) / ltot * 100) if ltot else None,
+               "days_since_start": days_in}
     for c in camps:                                           # кампании: последние 7 дней
         d7 = [str(n0 + timedelta(days=i)) for i in range(7)]
         s = sum(c["days"].get(d, [0, 0, 0])[0] for d in d7)
@@ -313,7 +343,7 @@ async def _build() -> dict:
     cur = series[-2] if len(series) > 1 and series[-1]["days"] < 4 else series[-1]
     return {"built": (datetime.utcnow() + timedelta(hours=3)).strftime("%d.%m.%Y %H:%M"),
             "base": {k: base[k] for k in ("start", "horizon_end", "kpi", "targets", "notes") if k in base},
-            "current_week": cur, "series": series, "groups": groups, "rows": rows,
+            "current_week": cur, "kpi_now": kpi_now, "series": series, "groups": groups, "rows": rows,
             "campaigns": camps, "journal": await asyncio.to_thread(_kv, _JOURNAL_KEY, [])}
 
 
