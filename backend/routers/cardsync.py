@@ -90,6 +90,10 @@ def _ham(a: str, b: str) -> int:
 
 
 def _oz_thumb(url: str) -> str:
+    # миниатюра есть только у фото, уже перезалитых Ozon на ir.ozone.ru; пока Ozon
+    # обрабатывает загрузку, в карточке стоит наша исходная ссылка — берём её как есть
+    if "ozone.ru/" not in url:
+        return url
     base, name = url.rsplit("/", 1)
     return f"{base}/wc250/{name}"
 
