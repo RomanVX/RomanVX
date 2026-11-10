@@ -6617,7 +6617,16 @@ async function csApply(what) {
   const box = () => document.getElementById('csResult');
   box().innerHTML = '<div class="alert alert-info py-2 small"><span class="spinner-border spinner-border-sm"></span> Отправляю в Ozon…</div>';
   try {
-    const d = await _csPost('/api/cardsync/apply', { arts, what });
+    await _csPost('/api/cardsync/apply', { arts, what });
+    let d = null;
+    for (let i = 0; i < 400; i++) {            // фото идут пачками, до ~30 мин
+      await new Promise(r => setTimeout(r, 4000));
+      const j = await fetchJSON('/api/cardsync/job', 30000);
+      if (j.running) { box().innerHTML = `<div class="alert alert-info py-2 small"><span class="spinner-border spinner-border-sm"></span> ${j.progress || 'идёт перенос…'} <span class="text-secondary">(можно уйти со страницы — перенос продолжится)</span></div>`; continue; }
+      if (j.error) throw new Error(j.error);
+      d = j; break;
+    }
+    if (!d || !d.results) throw new Error('перенос ещё идёт — обновите страницу позже');
     const tids = [...new Set(d.results.flatMap(x => x.tasks || []))];
     box().innerHTML = `<div class="alert alert-success py-2 small"><b>Отправлено в Ozon.</b> Ozon обрабатывает задачи 1–5 минут, фото публикует до 15–30 минут — потом нажмите «Сравнить заново».` +
       (tids.length ? ` <button class="btn btn-sm btn-outline-success ms-2" onclick="csTasks('${tids.join(',')}')">Проверить статус в Ozon</button>` : '') + '<br>' +

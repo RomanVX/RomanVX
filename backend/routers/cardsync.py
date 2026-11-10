@@ -45,6 +45,7 @@ _ATTR_DESC = 4191
 _MATCH = 10                       # порог Хэмминга для «то же фото»
 _WB_IMG = re.compile(r"https://(basket-\d+)\.wbbasket\.ru/(vol\d+)/(part\d+)/(\d+)/images/big/(\d+)\.webp")
 _bg: set = set()
+_job: dict = {"running": False, "progress": "", "results": None, "error": ""}
 
 
 def _msk() -> str:
@@ -308,7 +309,8 @@ async def _apply(rows: list[dict], what: set) -> list[dict]:
     # статус по товарам — /v1/product/import/info.
     res = [{"art": r["art"], "photos": None, "desc": None} for r in rows]
     if "photos" in what:
-        items, per = [], []
+        from routers import tools as _tools
+        items, per, srcs = [], [], []
         for r, one in zip(rows, res):
             links = _jpg_links(r["wb_big"])
             if not links:
@@ -317,7 +319,33 @@ async def _apply(rows: list[dict], what: set) -> list[dict]:
             items.append({"offer_id": r.get("offer_id") or r["art"],
                           "primary_image": links[0], "images": links[1:]})
             per.append(one)
-        await _send_batches("/v2/product/pictures/import", items, per, "photos")
+            srcs.append([m.groups() for m in (_WB_IMG.match(u or "") for u in r["wb_big"][:30]) if m])
+        # Ozon качает фото пачкой сразу после задачи — если перекодировать WEBP→JPG
+        # на лету, 512-МБ инстанс не успевает и часть фото (в т.ч. главное) теряется.
+        # Поэтому: по 8 товаров; перед отправкой готовим JPG на диске; ждём, пока
+        # Ozon обработает задачу, и только потом следующая пачка.
+        B = 8
+        for i in range(0, len(items), B):
+            _job["progress"] = f"фото: готовлю JPG для товаров {i + 1}–{min(i + B, len(items))} из {len(items)}"
+            for parts in srcs[i:i + B]:
+                for g in parts:
+                    try:
+                        await _tools.wb_jpg_file(*g, force=True)
+                    except Exception as e:
+                        _log.warning("cardsync jpg %s: %s", g, e)
+            _job["progress"] = f"фото: отправляю в Ozon товары {i + 1}–{min(i + B, len(items))} из {len(items)}"
+            await _send_batches("/v2/product/pictures/import", items[i:i + B], per[i:i + B], "photos")
+            tids = {t for one in per[i:i + B] for t in one.get("tasks", [])}
+            for _ in range(40):                          # до ~6 мин на пачку
+                await asyncio.sleep(9)
+                pending = False
+                for t in tids:
+                    st, d = await _oz("/v1/product/import/info", {"task_id": t})
+                    its = (d.get("result") or {}).get("items") or []
+                    if not its or any(x.get("status") in ("pending", "processing") for x in its):
+                        pending = True
+                if not pending:
+                    break
     if "desc" in what:
         items, per = [], []
         for r, one in zip(rows, res):
@@ -359,10 +387,25 @@ async def tasks(ids: str):
     return {"items": out}
 
 
+async def _apply_job(rows, what):
+    _job.update(running=True, progress="старт", results=None, error="", started=_msk())
+    try:
+        _job["results"] = await _apply(rows, what)
+    except Exception as e:
+        _job["error"] = str(e)[:300]
+        _log.warning("cardsync apply: %s", e)
+    finally:
+        _job.update(running=False, progress="", finished=_msk())
+        _state["ts"] = 0.0      # следующее открытие пересоберёт сравнение
+
+
 @router.post("/apply")
 async def apply(request: Request, payload: dict):
-    """{arts: [...], what: ["photos","desc"]} — перенос с WB на Ozon."""
+    """{arts: [...], what: ["photos","desc"]} — перенос с WB на Ozon (в фоне,
+    статус — GET /api/cardsync/job)."""
     _owner(request)
+    if _job.get("running"):
+        raise HTTPException(409, "Перенос уже идёт: " + (_job.get("progress") or ""))
     data = _state.get("data")
     if not data:
         raise HTTPException(409, "Сначала постройте сравнение")
@@ -371,9 +414,13 @@ async def apply(request: Request, payload: dict):
     rows = [r for r in data["rows"] if r["art"] in arts]
     if not rows or not what:
         raise HTTPException(400, "Не выбраны товары или что переносить")
-    res = await _apply(rows, what)
-    _state["ts"] = 0.0          # следующее открытие пересоберёт сравнение
-    return {"results": res}
+    _spawn(_apply_job(rows, what))
+    return {"started": True, "count": len(rows)}
+
+
+@router.get("/job")
+async def job():
+    return _job
 
 
 @router.post("/auto")

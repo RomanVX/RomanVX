@@ -5466,29 +5466,59 @@ async def agent_digest_get(request: Request, refresh: bool = Query(default=False
     return {"digest": text}
 
 
-@router.get("/img/wb/{basket}/{vol}/{part}/{nm}/{n}.jpg", include_in_schema=False)
-async def wb_image_jpg(basket: str, vol: str, part: str, nm: str, n: str):
-    """Публичная JPG-копия фото карточки WB (WB отдаёт только WEBP, а Ozon при
-    создании карточки принимает ссылки только на JPG/PNG). Адрес собирается
-    из проверенных частей — открытым прокси эндпоинт не является."""
+_WBJPG_DIR = "/tmp/wbjpg"
+_WBJPG_TTL = 6 * 3600
+
+
+def _wbjpg_ok(basket, vol, part, nm, n) -> bool:
+    return bool(re.fullmatch(r"basket-\d{1,3}", basket) and re.fullmatch(r"vol\d{1,8}", vol)
+                and re.fullmatch(r"part\d{1,10}", part) and re.fullmatch(r"\d{1,12}", nm)
+                and re.fullmatch(r"\d{1,2}", n))
+
+
+async def wb_jpg_file(basket: str, vol: str, part: str, nm: str, n: str, force: bool = False) -> str | None:
+    """JPG-копия фото WB на диске (кеш 6 ч). force — перекачать заново (перед
+    отправкой в Ozon: вдруг продавец заменил фото по тому же адресу)."""
     import io
     import httpx
-    from fastapi.responses import Response
     from PIL import Image
-    if not (re.fullmatch(r"basket-\d{1,3}", basket) and re.fullmatch(r"vol\d{1,8}", vol)
-            and re.fullmatch(r"part\d{1,10}", part) and re.fullmatch(r"\d{1,12}", nm)
-            and re.fullmatch(r"\d{1,2}", n)):
-        raise HTTPException(status_code=404)
+    if not _wbjpg_ok(basket, vol, part, nm, n):
+        return None
+    os.makedirs(_WBJPG_DIR, exist_ok=True)
+    path = f"{_WBJPG_DIR}/{basket}_{vol}_{part}_{nm}_{n}.jpg"
+    if not force and os.path.exists(path) and _time.time() - os.path.getmtime(path) < _WBJPG_TTL:
+        return path
     src = f"https://{basket}.wbbasket.ru/{vol}/{part}/{nm}/images/big/{n}.webp"
     async with httpx.AsyncClient(timeout=30) as c:
         r = await c.get(src)
     if r.status_code != 200 or len(r.content) > 15_000_000:
+        return None
+
+    def conv(data):
+        img = Image.open(io.BytesIO(data)).convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, "JPEG", quality=92)
+        tmp = path + ".tmp"
+        with open(tmp, "wb") as f:
+            f.write(buf.getvalue())
+        os.replace(tmp, path)
+    await asyncio.to_thread(conv, r.content)
+    return path
+
+
+@router.get("/img/wb/{basket}/{vol}/{part}/{nm}/{n}.jpg", include_in_schema=False)
+async def wb_image_jpg(basket: str, vol: str, part: str, nm: str, n: str):
+    """Публичная JPG-копия фото карточки WB (WB отдаёт только WEBP, а Ozon при
+    создании карточки принимает ссылки только на JPG/PNG). Адрес собирается
+    из проверенных частей — открытым прокси эндпоинт не является. Готовые JPG
+    лежат на диске: Ozon качает десятки фото разом, перекодировать каждое на
+    лету 512-МБ инстанс не успевает (Ozon получал ошибки)."""
+    from fastapi.responses import FileResponse
+    path = await wb_jpg_file(basket, vol, part, nm, n)
+    if not path:
         raise HTTPException(status_code=404)
-    img = Image.open(io.BytesIO(r.content)).convert("RGB")
-    buf = io.BytesIO()
-    img.save(buf, "JPEG", quality=92)
-    return Response(buf.getvalue(), media_type="image/jpeg",
-                    headers={"Cache-Control": "public, max-age=86400"})
+    return FileResponse(path, media_type="image/jpeg",
+                        headers={"Cache-Control": "public, max-age=86400"})
 
 
 # ══ Реклама Ozon v2: кампании с датами запуска, товары, бренды, динамика ═══════
