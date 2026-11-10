@@ -364,6 +364,8 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(_fbs_multi_loop())
     from routers import cardsync as _cardsync
     asyncio.create_task(_cardsync.loop())   # WB → Ozon: автоперенос карточек (если включён)
+    from routers import pricelock as _pricelock
+    asyncio.create_task(_pricelock.loop())  # сторож зафиксированных цен (товары вне репрайсера)
 
     async def _auto_reviews_loop():
         """Автоответы на ВСЕ отзывы (1-5★): каждые 20 минут подтягиваем
@@ -447,6 +449,8 @@ from routers import cardsync as _cardsync_r
 app.include_router(_cardsync_r.router)
 from routers import growth as _growth_r
 app.include_router(_growth_r.router)
+from routers import pricelock as _pricelock_r
+app.include_router(_pricelock_r.router)
 from routers import wms as _wms
 app.include_router(_wms.router)
 from routers import landing as _landing
@@ -478,7 +482,7 @@ _RO_DENY = (
     "/api/tools/fbs/", "/api/tools/supply/", "/api/tools/ozon/certificate/",
     "/api/tools/adv/sandbox", "/api/tools/agent", "/api/tools/competitors/",
     "/api/tools/niche", "/api/tools/visuals/", "/api/tools/dimensions/",
-    "/api/wms/", "/api/cardsync/apply", "/api/cardsync/auto", "/api/growth/baseline", "/api/growth/journal",  # mp/proxy сам пускает только чтение
+    "/api/wms/", "/api/cardsync/apply", "/api/cardsync/auto", "/api/growth/baseline", "/api/growth/journal", "/api/pricelock",  # mp/proxy сам пускает только чтение
 )
 
 
