@@ -6715,7 +6715,7 @@ function renderGrowth() {
   const dd = s => s ? s.slice(8, 10) + '.' + s.slice(5, 7) : '';
   const totalDays = Math.round((new Date(b.horizon_end) - new Date(b.start)) / 864e5) + 1;
   document.getElementById('grInfo').textContent = `данные ${d.built}${d.building ? ' · обновляю…' : ''}`;
-  const wkStart = Math.round(k.revenue_month / 30 * 7);
+  const wkStart = n.revenue_base || Math.round(k.revenue_month / 30 * 7);
   const wkFinal = Math.round(wkStart * t.revenue_x);
   const pctCls = (v, lim, inv) => v == null ? '' : (inv ? v <= lim : v >= lim) ? 'gr-ok' : 'gr-bad';
   const pct = (v, lim, inv) => v == null ? '<span class="text-secondary">—</span>' : `<span class="${pctCls(v, lim, inv)}">${v}%</span>`;

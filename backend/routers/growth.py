@@ -215,7 +215,13 @@ async def _build() -> dict:
         weeks.append(w)
         w += timedelta(days=7)
     horizon = date.fromisoformat(base["horizon_end"])
-    base_week_rev = base["kpi"]["revenue_month"] / 30 * 7
+    # база оборота — заказы тех же товаров за 14 дней до старта (тот же источник, что и факт),
+    # а не реализация месяца: иначе «старт» и «сейчас» несравнимы
+    _b0 = start - timedelta(days=14)
+    base_week_rev = sum(v[1] for (d, a), v in orders.items()
+                        if a in arts and str(_b0) <= d < str(start)) / 2
+    if not base_week_rev:
+        base_week_rev = base["kpi"]["revenue_month"] / 30 * 7
     n_weeks = max(1, (horizon - start).days / 7)
 
     def plan_rev(w: date) -> float | None:
@@ -324,7 +330,7 @@ async def _build() -> dict:
     k_plan = min(1.0, days_in / max(1, (horizon - start).days))
     rev7 = tot["revenue_7d"]
     kpi_now = {"from": str(n0), "to": str(n1),
-               "revenue": round(rev7), "orders": int(sum(r["orders_day_now"] for r in rows) * 7),
+               "revenue": round(rev7), "revenue_base": round(base_week_rev), "orders": int(sum(r["orders_day_now"] for r in rows) * 7),
                "plan": round(base_week_rev * (1 + k_plan * (base["targets"]["revenue_x"] - 1))),
                "ad": round(tot["ad_7d"]),
                "drr": round(tot["ad_7d"] / rev7 * 100, 1) if rev7 else None,
