@@ -97,6 +97,11 @@ WB_AGENT_MODE=1 + WB_AGENT_TOKEN, KEEP_AWAKE, SQLITE_PATH (локально).
 Owner-only прокси для живой проверки методов (бой и песочница):
 POST /api/tools/adv/sandbox {path, method, params?, json?, sandbox: bool}.
 `docs/ozon_api/seller.json` — полная спека Ozon Seller API (458 методов).
+`docs/ozon_api/performance.txt` — документация Ozon Performance API (реклама),
+текстом. «Оплата за заказ»: ставка ФИКСИРОВАННАЯ (get_cpo_min_bids) — 28% от цены,
+12% если товар одновременно в CPC-кампании; v2/bids/set устарел и значение не меняет.
+Бюджет CPC: PATCH /api/client/campaign/{id} {weeklyBudget в 1e-6 ₽}; товары в CPC:
+POST /api/client/campaign/{id}/products {bids:[{sku,bid}]}.
 ПРАВИЛО при написании любого вызова API: выгружать из спеки ПОЛНУЮ схему
 запроса + блок `example` (не обрезая вывод!) — enum-значения и обязательные
 поля брать только оттуда, никогда не дописывать «по смыслу».

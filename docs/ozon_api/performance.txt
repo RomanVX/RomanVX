@@ -1,0 +1,5981 @@
+
+
+ Документация Ozon Performance API
+
+ Performance
+Api
+
+Ввести Client ID и API Key
+
+ Русский 中文
+
+Общее описаниеМетоды Performance API
+
+Общее описание
+Введение
+
+Авторизация через API-ключ
+
+Авторизация через OAuth-токен
+
+Лимиты на запросы
+
+Обновления
+ 5 октября 2026
+
+4 сентября 2026
+
+6 августа 2026
+
+8 июня 2026
+
+2 июня 2026
+
+22 мая 2026
+
+6 апреля 2026
+
+19 марта 2026
+
+16 февраля 2026
+
+20 января 2026
+
+15 января 2026
+
+18 ноября 2025
+
+31 октября 2025
+
+29 октября 2025
+
+23 октября 2025
+
+21 октября 2025
+
+13 октября 2025
+
+2 октября 2025
+
+2 сентября 2025
+
+1 сентября 2025
+
+25 августа 2025
+
+19 августа 2025
+
+24 июля 2025
+
+17 июля 2025
+
+10 июня 2025
+
+17 апреля 2025
+
+4 апреля 2025
+
+1 апреля 2025
+
+25 марта 2025
+
+3 марта 2025
+
+26 февраля 2025
+
+20 января 2025
+
+9 января 2025
+
+28 ноября 2024
+
+31 октября 2024
+
+11 октября 2024
+
+26 сентября 2024
+
+3 сентября 2024
+
+29 августа 2024
+
+15 августа 2024
+
+7 августа 2024
+
+22 июля 2024
+
+3 июля 2024
+
+1 июля 2024
+
+23 мая 2024
+
+26 апреля 2024
+
+22 апреля 2024
+
+19 марта 2024
+
+5 марта 2024
+
+22 февраля 2024
+
+26 января 2024
+
+17 января 2024
+
+21 декабря 2023
+
+20 октября 2023
+
+10 апреля 2023
+
+3 ноября 2022
+
+5 сентября 2022
+
+2 сентября 2022
+
+30 августа 2022
+
+22 августа 2022
+
+11 августа 2022
+
+10 августа 2022
+
+5 августа 2022
+
+18 июля 2022
+
+15 июля 2022
+
+14 июля 2022
+
+11 июля 2022
+
+8 июля 2022
+
+7 июля 2022
+
+5 июля 2022
+
+4 июля 2022
+
+30 июня 2022
+
+28 июня 2022
+
+27 июня 2022
+
+2 июня 2022
+
+27 сентября 2021
+
+Методы Performance API
+Кампании и рекламируемые объекты
+ Список кампаний
+get
+/api/client/campaign
+
+Список продвигаемых объектов в кампании
+get
+/api/client/campaign/{campaignId}/objects
+
+Лимиты ставок для инструментов продвижения
+get
+/api/client/limits/list
+
+Минимальная ставка для товаров по SKU
+post
+/api/client/min/sku
+
+Список товаров с бонусами
+get
+/api/client/products_with_bonuses
+
+Статистика
+ Статистика по кампании
+post
+/api/client/statistics
+
+Статистика по показам видеобаннера
+post
+/api/client/statistics/video
+
+Отчёт по заказам
+post
+/api/client/statistics/attribution
+
+Cтатус отчёта
+get
+/api/client/statistics/{UUID}
+
+Список отчётов, сгенерированных через интерфейс
+get
+/api/client/statistics/list
+
+Список отчётов, сгенерированных через API
+get
+/api/client/statistics/externallist
+
+Получить отчёты
+get
+/api/client/statistics/report
+
+Статистика по медийным кампаниям
+get
+/api/client/statistics/campaign/media
+
+Статистика по кампании Оплата за клик
+get
+/api/client/statistics/campaign/product
+
+Статистика по расходу кампаний
+get
+/api/client/statistics/expense
+
+Дневная статистика по кампаниям
+get
+/api/client/statistics/daily
+
+Получить отчёт по заказам в оплате за заказ — выбранные товары
+post
+/api/client/statistic/orders/generate
+
+Получить отчёт по товарам в оплате за заказ — выбранные товары
+post
+/api/client/statistic/products/generate
+
+Получить отчёт по заказам в оплате за заказ — все товары
+get
+/api/client/statistics/all_sku_promo/orders/generate
+
+Получить отчёт по товарам в оплате за заказ — все товары
+get
+/api/client/statistics/all_sku_promo/products/generate
+
+Отчёт по поисковым запросам
+post
+/api/client/statistics/phrases
+
+Получить статистику по товарам в оплате за клик
+post
+/api/client/statistics/products/sku
+
+Оплата за клик
+ Создать кампанию с оплатой за клики
+post
+/api/client/campaign/cpc/v2/product
+
+Рассчитать минимальный бюджет кампании
+post
+/external/api/dynamic_budget
+
+Активировать кампанию
+post
+/api/client/campaign/{campaignId}/activate
+
+Выключить кампанию
+post
+/api/client/campaign/{campaignId}/deactivate
+
+Параметры кампании
+patch
+/api/client/campaign/{campaignId}
+
+Товары в Оплате за клик
+ Добавить товары в кампанию
+post
+/api/client/campaign/{campaignId}/products
+
+Обновить ставки товаров
+put
+/api/client/campaign/{campaignId}/products
+
+Список товаров кампании
+get
+/api/client/campaign/{campaignId}/v2/products
+
+Удалить товары из кампании
+post
+/api/client/campaign/{campaignId}/products/delete
+
+Конкурентные ставки для товара
+get
+/api/client/campaign/{campaignId}/products/bids/competitive
+
+Оплата за заказ
+ Список товаров в продвижении в оплате за заказ
+post
+/api/client/campaign/search_promo/v2/products
+
+Рекомендованные ставки для товаров
+post
+/api/client/search_promo/bids/recommendation
+
+Установить ставку на товар
+post
+/api/client/campaign/search_promo/v2/bids/set
+
+Получить фиксированные ставки для товаров
+post
+/api/client/search_promo/get_cpo_min_bids
+
+Включить продвижение товара в оплате за заказ
+post
+/api/client/search_promo/product/enable
+
+Отключить продвижение товара в оплате за заказ
+post
+/api/client/search_promo/product/disable
+
+Удалить товар из продвижения в оплате за заказ
+post
+/api/client/campaign/search_promo/v2/bids/delete
+
+Включить продвижение в оплате за заказ — все товары
+get
+/api/client/campaign/all_sku_promo/activate
+
+Выключить продвижение в оплате за заказ — все товары
+get
+/api/client/campaign/all_sku_promo/deactivate
+
+Установить ставку для продвижения в Оплате за заказ — все товары
+get
+/api/client/campaign/all_sku_promo/set_bid
+
+Включить продвижение товаров в акции «Морковск»
+post
+/api/client/campaign/search_promo/carrots/enable
+
+Отключить продвижение товаров в акции «Морковск»
+post
+/api/client/campaign/search_promo/carrots/disable
+
+Аналитика внешнего трафика
+ Отчёт с аналитикой внешнего трафика
+post
+/api/client/vendors/statistics
+
+Список запрошенных отчётов с аналитикой внешнего трафика
+get
+/api/client/vendors/statistics/list
+
+Информация об отчёте по UUID
+get
+/api/client/vendors/statistics/{UUID}
+
+Метка организации для внешних рекламных кампаний
+get
+/api/client/organisation/vendor_tag
+
+Документация Ozon Performance API (2.0)
+
+В документе описаны методы Ozon Performance API — интерфейса для работы с рекламным кабинетом для обмена
+информацией между системой продавца и Ozon.
+
+По вопросам работы с API, обращайтесь в поддержку через личный кабинет.
+
+Введение
+
+Чтобы использовать API отчётов по рекламным кампаниям Ozon, получите client_id и client_secret в вашем личном кабинете: 
+
+В личном кабинете перейдите на страницу Настройки → API-ключи. 
+
+При необходимости создайте сервисный аккаунт: нажмите Создать новый аккаунт.
+
+Нажмите на название сервисного аккаунта.
+
+Нажмите Добавить новый ключ.
+
+Для использования API:
+
+Получите авторизационный токен с помощью client_id и client_secret в сервисе авторизации.
+
+Выполните запросы с помощью авторизационного токена. Если срок действия токена истёк, получите новый.
+
+Авторизация через API-ключ
+
+Для получения авторизационного токена отправьте запрос:
+
+POST /api/client/token HTTP/1.1
+Host: https://api-performance.ozon.ru
+Content-Type: application/json
+Accept: application/json
+
+{
+ "client_id":"XYZ@advertising.performance.ozon.ru", 
+ "client_secret":"b1u5XXDQW3wEqQ7dG...ancMyuhQtMNBI", 
+ "grant_type":"client_credentials"
+}
+
+Сервис авторизации вернёт токен с указанием периода его действия в секундах:
+
+{
+ "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.WyJFTWhVVU...qTz2XXZBv41h4",
+ "expires_in": 1800,
+ "token_type": "Bearer"
+}
+
+Авторизация через OAuth-токен
+
+Доступно только продавцам из России.
+
+Чтобы получить OAuth-токен для доступа к Performance API, создайте частное
+или публичное приложение и выдайте ему
+доступ к вашему личному кабинету. После этого вы получите OAuth-токен, который позволит работать с методами Performance API.
+
+Используйте OAuth-токен с методами Performance API согласно уровням доступа, которые вы назначили приложению.
+
+Пример запроса:
+
+POST https://api-performance.ozon.ru/{эндпоинт метода Performance API}
+Authorization: Bearer ACCESS_TOKEN
+
+Лимиты на запросы
+
+Общий лимит на количество запросов в сутки — 100 000.
+
+Лимиты на работу с кампаниями:
+
+ | 
+
+ | Лимит
+ | Значение лимита
+
+ | Лимит на создание кампаний.
+ | в день — 1000;
+в час — 300.
+
+ | Лимит на копирование кампаний.
+ | в день — 1000;
+в час — 300.
+
+ | Лимит на изменение бюджета и смену стратегии для каждой кампании.
+ | в день — 500;
+в час — 100.
+
+ | Лимиты на количество добавлений товаров в созданную кампанию.
+ | в день — 1200 запросов на добавление, не больше 1000 товаров в одном запросе;
+в час — 200 запросов на добавление, не больше 1000 товаров в одном запросе.
+
+ | Лимит на изменение ставок внутри кампании.
+ | в день — 6000 запросов на изменение, не больше 10 000 товаров в одном запросе;
+в час — 500 запросов на изменение, не больше 10 000 товаров в одном запросе.
+
+Лимиты на выгрузки статистики проверяются в начале формирования отчёта. 
+Лимиты действуют для отчётов из раздела Статистика.
+
+Одна рекламная кампания = одна выгрузка. 
+Если в запросе несколько кампаний, это считается как несколько выгрузок.
+
+Лимит на количество выгрузок в сутки рассчитывается по формуле: количество активных кампаний × 240 — но не больше значения из таблицы ниже.
+
+Лимиты на выгрузки:
+
+ | 
+
+ | Лимит
+ | Значение лимита
+
+ | Лимит на количество дней в выгрузке.
+ | 62
+
+ | Лимит на количество кампаний в отчёте.
+ | 10
+
+ | Лимит на количество одновременных выгрузок с аккаунта.
+ | 1
+
+ | Лимит на количество выгрузок за 24 часа с аккаунта.
+ | 2000
+
+ | Лимиты на количество одновременных выгрузок по организации.
+ | 5
+
+ | Лимит на количество выгрузок за 24 часа в рамках организации.
+ | 2000
+
+Обновления
+
+5 октября 2026
+
+ | 
+
+ | Метод
+ | Описание
+
+ | —
+ | В разделе Лимиты на запросы обновили информацию о лимитах на работу с кампаниями.
+
+4 сентября 2026
+
+ | 
+
+ | Метод
+ | Описание
+
+ | —
+ | В раздел Лимиты на запросы добавили лимиты на работу с кампаниями. Введём лимиты 14 сентября 2026 года.
+
+6 августа 2026
+
+ | 
+
+ | Метод
+ | Изменение
+
+ | GET /api/client/campaign
+ | Добавили значение PLACEMENT_TILE_MAIN в параметре list.placement в ответе метода.
+
+ | POST /api/client/statistics
+ | Обновили описание метода.
+
+8 июня 2026
+
+ | 
+
+ | Метод
+ | Изменение
+
+ | GET /api/client/statistics/campaign/product
+ | Обновили описание метода.
+
+ | POST /api/client/statistics/products/sku
+ | Добавили метод для получения статистики по товарам для кампании с оплатой за клик.
+
+2 июня 2026
+
+ | 
+
+ | Метод
+ | Изменение
+
+ | POST /api/client/campaign/{campaignId}/products 
+ PUT /api/client/campaign/{campaignId}/products
+ | Добавили параметр bids.topPosition в запрос методов.
+
+ | GET /api/client/campaign/{campaignId}/v2/products
+ | Добавили параметр products.topPosition в ответ метода.
+
+ | GET /api/client/campaign/all_sku_promo/activate
+ | Добавили параметр selectedBid в ответ метода.
+
+ | GET /api/client/campaign/all_sku_promo/set_bid
+ | Добавили метод для установки ставки продвижения в Оплате за заказ.
+
+22 мая 2026
+
+ | 
+
+ | Метод
+ | Изменение
+
+ | POST /api/client/campaign/cpc/v2/product
+ | Обновили описание метода. 
+ В запросе метода: обновили описание параметра productAutopilotStrategy; 
+ удалили параметр ProductAdvPlacements; 
+ пометили устаревшим параметр dailyBudget. 
+
+ | POST /api/client/campaign/{campaignId}/activate 
+ POST /api/client/campaign/{campaignId}/deactivate
+ | В ответе методов: обновили описание параметров productAutopilotStrategy и placement; 
+ удалили параметры ProductAdvPlacements и advObjectType; 
+ пометили устаревшим параметр dailyBudget. 
+
+ | PATCH /api/client/campaign/{campaignId}
+ | В запросе метода: удалили параметр ProductAdvPlacements; 
+ пометили устаревшим параметр dailyBudget. 
+
+ | POST /api/client/campaign/{campaignId}/products 
+ PUT /api/client/campaign/{campaignId}/products
+ | В запросе методов: добавили параметр bids.targetCir; 
+ обновили описание параметра bids.bid. 
+
+ | GET /api/client/campaign/{campaignId}/v2/products
+ | В ответе метода: добавили параметр products.targetCir; 
+ обновили описание параметра products.bid. 
+
+6 апреля 2026
+
+ | 
+
+ | Метод
+ | Изменение
+
+ | —
+ | Изменили название раздела Как получить API-ключ на Авторизация через API-ключ.
+Добавили раздел Авторизация через OAuth-токен.
+
+19 марта 2026
+
+ | 
+
+ | Метод
+ | Изменение
+
+ | GET /api/client/campaign/all_sku_promo/activate
+GET /api/client/campaign/all_sku_promo/deactivate
+GET /api/client/statistics/all_sku_promo/orders/generate
+GET /api/client/statistics/all_sku_promo/products/generate
+ | Добавили методы для работы с продвижением всех товаров в оплате за заказ.
+
+ | POST /api/client/statistic/orders/generate
+POST /api/client/statistic/products/generate
+ | Обновили названия методов.
+
+16 февраля 2026
+
+ | 
+
+ | Метод
+ | Изменение
+
+ | POST /api/client/statistics/phrases
+ | Добавили метод для получения отчёта по поисковым запросам.
+
+20 января 2026
+
+ | 
+
+ | Метод
+ | Изменение
+
+ | POST /api/client/statistics/video
+POST /api/client/statistics/attribution
+GET /api/client/statistics/campaign/media
+GET /api/client/statistics/expense
+GET /api/client/statistics/daily
+GET /api/client/statistics/campaign/product
+POST /api/client/statistic/orders/generate
+POST /api/client/statistic/products/generate
+POST /api/client/statistics
+ | Изменили содержание отчётов в описании методов.
+
+15 января 2026
+
+ | 
+
+ | Метод
+ | Изменение
+
+ | GET /api/client/campaign 
+ POST /api/client/campaign/cpc/v2/product 
+ POST /api/client/campaign/{campaignId}/activate 
+ POST /api/client/campaign/{campaignId}/deactivate 
+ PATCH /api/client/campaign/{campaignId}
+ | Обновили описание методов.
+
+ | POST /api/client/campaign/cpc/v2/product 
+ PATCH /api/client/campaign/{campaignId}
+ | В запросе методов: пометили параметр ProductAdvPlacements как устаревший; 
+удалили параметр autoIncreasePercent.
+
+ | POST /api/client/campaign/{campaignId}/activate
+ | Пометили параметр ProductAdvPlacements как устаревший в ответе метода.
+
+ | GET /api/client/campaign 
+ POST /api/client/campaign/{campaignId}/activate 
+ POST /api/client/campaign/{campaignId}/deactivate
+ | Удалили параметр autoIncrease из ответа методов.
+
+ | POST /api/client/campaign/cpc/v2/product
+ | Удалили значение PLACEMENT_OVERTOP параметра placement и значение TAKEOVER параметра productAutopilotStrategy в запросе метода.
+
+18 ноября 2025
+
+ | 
+
+ | Метод
+ | Изменение
+
+ | GET /api/client/products_with_bonuses
+ | Добавили метод для получения списка товаров с бонусами.
+
+31 октября 2025
+
+ | 
+
+ | Метод
+ | Изменение
+
+ | POST /api/client/statistic/products/generate
+ | Обновили описание метода.
+
+29 октября 2025
+
+ | 
+
+ | Метод
+ | Изменение
+
+ | GET /api/client/statistics/campaign/product
+ | Обновили описание метода.
+
+23 октября 2025
+
+ | 
+
+ | Метод
+ | Изменение
+
+ | GET /api/client/campaign
+ | Добавили значение TOP_PROMOTION в параметр list.productAutopilotStrategy в ответе метода.
+
+ | POST /api/client/campaign/{campaignId}/activate
+POST /api/client/campaign/{campaignId}/deactivate
+ | Добавили значение TOP_PROMOTION в параметр productAutopilotStrategy в ответе методов.
+
+ | POST /api/client/campaign/cpc/v2/product
+ | Добавили значение TOP_PROMOTION в параметр productAutopilotStrategy в запросе метода.
+
+21 октября 2025
+
+ | 
+
+ | Метод
+ | Изменение
+
+ | GET /api/client/campaign
+ | Параметр автоподнятия list.autoIncrease устаревает, отключим его с 29 октября 2025.
+
+ | POST /api/client/campaign/cpc/v2/product
+PATCH /api/client/campaign/{campaignId}
+ | Параметр автоподнятия autoIncreasePercent устаревает, отключим его с 29 октября 2025.
+
+ | POST /api/client/campaign/{campaignId}/activate
+POST /api/client/campaign/{campaignId}/deactivate
+ | Параметр автоподнятия autoIncrease устаревает, отключим его с 29 октября 2025.
+
+13 октября 2025
+
+ | 
+
+ | Метод
+ | Изменение
+
+ | GET /api/client/campaign
+ | Добавили параметры list.isAutocreated и list.autostopStatus в ответ метода.
+
+ | POST /api/client/campaign/{campaignId}/activate
+POST /api/client/campaign/{campaignId}/deactivate
+ | Добавили параметры isAutocreated и autostopStatus в ответ методов.
+
+2 октября 2025
+
+ | 
+
+ | Метод
+ | Изменение
+
+ | POST /api/client/campaign/search_promo/carrots/enable
+POST /api/client/campaign/search_promo/carrots/disable
+ | Обновили описание методов.
+
+2 сентября 2025
+
+ | 
+
+ | Метод
+ | Изменение
+
+ | POST /api/client/campaign/search_promo/carrots/enable
+POST /api/client/campaign/search_promo/carrots/disable
+ | Добавили методы для включения и отключения продвижения товара в акции «Морковск».
+
+ | POST /api/client/campaign/search_promo/v2/products
+ | Добавили параметры products.bidWithoutAdditive, products.carrotsAdditive и products.carrotsStatus в ответ метода.
+
+1 сентября 2025
+
+ | 
+
+ | Метод
+ | Изменение
+
+ | POST /api/client/campaign/cpc/v2/product
+ | Обновили описание параметров placement и productAutopilotStrategy в запросе метода.
+
+ | POST /api/client/campaign/{campaignId}/activate
+POST /api/client/campaign/{campaignId}/deactivate
+ | Обновили описание параметров paymentType, advObjectType, placement и productAutopilotStrategy в ответе методов.
+
+ | POST /external/api/dynamic_budget
+ | Обновили описание параметров createCampaign.autopilotStrategy, createCampaign.placement и updateCampaign.autopilotStrategy в запросе метода.
+
+ | GET /api/client/campaign
+ | Обновили описание параметра advObjectType в запросе метода.
+Обновили описание параметров list.advObjectType, list.placement и list.productAutopilotStrategy в ответе метода.
+
+ | GET /api/client/campaign/{campaignId}/objects
+POST /api/client/statistics
+ | Обновили описание методов.
+
+ | GET /api/client/limits/list
+ | Обновили описание метода.
+Обновили описание параметров limits.objectType и limit.placement в ответе метода.
+
+ | POST /api/client/min/sku
+ | Обновили описание параметра paymentType в запросе метода.
+
+ | GET /api/client/statistics/campaign/product
+ | Изменили название метода.
+
+ | —
+ | Изменили название раздела Трафареты и вывод в топ на Оплата за клик.
+Изменили название раздела Товары в Трафаретах и Выводе в топ на Товары в Оплате за клик и Спецразмещении.
+
+25 августа 2025
+
+ | 
+
+ | Метод
+ | Изменение
+
+ | POST /api/client/campaign/cpc/v2/product
+ | Обновили описание метода. 
+В запросе метода: добавили значение PLACEMENT_OVERTOP в параметр placement;
+добавили значение TAKEOVER в параметр productAutopilotStrategy;
+добавили параметр ProductAdvPlacements.
+
+ | PATCH /api/client/campaign/{campaignId}
+ | Добавили параметр ProductAdvPlacements в запрос метода.
+
+ | POST /api/client/campaign/{campaignId}/activate
+POST /api/client/campaign/{campaignId}/deactivate
+ | В ответе методов: добавили значение PLACEMENT_OVERTOP в параметр placement;
+добавили значение TAKEOVER в параметр productAutopilotStrategy;
+добавили параметр ProductAdvPlacements.
+
+19 августа 2025
+
+ | 
+
+ | Метод
+ | Изменение
+
+ | POST /external/api/dynamic_budget
+ | Метод устаревает и будет отключён 1 сентября 2025 года.
+
+24 июля 2025
+
+ | 
+
+ | Метод
+ | Изменение
+
+ | POST /api/client/campaign/cpc/v2/product
+ | В запросе метода: пометили устаревшим значение PLACEMENT_TAKEOVER в параметре placement;
+удалили значение TAKEOVER в параметре productAutopilotStrategy;
+обновили описание значения TARGET_BIDS в параметре productAutopilotStrategy.
+
+ | POST /api/client/min/sku
+ | Обновили описание параметра paymentType в запросе метода.
+
+ | GET /api/client/campaign
+ | Обновили описание параметра advObjectType в запросе метода.
+Обновили описание параметра list.advObjectType в ответе метода.
+Добавили значение PLACEMENT_OVERTOP в параметре list.placement в ответе метода.
+
+ | POST /api/client/campaign/{campaignId}/activate
+POST /api/client/campaign/{campaignId}/deactivate
+ | В ответе методов: пометили устаревшим значение PLACEMENT_TAKEOVER в параметре placement;
+удалили значение TAKEOVER в параметре productAutopilotStrategy;
+обновили описание параметра advObjectType.
+
+ | GET /api/client/limits/list
+ | Обновили описание параметра limits.objectType в ответе метода.
+Добавили значение CAMPAIGN_PLACEMENT_OVERTOP в параметре limits.placement в ответе метода.
+Обновили описание метода.
+
+ | POST /api/client/campaign/search_promo/v2/products
+ | Обновили описание параметров products.isSearchPromoAvailable и products.searchPromoStatus в ответе метода.
+Изменили название метода.
+
+ | GET /api/client/statistics/{UUID}
+ | Обновили описание параметра kind в ответе метода.
+
+ | GET /api/client/statistics/list
+/api/client/statistics/externallist
+ | Обновили описание параметра items.meta.kind в ответе методов.
+
+ | GET /api/client/campaign/{campaignId}/objects
+POST /api/client/statistics
+ | Обновили описание методов.
+
+ | POST /api/client/statistic/orders/generate
+POST /api/client/statistic/products/generate
+POST /api/client/campaign/search_promo/v2/bids/delete
+POST /api/client/search_promo/product/disable
+POST /api/client/search_promo/product/enable
+ | Изменили название методов.
+
+ | POST /external/api/dynamic_budget
+ | В запросе метода: пометили устаревшим значение CAMPAIGN_PLACEMENT_TAKEOVER в параметре createCampaign.placement;
+удалили значение TAKEOVER в параметре createCampaign.autopilotStrategy;
+удалили значение TAKEOVER в параметре updateCampaign.autopilotStrategy.
+
+ | —
+ | Изменили название раздела Продвижение в поиске на Оплата за заказ.
+
+17 июля 2025
+
+ | 
+
+ | Метод
+ | Изменение
+
+ | POST /external/api/dynamic_budget
+ | Обновили описание параметра skuPrice в ответе метода.
+
+10 июня 2025
+
+ | 
+
+ | Метод
+ | Изменение
+
+ | GET /api/client/campaign
+ | Добавили параметры page и pageSize в запрос метода.
+
+17 апреля 2025
+
+ | 
+
+ | Метод
+ | Изменение
+
+ | POST /api/client/min/sku
+ | Добавили новый метод для получения минимальной ставки для товаров по SKU.
+
+ | GET /api/client/campaign/{campaignId}/brand_shelf/{brandShelfId}
+ | Удалили метод из документации.
+
+ | POST /api/client/campaign/cpc/v2/product 
+ PATCH /api/client/campaign/{campaignId}
+ | Добавили параметр autoIncreasePercent в запрос методов.
+
+ | GET /api/client/campaign 
+ POST /api/client/campaign/{campaignId}/activate 
+ POST /api/client/campaign/{campaignId}/deactivate
+ | Добавили параметры autoIncrease.autoIncreasePercent, autoIncrease.isAutoIncreased, autoIncrease.autoIncreasedBudget, autoIncrease.recommendedAutoIncreasePercent в ответ методов.
+
+4 апреля 2025
+
+ | 
+
+ | Метод
+ | Изменение
+
+ | GET /api/client/statistics/report
+ | Обновили описание метода. 
+ Изменили структуру заголовков и тела ответа.
+
+1 апреля 2025
+
+ | 
+
+ | Метод
+ | Изменение
+
+ | GET /api/client/statistics/campaign/product
+ | Обновили описание метода.
+
+25 марта 2025
+
+ | 
+
+ | Метод
+ | Изменение
+
+ | POST /api/client/search_promo/get_cpo_min_bids
+ | Обновили название параметра в запросе метода.
+
+3 марта 2025
+
+ | 
+
+ | Метод
+ | Изменение
+
+ | POST /api/client/campaign/cpc/v2/product
+ | Обновили описание параметров placement и productAutopilotStrategy в запросе метода.
+
+ | POST /api/client/campaign/{campaignId}/activate 
+ POST /api/client/campaign/{campaignId}/deactivate
+ | Обновили описание параметров placement и productAutopilotStrategy в ответе методов.
+
+ | POST /external/api/dynamic_budget
+ | Обновили описание параметров createCampaign.autopilotStrategy, createCampaign.placement и updateCampaign.autopilotStrategy.strategy в запросе метода.
+
+26 февраля 2025
+
+ | 
+
+ | Метод
+ | Изменение
+
+ | POST /api/client/search_promo/bids/recommendation 
+ POST /api/client/campaign/search_promo/v2/bids/set
+ | Пометили методы устаревшими.
+
+ | POST /api/client/search_promo/get_cpo_min_bids
+ | Добавили метод для получения фиксированных ставок на товары.
+
+20 января 2025
+
+ | 
+
+ | Метод
+ | Изменение
+
+ | POST /external/api/dynamic_budget
+ | Добавили метод для расчёта минимального бюджета кампании.
+
+9 января 2025
+
+ | 
+
+ | Метод
+ | Изменение
+
+ | POST /api/client/campaign/cpc/v2/product
+ | Обновили описание параметра productAutopilotStrategy в запросе метода.
+
+ | PATCH /api/client/campaign/{campaignId}
+ | Удалили параметр autopilot.skuAddMode в запросе метода.
+
+28 ноября 2024
+
+ | 
+
+ | Метод
+ | Изменение
+
+ | GET /api/client/statistics/campaign/product
+ | Добавили недельный бюджет в отчёт.
+
+31 октября 2024
+
+ | 
+
+ | Метод
+ | Изменение
+
+ | POST /api/client/campaign/cpc/v2/product
+ | Удалили параметр productCampaignMode в запросе метода.
+
+ | GET /api/client/statistics/campaign/media 
+ GET /api/client/statistics/campaign/product
+ | Обновили описание методов.
+
+11 октября 2024
+
+ | 
+
+ | Метод
+ | Изменение
+
+ | GET /api/client/statistics/externallist
+ | Добавили метод для получения списка отчётов, сгенерированных через API.
+
+ | GET /api/client/statistics/list
+ | Обновили описание метода.
+
+ | GET /api/client/campaign
+ | Обновили значение CAMPAIGN_STATE_STOPPED параметра state в запросе и параметра list.state в ответе метода.
+
+ | POST /api/client/campaign/{campaignId}/activate
+ POST /api/client/campaign/{campaignId}/deactivate
+ | Обновили значение CAMPAIGN_STATE_STOPPED параметра state ответах методов.
+
+26 сентября 2024
+
+ | 
+
+ | Метод
+ | Изменение
+
+ | Все методы
+ | С 15 января 2025 года хост performance.ozon.ru перестаёт работать. Перейдите на новый хост 
+api-performance.ozon.ru.
+
+3 сентября 2024
+
+ | 
+
+ | Метод
+ | Изменение
+
+ | GET /campaign/{campaignId}/products
+ | Метод устарел, удалили его из документации. Используйте GET /campaign/{campaignId}/v2/products.
+
+ | POST /campaign/{campaignId}/search_promo/products
+ | Метод устарел, удалили его из документации. Используйте POST /campaign/search_promo/v2/products.
+
+ | POST /campaign/{campaignId}/search_promo/bids/set
+ | Метод устарел, удалили его из документации. Используйте POST /campaign/search_promo/v2/bids/set.
+
+ | POST /campaign/cpc/product
+ | Метод устарел, удалили его из документации. Используйте POST /campaign/cpc/v2/product.
+
+ | POST /campaign/{campaignId}/search_promo/bids/delete
+ | Метод устарел, удалили его из документации. Используйте POST /campaign/search_promo/v2/bids/delete.
+
+ | POST /campaign/cpm/v2/product 
+ PATCH /campaign/{campaignId}/brand_shelf/{brandShelfId}
+ | Методы устарели, удалили их из документации.
+
+ | POST /campaign/search_promo/v2/bids/delete 
+ POST /search_promo/product/enable 
+ POST /search_promo/product/disable 
+ POST /campaign/search_promo/v2/bids/delete
+ | В описании методов добавили, что в одном запросе можно передать максимум 1000 товаров.
+
+29 августа 2024
+
+ | 
+
+ | Метод/раздел
+ | Описание
+
+ | POST /campaign/cpc/v2/product
+ | Обновили описание параметра productAutopilotStrategy в запросе метода.
+
+ | POST /campaign/{campaignId}/activate 
+ POST /campaign/{campaignId}/deactivate
+ | Обновили в ответе метода описание парамеров: advObjectType, placement и productAutopilotStrategy.
+
+ | GET /campaign
+ | Обновили описание парамера advObjectType в запросе метода.
+
+ | GET /campaign/{campaignId}/objects
+ | Обновили описание метода.
+
+ | GET /limits/list
+ | Обновили описание метода и параметров в ответе: limits.objectType и limits.placement.
+
+ | GET /statistics/campaign/product 
+ GET /statistics/campaign/media
+ | Обновили примеры запросов.
+
+ | Трафареты и Вывод в топ 
+ Товары в Трафаретах и Выводе в топ
+ | Обновили названия разделов.
+
+15 августа 2024
+
+ | 
+
+ | Метод
+ | Изменение
+
+ | POST /campaign/{campaignId}/products 
+ PUT /campaign/{campaignId}/products 
+ GET /campaign/{campaignId}/v2/products 
+ POST /campaign/search_promo/v2/products 
+ POST /search_promo/bids/recommendation 
+ POST /campaign/search_promo/v2/bids/set
+ | В параметрах bid, bids и SKU* уточнили, что ставка применяется только к заказам или кликам.
+
+7 августа 2024
+
+ | 
+
+ | Метод
+ | Изменение
+
+ | POST /campaign/{campaignId}/v2/activate 
+ POST /campaign/{campaignId}/v2/deactivate
+ | Методы не использовались, удалили их из документации. Используйте POST /campaign/{campaignId}/activate и POST /campaign/{campaignId}/deactivate.
+
+ | POST /campaign/{campaignId}/activate 
+ POST /campaign/{campaignId}/deactivate
+ | Убрали отметки, что методы устарели.
+
+ | POST /campaign/search_promo/v2/bids/set 
+ POST /search_promo/product/enable
+ | Обновили параметры ответа методов.
+
+ | POST /campaign/{campaignId}/search_promo/bids/reset
+ | Метод устарел, удалили его из документации.
+
+22 июля 2024
+
+ | 
+
+ | Метод
+ | Описание
+
+ | POST /campaign/cpc/product 
+ POST /campaign/cpc/v2/product 
+ PATCH /campaign/{campaignId}
+ | Добавили параметр weeklyBudget в запросы методов.
+
+ | POST /campaign/{campaignId}/v2/activate 
+ POST /campaign/{campaignId}/activate 
+ GET /campaign
+ | Добавили параметр weeklyBudget в ответы методов.
+
+3 июля 2024
+
+ | 
+
+ | Метод
+ | Описание
+
+ | POST /campaign/cpm/product
+ | Метод устарел, удалили его из документации.
+
+ | POST /campaign/cpm/v2/product
+ | Пометили метод устаревшим.
+
+ | POST /campaign/{campaignId}/v2/activate 
+ POST /campaign/{campaignId}/activate
+ | Обновили описания методов.
+
+1 июля 2024
+
+ | 
+
+ | Метод
+ | Описание
+
+ | GET /campaign/{campaignId}/brand_shelf/{brandShelfId} 
+ PATCH /campaign/{campaignId}/brand_shelf/{brandShelfId}
+ | Брендовая полка перестала работать, пометили методы устаревшими.
+
+ | GET /limits/list 
+ GET /campaign/{campaignId}/objects 
+ POST /statistics 
+ POST /statistics/attribution
+ | Убрали упоминание брендовой полки в описании методов и параметров.
+
+23 мая 2024
+
+ | 
+
+ | Метод
+ | Описание
+
+ | POST /campaign/cpm/v2/product 
+ POST /campaign/cpc/v2/product 
+ PATCH /campaign/{campaignId}
+ | Удалили параметр expenseStrategy в запросе метода.
+
+ | POST /campaign/cpc/v2/product
+ | Дополнили описание параметра productAutopilotStrategy в запросе метода.
+
+ | GET /campaign
+ | Дополнили описание параметра list.placement в ответе метода.
+
+ | POST /campaign/cpm/v2/product
+ | Дополнили описание параметра placement в запросе метода.
+
+ | POST /campaign/{campaignId}/v2/activate 
+ POST /campaign/{campaignId}/v2/deactivate
+ | Дополнили описание параметра productAutopilotStrategy в ответе метода.
+
+26 апреля 2024
+
+ | 
+
+ | Метод
+ | Описание
+
+ | POST /campaign/search_promo/v2/products
+ | Добавили параметр products.isSearchPromoAvailable в ответ метода.
+
+22 апреля 2024
+
+ | 
+
+ | Метод
+ | Описание
+
+ | POST /campaign/cpm/v2/product 
+ POST /campaign/cpc/v2/product
+ | В запросе метода:
+• удалили параметр autopilot;
+• изменили значение по умолчанию у параметра productCampaignMode.
+
+ | POST /statistic/orders/generate
+ | Добавили метод для получения отчёта по заказам в оплате за заказ.
+
+ | POST /statistic/products/generate
+ | Добавили метод для получения отчёта по товарам в оплате за заказ.
+
+19 марта 2024
+
+ | 
+
+ | Метод
+ | Описание
+
+ | GET /limits/list
+ | Добавили метод для получения:
+• минимальных и максимальных ставок для «Оплаты за заказ», «Трафаретов» и «Брендовой полки»;
+• минимальных ставок по категориям товаров в «Оплате за заказ» и «Трафаретах».
+
+5 марта 2024
+
+ | 
+
+ | Метод
+ | Описание
+
+ | PUT /campaign/{campaignId}/products
+ | Обновили описание метода.
+
+ | POST /campaign/search_promo/v2/products
+ | Обновили описание параметра page в запросе.
+
+ | —
+ | В разделе Лимиты на запросы повысили лимиты до 2000 на количество выгрузок за 24 часа с аккаунта и в рамках организации.
+
+22 февраля 2024
+
+ | 
+
+ | Метод
+ | Описание
+
+ | GET /campaign/{campaignId}/products
+ | Пометили метод устаревшим. Используйте GET /campaign/{campaignId}/v2/products.
+
+ | POST /campaign/cpm/product
+ | Пометили метод устаревшим.
+
+ | POST /campaign/cpc/product
+ | Пометили метод устаревшим. Используйте POST /campaign/cpc/v2/product.
+
+ | POST /campaign/{campaignId}/activate
+ | Пометили метод устаревшим. Используйте POST /campaign/{campaignId}/v2/activate.
+
+ | POST /campaign/{campaignId}/deactivate
+ | Пометили метод устаревшим. Используйте POST /campaign/{campaignId}/v2/deactivate.
+
+ | GET /campaign/{campaignId}/v2/products
+ | Добавили новый метод для получения списка товаров кампании.
+
+ | POST /campaign/cpm/v2/product
+ | Добавили новый метод для создания кампании с оплатой за показы.
+
+ | POST /campaign/cpc/v2/product
+ | Добавили новый метод для создания кампании с оплатой за клики.
+
+ | POST /campaign/{campaignId}/v2/activate
+ | Добавили новый метод для активации кампании.
+
+ | POST /campaign/{campaignId}/v2/deactivate
+ | Добавили новый метод для выключения кампании.
+
+ | GET /campaign/{campaignId}/products/bids/competitive
+ | Добавили новый метод для получения конкурентных ставок для товара в Трафаретах.
+
+26 января 2024
+
+ | 
+
+ | Метод
+ | Описание
+
+ | POST /campaign/{campaignId}/search_promo/products 
+ POST /campaign/{campaignId}/search_promo/bids/set 
+ POST /campaign/{campaignId}/search_promo/bids/reset 
+ POST /campaign/{campaignId}/search_promo/bids/delete
+ | Пометили методы устаревшими, используйте новые методы для управления оплатой за заказ.
+
+ | POST /campaign/search_promo/v2/products
+ | Добавили метод для получения списка товаров из оплаты за заказ.
+
+ | POST /search_promo/bids/recommendation
+ | Добавили метод для получения рекомендованных ставок для товаров из оплаты за заказ.
+
+ | POST /campaign/search_promo/v2/bids/set
+ | Добавили метод для установки ставок на оплату за заказ для товаров.
+
+ | POST /search_promo/product/enable
+ | Добавили метод для включения оплаты за заказ для товара.
+
+ | POST /search_promo/product/disable
+ | Добавили метод для отключения оплаты за заказ для товара.
+
+ | POST /campaign/search_promo/v2/bids/delete
+ | Добавили метод для удаления товаров из оплаты за заказ.
+
+17 января 2024
+
+ | 
+
+ | Метод
+ | Описание
+
+ | POST /campaign/cpm/product
+POST /campaign/cpc/product
+ | Обновили описания методов. Удалили параметр productCampaignMode из запросов методов.
+
+ | POST /campaign/{campaignId}/products
+ | Обновили описание метода. Удалили параметры phrases, groupId и stopWords из запроса метода.
+
+ | PUT /campaign/{campaignId}/products
+ | Удалили параметры phrases, groupId и stopWords из запроса метода.
+
+ | GET /campaign/{campaignId}/products
+ | Удалили параметры phrases, groupId и stopWords из ответа метода.
+
+ | GET /campaign/{campaignId}/objects
+POST /statistics/attribution
+POST /statistics
+POST /statistics/video
+ | Обновили описания методов.
+
+ | —
+ | Раздел Лимиты на ставки устарел, удалили его из документации.
+
+ | GET /campaign/available
+POST /campaign/{campaignId}/group
+GET /campaign/{campaignId}/group/{groupId}
+PUT /campaign/{campaignId}/group/{groupId}
+POST /statistics/phrases
+ | Методы устарели, удалили их из документации.
+
+ | PUT /campaign/{campaignId}/period
+PUT /campaign/{campaignId}/daily_budget
+ | Методы устарели, удалили их из документации. Используйте PATCH /campaign/{campaignId}.
+
+21 декабря 2023
+
+ | 
+
+ | Метод
+ | Описание
+
+ | POST /statistics/ 
+ POST /statistics/video 
+ POST /statistics/attribution 
+ GET /statistics/campaign/media 
+ GET /statistics/campaign/product 
+ GET /statistics/daily 
+ GET /statistics/expense
+ | Добавили в описание методов информацию о JSON-формате отчётов.
+
+20 октября 2023
+
+ | 
+
+ | Метод
+ | Описание
+
+ | —
+ | Обновили заголовки разделов: «Товарные рекламные кампании» на Трафареты и «Товары в рекламной кампании» на Товары в Трафаретах.
+
+ | GET /campaign
+ | Обновили описание параметра advObjectType в запросе метода. Добавили параметр PaymentType в ответ метода.
+
+10 апреля 2023
+
+ | 
+
+ | Метод
+ | Описание
+
+ | POST /statistics/phrases
+ | Удалили параметр groupBy из запроса метода.
+
+3 ноября 2022
+
+ | 
+
+ | Метод
+ | Описание
+
+ | —
+ | Обновили лимиты на ставки и добавили метод оплаты «Клики» для кампаний с размещением в «Карточке товара и категории».
+
+ | POST /campaign/cpc/product
+ | Добавили метод для создания рекламных кампаний с оплатой за клики.
+
+ | POST /campaign/{campaignId}/products
+ | В описание метода добавили рекомендации по добавлению товаров в кампании с оплатой за клики.
+
+ | PUT /campaign/{campaignId}/daily_budget
+ | Из запроса метода убрали параметры fromDate и toDate.
+
+ | PUT /campaign/{campaignId}/period
+ | Из запроса метода убрали параметр dailyBudget.
+
+ | PATCH /campaign/{campaignId}
+ | В запрос метода добавили параметр autopilot для передачи информации о кампаниях с включённой автостратегией. 
+ Изменили описание параметра budget.
+
+ | POST /campaign/cpm/product
+ | В запрос метода добавили параметр autopilot.skuAddMode для включения автоматического добавления товаров в кампании. 
+ В запросе метода обновили описание параметра toDate. 
+ В запрос метода добавили параметр budget.
+
+ | GET /campaign
+ | В ответ метода добавили поле autopilot.skuAddMode для получения информации об автоматическом добавления товаров в кампании.
+
+5 сентября 2022
+
+ | 
+
+ | Метод
+ | Описание
+
+ | GET /campaign
+POST /campaign/{campaignId}/activate
+POST /campaign/{campaignId}/deactivate
+ | Добавили поля с информацией об автостратегиях productAutopilotStrategy и autopilot в ответы методов.
+
+ | POST /campaign/cpm/product
+ | Добавили параметры productAutopilotStrategy и autopilot для передачи информации об автостратегиях в запрос метода.
+
+ | POST /campaign/{campaignId}/products
+PUT /campaign/{campaignId}/products
+ | Добавили ограничения при работе с кампаниями с включённой автостратегией в описания методов.
+
+2 сентября 2022
+
+ | 
+
+ | Метод
+ | Описание
+
+ | GET /campaign/{campaignId}/products
+ | Добавили в ответ поля: 
+• categories.bid — ставка на категорию,
+• categories.categoryId — идентификатор категории,
+• title — название товара.
+
+30 августа 2022
+
+ | 
+
+ | Метод
+ | Описание
+
+ | POST /statistics/video
+ | Добавили метод для получения статистики по показам видеобаннера.
+
+22 августа 2022
+
+ | 
+
+ | Метод
+ | Описание
+
+ | GET /organisation/vendor_tag
+ | Добавили метод для получения меток организации для внешних рекламных кампаний.
+
+11 августа 2022
+
+ | 
+
+ | Метод
+ | Описание
+
+ | GET /statistics/report
+ | Добавили описание ошибки некорректного UUID в ответ метода.
+
+10 августа 2022
+
+ | 
+
+ | Метод
+ | Описание
+
+ | GET /statistics/{UUID} 
+ GET /statistics/list
+ | Добавили значение для поля kind в ответах методов.
+
+5 августа 2022
+
+ | 
+
+ | Метод
+ | Описание
+
+ | GET /campaign/{campaignId}/group/{groupId}
+ | Добавили метод для получения информации о группе.
+
+18 июля 2022
+
+ | 
+
+ | Метод
+ | Описание
+
+ | —
+ | Обновили максимальную ставку на оплату за заказ в разделе Лимиты на ставки.
+
+15 июля 2022
+
+ | 
+
+ | Метод
+ | Описание
+
+ | POST /campaign/cpm/product
+ | Обновили описание параметра productCampaignMode в запросе.
+
+ | POST /campaign/{campaignId}/products
+ | Обновили описание метода.
+
+14 июля 2022
+
+ | 
+
+ | Метод
+ | Описание
+
+ | POST /campaign/cpm/product
+ | Обновили описание метода. Добавили параметр productCampaignMode и обновили описание параметра placement в запросе.
+
+ | POST /campaign/{campaignId}/products
+ | Обновили описание метода. Обновили описание параметра bids.bid в запросе метода.
+
+ | PUT /campaign/{campaignId}/products
+ | Обновили описание метода.
+
+ | GET /campaign
+ | Обновили описание параметра advObjectType в запросе. Добавили поле productCampaignMode в ответ метода.
+
+ | POST /campaign/{campaignId}/group 
+ PUT /campaign/{campaignId}/group/{groupId} 
+ POST /statistics/phrases
+ | Обновили описания методов.
+
+ | GET /campaign/available
+ | Добавили метод для получения доступных режимов создания рекламных кампаний.
+
+11 июля 2022
+
+ | 
+
+ | Метод
+ | Описание
+
+ | —
+ | Добавили раздел Лимиты на ставки.
+
+8 июля 2022
+
+ | 
+
+ | Метод
+ | Описание
+
+ | GET /campaign/{campaignId}/brand_shelf/{brandShelfId}
+ | Добавили поля targetDeepLink и bids.bidMicros в ответ метода. Уточнили возвращаемые значения для поля image.format в ответе. Обновили описание полей bids.bid и searchBids.bid в ответе.
+
+ | PATCH /campaign/{campaignId}/brand_shelf/{brandShelfId}
+ | Убрали поле searchBids.relevanceStatus из запроса метода.
+
+7 июля 2022
+
+ | 
+
+ | Метод
+ | Описание
+
+ | POST /vendors/statistics
+ | Добавили метод для запуска формирования отчёта с аналитикой внешнего трафика.
+
+ | GET /vendors/statistics/list
+ | Добавили метод для получения всех запрошенных отчётов с аналитикой внешнего трафика.
+
+ | GET /vendors/statistics/{UUID}
+ | Добавили метод для получения информации об отчёте с аналитикой внешнего трафика.
+
+5 июля 2022
+
+ | 
+
+ | Метод
+ | Описание
+
+ | POST /campaign/{campaignId}/search_promo/products
+
+POST /campaign/{campaignId}/search_promo/bids/delete
+ | Обновили описание методов.
+
+4 июля 2022
+
+ | 
+
+ | Метод
+ | Описание
+
+ | POST /statistics 
+ POST /statistics/phrases 
+ POST /statistics/attribution
+ | Изменили максимальный период, за который можно получить отчёт, в параметрах запроса to и from.
+
+30 июня 2022
+
+ | 
+
+ | Метод
+ | Описание
+
+ | GET /statistics/{UUID}
+ | Добавили поле kind в ответ и пример метода.
+
+ | POST /statistics
+ | Добавили поле vendor в ответ и пример метода.
+
+28 июня 2022
+
+ | 
+
+ | Метод
+ | Описание
+
+ | POST /campaign/cpc/product
+ | Метод устарел, удалили его из документации.
+
+ | —
+ | Теперь получить client_id и client_secret можно в личном кабинете продавца. Добавили инструкцию в документацию.
+
+27 июня 2022
+
+ | 
+
+ | Метод
+ | Описание
+
+ | PUT /campaign/{campaignId}/daily_budget
+ | Исправили описание к параметру dailyBudget в запросе.
+
+2 июня 2022
+
+ | 
+
+ | Метод
+ | Описание
+
+ | —
+ | Добавили раздел Лимиты на запросы.
+
+27 сентября 2021
+
+ | 
+
+ | Метод
+ | Описание
+
+ | —
+ | Добавили раздел Список методов.
+
+ | —
+ | Поменяли название раздела «Начало работы» на «Введение».
+
+ | 
+ | Поменяли название раздела «Получить токен» на «Как получить API-ключ».
+
+Кампании и рекламируемые объекты
+
+Список кампаний 
+get/api/client/campaign
+
+Описание и примеры
+Консоль
+
+query Parameters
+ | campaignIds | Array of strings <uint64> 
+ Список идентификаторов кампаний, для которых необходимо вывести информацию.
+
+Если передать значение, то в ответе будет информация по кампаниям, которые указаны
+в поле campaigns. Если поле пустое, информация будет отдана по всем кампаниям.
+
+ | advObjectType | string
+ Тип рекламируемой кампании:
+
+SKU — Оплата за клик;
+
+BANNER — Баннерная рекламная кампания;
+
+SEARCH_PROMO — Оплата за заказ;
+
+VIDEO_BANNER — Видеобаннер.
+
+Подробнее о типах рекламных кампаний
+
+ | state | string
+ Default: "CAMPAIGN_STATE_UNKNOWN"
+ Enum: "CAMPAIGN_STATE_UNKNOWN" "CAMPAIGN_STATE_RUNNING" "CAMPAIGN_STATE_PLANNED" "CAMPAIGN_STATE_STOPPED" "CAMPAIGN_STATE_INACTIVE" "CAMPAIGN_STATE_ARCHIVED" "CAMPAIGN_STATE_MODERATION_DRAFT" "CAMPAIGN_STATE_MODERATION_IN_PROGRESS" "CAMPAIGN_STATE_MODERATION_FAILED" "CAMPAIGN_STATE_FINISHED" 
+ Состояние кампании.
+
+Возможные значения:
+
+CAMPAIGN_STATE_RUNNING — активная кампания;
+
+CAMPAIGN_STATE_PLANNED — кампания, сроки проведения которой ещё не наступили;
+
+CAMPAIGN_STATE_STOPPED — кампания, приостановленная из-за нехватки бюджета;
+
+CAMPAIGN_STATE_INACTIVE — кампания, остановленная владельцем;
+
+CAMPAIGN_STATE_ARCHIVED — архивная кампания;
+
+CAMPAIGN_STATE_MODERATION_DRAFT — отредактированная кампания до отправки на модерацию;
+
+CAMPAIGN_STATE_MODERATION_IN_PROGRESS — кампания, отправленная на модерацию;
+
+CAMPAIGN_STATE_MODERATION_FAILED — кампания, непрошедшая модерацию;
+
+CAMPAIGN_STATE_FINISHED — кампания завершена, дата окончания в прошлом, такую кампанию нельзя изменить, можно
+только клонировать или создать новую.
+
+ | page | integer <int64> 
+ Номер страницы. Пагинация начинается с единицы.
+
+ | pageSize | integer <int64> 
+ Размер страницы.
+
+Ответы
+ 200Список всех кампаний
+
+Response Schema: application/json
+ | list | Array of objects
+ Список кампаний.
+
+ | Array ()
+ | id | string <uint64> 
+ Идентификатор кампании.
+
+ | paymentType | string
+ Default: "CAMPAIGN_TYPE_INVALID"
+ Тип оплаты:
+
+CPC — за клики,
+
+CPM — за показы,
+
+CPO — за заказы.
+
+ | title | string
+ Название кампании.
+
+ | state | string
+ Default: "CAMPAIGN_STATE_UNKNOWN"
+ Состояние кампании:
+
+CAMPAIGN_STATE_RUNNING — активная кампания;
+
+CAMPAIGN_STATE_PLANNED — кампания, сроки проведения которой ещё не наступили;
+
+CAMPAIGN_STATE_STOPPED — кампания, приостановленная из-за нехватки бюджета;
+
+CAMPAIGN_STATE_INACTIVE — кампания, остановленная владельцем;
+
+CAMPAIGN_STATE_ARCHIVED — архивная кампания;
+
+CAMPAIGN_STATE_MODERATION_DRAFT — отредактированная кампания до отправки на модерацию;
+
+CAMPAIGN_STATE_MODERATION_IN_PROGRESS — кампания, отправленная на модерацию;
+
+CAMPAIGN_STATE_MODERATION_FAILED — кампания, непрошедшая модерацию;
+
+CAMPAIGN_STATE_FINISHED — кампания завершена, дата окончания в прошлом, такую кампанию нельзя изменить, можно
+только клонировать или создать новую.
+
+ | advObjectType | string
+ Тип рекламируемой кампании:
+
+SKU — Оплата за клик;
+
+BANNER — Баннерная рекламная кампания;
+
+SEARCH_PROMO — Оплата за заказ;
+
+VIDEO_BANNER — Видеобаннер.
+
+ | fromDate | string
+ Дата старта рекламной кампании.
+
+ | toDate | string
+ Дата завершения рекламной кампании.
+
+ | autostopStatus | string
+ Default: "AUTOSTOP_STATUS_NONE"
+ Enum: "AUTOSTOP_STATUS_NONE" "AUTOSTOP_STATUS_ENABLED" "AUTOSTOP_STATUS_DISABLED" "AUTOSTOP_STATUS_STOPPED" 
+ Статус кампании:
+
+AUTOSTOP_STATUS_NONE — продавец создал кампанию вручную.
+
+AUTOSTOP_STATUS_ENABLED — кампания создана автоматически и остановится, когда кончатся баллы.
+
+AUTOSTOP_STATUS_DISABLED — кампания создана автоматически, но она не остановится, когда кончатся баллы.
+
+AUTOSTOP_STATUS_STOPPED — баллы закончились, кампания остановлена автоматически.
+
+ | isAutocreated | boolean
+ true, если кампания создана автоматически.
+
+ | budget | string <uint64> 
+ Бюджет рекламной кампании. Единица измерения — одна миллионная доля рубля, округляется до копеек. Например, значение 1 000 000 в параметре равно 1 рублю.
+
+ | dailyBudget | string <uint64> 
+ Дневной бюджет рекламной кампании. Единица измерения — одна миллионная доля рубля, округляется до копеек. Например, значение 1 000 000 в параметре равно 1 рублю.
+
+ | weeklyBudget | string <uint64> 
+ Недельный бюджет рекламной кампании. Единица измерения — одна миллионная доля рубля, округляется до копеек. Например, значение 1 000 000 в параметре равно 1 рублю.
+
+ | placement | string
+ Default: "PLACEMENT_INVALID"
+ Enum: "PLACEMENT_INVALID" "PLACEMENT_PDP" "PLACEMENT_SEARCH_AND_CATEGORY" "PLACEMENT_TOP_PROMOTION" "PLACEMENT_OVERTOP" "PLACEMENT_TAKEOVER" "PLACEMENT_TILE_MAIN" 
+ Место размещения продвигаемых товаров:
+
+PLACEMENT_INVALID — не определено.
+
+PLACEMENT_PDP — карточка товара. Доступно только для кампаний с ручным управлением.
+
+PLACEMENT_SEARCH_AND_CATEGORY — поиск и рекомендации.
+
+PLACEMENT_TOP_PROMOTION — поиск.
+
+PLACEMENT_OVERTOP — поиск и главная (Спецразмещение).
+
+PLACEMENT_TAKEOVER — одновременный показ товаров на первых 4 плитках.
+
+PLACEMENT_TILE_MAIN — главная, нативный баннер.
+
+ | productAutopilotStrategy | string
+ Default: "NO_AUTO_STRATEGY"
+ Enum: "MAX_VIEWS" "MAX_CLICKS" "TOP_MAX_CLICKS" "NO_AUTO_STRATEGY" "TAKEOVER" "TOP_PROMOTION" "TARGET_BIDS" "TARGET_CIR" 
+ Стратегия, которая используется для кампании:
+
+MAX_VIEWS — максимальное количество показов;
+
+MAX_CLICKS — автостратегия для Поиска и рекомендаций;
+
+TOP_MAX_CLICKS — автостратегия для Поиска;
+
+TAKEOVER — спецразмещение для Поиска;
+
+TOP_PROMOTION — вывод в топ;
+
+TARGET_BIDS — средняя стоимость клика для Поиска и рекомендаций;
+
+TARGET_CIR — целевой расход;
+
+NO_AUTO_STRATEGY — автостратегия не используется.
+
+ | autopilot | object
+ Информация о кампании. Возвращается, если в параметре productAutopilotStrategy включена стратегия.
+
+ | createdAt | string <date-time> 
+ Дата создания кампании в формате RFC3339.
+
+ | updatedAt | string <date-time> 
+ Дата обновления кампании в формате RFC3339.
+
+ | productCampaignMode | string
+ Default: "PRODUCT_CAMPAIGN_MODE_AUTO"
+ Enum: "PRODUCT_CAMPAIGN_MODE_AUTO" "PRODUCT_CAMPAIGN_MODE_MANUAL" 
+ Режим создания и управления товарной рекламной кампанией:
+
+PRODUCT_CAMPAIGN_MODE_AUTO — автоматически;
+
+PRODUCT_CAMPAIGN_MODE_MANUAL — вручную.
+
+ defaultОшибка запроса
+
+Примеры запроса
+JSON
+ Копировать
+
+GET /api/client/campaign?campaignIds=52374&advObjectType=SKU&state=CAMPAIGN_STATE_UNKNOWN HTTP/1.1
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.WyJFTWhVVU...qTz2XXZBv41h4
+Host: api-performance.ozon.ru:443
+Content-Type: application/json
+Accept: application/json
+
+Примеры ответа
+200
+default
+Content typeapplication/json
+
+ExampleБаннерная кампания 
+
+Баннерная кампания
+Продвижение товаров
+
+{"list": {"id": 48949,
+
+"paymentType": "CPM",
+
+"title": "Баннерная кампания",
+
+"state": "CAMPAIGN_STATE_RUNNING",
+
+"advObjectType": "BANNER",
+
+"fromDate": "2019-10-07",
+
+"toDate": "2021-10-07",
+
+"dailyBudget": 504000000,
+
+"placement": ["PLACEMENT_PDP"
+
+],
+
+"budget": 50000000,
+
+"createdAt": "2019-10-07T06:28:44.055042Z",
+
+"updatedAt": "2020-10-01T06:28:44.055042Z",
+
+"productAutopilotStrategy": "NO_AUTO_STRATEGY",
+
+"productCampaignMode": "PRODUCT_CAMPAIGN_MODE_AUTO"
+
+}
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Список продвигаемых объектов в кампании 
+get/api/client/campaign/{campaignId}/objects
+
+Описание и примеры
+Консоль
+
+Метод для получения списка продвигаемых объектов в кампаниях «Оплата за клик», «Баннеры» и «Видеобаннеры».
+
+Чтобы получить товары в кампании «Оплата за заказ», используйте POST /campaign/search_promo/v2/products.
+
+path Parameters
+ | campaignId required 
+ | string <uint64> 
+ Идентификатор кампании.
+
+Ответы
+ 200Список рекламируемых объектов в кампании
+
+Response Schema: application/json
+ | list | Array of objects
+ Список идентификаторов рекламируемых объектов.
+
+ | Array ()
+ | id | string <uint64> 
+ Идентификатор рекламируемого объекта:
+
+SKU — для рекламы товаров в спонсорских полках и в каталоге;
+
+числовой идентификатор — для баннерных кампаний.
+
+ defaultОшибка запроса
+
+Примеры запроса
+JSON
+ Копировать
+
+GET /api/client/campaign/48852/objects HTTP/1.1
+Host: api-performance.ozon.ru:443
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.WyJFTWhVVU...qTz2XXZBv41h4
+
+Примеры ответа
+200
+default
+Content typeapplication/json
+
+{"list": [{"id": "string"
+
+}
+
+]
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Лимиты ставок для инструментов продвижения 
+get/api/client/limits/list
+
+Описание и примеры
+Консоль
+
+Вы можете получить лимиты ставок по инструментам:
+
+Оплата за заказ:
+Минимальная и максимальная ставка для инструмента.
+
+Минимальные ставки за заказ для некоторых категорий товаров.
+
+Спецразмещение и Оплата за клик:
+Минимальная и максимальная ставка за клик.
+
+Минимальные ставки за клик для некоторых категорий товаров.
+
+Ответы
+ 200Лимиты ставок
+
+Response Schema: application/json
+ | limits | Array of objects
+ Минимальные и максимальные ставки для инструментов продвижения.
+
+ | Array ()
+ | categories | Array of objects
+ Минимальная ставка для категории второго уровня. Если категории нет в списке, применяется минимальная ставка для инструмента.
+
+ | maxBid | number <double> 
+ Максимальная ставка в рублях.
+
+ | minBid | number <double> 
+ Минимальная ставка в рублях.
+
+ | objectType | string
+ Enum: "SKU" "SEARCH_PROMO" 
+ Тип инструмента:
+
+SKU — Оплата за клик,
+
+SEARCH_PROMO — Оплата за заказ.
+
+ | paymentMethod | string
+ Enum: "CPO" "CPC" "CPM" 
+ Способ оплаты:
+
+CPO — оплата за заказ,
+
+CPC — оплата за клик,
+
+CPM — оплата за 1000 показов.
+
+ | placement | string
+ Enum: "CAMPAIGN_PLACEMENT_SEARCH_AND_CATEGORY" "CAMPAIGN_PLACEMENT_TOP_PROMOTION" "CAMPAIGN_PLACEMENT_OVERTOP" 
+ Тип кампании:
+
+CAMPAIGN_PLACEMENT_SEARCH_AND_CATEGORY — Поиск и рекомендации;
+
+CAMPAIGN_PLACEMENT_TOP_PROMOTION — Поиск;
+
+CAMPAIGN_PLACEMENT_OVERTOP — Спецразмещение.
+
+ defaultОшибка
+
+Примеры ответа
+200
+default
+Content typeapplication/json
+
+{"limits": [{"categories": [{"bid": 0,
+
+"category": "string"
+
+}
+
+],
+
+"maxBid": 0,
+
+"minBid": 0,
+
+"objectType": "SKU",
+
+"paymentMethod": "CPO",
+
+"placement": "CAMPAIGN_PLACEMENT_SEARCH_AND_CATEGORY"
+
+}
+
+]
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Минимальная ставка для товаров по SKU 
+post/api/client/min/sku
+
+Описание и примеры
+Консоль
+
+Используйте метод, чтобы узнать минимальную ставку для одного или нескольких товаров по SKU.
+
+Request Body schema: application/json
+
+ | marketplaceId | string
+ Enum: "MARKETPLACE_ID_RU" "MARKETPLACE_ID_KZ" "MARKETPLACE_ID_BY" 
+ Страна витрины:
+
+MARKETPLACE_ID_RU — Россия;
+
+MARKETPLACE_ID_KZ — Казахстан;
+
+MARKETPLACE_ID_BY — Белоруссия.
+
+ | paymentType | string
+ Enum: "CPO" "CPC" "CPC_TOP" 
+ Тип минимальной ставки:
+
+CPO — по кампании «Оплата за заказ»;
+
+CPC — по поиску и рекомендациям;
+
+CPC_TOP — по поиску.
+
+ | sku | Array of strings <uint64> 
+ Идентификатор товара: Ozon ID или SKU.
+
+Ответы
+ 200Размер минимальной ставки
+
+Response Schema: application/json
+ | minBids | Array of objects
+ Информация о минимальных ставках.
+
+ | Array ()
+ | bid | number <double> 
+ Размер ставки.
+
+ | sku | string <uint64> 
+ Идентификатор товара: Ozon ID или SKU.
+
+ defaultОшибка
+
+Примеры запроса
+Payload
+Content typeapplication/json
+
+{"marketplaceId": "MARKETPLACE_ID_RU",
+
+"paymentType": "CPO",
+
+"sku": ["string"
+
+]
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Примеры ответа
+200
+default
+Content typeapplication/json
+
+{"minBids": [{"bid": 0,
+
+"sku": "string"
+
+}
+
+]
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Список товаров с бонусами 
+get/api/client/products_with_bonuses
+
+Описание и примеры
+Консоль
+
+Возвращает список SKU товаров, на которые начислены бонусы. 
+
+За клик на товар в первую очередь тратятся начисленные на него бонусы. Если бонусы кончились, тратится общий бюджет кампании.
+
+Ответы
+ 200Список товаров с бонусами
+
+Response Schema: application/json
+ | skus | Array of strings <uint64> 
+ Список SKU товаров.
+
+ defaultОшибка
+
+Примеры ответа
+200
+default
+Content typeapplication/json
+
+{"skus": ["string"
+
+]
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Статистика
+
+Даты в отчётах рекламного кабинета группируются по московскому времени.
+
+Для получения отчёта кампании:
+
+Отправьте запрос на генерацию отчёта.
+
+Получите сгенерированный отчёт по UUID запроса.
+
+Статистика по кампании 
+post/api/client/statistics
+
+Описание и примеры
+Консоль
+
+В запросе укажите временной промежуток с помощью полей from и to или dateFrom и dateTo. Если заполнены все
+четыре поля, в ответе будет статистика по временному промежутку из полей dateFrom и dateTo.
+
+Performance API асинхронный. Поэтому в результате запроса будет не сам отчёт, а уникальный идентификатор
+отправленного запроса, с помощью которого можно проверить статус формирования отчёта и скачать отчёт.
+Формат отчёта — CSV. 
+
+Архивы с примерами отчётов для разных типов кампаний:
+
+Баннеры и нативные баннеры
+
+Видеобаннеры
+
+Оплата за клик
+
+Чтобы запросить отчёт в формате JSON, добавьте в адрес метода /json и отправьте запрос по адресу /api/client/statistics/json.
+
+Request Body schema: application/json
+
+ | campaigns required 
+ | Array of strings <uint64> 
+ Список идентификаторов кампаний, для которых необходимо подготовить отчёт.
+
+Формат отчёта:
+
+CSV — если в списке одна кампания.
+
+ZIP архив — если в списке несколько кампаний. Каждый файл соответствует одной кампании из списка. Имя файла вида <идентификатор кампании>.csv.
+
+ | from | string <date-time> 
+ Начальная дата периода отчёта в формате RFC 3339.
+
+Максимальный период, за который можно получить отчёт — 62 дня.
+
+ | to | string <date-time> 
+ Конечная дата периода отчёта в формате RFC 3339.
+
+Максимальный период, за который можно получить отчёт — 62 дня.
+
+ | dateFrom | string
+ Начальная дата периода отчёта в формате ГГГГ-ММ-ДД. Например: 2019-02-10.
+
+ | dateTo | string
+ Конечная дата периода отчёта в формате ГГГГ-ММ-ДД. Например: 2019-02-10.
+
+ | groupBy | string
+ Default: "NO_GROUP_BY"
+ Enum: "NO_GROUP_BY" "DATE" "START_OF_WEEK" "START_OF_MONTH" 
+ Тип группировки по времени:
+
+DATE — группировка по дате (по дням);
+
+START_OF_WEEK — группировка по неделям;
+
+START_OF_MONTH — группировка по месяцам.
+
+Ответы
+ 200Статистика по кампании
+
+Response Schema: application/json
+ | UUID | string
+ Уникальный идентификатор отправленного запроса. 
+
+По нему можно проверить статус формирования отчёта и скачать отчёт.
+
+ | vendor | boolean
+ Если запрашивается отчёт с аналитикой внешнего трафика — true.
+
+ defaultОшибка запроса
+
+Примеры запроса
+Payload
+JSON
+Content typeapplication/json
+
+{"campaigns": ["string"
+
+],
+
+"from": "2019-08-24T14:15:22Z",
+
+"to": "2019-08-24T14:15:22Z",
+
+"dateFrom": "string",
+
+"dateTo": "string",
+
+"groupBy": "NO_GROUP_BY"
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Примеры ответа
+200
+default
+Content typeapplication/json
+
+{"UUID": "0c159c60-ab92-46d9-9a6b-d225dbf5c7b1",
+
+"vendor": true
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Статистика по показам видеобаннера 
+post/api/client/statistics/video
+
+Описание и примеры
+Консоль
+
+В запросе укажите временной промежуток с помощью полей dateFrom и dateTo.
+
+Performance API асинхронный. Поэтому в результате запроса будет не сам отчёт, а уникальный идентификатор
+отправленного запроса, с помощью которого можно проверить статус формирования отчёта и скачать отчёт.
+Формат отчёта — CSV. 
+
+Отчёт содержит:
+
+название;
+
+идентификатор кампании;
+
+период отчёта;
+
+идентификатор баннера;
+
+показы;
+
+клики;
+
+охват;
+
+CTR;
+
+доля видимых показов;
+
+досмотры по квартилям: 25%, 50%, 75% и 100%;
+
+доля досмотров: 25%, 50%, 75% и 100%;
+
+просмотры со звуком;
+
+заказы;
+
+расход.
+
+Чтобы запросить отчёт в формате JSON, добавьте в адрес метода /json и отправьте запрос по адресу /api/client/statistics/video/json.
+
+Request Body schema: application/json
+
+ | campaigns required 
+ | Array of strings <uint64> 
+ Список идентификаторов кампаний, для которых необходимо подготовить отчёт.
+
+Формат отчёта:
+
+CSV — если в списке одна кампания.
+
+ZIP архив — если в списке несколько кампаний. Каждый файл соответствует одной кампании из списка. Имя файла вида <идентификатор кампании>.csv.
+
+ | dateFrom | string
+ Начальная дата периода отчёта в формате ГГГГ-ММ-ДД. Например: 2019-02-10.
+
+ | dateTo | string
+ Конечная дата периода отчёта в формате ГГГГ-ММ-ДД. Например: 2019-02-10.
+
+ | groupBy | string
+ Default: "NO_GROUP_BY"
+ Enum: "NO_GROUP_BY" "DATE" "START_OF_WEEK" "START_OF_MONTH" 
+ Тип группировки по времени:
+
+DATE — группировка по дате (по дням);
+
+START_OF_WEEK — группировка по неделям;
+
+START_OF_MONTH — группировка по месяцам.
+
+Ответы
+ 200Статистика по показам видеобаннера
+
+Response Schema: application/json
+ | UUID | string
+ Уникальный идентификатор отправленного запроса. 
+
+По нему можно проверить статус формирования отчёта и скачать отчёт.
+
+ | vendor | boolean
+ Если запрашивается отчёт с аналитикой внешнего трафика — true.
+
+ defaultОшибка запроса
+
+Примеры запроса
+Payload
+JSON
+Content typeapplication/json
+
+{"campaigns": ["string"
+
+],
+
+"dateFrom": "string",
+
+"dateTo": "string",
+
+"groupBy": "NO_GROUP_BY"
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Примеры ответа
+200
+default
+Content typeapplication/json
+
+{"UUID": "0c159c60-ab92-46d9-9a6b-d225dbf5c7b1",
+
+"vendor": true
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Отчёт по заказам 
+post/api/client/statistics/attribution
+
+Описание и примеры
+Консоль
+
+Метод для получения отчёта по заказам на баннеры.
+
+В запросе укажите временной промежуток с помощью полей from и to или dateFrom и dateTo. Если заполнены все
+ четыре поля, в ответе будет статистика по временному промежутку из полей dateFrom и dateTo.
+
+Performance API асинхронный. Поэтому в результате запроса будет не сам отчёт, а уникальный идентификатор
+отправленного запроса, с помощью которого можно проверить статус формирования отчёта и скачать отчёт.
+Формат отчёта — CSV. 
+
+Отчёт содержит:
+
+название,
+
+идентификатор кампании,
+
+период отчёта,
+
+SKU,
+
+названия товаров,
+
+количество заказов,
+
+выручка в рублях,
+
+количество заказов модели,
+
+выручка с заказов модели,
+
+тип атрибуции.
+
+Чтобы запросить отчёт в формате JSON, добавьте в адрес метода /json и отправьте запрос по адресу /api/client/statistics/attribution/json.
+
+Request Body schema: application/json
+
+ | campaigns required 
+ | Array of strings <uint64> 
+ Список идентификаторов кампаний, для которых необходимо подготовить отчёт.
+
+Формат отчёта:
+
+CSV — если в списке одна кампания.
+
+ZIP архив — если в списке несколько кампаний. Каждый файл соответствует одной кампании из списка. Имя файла вида <идентификатор кампании>.csv.
+
+ | from | string <date-time> 
+ Начальная дата периода отчёта в формате RFC 3339.
+
+Максимальный период, за который можно получить отчёт — 62 дня.
+
+ | to | string <date-time> 
+ Конечная дата периода отчёта в формате RFC 3339.
+
+Максимальный период, за который можно получить отчёт — 62 дня.
+
+ | dateFrom | string
+ Начальная дата периода отчёта в формате ГГГГ-ММ-ДД. Например: 2019-02-10.
+
+ | dateTo | string
+ Конечная дата периода отчёта в формате ГГГГ-ММ-ДД. Например: 2019-02-10.
+
+ | groupBy | string
+ Default: "NO_GROUP_BY"
+ Enum: "NO_GROUP_BY" "DATE" "START_OF_WEEK" "START_OF_MONTH" 
+ Тип группировки по времени:
+
+DATE — группировка по дате (по дням);
+
+START_OF_WEEK — группировка по неделям;
+
+START_OF_MONTH — группировка по месяцам.
+
+Ответы
+ 200Отчёт по заказам
+
+Response Schema: application/json
+ | UUID | string
+ Уникальный идентификатор отправленного запроса. 
+
+По нему можно проверить статус формирования отчёта и скачать отчёт.
+
+ | vendor | boolean
+ Если запрашивается отчёт с аналитикой внешнего трафика — true.
+
+ defaultОшибка запроса
+
+Примеры запроса
+Payload
+JSON
+Content typeapplication/json
+
+{"campaigns": ["string"
+
+],
+
+"from": "2019-08-24T14:15:22Z",
+
+"to": "2019-08-24T14:15:22Z",
+
+"dateFrom": "string",
+
+"dateTo": "string",
+
+"groupBy": "NO_GROUP_BY"
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Примеры ответа
+200
+default
+Content typeapplication/json
+
+{"UUID": "0c159c60-ab92-46d9-9a6b-d225dbf5c7b1"
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Cтатус отчёта 
+get/api/client/statistics/{UUID}
+
+Описание и примеры
+Консоль
+
+path Parameters
+ | UUID required 
+ | string
+ Уникальный идентификатор запроса.
+
+Ответы
+ 200Cтатус отчёта
+
+Response Schema: application/json
+ | UUID | string
+ Уникальный идентификатор запроса, для которого производилась проверка.
+
+ | state | string
+ Default: "NOT_STARTED"
+ Enum: "NOT_STARTED" "IN_PROGRESS" "ERROR" "OK" 
+ Текущее состояние запроса:
+
+NOT_STARTED — запрос ожидает выполнения;
+
+IN_PROGRESS — запрос выполняется в данный момент;
+
+ERROR — выполнение запроса завершилось ошибкой;
+
+OK — запрос успешно выполнен.
+
+ | createdAt | string <date-time> 
+ Дата и время получения запроса сервером, часовой пояс UTC.
+
+ | updatedAt | string <date-time> 
+ Дата и время последнего обновления состояния запроса, часовой пояс UTC.
+
+ | request | object
+ Структура исходного запроса.
+
+ | error | string
+ Краткое описание возникшей ошибки.
+
+Поле присутствует, если выполнение запроса завершилось ошибкой.
+
+ | link | string
+ Относительная ссылка на отчёт в формате CSV.
+
+Поле присутствует, если запрос выполнен успешно.
+
+ | kind | string
+ Default: "STATS"
+ Enum: "STATS" "SEARCH_PHRASES" "ATTRIBUTION" "VIDEO" 
+ Тип запрашиваемого отчёта:
+
+STATS — отчёт по кампании;
+
+SEARCH_PHRASES — отчёт по поисковым фразам и по категории товаров;
+
+ATTRIBUTION — отчёт по заказам для оплаты за заказ;
+
+VIDEO — отчёт по показам видеобаннера.
+
+ defaultОшибка запроса
+
+Примеры запроса
+JSON
+ Копировать
+
+GET /api/client/statistics/0c159c60-ab92-46d9-9a6b-d225dbf5c7b1 HTTP/1.1
+Host: api-performance.ozon.ru:443
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.WyJFTWhVVU...qTz2XXZBv41h4
+Content-Type: application/json
+Accept: application/json
+
+Примеры ответа
+200
+default
+Content typeapplication/json
+
+{"UUID": "0c159c60-ab92-46d9-9a6b-d225dbf5c7b1",
+
+"state": "OK",
+
+"createdAt": "2020-03-23T19:30:58.264653Z",
+
+"updatedAt": "2020-03-23T19:30:58.689007Z",
+
+"request": {"attributionDays": "",
+
+"campaignId": 1,
+
+"campaigns": [12558
+
+],
+
+"dateFrom": "2020-03-01",
+
+"dateTo": "2020-03-20",
+
+"from": "2020-03-01T00:00:00Z",
+
+"groupBy": "DATE",
+
+"objects": [ ],
+
+"to": "2020-03-20T00:00:00Z"
+
+},
+
+"link": "string",
+
+"kind": "STATS"
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Список отчётов, сгенерированных через интерфейс 
+get/api/client/statistics/list
+
+Описание и примеры
+Консоль
+
+Метод для получения списка отчётов, которые сгенерированы через интерфейс рекламного кабинета.
+
+query Parameters
+ | page | integer <int64> 
+ Номер страницы.
+
+ | pageSize | integer <int64> 
+ Размер страницы.
+
+Ответы
+ 200Список отчётов
+
+Response Schema: application/json
+ | items | Array of objects
+ Список отчётов.
+
+ | total | string <uint64> 
+ Количество отчётов.
+
+ defaultОшибка запроса
+
+Примеры запроса
+JSON
+ Копировать
+
+GET /api/client/statistics/list?page=1&pageSize=100 HTTP/1.1
+Host: api-performance.ozon.ru:443
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.WyJFTWhVVU...qTz2XXZBv41h4
+Content-Type: application/json
+Accept: application/json
+
+Примеры ответа
+200
+default
+Content typeapplication/json
+
+{"items": [{"campaigns": [{"id": "string",
+
+"title": "string"
+
+}
+
+],
+
+"meta": {"UUID": "string",
+
+"state": "NOT_STARTED",
+
+"createdAt": "2019-08-24T14:15:22Z",
+
+"updatedAt": "2019-08-24T14:15:22Z",
+
+"request": {"campaigns": ["string"
+
+],
+
+"from": "2019-08-24T14:15:22Z",
+
+"to": "2019-08-24T14:15:22Z",
+
+"dateFrom": "string",
+
+"dateTo": "string",
+
+"groupBy": "NO_GROUP_BY"
+
+},
+
+"error": "string",
+
+"link": "string",
+
+"kind": "STATS"
+
+},
+
+"name": "string"
+
+}
+
+],
+
+"total": "string"
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Список отчётов, сгенерированных через API 
+get/api/client/statistics/externallist
+
+Описание и примеры
+Консоль
+
+Метод для получения списка отчётов, которые сгенерированы через API сервисными аккаунтами.
+
+query Parameters
+ | page | integer <int64> 
+ Номер страницы.
+
+ | pageSize | integer <int64> 
+ Размер страницы.
+
+Ответы
+ 200Список отчётов
+
+Response Schema: application/json
+ | items | Array of objects
+ Список отчётов.
+
+ | total | string <uint64> 
+ Количество отчётов.
+
+ defaultОшибка запроса
+
+Примеры запроса
+JSON
+ Копировать
+
+GET /api/client/statistics/list?page=1&pageSize=100 HTTP/1.1
+Host: api-performance.ozon.ru:443
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.WyJFTWhVVU...qTz2XXZBv41h4
+Content-Type: application/json
+Accept: application/json
+
+Примеры ответа
+200
+default
+Content typeapplication/json
+
+{"items": [{"campaigns": [{"id": "string",
+
+"title": "string"
+
+}
+
+],
+
+"meta": {"UUID": "string",
+
+"state": "NOT_STARTED",
+
+"createdAt": "2019-08-24T14:15:22Z",
+
+"updatedAt": "2019-08-24T14:15:22Z",
+
+"request": {"campaigns": ["string"
+
+],
+
+"from": "2019-08-24T14:15:22Z",
+
+"to": "2019-08-24T14:15:22Z",
+
+"dateFrom": "string",
+
+"dateTo": "string",
+
+"groupBy": "NO_GROUP_BY"
+
+},
+
+"error": "string",
+
+"link": "string",
+
+"kind": "STATS"
+
+},
+
+"name": "string"
+
+}
+
+],
+
+"total": "string"
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Получить отчёты 
+get/api/client/statistics/report
+
+Описание и примеры
+Консоль
+
+При успешном запросе ссылка на скачивание отчёта в формате CSV или ZIP появится в поле link при использовании метода «Статус отчета».
+
+Формат отчёта в заголовке ответа указан в поле content-type. Формат зависит от того, сколько кампаний в поле campaigns исходного запроса:
+
+CSV — если в списке одна кампания.
+
+ZIP-архив — если в списке несколько кампаний. Каждый файл соответствует одной кампании из списка. Имя файла вида <идентификатор кампании>.csv.
+
+query Parameters
+ | UUID | string
+ Уникальный идентификатор запроса.
+
+Ответы
+ 200Отчёт
+
+ Response Headers | content-type | string
+ Example: "text/csv; charset=UTF-8"
+
+ | x-o3-trace-id | string
+
+Response Schema: text/csv
+string
+ Строки отчёта.
+
+ 404Некорректный UUID
+
+ defaultОшибка запроса
+
+Примеры запроса
+JSON
+ Копировать
+
+GET /api/client/statistics/report?UUID=0c159c60-ab92-46d9-9a6b-d225dbf5c7b1 HTTP/1.1
+Host: api-performance.ozon.ru:443
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.WyJFTWhVVU...qTz2XXZBv41h4
+
+Примеры ответа
+200
+404
+default
+Content typetext/csv
+
+ Копировать
+
+; Кампания по продвижению товаров № 13883040, период 03.01.2025-03.01.2025 
+sku; Название товара; Цена товара, Р; Показы; Клики; CTR (%); В корзину; Ср. цена клика, г;Ср. цена 1000 показов, Р; Расход, Р, с НДС; Заказы; Выручка, Р; Заказы модели; Выручка с заказов модели, Р;ДРР, %: Дата добавления 
+Bcero;;;0;0;0,00; 0; 0,00;0,00; 0,00; 0; 0,00;0;0,00;0,00
+
+Статистика по медийным кампаниям 
+get/api/client/statistics/campaign/media
+
+Описание и примеры
+Консоль
+
+В запросе укажите временной промежуток с помощью полей from и to или dateFrom и dateTo. Если заполнены все
+четыре поля, в ответе будет статистика по временному промежутку из полей dateFrom и dateTo.
+
+Формат отчёта — CSV. 
+
+Чтобы запросить отчёт в формате JSON, добавьте в адрес метода /json и отправьте запрос по адресу /api/client/statistics/campaign/media/json.
+
+Отчёт содержит:
+
+идентификатор кампании,
+
+название кампании,
+
+формат кампании,
+
+статус кампании,
+
+дневной бюджет в рублях,
+
+бюджет в рублях,
+
+расход в рублях,
+
+показы,
+
+клики,
+
+средняя цена 1000 показов в рублях,
+
+отношение числа кликов к числу показов (CTR),
+
+средняя цена клика в рублях,
+
+заказы в штуках,
+
+заказы после просмотра в штуках,
+
+сумма заказов после просмотра,
+
+доля рекламных расходов (ДРР),
+
+сумма заказов,
+
+тип оплаты,
+
+тип бюджета.
+
+query Parameters
+ | campaignIds | Array of strings <uint64> 
+ Список идентификаторов кампаний, для которых необходимо подготовить отчёт.
+
+Если поле заполнено, в отчёте будет статистика только по указанным кампаниям. Если поле пустое, в ответе будет
+статистика по всем кампаниям в указанном промежутке времени.
+
+Необязательное поле.
+
+ | from | string <date-time> 
+ Начальная дата периода отчёта в формате RFC3339.
+
+Необязательное поле.
+
+ | to | string <date-time> 
+ Конечная дата периода отчёта в формате RFC3339.
+
+Необязательное поле.
+
+ | dateFrom | string
+ Начальная дата периода отчёта в формате ГГГГ-ММ-ДД. Например: 2019-02-10.
+
+Необязательное поле.
+
+ | dateTo | string
+ Начальная дата периода отчёта в формате ГГГГ-ММ-ДД. Например: 2019-02-10.
+
+Необязательное поле.
+
+Ответы
+ 200Статистика по медийным кампаниям
+
+Response Schema: application/json
+ | contentType | string
+ Формат отчёта.
+
+ defaultОшибка запроса
+
+Примеры запроса
+JSON
+ Копировать
+
+GET /api/client/statistics/campaign/media?dateFrom=2024-08-01&dateTo=2024-08-01&campaignIds=11037395&campaignIds=11037396 HTTP/1.1
+Host: api-performance.ozon.ru:443
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.WyJFTWhVVU...qTz2XXZBv41h4
+Content-Type: application/json
+
+Примеры ответа
+200
+default
+Content typeapplication/json
+
+{"contentType": "string"
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Статистика по кампании Оплата за клик 
+get/api/client/statistics/campaign/product
+
+Описание и примеры
+Консоль
+
+Не расходует лимиты Performance API.
+
+В запросе укажите временной промежуток с помощью полей from и to или dateFrom и dateTo. Если заполнены все
+четыре поля, в ответе будет статистика по временному промежутку из полей dateFrom и dateTo.
+
+Формат отчёта — CSV. 
+
+Чтобы запросить отчёт в формате JSON, добавьте в адрес метода /json и отправьте запрос по адресу /api/client/statistics/campaign/product/json.
+
+Отчёт содержит:
+
+идентификатор кампании,
+
+название кампании,
+
+тип объекта,
+
+статус кампании,
+
+недельный бюджет в рублях,
+
+бюджет в рублях,
+
+расход в рублях,
+
+показы,
+
+клики,
+
+количество добавлений товара в корзину,
+
+отношение числа кликов к числу показов (CTR),
+
+средняя цена клика в рублях,
+
+заказы в штуках,
+
+заказы в рублях,
+
+доля рекламных расходов (ДРР),
+
+тип продвижения,
+
+места размещения для спецразмещения.
+
+query Parameters
+ | campaignIds | Array of strings <uint64> 
+ Список идентификаторов кампаний, для которых необходимо подготовить отчёт.
+
+Если поле заполнено, в отчёте будет статистика только по указанным кампаниям. Если поле пустое, в ответе будет
+статистика по всем кампаниям в указанном промежутке времени.
+
+Необязательное поле.
+
+ | from | string <date-time> 
+ Начальная дата периода отчёта в формате RFC3339.
+
+Необязательное поле.
+
+ | to | string <date-time> 
+ Конечная дата периода отчёта в формате RFC3339.
+
+Необязательное поле.
+
+ | dateFrom | string
+ Начальная дата периода отчёта в формате ГГГГ-ММ-ДД. Например: 2019-02-10.
+
+Необязательное поле.
+
+ | dateTo | string
+ Начальная дата периода отчёта в формате ГГГГ-ММ-ДД. Например: 2019-02-10.
+
+Необязательное поле.
+
+Ответы
+ 200Статистика по продуктовым кампаниям
+
+Response Schema: application/json
+ | contentType | string
+ Формат отчёта.
+
+ defaultОшибка запроса
+
+Примеры запроса
+JSON
+ Копировать
+
+GET /api/client/statistics/campaign/product?dateFrom=2024-08-01&dateTo=2024-08-07&campaignIds=11037395&campaignIds=11037396 HTTP/1.1
+Host: api-performance.ozon.ru:443
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.WyJFTWhVVU...qTz2XXZBv41h4
+Content-Type: application/json
+
+Примеры ответа
+200
+default
+Content typeapplication/json
+
+{"contentType": "string"
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Статистика по расходу кампаний 
+get/api/client/statistics/expense
+
+Описание и примеры
+Консоль
+
+Если в запросе не указаны значения полей dateFrom и dateTo, то в ответе будет статистика за последние 7 дней.
+
+Формат отчёта — CSV. 
+
+Чтобы запросить отчёт в формате JSON, добавьте в адрес метода /json и отправьте запрос по адресу /api/client/statistics/expense/json.
+
+Отчёт содержит:
+
+идентификатор кампании,
+
+дата,
+
+название,
+
+расход,
+
+расход с абонентского счёта,
+
+расход бонусов.
+
+query Parameters
+ | campaignIds | Array of strings <uint64> 
+ Список идентификаторов кампаний, для которых необходимо подготовить отчёт.
+
+Если поле заполнено, в отчёте будет статистика только по указанным кампаниям. Если поле пустое, в ответе будет
+статистика по всем кампаниям в указанном промежутке времени.
+
+Необязательное поле.
+
+ | dateFrom | string
+ Начальная дата периода отчёта в формате ГГГГ-ММ-ДД. Например: 2019-02-10.
+
+Необязательное поле.
+
+ | dateTo | string
+ Начальная дата периода отчёта в формате ГГГГ-ММ-ДД. Например: 2019-02-10.
+
+Необязательное поле.
+
+Ответы
+ 200Статистика по расходу кампаний
+
+Response Schema: application/json
+ | contentType | string
+ Формат отчёта.
+
+ defaultОшибка запроса
+
+Примеры запроса
+JSON
+ Копировать
+
+GET /api/client/statistics/expense?campaigns=48852&dateFrom=2019-02-10&dateTo=2020-02-10 HTTP/1.1
+Host: api-performance.ozon.ru:443
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.WyJFTWhVVU...qTz2XXZBv41h4
+Content-Type: application/json
+
+Примеры ответа
+200
+default
+Content typeapplication/json
+
+{"contentType": "string"
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Дневная статистика по кампаниям 
+get/api/client/statistics/daily
+
+Описание и примеры
+Консоль
+
+Если в запросе не указаны значения полей dateFrom и dateTo, то в ответе будет статистика за последние 7 дней.
+
+Формат отчёта — CSV. 
+
+Чтобы запросить отчёт в формате JSON, добавьте в адрес метода /json и отправьте запрос по адресу /api/client/statistics/daily/json.
+
+Отчёт содержит:
+
+идентификатор кампании,
+
+название кампании,
+
+дата,
+
+показы,
+
+клики,
+
+расход в рублях,
+
+заказы в штуках,
+
+заказы в рублях.
+
+query Parameters
+ | campaignIds | Array of strings <uint64> 
+ Список идентификаторов кампаний, для которых необходимо подготовить отчёт.
+
+Если поле заполнено, в отчёте будет статистика только по указанным кампаниям. Если поле пустое, в ответе будет
+статистика по всем кампаниям в указанном промежутке времени.
+
+Необязательное поле.
+
+ | dateFrom | string
+ Начальная дата периода отчёта в формате ГГГГ-ММ-ДД. Например: 2019-02-10.
+
+Необязательное поле.
+
+ | dateTo | string
+ Начальная дата периода отчёта в формате ГГГГ-ММ-ДД. Например: 2019-02-10.
+
+Необязательное поле.
+
+Ответы
+ 200Дневная статистика по кампаниям
+
+Response Schema: application/json
+ | contentType | string
+ Формат отчёта.
+
+ defaultОшибка запроса
+
+Примеры запроса
+JSON
+ Копировать
+
+GET /api/client/statistics/daily?campaigns=48852&dateFrom=2019-02-10&dateTo=2020-02-10 HTTP/1.1
+Host: api-performance.ozon.ru:443
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.WyJFTWhVVU...qTz2XXZBv41h4
+Content-Type: application/json
+
+Примеры ответа
+200
+default
+Content typeapplication/json
+
+{"contentType": "string"
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Получить отчёт по заказам в оплате за заказ — выбранные товары 
+post/api/client/statistic/orders/generate
+
+Описание и примеры
+Консоль
+
+В параметрах запроса from и to укажите промежуток времени.
+
+Performance API асинхронный.
+Поэтому в результате запроса будет не сам отчёт, а уникальный идентификатор отправленного запроса, с помощью которого можно проверить статус формирования отчёта и скачать отчёт в формате CSV.
+
+Чтобы запросить отчёт в формате JSON, добавьте /json в адрес метода: /api/client/statistic/orders/generate/json.
+
+Отчёт содержит:
+
+период отчёта;
+
+дату;
+
+ID заказа;
+
+номер заказа;
+
+SKU;
+
+SKU продвигаемого товара;
+
+артикул;
+
+наименование;
+
+источник заказа;
+
+количество;
+
+стоимость, ₽;
+
+ставку, %;
+
+ставку, ₽;
+
+расход, ₽.
+
+Request Body schema: application/json
+
+ | from | string <date-time> 
+ Начальная дата периода отчёта в формате RFC 3339.
+
+ | to | string <date-time> 
+ Конечная дата периода отчёта в формате RFC 3339.
+
+Ответы
+ 200Статистика по кампании
+
+Response Schema: application/json
+ | UUID | string
+ Уникальный идентификатор отправленного запроса. 
+
+По нему можно проверить статус формирования отчёта и скачать отчёт.
+
+ | vendor | boolean
+ Если запрашивается отчёт с аналитикой внешнего трафика — true.
+
+ defaultОшибка запроса
+
+Примеры запроса
+Payload
+Content typeapplication/json
+
+{"from": "2019-08-24T14:15:22Z",
+
+"to": "2019-08-24T14:15:22Z"
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Примеры ответа
+200
+default
+Content typeapplication/json
+
+{"UUID": "string",
+
+"vendor": true
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Получить отчёт по товарам в оплате за заказ — выбранные товары 
+post/api/client/statistic/products/generate
+
+Описание и примеры
+Консоль
+
+В параметрах запроса from и to укажите промежуток времени.
+
+Performance API асинхронный.
+Поэтому в результате запроса будет не сам отчёт, а уникальный идентификатор отправленного запроса, с помощью которого можно проверить статус формирования отчёта и скачать отчёт в формате CSV.
+
+Чтобы запросить отчёт в формате JSON, добавьте /json в адрес метода: /api/client/statistic/products/generate/json.
+
+Отчёт содержит:
+
+период отчёта;
+
+SKU;
+
+артикул;
+
+наименование;
+
+категорию;
+
+продвижение;
+
+цену товара, ₽;
+
+ставку, %;
+
+ставку, ₽;
+
+количество заказов;
+
+сумму заказов, ₽;
+
+расход, ₽;
+
+продажи («Оплата за клик»), ₽;
+
+расход («Оплата за клик»), ₽;
+
+заказы («Оплата за клик»), шт;
+
+в корзину;
+
+ДРР, %;
+
+последнее изменение.
+
+Request Body schema: application/json
+
+ | from | string <date-time> 
+ Начальная дата периода отчёта в формате RFC 3339.
+
+ | to | string <date-time> 
+ Конечная дата периода отчёта в формате RFC 3339.
+
+Ответы
+ 200Статистика по кампании
+
+Response Schema: application/json
+ | UUID | string
+ Уникальный идентификатор отправленного запроса. 
+
+По нему можно проверить статус формирования отчёта и скачать отчёт.
+
+ | vendor | boolean
+ Если запрашивается отчёт с аналитикой внешнего трафика — true.
+
+ defaultОшибка запроса
+
+Примеры запроса
+Payload
+Content typeapplication/json
+
+{"from": "2019-08-24T14:15:22Z",
+
+"to": "2019-08-24T14:15:22Z"
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Примеры ответа
+200
+default
+Content typeapplication/json
+
+{"UUID": "string",
+
+"vendor": true
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Получить отчёт по заказам в оплате за заказ — все товары 
+get/api/client/statistics/all_sku_promo/orders/generate
+
+Описание и примеры
+Консоль
+
+В параметрах запроса timeBounds.from и timeBounds.to укажите промежуток времени.
+
+Performance API асинхронный.
+Поэтому в результате запроса будет не сам отчёт, а уникальный идентификатор отправленного запроса, с помощью которого можно проверить статус формирования отчёта и скачать отчёт в формате CSV.
+
+Чтобы запросить отчёт в формате JSON, добавьте /json в адрес метода: /api/client/statistics/all_sku_promo/orders/generate/json.
+
+Отчёт содержит:
+
+период отчёта;
+
+дату;
+
+идентификатор заказа;
+
+номер заказа;
+
+SKU;
+
+SKU продвигаемого товара;
+
+артикул;
+
+название товара;
+
+количество;
+
+стоимость, ₽;
+
+стоимость продажи, ₽;
+
+ставку, %;
+
+ставку, ₽;
+
+расход, ₽.
+
+query Parameters
+ | timeBounds.from | string <date-time> 
+ Начальная дата периода отчёта в формате RFC 3339.
+
+ | timeBounds.to | string <date-time> 
+ Конечная дата периода отчёта в формате RFC 3339.
+
+Ответы
+ 200Статистика по кампании
+
+Response Schema: application/json
+ | UUID | string
+ Уникальный идентификатор отправленного запроса. 
+
+По нему можно проверить статус формирования отчёта и скачать отчёт.
+
+ defaultОшибка
+
+Примеры ответа
+200
+default
+Content typeapplication/json
+
+{"UUID": "string"
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Получить отчёт по товарам в оплате за заказ — все товары 
+get/api/client/statistics/all_sku_promo/products/generate
+
+Описание и примеры
+Консоль
+
+В параметрах запроса timeBounds.from и timeBounds.to укажите промежуток времени.
+
+Performance API асинхронный.
+Поэтому в результате запроса будет не сам отчёт, а уникальный идентификатор отправленного запроса, с помощью которого можно проверить статус формирования отчёта и скачать отчёт в формате CSV.
+
+Чтобы запросить отчёт в формате JSON, добавьте /json в адрес метода: /api/client/statistics/all_sku_promo/products/generate/json.
+
+Отчёт содержит:
+
+дату;
+
+статус продвижения: включено или выключено;
+
+расход, ₽;
+
+продажи из поиска, ₽;
+
+продажи из рекомендаций, ₽;
+
+количество заказов из поиска;
+
+количество заказов из рекомендаций.
+
+query Parameters
+ | timeBounds.from | string <date-time> 
+ Начальная дата периода отчёта в формате RFC 3339.
+
+ | timeBounds.to | string <date-time> 
+ Конечная дата периода отчёта в формате RFC 3339.
+
+Ответы
+ 200Статистика по кампании
+
+Response Schema: application/json
+ | UUID | string
+ Уникальный идентификатор отправленного запроса. 
+
+По нему можно проверить статус формирования отчёта и скачать отчёт.
+
+ defaultОшибка
+
+Примеры ответа
+200
+default
+Content typeapplication/json
+
+{"UUID": "string"
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Отчёт по поисковым запросам 
+post/api/client/statistics/phrases
+
+Описание и примеры
+Консоль
+
+Метод находится на стадии тестирования.
+
+Отчёт можно сформировать только для кампаний с оплатой за клик с признаком placement = PLACEMENT_TOP_PROMOTION.
+
+Чтобы запросить отчёт в формате JSON, добавьте в адрес метода /json и отправьте запрос по адресу /api/client/statistics/phrases/json.
+
+Request Body schema: application/json
+
+ | campaigns | Array of strings <uint64> 
+ Список кампаний.
+
+ | dateFrom | string
+ Начальная дата периода отчёта в формате ГГГГ-ММ-ДД. Например: 2019-02-10. Дата не может быть раньше 1 февраля 2025 года.
+
+ | dateTo | string
+ Конечная дата периода отчёта в формате ГГГГ-ММ-ДД. Например: 2019-02-10.
+
+ | from | string <date-time> 
+ Начальная дата периода отчёта в формате RFC 3339. Дата не может быть раньше 1 февраля 2025 года.
+
+ | to | string <date-time> 
+ Конечная дата периода отчёта в формате RFC 3339.
+
+ | groupBy | string
+ Default: "NO_GROUP_BY"
+ Enum: "NO_GROUP_BY" "DATE" "START_OF_WEEK" "START_OF_MONTH" 
+ Тип группировки по времени:
+
+DATE — группировка по дате (по дням);
+
+START_OF_WEEK — группировка по неделям;
+
+START_OF_MONTH — группировка по месяцам.
+
+Ответы
+ 200Отчёт по поисковым запросам
+
+Response Schema: application/json
+ | UUID | string
+ Уникальный идентификатор отправленного запроса. 
+
+По нему можно проверить статус формирования отчёта и скачать отчёт.
+
+ | vendor | boolean
+ Если запрашивается отчёт с аналитикой внешнего трафика — true.
+
+ defaultОшибка
+
+Примеры запроса
+Payload
+Content typeapplication/json
+
+{"campaigns": ["string"
+
+],
+
+"dateFrom": "string",
+
+"dateTo": "string",
+
+"from": "2019-08-24T14:15:22Z",
+
+"to": "2019-08-24T14:15:22Z",
+
+"groupBy": "NO_GROUP_BY"
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Примеры ответа
+200
+default
+Content typeapplication/json
+
+{"UUID": "string",
+
+"vendor": true
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Получить статистику по товарам в оплате за клик 
+post/api/client/statistics/products/sku
+
+Описание и примеры
+Консоль
+
+Не расходует лимиты Performance API.
+
+Request Body schema: application/json
+
+ | campaignIds | Array of strings <uint64> 
+ Список идентификаторов кампаний.
+
+ | dateFrom | string YYYY-MM-DD
+ Дата начала периода статистики, не раньше предыдущего дня.
+
+ | dateTo | string YYYY-MM-DD
+ Дата окончания периода статистики.
+
+Ответы
+ 200Статистика по товарам
+
+Response Schema: application/json
+ | rows | Array of objects
+ Статистика по товарам.
+
+ | Array ()
+ | avgCpc | string
+ Средняя стоимость клика в рублях.
+
+ | campaignId | string <uint64> 
+ Идентификатор кампании.
+
+ | clicks | string <uint64> 
+ Количество кликов.
+
+ | ctr | number <double> 
+ Отношение числа кликов к числу показов — CTR.
+
+ | date | string
+ Дата, за которую посчитана статистика.
+
+ | dateAdded | string <date-time> 
+ Дата добавления кампании.
+
+ | drr | number <double> 
+ Доля рекламных расходов — ДРР.
+
+ | expense | string
+ Расход в рублях.
+
+ | modelOrders | string <uint64> 
+ Количество заказов модели.
+
+ | modelSales | string
+ Стоимость заказов модели в рублях.
+
+ | orders | string <uint64> 
+ Количество заказов.
+
+ | price | string
+ Цена товара в рублях.
+
+ | sales | string
+ Стоимость заказов в рублях.
+
+ | sku | string <uint64> 
+ Идентификатор товара в системе Ozon — SKU.
+
+ | toCart | string <uint64> 
+ Количество добавлений товара в корзину.
+
+ | views | string <uint64> 
+ Количество показов.
+
+ defaultОшибка
+
+Примеры запроса
+Payload
+Content typeapplication/json
+
+{"campaignIds": ["string"
+
+],
+
+"dateFrom": "string",
+
+"dateTo": "string"
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Примеры ответа
+200
+default
+Content typeapplication/json
+
+{"rows": [{"avgCpc": "string",
+
+"campaignId": "string",
+
+"clicks": "string",
+
+"ctr": 0,
+
+"date": "string",
+
+"dateAdded": "2019-08-24T14:15:22Z",
+
+"drr": 0,
+
+"expense": "string",
+
+"modelOrders": "string",
+
+"modelSales": "string",
+
+"orders": "string",
+
+"price": "string",
+
+"sales": "string",
+
+"sku": "string",
+
+"toCart": "string",
+
+"views": "string"
+
+}
+
+]
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Оплата за клик
+
+Создать кампанию с оплатой за клики 
+post/api/client/campaign/cpc/v2/product
+
+Описание и примеры
+Консоль
+
+Метод для создания товарной рекламной кампании с оплатой за клики.
+
+При успешном выполнении запроса в поле campaignId ответа будет идентификатор созданной кампании.
+
+Request Body schema: application/json
+
+ | title | string
+ Название рекламной кампании.
+
+ | fromDate | string
+ Дата начала рекламной кампании по московскому времени.
+
+Если параметр не заполнен, датой старта считается начало текущего дня. 
+Открутка начинается сразу после активации кампании, если не нужна модерация.
+
+ | toDate | string
+ Дата окончания рекламной кампании по московскому времени. 
+Параметр не учитывается для кампаний с оплатой за клики, созданных в автоматическом режиме.
+
+ | dailyBudget | string <uint64> 
+ Deprecated 
+ Ограничение дневного бюджета рекламной кампании. Единица измерения — одна миллионная доля рубля, округляется до
+копеек. Например, значение 1 000 000 в параметре равно 1 рублю.
+
+Если параметр не заполнен, дневной бюджет не ограничен. После создания рекламной кампании изменить бюджет с дневного на недельный и наоборот не получится.
+
+ | weeklyBudget | string <uint64> 
+ Ограничение недельного бюджета рекламной кампании. Единица измерения — одна миллионная доля рубля, округляется до
+копеек. Например, значение 1 000 000 в параметре равно 1 рублю.
+
+Если параметр не заполнен, недельный бюджет не ограничен. После создания рекламной кампании изменить бюджет с недельного на дневной и наоборот не получится.
+
+ | placement required 
+ | string
+ Default: "PLACEMENT_INVALID"
+ Enum: "PLACEMENT_TOP_PROMOTION" "PLACEMENT_INVALID" "PLACEMENT_SEARCH_AND_CATEGORY" 
+ Место размещения продвигаемых товаров:
+
+PLACEMENT_TOP_PROMOTION — поиск;
+
+PLACEMENT_INVALID — не определено;
+
+PLACEMENT_SEARCH_AND_CATEGORY — поиск и рекомендации.
+
+ | productAutopilotStrategy | string
+ Enum: "MAX_CLICKS" "TOP_MAX_CLICKS" "TARGET_BIDS" "TOP_PROMOTION" "TARGET_CIR" 
+ Стратегия, которая будет использоваться для кампании:
+
+MAX_CLICKS — автостратегия для Поиска и рекомендаций;
+
+TOP_MAX_CLICKS — автостратегия для Поиска;
+
+TARGET_BIDS — средняя стоимость клика для Поиска и рекомендаций;
+
+TOP_PROMOTION — вывод в топ;
+
+TARGET_CIR — целевой расход.
+
+Ответы
+ 200Кампания создана
+
+Response Schema: application/json
+ | campaignId | string <uint64> 
+ Идентификатор кампании.
+
+ defaultОшибка запроса
+
+Примеры запроса
+Payload
+Content typeapplication/json
+
+{"title": "string",
+
+"fromDate": "string",
+
+"toDate": "string",
+
+"dailyBudget": "string",
+
+"weeklyBudget": "string",
+
+"placement": "PLACEMENT_INVALID",
+
+"productAutopilotStrategy": "MAX_CLICKS"
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Примеры ответа
+200
+default
+Content typeapplication/json
+
+{"campaignId": "string"
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Рассчитать минимальный бюджет кампании Deprecated 
+post/external/api/dynamic_budget
+
+Описание и примеры
+Консоль
+
+1 сентября 2025 года метод будет отключён. Теперь минимальный бюджет рассчитывается по формуле: 2 000 рублей × 1 SKU.
+
+Request Body schema: application/json
+
+ | createCampaign | object
+ Параметры для расчёта при создании кампании.
+
+ | updateCampaign | object
+ Параметры для расчёта при обновлении кампании.
+
+Ответы
+ 200Результат запроса
+
+Response Schema: application/json
+ | campaignBudget | string <uint64> 
+ Бюджет рекламной кампании. Единица измерения — одна миллионная доля рубля, округляется до копеек. Например, значение 1 000 000 в параметре равно 1 рублю.
+
+ | dynamicBudget | string <uint64> 
+ Минимальный бюджет.
+
+ | dynamicBudgetType | string
+ Default: "DYNAMIC_BUDGET_REQUIRED"
+ Enum: "DYNAMIC_BUDGET_REQUIRED" "DYNAMIC_BUDGET_RECOMMENDED" 
+ Тип минимального бюджета:
+
+DYNAMIC_BUDGET_REQUIRED — обязательный;
+
+DYNAMIC_BUDGET_RECOMMENDED — рекомендованный.
+
+ | skuPrice | string <uint64> 
+ Сумма в рублях, на которую увеличивается минимальный бюджет за каждый добавленный в кампанию товар.
+
+ defaultОшибка запроса
+
+Примеры запроса
+Payload
+Content typeapplication/json
+
+{"createCampaign": {"autopilotStrategy": "NO_AUTO_STRATEGY",
+
+"placement": "CAMPAIGN_PLACEMENT_INVALID",
+
+"skusCount": "string"
+
+},
+
+"updateCampaign": {"addingSkus": ["string"
+
+],
+
+"autopilotStrategy": {"strategy": "NO_AUTO_STRATEGY"
+
+},
+
+"campaignId": "string"
+
+}
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Примеры ответа
+200
+default
+Content typeapplication/json
+
+{"campaignBudget": "string",
+
+"dynamicBudget": "string",
+
+"dynamicBudgetType": "DYNAMIC_BUDGET_REQUIRED",
+
+"skuPrice": "string"
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Активировать кампанию 
+post/api/client/campaign/{campaignId}/activate
+
+Описание и примеры
+Консоль
+
+path Parameters
+ | campaignId required 
+ | string <uint64> 
+ Идентификатор кампании.
+
+Request Body schema: application/json
+
+object
+
+Ответы
+ 200Кампания активирована
+
+Response Schema: application/json
+ | id | string <uint64> 
+ Идентификатор кампании.
+
+ | autostopStatus | string
+ Default: "AUTOSTOP_STATUS_NONE"
+ Enum: "AUTOSTOP_STATUS_NONE" "AUTOSTOP_STATUS_ENABLED" "AUTOSTOP_STATUS_DISABLED" "AUTOSTOP_STATUS_STOPPED" 
+ Статус кампании:
+
+AUTOSTOP_STATUS_NONE — продавец создал кампанию вручную.
+
+AUTOSTOP_STATUS_ENABLED — кампания создана автоматически и остановится, когда кончатся баллы.
+
+AUTOSTOP_STATUS_DISABLED — кампания создана автоматически, но она не остановится, когда кончатся баллы.
+
+AUTOSTOP_STATUS_STOPPED — баллы закончились, кампания остановлена автоматически.
+
+ | isAutocreated | boolean
+ true, если кампания создана автоматически.
+
+ | paymentType | string
+ Default: "CAMPAIGN_TYPE_INVALID"
+ Тип оплаты:
+
+CPC — за клики.
+
+ | title | string
+ Название кампании.
+
+ | state | string
+ Default: "CAMPAIGN_STATE_UNKNOWN"
+ Состояние кампании:
+
+CAMPAIGN_STATE_RUNNING — активная кампания;
+
+CAMPAIGN_STATE_PLANNED — кампания, сроки проведения которой ещё не наступили;
+
+CAMPAIGN_STATE_STOPPED — кампания, приостановленная из-за нехватки бюджета;
+
+CAMPAIGN_STATE_INACTIVE — кампания, остановленная владельцем;
+
+CAMPAIGN_STATE_ARCHIVED — архивная кампания;
+
+CAMPAIGN_STATE_MODERATION_DRAFT — отредактированная кампания до отправки на модерацию;
+
+CAMPAIGN_STATE_MODERATION_IN_PROGRESS — кампания, отправленная на модерацию;
+
+CAMPAIGN_STATE_MODERATION_FAILED — кампания, непрошедшая модерацию;
+
+CAMPAIGN_STATE_FINISHED — кампания завершена, дата окончания в прошлом, такую кампанию нельзя изменить, можно
+только клонировать или создать новую.
+
+ | fromDate | string
+ Дата старта рекламной кампании.
+
+ | toDate | string
+ Дата завершения рекламной кампании.
+
+ | budget | string <uint64> 
+ Бюджет рекламной кампании. Единица измерения — одна миллионная доля рубля, округляется до копеек. Например, значение 1 000 000 в параметре равно 1 рублю.
+
+ | dailyBudget | string <uint64> 
+ Deprecated 
+ Дневной бюджет рекламной кампании. Единица измерения — одна миллионная доля рубля, округляется до копеек. Например, значение 1 000 000 в параметре равно 1 рублю.
+
+ | weeklyBudget | string <uint64> 
+ Недельный бюджет рекламной кампании. Единица измерения — одна миллионная доля рубля, округляется до копеек. Например, значение 1 000 000 в параметре равно 1 рублю.
+
+ | placement | string
+ Default: "PLACEMENT_INVALID"
+ Enum: "PLACEMENT_INVALID" "PLACEMENT_PDP" "PLACEMENT_SEARCH_AND_CATEGORY" "PLACEMENT_TOP_PROMOTION" "PLACEMENT_OVERTOP" 
+ Место размещения продвигаемых товаров:
+
+PLACEMENT_INVALID — не определено.
+
+PLACEMENT_PDP — карточка товара. Доступно только для кампаний с ручным управлением.
+
+PLACEMENT_SEARCH_AND_CATEGORY — поиск и рекомендации.
+
+PLACEMENT_TOP_PROMOTION — поиск.
+
+ | productAutopilotStrategy | string
+ Enum: "MAX_CLICKS" "TOP_MAX_CLICKS" "TARGET_BIDS" "TOP_PROMOTION" "TARGET_CIR" 
+ Стратегия, которая используется для кампании:
+
+MAX_CLICKS — автостратегия для Поиска и рекомендаций;
+
+TOP_MAX_CLICKS — автостратегия для Поиска;
+
+TARGET_BIDS — средняя стоимость клика для Поиска и рекомендаций;
+
+TOP_PROMOTION — вывод в топ;
+
+TARGET_CIR — целевой расход.
+
+ | autopilot | object
+ Информация о кампании. Возвращается, если в параметре productAutopilotStrategy включена стратегия.
+
+ | createdAt | string <date-time> 
+ Дата создания кампании в формате RFC3339.
+
+ | updatedAt | string <date-time> 
+ Дата обновления кампании в формате RFC3339.
+
+ | productCampaignMode | string
+ Default: "PRODUCT_CAMPAIGN_MODE_AUTO"
+ Enum: "PRODUCT_CAMPAIGN_MODE_AUTO" "PRODUCT_CAMPAIGN_MODE_MANUAL" 
+ Режим создания и управления товарной рекламной кампанией:
+
+PRODUCT_CAMPAIGN_MODE_AUTO — автоматически;
+
+PRODUCT_CAMPAIGN_MODE_MANUAL — вручную.
+
+ defaultОшибка запроса
+
+Примеры запроса
+Payload
+JSON
+Content typeapplication/json
+
+{ }
+
+ Копировать
+
+ Свернуть всё
+
+Примеры ответа
+200
+default
+Content typeapplication/json
+
+{"id": "string",
+
+"autostopStatus": "AUTOSTOP_STATUS_NONE",
+
+"isAutocreated": true,
+
+"paymentType": "CAMPAIGN_TYPE_INVALID",
+
+"title": "string",
+
+"state": "CAMPAIGN_STATE_UNKNOWN",
+
+"fromDate": "string",
+
+"toDate": "string",
+
+"budget": "string",
+
+"dailyBudget": "string",
+
+"weeklyBudget": "string",
+
+"placement": "PLACEMENT_INVALID",
+
+"productAutopilotStrategy": "MAX_CLICKS",
+
+"autopilot": {"categoryId": "string",
+
+"skuAddMode": "PRODUCT_CAMPAIGN_SKU_ADD_MODE_UNKNOWN"
+
+},
+
+"createdAt": "2019-08-24T14:15:22Z",
+
+"updatedAt": "2019-08-24T14:15:22Z",
+
+"productCampaignMode": "PRODUCT_CAMPAIGN_MODE_AUTO"
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Выключить кампанию 
+post/api/client/campaign/{campaignId}/deactivate
+
+Описание и примеры
+Консоль
+
+path Parameters
+ | campaignId required 
+ | string <uint64> 
+ Идентификатор кампании.
+
+Request Body schema: application/json
+
+object
+
+Ответы
+ 200Кампания деактивирована
+
+Response Schema: application/json
+ | id | string <uint64> 
+ Идентификатор кампании.
+
+ | autostopStatus | string
+ Default: "AUTOSTOP_STATUS_NONE"
+ Enum: "AUTOSTOP_STATUS_NONE" "AUTOSTOP_STATUS_ENABLED" "AUTOSTOP_STATUS_DISABLED" "AUTOSTOP_STATUS_STOPPED" 
+ Статус кампании:
+
+AUTOSTOP_STATUS_NONE — продавец создал кампанию вручную.
+
+AUTOSTOP_STATUS_ENABLED — кампания создана автоматически и остановится, когда кончатся баллы.
+
+AUTOSTOP_STATUS_DISABLED — кампания создана автоматически, но она не остановится, когда кончатся баллы.
+
+AUTOSTOP_STATUS_STOPPED — баллы закончились, кампания остановлена автоматически.
+
+ | isAutocreated | boolean
+ true, если кампания создана автоматически.
+
+ | paymentType | string
+ Default: "CAMPAIGN_TYPE_INVALID"
+ Тип оплаты:
+
+CPC — за клики.
+
+ | title | string
+ Название кампании.
+
+ | state | string
+ Default: "CAMPAIGN_STATE_UNKNOWN"
+ Состояние кампании:
+
+CAMPAIGN_STATE_RUNNING — активная кампания;
+
+CAMPAIGN_STATE_PLANNED — кампания, сроки проведения которой ещё не наступили;
+
+CAMPAIGN_STATE_STOPPED — кампания, приостановленная из-за нехватки бюджета;
+
+CAMPAIGN_STATE_INACTIVE — кампания, остановленная владельцем;
+
+CAMPAIGN_STATE_ARCHIVED — архивная кампания;
+
+CAMPAIGN_STATE_MODERATION_DRAFT — отредактированная кампания до отправки на модерацию;
+
+CAMPAIGN_STATE_MODERATION_IN_PROGRESS — кампания, отправленная на модерацию;
+
+CAMPAIGN_STATE_MODERATION_FAILED — кампания, непрошедшая модерацию;
+
+CAMPAIGN_STATE_FINISHED — кампания завершена, дата окончания в прошлом, такую кампанию нельзя изменить, можно
+только клонировать или создать новую.
+
+ | fromDate | string
+ Дата старта рекламной кампании.
+
+ | toDate | string
+ Дата завершения рекламной кампании.
+
+ | budget | string <uint64> 
+ Бюджет рекламной кампании. Единица измерения — одна миллионная доля рубля, округляется до копеек. Например, значение 1 000 000 в параметре равно 1 рублю.
+
+ | dailyBudget | string <uint64> 
+ Deprecated 
+ Дневной бюджет рекламной кампании. Единица измерения — одна миллионная доля рубля, округляется до копеек. Например, значение 1 000 000 в параметре равно 1 рублю.
+
+ | weeklyBudget | string <uint64> 
+ Недельный бюджет рекламной кампании. Единица измерения — одна миллионная доля рубля, округляется до копеек. Например, значение 1 000 000 в параметре равно 1 рублю.
+
+ | placement | string
+ Default: "PLACEMENT_INVALID"
+ Enum: "PLACEMENT_INVALID" "PLACEMENT_PDP" "PLACEMENT_SEARCH_AND_CATEGORY" "PLACEMENT_TOP_PROMOTION" "PLACEMENT_OVERTOP" 
+ Место размещения продвигаемых товаров:
+
+PLACEMENT_INVALID — не определено.
+
+PLACEMENT_PDP — карточка товара. Доступно только для кампаний с ручным управлением.
+
+PLACEMENT_SEARCH_AND_CATEGORY — поиск и рекомендации.
+
+PLACEMENT_TOP_PROMOTION — поиск.
+
+ | productAutopilotStrategy | string
+ Enum: "MAX_CLICKS" "TOP_MAX_CLICKS" "TARGET_BIDS" "TOP_PROMOTION" "TARGET_CIR" 
+ Стратегия, которая используется для кампании:
+
+MAX_CLICKS — автостратегия для Поиска и рекомендаций;
+
+TOP_MAX_CLICKS — автостратегия для Поиска;
+
+TARGET_BIDS — средняя стоимость клика для Поиска и рекомендаций;
+
+TOP_PROMOTION — вывод в топ;
+
+TARGET_CIR — целевой расход.
+
+ | autopilot | object
+ Информация о кампании. Возвращается, если в параметре productAutopilotStrategy включена стратегия.
+
+ | createdAt | string <date-time> 
+ Дата создания кампании в формате RFC3339.
+
+ | updatedAt | string <date-time> 
+ Дата обновления кампании в формате RFC3339.
+
+ | productCampaignMode | string
+ Default: "PRODUCT_CAMPAIGN_MODE_AUTO"
+ Enum: "PRODUCT_CAMPAIGN_MODE_AUTO" "PRODUCT_CAMPAIGN_MODE_MANUAL" 
+ Режим создания и управления товарной рекламной кампанией:
+
+PRODUCT_CAMPAIGN_MODE_AUTO — автоматически;
+
+PRODUCT_CAMPAIGN_MODE_MANUAL — вручную.
+
+ defaultОшибка запроса
+
+Примеры запроса
+Payload
+JSON
+Content typeapplication/json
+
+{ }
+
+ Копировать
+
+ Свернуть всё
+
+Примеры ответа
+200
+default
+Content typeapplication/json
+
+{"id": "string",
+
+"autostopStatus": "AUTOSTOP_STATUS_NONE",
+
+"isAutocreated": true,
+
+"paymentType": "CAMPAIGN_TYPE_INVALID",
+
+"title": "string",
+
+"state": "CAMPAIGN_STATE_UNKNOWN",
+
+"fromDate": "string",
+
+"toDate": "string",
+
+"budget": "string",
+
+"dailyBudget": "string",
+
+"weeklyBudget": "string",
+
+"placement": "PLACEMENT_INVALID",
+
+"productAutopilotStrategy": "MAX_CLICKS",
+
+"autopilot": {"categoryId": "string",
+
+"skuAddMode": "PRODUCT_CAMPAIGN_SKU_ADD_MODE_UNKNOWN"
+
+},
+
+"createdAt": "2019-08-24T14:15:22Z",
+
+"updatedAt": "2019-08-24T14:15:22Z",
+
+"productCampaignMode": "PRODUCT_CAMPAIGN_MODE_AUTO"
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Параметры кампании 
+patch/api/client/campaign/{campaignId}
+
+Описание и примеры
+Консоль
+
+Метод для изменения параметров кампании.
+
+path Parameters
+ | campaignId required 
+ | string <uint64> 
+ Идентификатор кампании.
+
+Request Body schema: application/json
+
+ | autopilot | object
+ Информация о кампании. Обязательный параметр, если в параметре productAutopilotStrategy включена автостратегия.
+
+ | fromDate | string
+ Дата начала рекламной кампании по московскому времени.
+
+Не может быть раньше текущей даты.
+
+ | toDate | string
+ Дата окончания рекламной кампании по московскому времени.
+
+Не может быть раньше даты начала.
+
+ | budget | string <uint64> 
+ Ограничение общего бюджета рекламной кампании. Единица измерения — одна миллионная доля рубля, округляется до копеек. Например, значение 1 000 000 в параметре равно 1 рублю.
+
+Учитывается только для автоматических кампаний брендов и агентств. 
+В других организациях установить новое ограничение общего бюджета не получится. Если у кампании уже установлен бюджет, можно:
+
+Убрать ограничения: передайте 0 в этом параметре.
+
+Не менять бюджет кампании. Когда он будет исчерпан, уберите ограничения бюджета или создайте новую кампанию с неограниченным бюджетом.
+
+ | dailyBudget | string <uint64> 
+ Deprecated 
+ Ограничение дневного бюджета рекламной кампании. Единица измерения — одна миллионная доля рубля, округляется до копеек. Например, значение 1 000 000 в параметре равно 1 рублю.
+
+Если параметр не заполнен, дневной бюджет не ограничен. После создания рекламной кампании изменить бюджет с дневного на недельный и наоборот не получится.
+
+ | weeklyBudget | string <uint64> 
+ Ограничение недельного бюджета рекламной кампании. Единица измерения — одна миллионная доля рубля, округляется до
+копеек. Например, значение 1 000 000 в параметре равно 1 рублю.
+
+Если параметр не заполнен, недельный бюджет не ограничен. После создания рекламной кампании изменить бюджет с недельного на дневной и наоборот не получится.
+
+Ответы
+ 200Параметры кампании обновлены
+
+Response Schema: application/json
+ | campaignId | string <uint64> 
+ Идентификатор кампании.
+
+ defaultОшибка запроса
+
+Примеры запроса
+Payload
+JSON
+Content typeapplication/json
+
+{"autopilot": {"categoryId": "string",
+
+"skuAddMode": "PRODUCT_CAMPAIGN_SKU_ADD_MODE_UNKNOWN"
+
+},
+
+"fromDate": "string",
+
+"toDate": "string",
+
+"budget": "string",
+
+"dailyBudget": "string",
+
+"weeklyBudget": "string"
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Примеры ответа
+200
+default
+Content typeapplication/json
+
+{"campaignId": "string"
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Товары в Оплате за клик
+
+Добавить товары в кампанию 
+post/api/client/campaign/{campaignId}/products
+
+Описание и примеры
+Консоль
+
+В кампанию можно добавить не более 500 товаров.
+
+Рекомендации по заполнению параметров для разных кампаний
+
+Для добавления в кампанию товаров передайте значения параметров sku и bid. Если параметр bid не указан, 
+автоматически задаётся конкурентная ставка.
+
+Параметр bid учитывается только для кампании с включённой стратегией «Средняя стоимость клика». 
+
+Для кампании с включённой стратегией можно добавлять товары только из категории autopilot.categoryId.
+
+path Parameters
+ | campaignId required 
+ | string <uint64> 
+ Идентификатор кампании.
+
+Request Body schema: application/json
+
+ | bids | Array of objects
+ Ставки за клики.
+
+Ответы
+200Товары добавлены в кампанию
+
+ defaultОшибка запроса
+
+Примеры запроса
+Payload
+JSON
+Content typeapplication/json
+
+{"bids": [{"sku": "string",
+
+"bid": "string",
+
+"targetCir": 15,
+
+"topPosition": "Топ-20"
+
+}
+
+]
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Примеры ответа
+default
+Content typeapplication/json
+
+{"error": "text"
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Обновить ставки товаров 
+put/api/client/campaign/{campaignId}/products
+
+Описание и примеры
+Консоль
+
+Этот метод перезаписывает список стоп-слов и фразы со ставками. Исходные стоп-слова и фразы со ставками удаляются.
+
+Чтобы обновить ставки в кампании с размещением в карточке товара, передайте значения параметров sku и bid.
+
+Параметр bid учитывается только для кампании с включённой стратегией «Средняя стоимость клика».
+
+path Parameters
+ | campaignId required 
+ | string <uint64> 
+ Идентификатор кампании.
+
+Request Body schema: application/json
+
+ | bids | Array of objects
+ Ставки за клики.
+
+Ответы
+200Ставки обновлены
+
+ defaultОшибка запроса
+
+Примеры запроса
+Payload
+JSON
+Content typeapplication/json
+
+{"bids": [{"sku": "string",
+
+"bid": "string",
+
+"targetCir": 15,
+
+"topPosition": "Топ-20"
+
+}
+
+]
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Примеры ответа
+default
+Content typeapplication/json
+
+{"error": "text"
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Список товаров кампании 
+get/api/client/campaign/{campaignId}/v2/products
+
+Описание и примеры
+Консоль
+
+path Parameters
+ | campaignId required 
+ | string <uint64> 
+ Идентификатор кампании.
+
+query Parameters
+ | page | integer <int64> 
+ Номер страницы.
+
+ | pageSize | integer <int64> 
+ Размер страницы.
+
+Ответы
+ 200Список товаров кампании
+
+Response Schema: application/json
+ | products | Array of objects
+ Список товаров кампании.
+
+ | Array ()
+ | sku | string <uint64> 
+ Идентификатор товара: Ozon ID или SKU.
+
+ | bid | string <uint64> 
+ Только для стратегии «Средняя стоимость клика». 
+
+Ставка за один клик — CPC.
+
+ | targetCir | number <double> [ 10 .. 100 ] 
+ Default: 15
+ Только для стратегии «Целевой расход».
+
+Целевая доля рекламных расходов в процентах.
+
+ | title | string
+ Название товара.
+
+ | topPosition | string <uint64> 
+ Default: "Топ-20"
+ Только для стратегии «Вывод в топ».
+
+ Диапазон позиций в поиске:
+
+Топ-4,
+
+Топ-12,
+
+Топ-20,
+
+Топ-30.
+
+ defaultОшибка запроса
+
+Примеры ответа
+200
+default
+Content typeapplication/json
+
+{"products": [{"sku": "string",
+
+"bid": "string",
+
+"targetCir": 15,
+
+"title": "string",
+
+"topPosition": "Топ-20"
+
+}
+
+]
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Удалить товары из кампании 
+post/api/client/campaign/{campaignId}/products/delete
+
+Описание и примеры
+Консоль
+
+path Parameters
+ | campaignId required 
+ | string <uint64> 
+ Идентификатор кампании.
+
+Request Body schema: application/json
+
+ | sku | Array of strings <uint64> 
+ SKU продвигаемого товара.
+
+Ответы
+200Товар удалён из кампании
+
+ defaultОшибка запроса
+
+Примеры запроса
+Payload
+JSON
+Content typeapplication/json
+
+{"sku": ["string"
+
+]
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Примеры ответа
+default
+Content typeapplication/json
+
+{"error": "text"
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Конкурентные ставки для товара 
+get/api/client/campaign/{campaignId}/products/bids/competitive
+
+Описание и примеры
+Консоль
+
+Если товар не добавлен в кампанию, в параметре bid будет значение 0.
+В одном запросе вы можете передать до 200 товаров.
+
+path Parameters
+ | campaignId required 
+ | string
+ Идентификатор кампании.
+
+query Parameters
+ | skus | Array of strings
+ Список SKU товаров.
+
+Ответы
+ 200Конкурентные ставки
+
+Response Schema: application/json
+ | bids | Array of objects
+ Список ставок.
+
+ | campaignId | string
+ Идентификатор кампании.
+
+ defaultОшибка запроса
+
+Примеры ответа
+200
+default
+Content typeapplication/json
+
+{"bids": [{"bid": "string",
+
+"sku": "string"
+
+}
+
+],
+
+"campaignId": "string"
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Оплата за заказ
+
+Список товаров в продвижении в оплате за заказ 
+post/api/client/campaign/search_promo/v2/products
+
+Описание и примеры
+Консоль
+
+Request Body schema: application/json
+
+ | page | integer <int64> 
+ Номер страницы. Пагинация начинается с единицы.
+
+ | pageSize | integer <int64> 
+ Размер страницы.
+
+Ответы
+ 200Список товаров
+
+Response Schema: application/json
+ | products | Array of objects
+ Список товаров.
+
+ | total | string <uint64> 
+ Количество товаров.
+
+ defaultОшибка
+
+Примеры запроса
+Payload
+Content typeapplication/json
+
+{"page": 0,
+
+"pageSize": 0
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Примеры ответа
+200
+default
+Content typeapplication/json
+
+{"products": [{"bid": 0,
+
+"bidPrice": "string",
+
+"bidWithoutAdditive": 0,
+
+"carrotsAdditive": 0,
+
+"carrotsStatus": "CARROTS_STATUS_INVALID",
+
+"hint": {"campaignId": "string",
+
+"organisationTitle": "string"
+
+},
+
+"imageUrl": "string",
+
+"isSearchPromoAvailable": true,
+
+"previousBid": {"bid": 0,
+
+"bidPrice": "string",
+
+"updatedAt": "2019-08-24T14:15:22Z"
+
+},
+
+"previousVisibilityIndex": "string",
+
+"price": "string",
+
+"searchPromoStatus": true,
+
+"sku": "string",
+
+"sourceSku": "string",
+
+"title": "string",
+
+"views": {"previousWeek": "string",
+
+"thisWeek": "string"
+
+},
+
+"visibilityIndex": "string"
+
+}
+
+],
+
+"total": "string"
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Рекомендованные ставки для товаров Deprecated 
+post/api/client/search_promo/bids/recommendation
+
+Описание и примеры
+Консоль
+
+За один запрос вы можете передать до 200 SKU.
+
+Request Body schema: application/json
+
+ | skus | Array of strings <uint64> 
+ Список идентификаторов товаров.
+
+Ответы
+ 200Рекомендованные ставки
+
+Response Schema: application/json
+ | recommendedBids | object
+ Список рекомендованных ставок.
+
+ | | SKU* | string
+ SKU товара и рекомендованная ставка за 1 заказ (CPO) в процентах от цены товара.
+
+ defaultОшибка
+
+Примеры запроса
+Payload
+Content typeapplication/json
+
+{"skus": ["string"
+
+]
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Примеры ответа
+200
+default
+Content typeapplication/json
+
+{"recommendedBids": {"sku1": "string",
+
+"sku2": "string"
+
+}
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Установить ставку на товар Deprecated 
+post/api/client/campaign/search_promo/v2/bids/set
+
+Описание и примеры
+Консоль
+
+Если товар ещё не добавлен в продвижение, система добавит его автоматически.
+
+В одном запросе можно передать максимум 1000 товаров.
+
+Request Body schema: application/json
+
+ | bids | Array of objects
+ Значения ставок.
+
+Ответы
+ 200Ставка установлена
+
+Response Schema: application/json
+ | response | Array of objects
+ Ответ метода.
+
+ | Array ()
+ | bid | number <double> 
+ Значения ставок.
+
+ | error | string
+ Ошибка, из-за которой нельзя обновить ставку.
+
+ | sku | string <uint64> 
+ SKU продвигаемого товара.
+
+ | update | boolean
+ true, если ставка обновилась.
+
+ defaultОшибка
+
+Примеры запроса
+Payload
+Content typeapplication/json
+
+{"bids": [{"bid": 0,
+
+"sku": "string"
+
+}
+
+]
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Примеры ответа
+200
+default
+Content typeapplication/json
+
+{"response": [{"bid": 0,
+
+"error": "string",
+
+"sku": "string",
+
+"update": true
+
+}
+
+]
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Получить фиксированные ставки для товаров 
+post/api/client/search_promo/get_cpo_min_bids
+
+Описание и примеры
+Консоль
+
+За один запрос вы можете передать до 200 SKU.
+
+Request Body schema: application/json
+
+ | skus | Array of strings <uint64> 
+ Список идентификаторов товаров.
+
+Ответы
+ 200Фиксированные ставки получены
+
+Response Schema: application/json
+ | bids | Array of objects
+ Информация о ставках.
+
+ | Array ()
+ | bid | number <double> 
+ Значение ставки.
+
+ | sku | string <uint64> 
+ SKU продвигаемого товара.
+
+ defaultОшибка
+
+Примеры запроса
+Payload
+Content typeapplication/json
+
+{"skus": ["string"
+
+]
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Примеры ответа
+200
+default
+Content typeapplication/json
+
+{"bids": [{"bid": 0,
+
+"sku": "string"
+
+}
+
+]
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Включить продвижение товара в оплате за заказ 
+post/api/client/search_promo/product/enable
+
+Описание и примеры
+Консоль
+
+В одном запросе можно передать максимум 1000 товаров.
+
+Request Body schema: application/json
+
+ | skus | Array of strings <uint64> 
+ Список идентификаторов товаров.
+
+Ответы
+ 200Продвижение товара включено
+
+Response Schema: application/json
+ | response | Array of objects
+ Ответ метода.
+
+ | Array ()
+ | bid | number <double> 
+ Значения ставок.
+
+ | error | string
+ Ошибка, из-за которой нельзя включить продвижение товара.
+
+ | sku | string <uint64> 
+ SKU продвигаемого товара.
+
+ | update | boolean
+ true, если продвижение товара включилось.
+
+ defaultОшибка
+
+Примеры запроса
+Payload
+Content typeapplication/json
+
+{"skus": ["string"
+
+]
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Примеры ответа
+200
+default
+Content typeapplication/json
+
+{"response": [{"bid": 0,
+
+"error": "string",
+
+"sku": "string",
+
+"update": true
+
+}
+
+]
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Отключить продвижение товара в оплате за заказ 
+post/api/client/search_promo/product/disable
+
+Описание и примеры
+Консоль
+
+В одном запросе можно передать максимум 1000 товаров.
+
+Request Body schema: application/json
+
+ | skus | Array of strings <uint64> 
+ Список идентификаторов товаров.
+
+Ответы
+ 200Продвижение товара отключено
+
+Response Schema: application/json
+object
+
+ defaultОшибка
+
+Примеры запроса
+Payload
+Content typeapplication/json
+
+{"skus": ["string"
+
+]
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Примеры ответа
+200
+default
+Content typeapplication/json
+
+{ }
+
+ Копировать
+
+ Свернуть всё
+
+Удалить товар из продвижения в оплате за заказ 
+post/api/client/campaign/search_promo/v2/bids/delete
+
+Описание и примеры
+Консоль
+
+В одном запросе можно передать максимум 1000 товаров.
+
+Request Body schema: application/json
+
+ | sku | Array of strings <uint64> 
+ Список идентификаторов товаров.
+
+Ответы
+ 200Товар удалён
+
+Response Schema: application/json
+object
+
+ defaultОшибка
+
+Примеры запроса
+Payload
+Content typeapplication/json
+
+{"sku": ["string"
+
+]
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Примеры ответа
+200
+default
+Content typeapplication/json
+
+{ }
+
+ Копировать
+
+ Свернуть всё
+
+Включить продвижение в оплате за заказ — все товары 
+get/api/client/campaign/all_sku_promo/activate
+
+Описание и примеры
+Консоль
+
+Ответы
+ 200Продвижение включено
+
+Response Schema: application/json
+ | selectedBid | string <uint64> 
+ Выбранная ставка для продвижения.
+
+ defaultОшибка
+
+Примеры ответа
+200
+default
+Content typeapplication/json
+
+{"selectedBid": "string"
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Выключить продвижение в оплате за заказ — все товары 
+get/api/client/campaign/all_sku_promo/deactivate
+
+Описание и примеры
+Консоль
+
+Ответы
+200Продвижение выключено
+
+ defaultОшибка
+
+Примеры ответа
+default
+Content typeapplication/json
+
+{"error": "text"
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Установить ставку для продвижения в Оплате за заказ — все товары 
+get/api/client/campaign/all_sku_promo/set_bid
+
+Описание и примеры
+Консоль
+
+query Parameters
+ | bid | string <uint64> 
+ Default: 7
+ Значение ставки в процентах:
+
+5,
+
+7,
+
+9.
+
+Ответы
+200Ставка установлена
+
+ defaultОшибка
+
+Примеры ответа
+default
+Content typeapplication/json
+
+{"error": "text"
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Включить продвижение товаров в акции «Морковск» 
+post/api/client/campaign/search_promo/carrots/enable
+
+Описание и примеры
+Консоль
+
+Добавляет товары в акцию «Морковск».
+
+Подробнее об акции
+
+Request Body schema: application/json
+
+ | skus required 
+ | Array of strings <uint64> 
+ Список идентификаторов товаров.
+
+Ответы
+ 200Продвижение включено
+
+Response Schema: application/json
+ | skuToInfo | object
+ Информация о включении продвижения по SKU товара.
+
+ | | property name* | object
+ Информация об операции.
+
+ defaultОшибка
+
+Примеры запроса
+Payload
+Content typeapplication/json
+
+{"skus": ["string"
+
+]
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Примеры ответа
+200
+default
+Content typeapplication/json
+
+{"skuToInfo": {"property1": {"error": "CARROT_ERROR_NONE",
+
+"isDisabled": false
+
+},
+
+"property2": {"error": "CARROT_ERROR_NONE",
+
+"isDisabled": true
+
+}
+
+}
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Отключить продвижение товаров в акции «Морковск» 
+post/api/client/campaign/search_promo/carrots/disable
+
+Описание и примеры
+Консоль
+
+Удаляет товары из акции «Морковск».
+
+Подробнее об акции
+
+Request Body schema: application/json
+
+ | skus required 
+ | Array of strings <uint64> 
+ Список идентификаторов товаров.
+
+Ответы
+ 200Продвижение отключено
+
+Response Schema: application/json
+ | skuToInfo | object
+ Информация об отключении продвижения по SKU товара.
+
+ | | property name* | object
+ Информация об операции.
+
+ defaultAn unexpected error response.
+
+Примеры запроса
+Payload
+Content typeapplication/json
+
+{"skus": ["string"
+
+]
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Примеры ответа
+200
+default
+Content typeapplication/json
+
+{"skuToInfo": {"property1": {"error": "CARROT_ERROR_NONE",
+
+"isDisabled": true
+
+},
+
+"property2": {"error": "CARROT_ERROR_NONE",
+
+"isDisabled": false
+
+}
+
+}
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Аналитика внешнего трафика
+
+Отчёт с аналитикой внешнего трафика 
+post/api/client/vendors/statistics
+
+Описание и примеры
+Консоль
+
+Метод для запуска формирования отчёта с аналитикой внешнего трафика.
+
+Разница между dateFrom и dateTo должна быть не больше трёх месяцев. Если разница больше, 
+отчёт сформируется за 3 месяца с даты, указанной в dateFrom.
+
+Request Body schema: application/json
+
+ | dateFrom | string
+ Начало отчётного периода.
+
+Дата должна быть не ранее 1 января 2022 года.
+
+ | dateTo | string
+ Конец отчётного периода.
+
+Дата должна быть позднее dateFrom не больше чем на 3 месяца. Если дата позднее трёх месяцев, 
+отчёт сформируется за 3 месяца с даты, указанной в dateFrom.
+
+ | type | string
+ Enum: "TRAFFIC_SOURCES" "ORDERS" 
+ Тип отчёта:
+
+TRAFFIC_SOURCES — отчёт по источникам трафика.
+
+ORDERS — отчёт по заказам.
+
+Ответы
+ 200Успешно
+
+Response Schema: application/json
+ | UUID | string
+ Уникальный идентификатор отправленного запроса. 
+
+По нему можно проверить статус формирования отчёта и скачать отчёт.
+
+ | vendor | boolean
+ Если запрашивается отчёт с аналитикой внешнего трафика — true.
+
+ defaultОшибка запроса
+
+Примеры запроса
+Payload
+Content typeapplication/json
+
+{"dateFrom": "string",
+
+"dateTo": "string",
+
+"type": "TRAFFIC_SOURCES"
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Примеры ответа
+200
+default
+Content typeapplication/json
+
+{"UUID": "string",
+
+"vendor": true
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Список запрошенных отчётов с аналитикой внешнего трафика 
+get/api/client/vendors/statistics/list
+
+Описание и примеры
+Консоль
+
+query Parameters
+ | page | integer <int64> 
+ Номер страницы.
+
+ | pageSize | integer <int64> 
+ Размер страницы.
+
+Ответы
+ 200Отчёты
+
+Response Schema: application/json
+ | items | Array of objects
+ Информация об отчётах.
+
+ | total | string <uint64> 
+ Количество отчётов.
+
+ defaultОшибка запроса
+
+Примеры ответа
+200
+default
+Content typeapplication/json
+
+{"items": [{"meta": {"UUID": "string",
+
+"createdAt": "2019-08-24T14:15:22Z",
+
+"error": "string",
+
+"link": "string",
+
+"request": {"dateFrom": "string",
+
+"dateTo": "string",
+
+"type": "TRAFFIC_SOURCES"
+
+},
+
+"state": "NOT_STARTED",
+
+"updatedAt": "2019-08-24T14:15:22Z"
+
+},
+
+"name": "string"
+
+}
+
+],
+
+"total": "string"
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Информация об отчёте по UUID 
+get/api/client/vendors/statistics/{UUID}
+
+Описание и примеры
+Консоль
+
+path Parameters
+ | UUID required 
+ | string
+ Уникальный идентификатор запроса.
+
+query Parameters
+ | vendor required 
+ | boolean
+ Признак, что запрашивается отчёт с аналитикой внешнего трафика. Передавайте true в этом параметре.
+
+Ответы
+ 200Информация об отчёте
+
+Response Schema: application/json
+ | UUID | string
+ Уникальный идентификатор отправленного запроса, с помощью которого в дальнейшем можно проверить статус выполнения запроса и скачать отчёт.
+
+ | createdAt | string <date-time> 
+ Дата формирования отчёта.
+
+ | error | string
+ Описание ошибки.
+
+ | link | string
+ Ссылка на отчёт.
+
+ | request | object
+ Метод, с помощью которого запросили формирование отчёта.
+
+ | state | any
+ Default: "NOT_STARTED"
+ Enum: "NOT_STARTED" "IN_PROGRESS" "OK" "ERROR" "TIMEOUT" "CANCEL" 
+ Статус формирования отчёта:
+
+NOT_STARTED — ещё не началось. 
+
+IN_PROGRESS — в процессе. 
+
+CANCEL — отменено.
+
+OK — отчёт сформирован.
+
+ERROR — произошла ошибка.
+
+TIMEOUT — время ожидания истекло.
+
+ | updatedAt | string <date-time> 
+ Время изменения статуса.
+
+ defaultОшибка запроса
+
+Примеры ответа
+200
+default
+Content typeapplication/json
+
+{"UUID": "string",
+
+"createdAt": "2019-08-24T14:15:22Z",
+
+"error": "string",
+
+"link": "string",
+
+"request": {"dateFrom": "string",
+
+"dateTo": "string",
+
+"type": "TRAFFIC_SOURCES"
+
+},
+
+"state": "NOT_STARTED",
+
+"updatedAt": "2019-08-24T14:15:22Z"
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+Метка организации для внешних рекламных кампаний 
+get/api/client/organisation/vendor_tag
+
+Описание и примеры
+Консоль
+
+Метод возвращает префикс для метки UTM_CAMPAIGN по идентификатору организации.
+
+Подробнее о ссылках для внешних рекламных кампаний
+
+query Parameters
+ | orgId required 
+ | string <uint64> 
+ Идентификатор организации.
+
+Ответы
+ 200Метка организации
+
+Response Schema: application/json
+ | tag | string
+ Префикс организации для UTM-метки.
+
+ defaultОшибка запроса
+
+Примеры запроса
+JSON
+ Копировать
+
+GET /api/client/organisation/vendor_tag?orgId=42 HTTP/1.1
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.WyJFTWhVVU...qTz2XXZBv41h4
+Host: api-performance.ozon.ru:443
+Content-Type: application/json
+Accept: application/json
+
+Примеры ответа
+200
+default
+Content typeapplication/json
+
+{"tag": "vendor_org_42"
+
+}
+
+ Копировать
+
+ Свернуть всё
+
+ 
