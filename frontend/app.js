@@ -25,7 +25,7 @@ document.addEventListener('DOMContentLoaded', _initThemeBtn);
 const API = '';
 let charts = {};
 let sortState = {};
-const dirty = { salesan: true, stocks: true, reviews: true, finance: true, unit: true, tools: true, toolsoz: true, docs: true, fbs: true, dims: true, promo: true };
+const dirty = { salesan: true, stocks: true, reviews: true, finance: true, unit: true, tools: true, toolsoz: true, docs: true, fbs: true, dims: true, promo: true, cardsync: true };
 let _advertData = [];
 let currentTab = 'finance';
 let prodAllData = [];
@@ -121,7 +121,7 @@ function applyProfile() {
   // заголовок «Wildberries» вёл в Продуктолог (ИИ) — ведём в воронку
   const wbTitle = document.querySelector('#navWB .mp-menu-title');
   if (wbTitle) wbTitle.setAttribute('onclick', "goNavTool('tools','wbfunnel','navWB')");
-  const HIDE = ["goNav('fbs'", "'slots'", "'prod'", "'niche'", "'nichecalc'", "'visuals'", "'competitors'"];
+  const HIDE = ["goNav('fbs'", "'slots'", "'prod'", "'niche'", "'nichecalc'", "'visuals'", "'competitors'", "goNav('cardsync'"];
   document.querySelectorAll('#mainMenu a, #mainMenu button').forEach(el => {
     const oc = el.getAttribute('onclick') || '';
     if (HIDE.some(h => oc.includes(h))) el.style.display = 'none';
@@ -309,7 +309,7 @@ function goNavTool(tab, tool, navId) {
 function switchTab(name, linkEl) {
   document.querySelectorAll('#mainTabs .nav-link').forEach(a => a.classList.remove('active'));
   if (linkEl) linkEl.classList.add('active');
-  ['salesan', 'stocks', 'reviews', 'finance', 'unit', 'tools', 'toolsoz', 'docs', 'fbs', 'dims', 'promo'].forEach(t => {
+  ['salesan', 'stocks', 'reviews', 'finance', 'unit', 'tools', 'toolsoz', 'docs', 'fbs', 'dims', 'promo', 'cardsync'].forEach(t => {
     const el = document.getElementById('pane-' + t);
     if (el) el.style.display = t === name ? 'block' : 'none';
   });
@@ -318,7 +318,7 @@ function switchTab(name, linkEl) {
     dirty[name] = false;
     ({ salesan: loadSalesAnalytics, stocks: loadStocks,
        reviews: loadReviews, finance: loadFinance, tools: loadTools, toolsoz: loadOzTool, docs: loadDocs,
-       unit: loadUnitEconomics, fbs: loadFbs, dims: loadDims, promo: loadPromo })[name]();
+       unit: loadUnitEconomics, fbs: loadFbs, dims: loadDims, promo: loadPromo, cardsync: loadCardSync })[name]();
   }
 }
 
@@ -6505,4 +6505,131 @@ function renderPromoDetail() {
         <td>${i.ad_drr != null ? i.ad_drr + '%' : '<span class="text-secondary small">нет рекламы</span>'}${i.vs_ad && i.ad_drr != null ? `<div class="small" style="color:${i.vs_ad.startsWith('дешевле') ? 'var(--pos)' : 'var(--neg)'}">${esc(i.vs_ad)}</div>` : ''}</td>
         <td>${i.in_action ? '✓' : ''}</td></tr>`).join('') || '<tr><td colspan="16" class="text-secondary">Нет товаров по фильтру</td></tr>'}</tbody></table></div>
     <div class="small text-secondary mt-2">Себестоимость — из загруженной в дашборд или из карточки Ozon (поле «себестоимость»). Без неё прибыль и маржа не считаются, рекомендация строится по остатку, скорости продаж и глубине скидки. «К выплате» — цена в акции минус комиссия Ozon FBO, логистика и эквайринг.</div></div>`;
+}
+
+
+// ══ Карточки WB → Ozon: фото и описание ════════════════════════════════════
+let _cs = null, _csSel = new Set(), _csOnlyDiff = true, _csOpen = null, _csBusy = false;
+
+async function loadCardSync(refresh) {
+  const wrap = document.getElementById('csWrap');
+  if (!wrap) return;
+  try {
+    const d = await fetchJSON('/api/cardsync/compare' + (refresh ? '?refresh=true' : ''), 90000);
+    if (!d.rows) {
+      wrap.innerHTML = `<div class="text-center text-secondary py-4"><span class="spinner-border spinner-border-sm"></span> Собираю и сравниваю карточки: ${d.progress || ''}${d.error ? '<br><span class="text-danger">' + d.error + '</span>' : ''}</div>`;
+      setTimeout(() => { if (currentTab === 'cardsync') loadCardSync(); }, 5000);
+      return;
+    }
+    _cs = d;
+    renderCardSync();
+    if (d.building) setTimeout(() => { if (currentTab === 'cardsync') loadCardSync(); }, 8000);
+  } catch (e) {
+    wrap.innerHTML = `<div class="alert alert-danger">Ошибка: ${e.message}</div>`;
+  }
+}
+
+function _csRowDiff(r) { return r.photos.status !== 'same' || !r.desc_same; }
+
+function _csStrip(urls, marks, color) {
+  return urls.map((u, i) => `<img src="${u}" loading="lazy" referrerpolicy="no-referrer" style="width:30px;height:40px;object-fit:cover;border-radius:3px;margin:1px;border:2px solid ${marks && marks[i] ? color : 'transparent'}" title="фото ${i + 1}">`).join('');
+}
+
+function renderCardSync() {
+  const d = _cs, wrap = document.getElementById('csWrap');
+  if (!d || !wrap) return;
+  const rows = d.rows || [];
+  const nPh = rows.filter(r => r.photos.status !== 'same').length;
+  const nDs = rows.filter(r => !r.desc_same).length;
+  document.getElementById('csInfo').textContent = `сравнено ${d.built}${d.building ? ' · обновляю…' : ''}`;
+  const auto = d.auto || {};
+  const shown = rows.filter(r => !_csOnlyDiff || _csRowDiff(r));
+  const phBadge = p => p.status === 'same' ? '<span class="badge bg-success">совпадают</span>'
+    : p.status === 'order' ? '<span class="badge bg-warning text-dark">другой порядок</span>'
+    : `<span class="badge bg-danger">на Ozon нет ${p.missing}${p.extra ? ', лишних ' + p.extra : ''}</span>`;
+  let h = `<div class="d-flex flex-wrap gap-3 align-items-center mb-3">
+    <span>Пар карточек: <b>${rows.length}</b></span>
+    <span>фото отличаются: <b class="${nPh ? 'text-danger' : ''}">${nPh}</b></span>
+    <span>описание отличается: <b class="${nDs ? 'text-danger' : ''}">${nDs}</b></span>
+    <label class="form-check-label small"><input type="checkbox" class="form-check-input me-1" ${_csOnlyDiff ? 'checked' : ''} onchange="_csOnlyDiff=this.checked;renderCardSync()">только с отличиями</label>
+    <div class="form-check form-switch ms-auto mb-0" title="Раз в 6 часов: изменения карточек WB переносятся на Ozon. При включении текущее состояние WB считается исходным.">
+      <input class="form-check-input" type="checkbox" id="csAuto" ${auto.on ? 'checked' : ''} onchange="csSetAuto(this.checked)">
+      <label class="form-check-label small" for="csAuto">Автосинхронизация${auto.on ? ' с ' + auto.since : ''}</label>
+    </div></div>
+  <div class="d-flex flex-wrap gap-2 mb-2">
+    <button class="btn btn-sm btn-outline-secondary" onclick="csSelect('diff')">Выбрать все с отличиями</button>
+    <button class="btn btn-sm btn-outline-secondary" onclick="csSelect('none')">Снять выбор</button>
+    <span class="small text-secondary align-self-center">выбрано: <b id="csSelN">${_csSel.size}</b></span>
+    <button class="btn btn-sm btn-primary ms-auto" onclick="csApply(['photos'])" ${_csBusy ? 'disabled' : ''}>Перенести фото</button>
+    <button class="btn btn-sm btn-primary" onclick="csApply(['desc'])" ${_csBusy ? 'disabled' : ''}>Перенести описание</button>
+    <button class="btn btn-sm btn-success" onclick="csApply(['photos','desc'])" ${_csBusy ? 'disabled' : ''}>Фото и описание</button>
+  </div>
+  <div id="csResult"></div>
+  <div class="table-responsive"><table class="table table-sm align-middle">
+  <thead><tr><th></th><th>Артикул</th><th>Фото WB <span class="text-secondary small">(красная рамка — нет на Ozon)</span><br>Фото Ozon <span class="text-secondary small">(серая — нет на WB)</span></th><th>Фото</th><th>Описание</th><th>Перенос</th></tr></thead><tbody>`;
+  for (const r of shown) {
+    const p = r.photos;
+    const wbMiss = (p.match || []).map(m => m == null);
+    const used = new Set((p.match || []).filter(m => m != null));
+    const ozExtra = r.oz_photos.map((_, j) => !used.has(j));
+    const last = r.last ? `${r.last.at}<br><span class="text-secondary small">${r.last.what || ''}</span>` : '<span class="text-secondary">—</span>';
+    h += `<tr>
+      <td><input type="checkbox" class="form-check-input" ${_csSel.has(r.art) ? 'checked' : ''} onchange="csToggle('${r.art}',this.checked)"></td>
+      <td><b>${r.art}</b><div class="small text-secondary" style="max-width:220px">${r.name_oz || r.title_wb}</div></td>
+      <td><div>${_csStrip(r.wb_photos, wbMiss, '#dc2626')}</div><div>${_csStrip(r.oz_photos, ozExtra, '#9ca3af')}</div></td>
+      <td>${phBadge(p)}<div class="small text-secondary">WB ${r.wb_photos.length} · Ozon ${r.oz_photos.length}</div></td>
+      <td>${r.desc_same ? '<span class="badge bg-success">совпадает</span>' : `<span class="badge bg-danger">отличается</span> <a href="#" class="small" onclick="_csOpen=_csOpen==='${r.art}'?null:'${r.art}';renderCardSync();return false">сравнить</a>`}</td>
+      <td class="small">${last}</td></tr>`;
+    if (_csOpen === r.art) {
+      const esc = t => (t || '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
+      h += `<tr><td></td><td colspan="5"><div class="row g-2">
+        <div class="col-md-6"><div class="small fw-bold">WB (${(r.desc_wb || '').length} симв.)</div><div class="small border rounded p-2" style="white-space:pre-wrap;max-height:260px;overflow:auto">${esc(r.desc_wb)}</div></div>
+        <div class="col-md-6"><div class="small fw-bold">Ozon (${(r.desc_oz || '').length} симв.)</div><div class="small border rounded p-2" style="white-space:pre-wrap;max-height:260px;overflow:auto">${esc(r.desc_oz)}</div></div>
+      </div></td></tr>`;
+    }
+  }
+  h += '</tbody></table></div>';
+  if ((d.only_wb || []).length || (d.only_oz || []).length)
+    h += `<div class="small text-secondary">Нет пары (не переносятся): только на WB — ${(d.only_wb || []).join(', ') || '—'}; только на Ozon — ${(d.only_oz || []).join(', ') || '—'}.</div>`;
+  wrap.innerHTML = h;
+}
+
+function csToggle(art, on) { on ? _csSel.add(art) : _csSel.delete(art); const n = document.getElementById('csSelN'); if (n) n.textContent = _csSel.size; }
+function csSelect(mode) {
+  _csSel = new Set(mode === 'diff' ? (_cs.rows || []).filter(_csRowDiff).map(r => r.art) : []);
+  renderCardSync();
+}
+
+async function _csPost(path, body) {
+  const r = await fetch(`${API}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  let j = {}; try { j = await r.json(); } catch {}
+  if (!r.ok) throw new Error(j.detail || r.status);
+  return j;
+}
+
+async function csApply(what) {
+  if (!_csSel.size) { alert('Выберите товары галочками'); return; }
+  const arts = [..._csSel];
+  const txt = (what.includes('photos') ? 'Фото на Ozon будут ЗАМЕНЕНЫ фото с WB (все, в том же порядке). ' : '')
+    + (what.includes('desc') ? 'Описание на Ozon будет заменено описанием с WB. ' : '');
+  if (!confirm(`${txt}\nТоваров: ${arts.length} (${arts.slice(0, 8).join(', ')}${arts.length > 8 ? '…' : ''}).\nOzon может отправить карточки на короткую проверку. Продолжить?`)) return;
+  _csBusy = true; renderCardSync();
+  const box = () => document.getElementById('csResult');
+  box().innerHTML = '<div class="alert alert-info py-2 small"><span class="spinner-border spinner-border-sm"></span> Отправляю в Ozon…</div>';
+  try {
+    const d = await _csPost('/api/cardsync/apply', { arts, what });
+    box().innerHTML = `<div class="alert alert-success py-2 small"><b>Отправлено в Ozon.</b> Фото Ozon скачивает и публикует несколько минут — потом нажмите «Сравнить заново».<br>` +
+      d.results.map(x => `${x.art}: ${x.photos ? 'фото — ' + x.photos : ''}${x.photos && x.desc ? '; ' : ''}${x.desc ? 'описание — ' + x.desc : ''}`).join('<br>') + '</div>';
+    _csSel = new Set();
+  } catch (e) {
+    box().innerHTML = `<div class="alert alert-danger py-2 small">Ошибка: ${e.message}</div>`;
+  }
+  _csBusy = false;
+  const keep = box().innerHTML; renderCardSync(); box().innerHTML = keep;
+}
+
+async function csSetAuto(on) {
+  if (on && !confirm('Включить автосинхронизацию?\nТекущие карточки WB считаются исходными — на Ozon будут переноситься только их будущие изменения (фото и описание), проверка раз в 6 часов. Уже существующие отличия перенесите кнопками.')) { renderCardSync(); return; }
+  try { const st = await _csPost('/api/cardsync/auto', { on }); _cs.auto = st; } catch (e) { alert('Ошибка: ' + e.message); }
+  renderCardSync();
 }

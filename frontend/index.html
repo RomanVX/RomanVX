@@ -116,6 +116,8 @@
         <a href="#" onclick="goNavTool('toolsoz','funnel','navOzon');return false">Воронка продаж</a>
         <a href="#" onclick="goNavTool('toolsoz','ads','navOzon');return false">Реклама (Performance)</a>
         <a href="#" onclick="goNavTool('toolsoz','phrases','navOzon');return false">Запросы</a>
+        <div class="mp-drop-sep"></div>
+        <a href="#" onclick="goNav('cardsync','navOzon');return false">Карточки WB → Ozon</a>
       </div>
     </div>
     </div>
@@ -523,6 +525,17 @@
     <div id="promoWrap"><div class="text-center text-secondary py-4"><span class="spinner-border"></span></div></div>
   </div>
 
+  <!-- ── Карточки WB → Ozon: фото и описание ── -->
+  <div id="pane-cardsync" style="display:none">
+    <div class="d-flex gap-2 mb-2 flex-wrap align-items-center">
+      <h5 class="mb-0 me-2">Карточки WB → Ozon</h5>
+      <span id="csInfo" class="text-secondary small"></span>
+      <button class="btn btn-sm btn-outline-secondary ms-auto" onclick="loadCardSync(true)"><i class="bi bi-arrow-clockwise"></i> Сравнить заново</button>
+    </div>
+    <div class="text-secondary small mb-3">Фото сравниваются по содержимому (а не по ссылкам), описание — с характеристикой Ozon «Аннотация». Перенос заменяет на Ozon <b>все</b> фото карточки фото с WB в том же порядке; название на Ozon не меняется.</div>
+    <div id="csWrap"><div class="text-center text-secondary py-4"><span class="spinner-border"></span></div></div>
+  </div>
+
   <div id="pane-unit" style="display:none">
     <div class="d-flex gap-2 mb-3 flex-wrap align-items-center">
       <div id="unitMpWB" class="mp-selector-bloc active" style="--mp-color:#c026d3" onclick="setUnitMp('WB')">
@@ -559,6 +572,6 @@
 
 <script src="vendor/bootstrap.bundle.min.js"></script>
 <script src="vendor/chart.umd.min.js"></script>
-<script src="app.js?v=255"></script>
+<script src="app.js?v=256"></script>
 </body>
 </html>

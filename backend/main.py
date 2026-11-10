@@ -362,6 +362,8 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(_report_interrupted())
     asyncio.create_task(_client_prices_loop())
     asyncio.create_task(_fbs_multi_loop())
+    from routers import cardsync as _cardsync
+    asyncio.create_task(_cardsync.loop())   # WB → Ozon: автоперенос карточек (если включён)
 
     async def _auto_reviews_loop():
         """Автоответы на ВСЕ отзывы (1-5★): каждые 20 минут подтягиваем
@@ -441,6 +443,8 @@ app.include_router(tools.router)
 app.include_router(docs.router)
 from routers import promo as _promo
 app.include_router(_promo.router)
+from routers import cardsync as _cardsync_r
+app.include_router(_cardsync_r.router)
 from routers import wms as _wms
 app.include_router(_wms.router)
 from routers import landing as _landing
@@ -472,7 +476,7 @@ _RO_DENY = (
     "/api/tools/fbs/", "/api/tools/supply/", "/api/tools/ozon/certificate/",
     "/api/tools/adv/sandbox", "/api/tools/agent", "/api/tools/competitors/",
     "/api/tools/niche", "/api/tools/visuals/", "/api/tools/dimensions/",
-    "/api/wms/",                                  # mp/proxy сам пускает только чтение
+    "/api/wms/", "/api/cardsync/apply", "/api/cardsync/auto",  # mp/proxy сам пускает только чтение
 )
 
 
