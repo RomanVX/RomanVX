@@ -532,14 +532,20 @@ function applySize() {
   const [w, h] = v === 'auto' ? ['58', '40'] : v.split('x');      // превью для «авто» — 58×40
   document.documentElement.style.setProperty('--lw', w + 'mm');
   document.documentElement.style.setProperty('--lh', h + 'mm');
-  $('pageSize').textContent = v === 'auto' ? '@page{margin:0}' : `@page{size:${w}mm ${h}mm;margin:0}`;
+  // Явный размер — печатаем в миллиметрах: Firefox не считает 100vw/100vh размером листа
+  // (этикетка выходит мелкой в углу), а мм одинаково понимают все браузеры.
+  $('pageSize').textContent = v === 'auto' ? '@page{margin:0}'
+    : `@page{size:${w}mm ${h}mm;margin:0} @media print{html body #printArea .label{--lw:${w}mm;--lh:${h}mm}}`;
   try { localStorage.setItem('kizSize', $('size').value); localStorage.setItem('kizAuto', $('auto').checked ? '1' : '0'); } catch (e) {}
 }
 $('size').onchange = () => { applySize(); render(); };
 $('auto').onchange = applySize;
 $('who').onchange = () => { try { localStorage.setItem('kizWho', $('who').value.trim()); } catch (e) {} $('scan').focus(); };
 try { $('who').value = localStorage.getItem('kizWho') || ''; } catch (e) {}
-try { const s = localStorage.getItem('kizSize'); if (s) $('size').value = s; const a = localStorage.getItem('kizAuto'); if (a) $('auto').checked = a === '1'; } catch (e) {}
+// Firefox не умеет «по бумаге принтера» (не знает размер листа) — по умолчанию 58×40
+const isFirefox = /firefox/i.test(navigator.userAgent);
+if (isFirefox) $('size').querySelector('option[value="auto"]').textContent = 'По бумаге принтера (только Chrome)';
+try { const s = localStorage.getItem('kizSize'); if (s && !(isFirefox && s === 'auto')) $('size').value = s; else if (isFirefox) $('size').value = '58x40'; const a = localStorage.getItem('kizAuto'); if (a) $('auto').checked = a === '1'; } catch (e) {}
 applySize();
 
 async function loadLog() {
