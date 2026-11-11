@@ -12,6 +12,10 @@ Render из РФ заблокирован, а через Cloudflare больши
 Использование:  python3 xray_from_link.py 'vless://…'  > /usr/local/etc/xray/config.json
 Понимает ссылки vless://, trojan://, vmess://, ss:// и ссылку-подписку https://…
 (список ссылок, в т.ч. base64) — берётся первая поддерживаемая.
+Или путь к JSON-конфигу клиента (экспорт из Happ / v2rayN / v2rayNG): из него
+берётся VPN-выход целиком, со всеми настройками транспорта (xhttp extra, xmux
+и т.п., которые в ссылку не помещаются):
+                python3 xray_from_link.py /root/happ.json > /usr/local/etc/xray/config.json
 """
 import base64
 import json
@@ -106,8 +110,26 @@ def outbound(link: str) -> dict:
     raise ValueError(f"тип ссылки «{scheme}» Xray не поддерживает")
 
 
+def from_json(text: str) -> dict:
+    """VPN-выход из готового конфига клиента: outbound с тегом proxy/vpn или
+    первый с протоколом vless/vmess/trojan/shadowsocks."""
+    cfg = json.loads(text)
+    obs = cfg.get("outbounds") or []
+    good = [o for o in obs if o.get("protocol") in ("vless", "vmess", "trojan", "shadowsocks")]
+    if not good:
+        raise SystemExit("В JSON нет VPN-выхода (vless/vmess/trojan/shadowsocks)")
+    out = next((o for o in good if o.get("tag") in ("proxy", "vpn")), good[0])
+    out = dict(out, tag="vpn")
+    out.pop("mux", None)                  # мультиплекс клиента серверу не нужен
+    return out
+
+
 def pick(arg: str) -> dict:
     arg = arg.strip()
+    if arg.startswith("{"):                                  # JSON прямо в аргументе
+        return from_json(arg)
+    if arg.endswith(".json") or arg == "-":                  # JSON из файла / stdin
+        return from_json(sys.stdin.read() if arg == "-" else open(arg, encoding="utf-8-sig").read())
     if arg.lower().startswith(("http://", "https://")):     # ссылка-подписка
         req = urllib.request.Request(arg, headers={"User-Agent": "v2rayN/7.0"})
         text = urllib.request.urlopen(req, timeout=30).read().decode("utf-8", "replace").strip()
