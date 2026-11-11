@@ -21,6 +21,11 @@ main{padding:20px 24px;display:grid;grid-template-columns:minmax(0,1.2fr) minmax
 body.tsd #labelCard,body.tsd #expCard{display:none}
 
 #jobInfo .msg{margin-top:6px}
+.btn.sm{padding:3px 10px;font-size:13px}
+#statBody tr.done td{color:var(--muted)}
+#statBody .bar{height:4px;border-radius:2px;background:var(--line);margin-top:3px}
+#statBody .bar i{display:block;height:100%;border-radius:2px;background:var(--ok)}
+@media (max-width:600px){.hide-m{display:none}}
 .card{background:var(--card);border:1px solid var(--line);border-radius:var(--rad);padding:16px 18px;display:flex;flex-direction:column;gap:12px;min-width:0}
 h2{font-size:15px;margin:0}
 .steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
@@ -141,7 +146,7 @@ th{color:var(--muted);font-weight:600;font-size:12px}
 
     <section class="card">
       <div class="row" style="justify-content:space-between">
-        <h2>Журнал за сегодня</h2>
+        <h2>История печати</h2>
         <div class="row">
           <label class="f">с <input type="date" id="d0"></label>
           <label class="f">по <input type="date" id="d1"></label>
@@ -149,8 +154,20 @@ th{color:var(--muted);font-weight:600;font-size:12px}
           <button class="btn" id="logXlsx">Excel</button>
         </div>
       </div>
-      <div class="tw"><table><thead><tr><th>Время</th><th>Контрагент</th><th>Артикул</th><th>Товар</th><th>Серийный №</th><th>Годен до</th><th>Срок из</th><th>Кто</th></tr></thead>
-        <tbody id="logBody"><tr><td colspan="8" class="muted">Загрузка…</td></tr></tbody></table></div>
+      <div class="tw"><table><thead><tr><th>Время</th><th class="hide-m">Контрагент</th><th>Артикул</th><th class="hide-m">Товар</th><th>Серийный №</th><th class="hide-m">Годен до</th><th class="hide-m">Срок из</th><th class="hide-m">Кто</th><th></th></tr></thead>
+        <tbody id="logBody"><tr><td colspan="9" class="muted">Загрузка…</td></tr></tbody></table></div>
+    </section>
+
+    <section class="card" id="statCard">
+      <div class="row" style="justify-content:space-between">
+        <h2>Сборка по поставке</h2>
+        <div class="row">
+          <select id="supplySel" style="max-width:260px"></select>
+          <span class="muted" id="statTotal"></span>
+        </div>
+      </div>
+      <div class="tw" style="max-height:420px;overflow-y:auto"><table><thead style="position:sticky;top:0;background:var(--card)"><tr><th>Артикул</th><th class="hide-m">Товар</th><th style="text-align:right">План</th><th style="text-align:right">Собрано</th><th style="text-align:right">Осталось</th></tr></thead>
+        <tbody id="statBody"><tr><td colspan="5" class="muted">Загрузите файл поставки в блоке «Сроки годности из поставки» — здесь появится план сборки.</td></tr></tbody></table></div>
     </section>
   </div>
 
@@ -566,16 +583,53 @@ if (isFirefox) $('size').querySelector('option[value="auto"]').textContent = 'П
 try { const s = localStorage.getItem('kizSize'); if (s && !(isFirefox && s === 'auto')) $('size').value = s; else if (isFirefox) $('size').value = '58x40'; } catch (e) {}
 applySize();
 
+let _logRows = [];
 async function loadLog() {
   const d0 = $('d0').value, d1 = $('d1').value;
   try {
     const r = await api(`/api/kiz/log?d0=${d0}&d1=${d1}`);
-    $('logBody').innerHTML = r.rows.length ? r.rows.map(x => `<tr><td>${esc(x.ts.slice(5, 16).replace('T', ' '))}</td><td>${esc(x.company)}</td><td>${esc(x.article)}</td>
-      <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis">${esc(x.name)}</td><td>${esc(x.serial)}</td><td>${fmtD(x.expiry)}</td><td>${esc(x.expiry_src)}</td><td>${esc(x.author)}</td></tr>`).join('')
-      : '<tr><td colspan="8" class="muted">Пока ничего не печатали</td></tr>';
+    _logRows = r.rows;
+    $('logBody').innerHTML = r.rows.length ? r.rows.map((x, i) => `<tr><td>${esc(x.ts.slice(5, 16).replace('T', ' '))}</td><td class="hide-m">${esc(x.company)}</td><td>${esc(x.article)}</td>
+      <td class="hide-m" style="max-width:260px;overflow:hidden;text-overflow:ellipsis">${esc(x.name)}</td><td>${esc(x.serial)}</td><td class="hide-m">${fmtD(x.expiry)}</td><td class="hide-m">${esc(x.expiry_src)}</td><td class="hide-m">${esc(x.author)}</td>
+      <td><button class="btn sm" onclick="reprint(${i})" title="Напечатать эту этикетку ещё раз">Перепечатать</button></td></tr>`).join('')
+      : '<tr><td colspan="9" class="muted">Пока ничего не печатали</td></tr>';
     if (d0 === mskToday() && d1 === mskToday()) $('todayCount').textContent = `Сегодня напечатано: ${r.rows.length}`;
-  } catch (e) { $('logBody').innerHTML = `<tr><td colspan="8" class="muted">${esc(e.message)}</td></tr>`; }
+  } catch (e) { $('logBody').innerHTML = `<tr><td colspan="9" class="muted">${esc(e.message)}</td></tr>`; }
+  loadStats();
 }
+/* Перепечатка из истории: собираем этикетку из записи журнала (КИЗ, штрихкод, товар, срок)
+   и печатаем тем же путём, что и после скана: на ТСД — заданием на станцию, на ПК — сразу. */
+async function reprint(i) {
+  const x = _logRows[i];
+  if (!x) return;
+  if (st.kiz || st.bc) { say('Сначала закончите или сбросьте текущий скан.', 'warn'); return; }
+  const k = KIZ.parseKiz(x.kiz || '');
+  if (!k || !k.ok) { say('Не удалось разобрать КИЗ из истории: ' + esc(x.serial), 'bad'); return; }
+  const code = String(x.barcode || '');
+  Object.assign(st, { kiz: k, bc: { code, bcid: code.length === 13 && KIZ.eanCheck(code) === +code[12] ? 'ean13' : 'code128' },
+    product: { name: x.name || '', article: x.article || '', company: x.company || '', barcodes: [code] },
+    expiry: x.expiry, expirySrc: x.expiry_src || 'история', saved: null, dup: null, mismatch: false, crpt: null });
+  render();
+  if (mode() === 'tsd') await sendJob(); else await doPrint();
+}
+let _statSupply = '';
+async function loadStats() {
+  try {
+    const r = await api('/api/kiz/supply/stats?supply=' + encodeURIComponent(_statSupply));
+    if (!r.supplies.length) return;
+    _statSupply = r.supply;
+    $('supplySel').innerHTML = r.supplies.map(x => `<option value="${esc(x.supply)}"${x.supply === r.supply ? ' selected' : ''}>${esc(x.supply)} · ${esc((x.uploaded_at || '').slice(0, 10).split('-').reverse().join('.'))}</option>`).join('');
+    const plan = r.rows.reduce((a, x) => a + x.plan, 0), done = r.rows.reduce((a, x) => a + Math.min(x.done, x.plan), 0);
+    $('statTotal').textContent = `собрано ${done} из ${plan} (${plan ? Math.round(done / plan * 100) : 0}%)`;
+    const rows = r.rows.slice().sort((a, b) => (a.done >= a.plan) - (b.done >= b.plan) || (b.done > 0) - (a.done > 0) || a.article.localeCompare(b.article));
+    $('statBody').innerHTML = rows.map(x => { const left = Math.max(0, x.plan - x.done), pc = Math.min(100, Math.round(x.done / x.plan * 100));
+      return `<tr class="${left ? '' : 'done'}"><td>${esc(x.article || x.gtin.replace(/^0/, ''))}</td>
+        <td class="hide-m" style="white-space:normal;max-width:320px">${esc(shortName(x.name || ''))}<div class="bar"><i style="width:${pc}%"></i></div></td>
+        <td style="text-align:right">${x.plan}</td><td style="text-align:right"><b>${x.done}</b>${x.done > x.plan ? ' <span class="muted">(больше плана)</span>' : ''}</td>
+        <td style="text-align:right">${left || '✓'}</td></tr>`; }).join('');
+  } catch (e) {}
+}
+$('supplySel').onchange = () => { _statSupply = $('supplySel').value; loadStats(); };
 let _expRows = [];
 async function loadExpiries() {
   try {
@@ -597,12 +651,12 @@ $('expUpload').onclick = async () => {
   if (!f) { $('expResult').textContent = 'Выберите файл поставки (.xlsx).'; return; }
   $('expUpload').disabled = true; $('expResult').textContent = 'Загружаю…';
   try {
-    const r = await api('/api/kiz/expiry/import?author=' + encodeURIComponent($('who').value.trim()),
+    const r = await api('/api/kiz/expiry/import?author=' + encodeURIComponent($('who').value.trim()) + '&name=' + encodeURIComponent(f.name.replace(/\.xlsx$/i, '')),
       { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: f });
     $('expResult').innerHTML = `Готово: в файле <b>${r.total}</b> товаров — новых ${r.added}, обновлён срок у ${r.changed}, без изменений ${r.same}.` +
       (r.notes && r.notes.length ? '<br>' + r.notes.map(esc).join('<br>') : '');
     $('expFile').value = '';
-    loadExpiries();
+    loadExpiries(); _statSupply = r.supply || ''; loadStats();
   } catch (e) { $('expResult').textContent = 'Не загрузилось: ' + e.message; }
   $('expUpload').disabled = false; $('scan').focus();
 };

@@ -80,6 +80,10 @@ SCHEMA = [
         id TEXT PRIMARY KEY, ts TEXT, kiz TEXT, gtin TEXT, serial TEXT, barcode TEXT,
         article TEXT, name TEXT, company TEXT, expiry TEXT, expiry_src TEXT, author TEXT)""",
     "CREATE INDEX IF NOT EXISTS kiz_log_kiz ON kiz_log (kiz)",
+    # строки загруженных поставок: что и сколько собрать (для статистики сборки)
+    """CREATE TABLE IF NOT EXISTS kiz_supply (
+        supply TEXT, gtin TEXT, article TEXT, name TEXT, batch TEXT, expiry TEXT, qty INTEGER,
+        since TEXT, uploaded_at TEXT)""",
     "CREATE INDEX IF NOT EXISTS kiz_log_ts ON kiz_log (ts)",
 ]
 
@@ -406,6 +410,40 @@ def kiz_expiry_bulk(rows: list[dict], author: str) -> dict:
         else:
             same += 1
     return {"added": added, "changed": changed, "same": same}
+
+
+def kiz_supply_save(supply: str, rows: list[dict], since: str) -> int:
+    """Перезаписывает строки поставки (повторная загрузка того же файла не дублирует)."""
+    from datetime import datetime, timedelta
+    now = (datetime.utcnow() + timedelta(hours=3)).isoformat(timespec="seconds")
+    db.execute("DELETE FROM kiz_supply WHERE supply = ?", (supply,))
+    n = 0
+    for r in rows:
+        if not r.get("qty"):
+            continue
+        db.execute("INSERT INTO kiz_supply (supply, gtin, article, name, batch, expiry, qty, since, uploaded_at) "
+                   "VALUES (?,?,?,?,?,?,?,?,?)", (supply, r["gtin"], r.get("article") or "", r.get("product") or "",
+                                                  r.get("batch") or "", r["expiry"], int(r["qty"]), since or now, now))
+        n += 1
+    return n
+
+
+def kiz_supply_stats(supply: str = "") -> dict:
+    """Список поставок и по выбранной (по умолчанию последней): план / собрано по каждому товару.
+    Собрано = уникальные КИЗ этого GTIN, напечатанные с начала поставки (перепечатка не считается)."""
+    sups = db.fetchall("SELECT supply, MAX(uploaded_at), MIN(since), SUM(qty), COUNT(*) FROM kiz_supply "
+                       "GROUP BY supply ORDER BY MAX(uploaded_at) DESC")
+    lst = [{"supply": a, "uploaded_at": b, "since": c, "qty": d, "lines": e} for a, b, c, d, e in sups]
+    if not lst:
+        return {"supplies": [], "rows": []}
+    cur = next((x for x in lst if x["supply"] == supply), lst[0])
+    lines = db.fetchall("SELECT gtin, article, name, batch, expiry, qty FROM kiz_supply WHERE supply = ? ORDER BY article",
+                        (cur["supply"],))
+    done = {g: n for g, n in db.fetchall(
+        "SELECT gtin, COUNT(DISTINCT kiz) FROM kiz_log WHERE ts >= ? GROUP BY gtin", (cur["since"],))}
+    rows = [{"gtin": g, "article": a, "name": nm, "batch": b, "expiry": e, "plan": q, "done": done.get(g, 0)}
+            for g, a, nm, b, e, q in lines]
+    return {"supplies": lst, "supply": cur["supply"], "since": cur["since"], "rows": rows}
 
 
 def kiz_expiry_list() -> list[dict]:

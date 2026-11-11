@@ -91,12 +91,14 @@ async def basic_auth(request: Request, call_next):
     «Упаковка КИЗ»: страница открыта, её API — по PIN (или паролю дашборда)."""
     path = request.url.path
     if path in _PUBLIC or path.startswith(_PUBLIC_PREFIX):
-        if path.startswith("/api/kiz/") and not _basic_ok(request):
-            st = await asyncio.to_thread(_kiz_pin_state, request)
-            if st == "locked":
-                return JSONResponse({"error": "pin_locked", "message": "Слишком много неверных PIN. Подождите 15 минут."}, status_code=429)
-            if st == "need":
-                return JSONResponse({"error": "pin", "message": "Нужен PIN"}, status_code=401)
+        # PIN для «Упаковки КИЗ» отключён по просьбе владельца (11.11.2026): страница и её API
+        # открыты всем, у кого есть адрес. Вернуть проверку — раскомментировать блок ниже.
+        # if path.startswith("/api/kiz/") and not _basic_ok(request):
+        #     st = await asyncio.to_thread(_kiz_pin_state, request)
+        #     if st == "locked":
+        #         return JSONResponse({"error": "pin_locked", "message": "Слишком много неверных PIN. Подождите 15 минут."}, status_code=429)
+        #     if st == "need":
+        #         return JSONResponse({"error": "pin", "message": "Нужен PIN"}, status_code=401)
         return await call_next(request)
     if not (os.environ.get("DASH_PASSWORD") or "").strip():
         return Response("Задайте DASH_PASSWORD в настройках Render", status_code=503)
@@ -643,6 +645,7 @@ def _parse_expiry_xlsx(data: bytes) -> tuple[list[dict], list[str]]:
         ci, ce = col(hdr, "еан", "ean", "gtin", "штрихкод", "шк"), col(hdr, "срок год", "годен")
         cn, cb = col(hdr, "наименован", "товар", "назван"), col(hdr, "парти", "batch", "lot")
         ca = col(hdr, "артикул", "article", "sku")
+        cq = col(hdr, "units", "кол-во", "количеств", "qty", "к отбору")
         for r in rows:
             if not r or ci >= len(r) or ce >= len(r):
                 continue
@@ -654,12 +657,17 @@ def _parse_expiry_xlsx(data: bytes) -> tuple[list[dict], list[str]]:
             name = str(r[cn] or "").strip() if cn is not None and cn < len(r) else ""
             batch = str(r[cb] or "").strip() if cb is not None and cb < len(r) else ""
             art = str(r[ca] or "").strip() if ca is not None and ca < len(r) else ""
+            try:
+                qty = int(float(r[cq] or 0)) if cq is not None and cq < len(r) else 0
+            except (TypeError, ValueError):
+                qty = 0
             prev = found.get(g)
+            qty += (prev or {}).get("qty", 0)          # строки по коробам — складываем
             if prev and prev["expiry"] != e:
                 notes.append(f"{name or g}: в файле два срока {prev['expiry']} и {e} — взят ранний")
                 if e > prev["expiry"]:
                     continue
-            found[g] = {"gtin": g, "expiry": e, "product": name[:200], "article": art[:60], "batch": batch[:60]}
+            found[g] = {"gtin": g, "expiry": e, "product": name[:200], "article": art[:60], "batch": batch[:60], "qty": qty}
     return list(found.values()), notes
 
 
@@ -674,7 +682,15 @@ async def kiz_expiry_import(request: Request):
     if not rows:
         return JSONResponse({"error": "не нашёл колонки штрихкода (ЕАН/GTIN) и срока годности"}, status_code=400)
     res = await _t(store.kiz_expiry_bulk, rows, _kiz_author(request, {"author": request.query_params.get("author")}))
-    return {**res, "total": len(rows), "notes": notes[:20]}
+    qp = request.query_params
+    supply = (qp.get("name") or "").strip()[:80] or "поставка"
+    n_plan = await _t(store.kiz_supply_save, supply, rows, (qp.get("since") or "").strip()[:19])
+    return {**res, "total": len(rows), "notes": notes[:20], "supply": supply, "plan_lines": n_plan}
+
+
+@app.get("/api/kiz/supply/stats")
+async def kiz_supply_stats(supply: str = ""):
+    return await _t(store.kiz_supply_stats, supply)
 
 
 @app.get("/api/kiz/expiry/list")
