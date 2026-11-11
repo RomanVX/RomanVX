@@ -204,7 +204,11 @@ async def _build() -> dict:
         raise RuntimeError("нет точки старта — POST /api/growth/baseline")
     start = date.fromisoformat(base["start"])
     today = _msk_today()
-    since = start - timedelta(days=28)                 # 4 недели до старта — для сравнения
+    # база сравнения — ПРЕДЫДУЩИЙ МЕСЯЦ целиком (месяц к месяцу), дни — только с даты старта
+    pm_end = date(start.year, start.month, 1) - timedelta(days=1)
+    pm_start = pm_end.replace(day=1)
+    m0 = date(today.year, today.month, 1)
+    since = min(pm_start, m0)
     _state["progress"] = "заказы и локализация"
     orders, loc, hourly = await _orders(since, today)
     _state["progress"] = "реклама"
@@ -215,86 +219,81 @@ async def _build() -> dict:
     pos_now = await _positions(today - timedelta(days=17), today - timedelta(days=4))  # у Ozon лаг ~3 дня
     E = base["econ"]
     arts = [a for g in GROUPS.values() for a in g]
-
-    # недели: понедельник-воскресенье; неделя старта — та, что содержит start
-    def wk(d: date) -> date:
-        return d - timedelta(days=d.weekday())
-    weeks = []
-    w = wk(since)
-    while w <= today:
-        weeks.append(w)
-        w += timedelta(days=7)
     horizon = date.fromisoformat(base["horizon_end"])
-    # база оборота — заказы тех же товаров за 14 дней до старта (тот же источник, что и факт),
-    # а не реализация месяца: иначе «старт» и «сейчас» несравнимы
-    _b0 = start - timedelta(days=14)
-    base_week_rev = sum(v[1] for (d, a), v in orders.items()
-                        if a in arts and str(_b0) <= d < str(start)) / 2
-    if not base_week_rev:
-        base_week_rev = base["kpi"]["revenue_month"] / 30 * 7
-    n_weeks = max(1, (horizon - start).days / 7)
+    yday = today - timedelta(days=1)
+    # «после старта»: полные дни start..вчера; если полных ещё нет — сегодняшний неполный
+    aft0, aft1 = start, (yday if yday >= start else today)
+    after_partial = aft1 == today
 
-    def plan_rev(w: date) -> float | None:
-        if w < wk(start):
-            return None
-        k = min(1.0, ((w - wk(start)).days / 7 + 1) / n_weeks)
-        return round(base_week_rev * (1 + k * (base["targets"]["revenue_x"] - 1)))
-
-    series = []
-    for w in weeks:
-        days = [w + timedelta(days=i) for i in range(7)]
-        dd = [str(d) for d in days if d <= today]
-        rev = qty = ad = pay = gross = 0.0
-        for a in arts:
-            q = sum(orders.get((d, a), [0, 0])[0] for d in dd)
-            r = sum(orders.get((d, a), [0, 0])[1] for d in dd)
-            if not q:
-                continue
-            a_sp = sum(sku_ad.get((d, a), 0) for d in dd)
-            e = E.get(a) or E.get(base.get("proxy", {}).get(a, ""), None)
-            qty += q; rev += r; ad += a_sp
-            if e:
-                x = _econ(e, q, r, a_sp)
-                pay += x.get("payout_rub", 0); gross += x.get("gross_rub", 0)
-        cpc = sum(v for (d, g), v in grp_ad.items() if d in dd)
-        pay -= cpc; gross -= cpc; ad += cpc
-        lt = [loc.get(d, [0, 0]) for d in dd]
-        lsum = sum(x[1] for x in lt)
-        series.append({"week": str(w), "days": len(dd), "revenue": round(rev), "orders": int(qty),
-                       "plan": plan_rev(w), "ad": round(ad),
-                       "drr": round(ad / rev * 100, 1) if rev else None,
-                       "payout": round(pay / rev * 100, 1) if rev else None,
-                       "margin": round(gross / rev * 100, 1) if rev else None,
-                       "local": round(sum(x[0] for x in lt) / lsum * 100) if lsum else None,
-                       "is_start": w == wk(start)})
-
-    # по товарам: база = 14 дней до старта, сейчас = последние 7 полных дней
-    b0, b1 = start - timedelta(days=14), start - timedelta(days=1)
-    n0, n1 = today - timedelta(days=7), today - timedelta(days=1)
-
-    def agg(a, d0, d1):
-        q = r = s = 0.0
+    def period(d0, d1, groups_=None):
+        gs = groups_ or list(GROUPS)
+        arts_ = [a for g in gs for a in GROUPS[g]]
+        q = r = ad = pay = gross = 0.0; days = 0; lsum = [0, 0]
         d = d0
         while d <= d1:
-            o = orders.get((str(d), a), [0, 0]); q += o[0]; r += o[1]; s += sku_ad.get((str(d), a), 0)
+            ds = str(d); days += 1
+            for a in arts_:
+                qq, rr = orders.get((ds, a), [0, 0]); sp = sku_ad.get((ds, a), 0); ad += sp
+                if not qq:
+                    pay -= sp; gross -= sp
+                    continue
+                q += qq; r += rr
+                e = E.get(a) or E.get(base.get("proxy", {}).get(a, ""), None)
+                if e:
+                    x = _econ(e, qq, rr, sp); pay += x.get("payout_rub", 0); gross += x.get("gross_rub", 0)
+            cpc = sum(grp_ad.get((ds, g), 0) for g in gs); ad += cpc; pay -= cpc; gross -= cpc
+            if groups_ is None:
+                lc = loc.get(ds, [0, 0]); lsum[0] += lc[0]; lsum[1] += lc[1]
             d += timedelta(days=1)
-        return q, r, s
+        pc = lambda v: round(v / r * 100, 1) if r else None
+        return {"from": str(d0), "to": str(d1), "days": days, "orders": int(q), "revenue": round(r), "ad": round(ad),
+                "orders_day": round(q / days, 1) if days else 0, "revenue_day": round(r / days) if days else 0,
+                "drr": pc(ad), "payout": pc(pay), "margin": pc(gross),
+                "local": round(lsum[0] / lsum[1] * 100) if lsum[1] else None}
+
+    oct_ = period(pm_start, pm_end)
+    pre = period(m0, start - timedelta(days=1)) if start > m0 else None
+    after = period(aft0, aft1); after["partial"] = after_partial
+    mtd = period(m0, yday) if yday >= m0 else None
+    import calendar as _cal
+    mdays = _cal.monthrange(today.year, today.month)[1]
+    left = (date(today.year, today.month, mdays) - today).days + 1          # сегодня + оставшиеся дни
+    forecast = round((mtd["revenue"] if mtd else 0) + after["revenue_day"] * left)
+    base_day_rev = oct_["revenue_day"] or base["kpi"]["revenue_month"] / 30
+    total_days = max(1, (horizon - start).days)
+    xr = base["targets"]["revenue_x"]
+    plan_of = lambda d: round(base_day_rev * (1 + min(1.0, ((d - start).days + 1) / total_days) * (xr - 1)))
+    mom = {"prev": oct_, "pre": pre, "after": after, "mtd": mtd, "forecast_month": forecast,
+           "prev_month_label": pm_start.strftime("%m.%Y"), "month_days": mdays,
+           "groups": [{"group": g, "prev": period(pm_start, pm_end, [g])["orders_day"],
+                       "pre": period(m0, start - timedelta(days=1), [g])["orders_day"] if pre else None,
+                       "after": period(aft0, aft1, [g])["orders_day"]} for g in GROUPS]}
+
+    # по товарам: октябрь в день → после старта в день
+    def agg(a, d0, d1):
+        q = r = s_ = 0.0
+        d = d0
+        while d <= d1:
+            o = orders.get((str(d), a), [0, 0]); q += o[0]; r += o[1]; s_ += sku_ad.get((str(d), a), 0)
+            d += timedelta(days=1)
+        return q, r, s_
+    n_prev, n_aft = (pm_end - pm_start).days + 1, (aft1 - aft0).days + 1
     import catalog as _cat
     rows = []
     for g, ga in GROUPS.items():
         for a in ga:
-            q0, r0, s0 = agg(a, b0, b1)
-            q1, r1, s1 = agg(a, n0, n1)
+            q0, r0, s0 = agg(a, pm_start, pm_end)
+            q1, r1, s1 = agg(a, aft0, aft1)
             pr = prices.get(a, {})
             e = E.get(a)
             x = _econ(e, q1, r1, s1) if e else {}
-            od0, od1 = q0 / 14, q1 / 7
+            od0, od1 = q0 / n_prev, q1 / n_aft
             delta = round((od1 / od0 - 1) * 100) if od0 else None
             mp, mn = pr.get("marketing_price") or pr.get("price"), pr.get("min_price")
             bq = (base.get("positions") or {}).get(a)
             flags = []
-            if delta is not None and delta <= -30 and q0 >= 5:
-                flags.append(f"заказы {delta}% к старту")
+            if delta is not None and delta <= -30 and q0 >= 10:
+                flags.append(f"заказы {delta}% к октябрю")
             if mp and mn and mp < mn * 0.98:
                 flags.append("цена в акции ниже минимальной")
             if x.get("payout") is not None and x["payout"] < 25 and r1:
@@ -314,12 +313,12 @@ async def _build() -> dict:
                 **{k: x.get(k) for k in ("payout", "margin")},
                 "flags": flags,
             })
-    d7s = {str(n0 + timedelta(days=i)) for i in range(7)}
+    win = {str(aft0 + timedelta(days=i)) for i in range(n_aft)}
     groups = []
     for g, ga in GROUPS.items():
         rr = [r for r in rows if r["group"] == g]
         rev = sum(r["revenue_7d"] for r in rr)
-        cpc = sum(v for (d, gg), v in grp_ad.items() if gg == g and d in d7s)
+        cpc = sum(v for (d, gg), v in grp_ad.items() if gg == g and d in win)
         ad = sum(r["ad_7d"] for r in rr) + cpc
         pay = sum(r["payout_rub"] or 0 for r in rr) - cpc
         gross = sum(r["gross_rub"] or 0 for r in rr) - cpc
@@ -330,72 +329,32 @@ async def _build() -> dict:
                        "payout": round(pay / rev * 100, 1) if rev else None,
                        "margin": round(gross / rev * 100, 1) if rev else None,
                        "flags": sum(len(r["flags"]) for r in rr)})
-    # итог «последние 7 дней» — скользящее окно, а не календарная неделя
-    tot = {k: sum(gx[k] or 0 for gx in groups) for k in ("revenue_7d", "ad_7d")}
-    pay7 = sum(r["payout_rub"] or 0 for r in rows) - sum(v for (d, _), v in grp_ad.items() if d in d7s)
-    gross7 = sum(r["gross_rub"] or 0 for r in rows) - sum(v for (d, _), v in grp_ad.items() if d in d7s)
-    lt = [loc.get(d, [0, 0]) for d in d7s]
-    ltot = sum(x[1] for x in lt)
-    days_in = max(0, (n1 - start).days + 1)
-    k_plan = min(1.0, days_in / max(1, (horizon - start).days))
-    rev7 = tot["revenue_7d"]
-    kpi_now = {"from": str(n0), "to": str(n1),
-               "revenue": round(rev7), "revenue_base": round(base_week_rev), "orders": int(sum(r["orders_day_now"] for r in rows) * 7),
-               "plan": round(base_week_rev * (1 + k_plan * (base["targets"]["revenue_x"] - 1))),
-               "ad": round(tot["ad_7d"]),
-               "drr": round(tot["ad_7d"] / rev7 * 100, 1) if rev7 else None,
-               "payout": round(pay7 / rev7 * 100, 1) if rev7 else None,
-               "margin": round(gross7 / rev7 * 100, 1) if rev7 else None,
-               "local": round(sum(x[0] for x in lt) / ltot * 100) if ltot else None,
-               "days_since_start": days_in}
-    for c in camps:                                           # кампании: последние 7 дней
-        d7 = [str(n0 + timedelta(days=i)) for i in range(7)]
-        s = sum(c["days"].get(d, [0, 0, 0])[0] for d in d7)
-        o = sum(c["days"].get(d, [0, 0, 0])[1] for d in d7)
-        m = sum(c["days"].get(d, [0, 0, 0])[2] for d in d7)
-        c.update(spent_7d=round(s), orders_7d=o, drr_7d=round(s / m * 100, 1) if m else None)
+    days_in = max(0, (today - start).days + 1)
+    kpi_now = {**after, "revenue_base": oct_["revenue_day"],
+               "plan": round(sum(plan_of(aft0 + timedelta(days=i)) for i in range(n_aft)) / n_aft),
+               "days_since_start": days_in, "window": "after_start"}
+    for c in camps:                                           # кампании: после старта
+        s_ = sum(c["days"].get(d, [0, 0, 0])[0] for d in win)
+        o = sum(c["days"].get(d, [0, 0, 0])[1] for d in win)
+        m = sum(c["days"].get(d, [0, 0, 0])[2] for d in win)
+        c.update(spent_7d=round(s_), orders_7d=o, drr_7d=round(s_ / m * 100, 1) if m else None)
         c.pop("days", None)
     camps.sort(key=lambda c: -c.get("spent_7d", 0))
-    cur = series[-2] if len(series) > 1 and series[-1]["days"] < 4 else series[-1]
 
-    # ── по дням: факт каждого дня с начала окна, план дня — линия роста к цели ──
-    base_day_rev = base_week_rev / 7
-    total_days = max(1, (horizon - start).days)
+    # ── дни с даты старта ──
     daily = []
-    d = since
+    d = start
     while d <= today:
-        ds = str(d)
-        rev = qty = ad = pay = gross = 0.0
-        gq = defaultdict(int)
-        for a in arts:
-            q, r = orders.get((ds, a), [0, 0])
-            if not q:
-                continue
-            a_sp = sku_ad.get((ds, a), 0)
-            qty += q; rev += r; ad += a_sp; gq[SKU_GROUP[a]] += q
-            e = E.get(a) or E.get(base.get("proxy", {}).get(a, ""), None)
-            if e:
-                x = _econ(e, q, r, a_sp)
-                pay += x.get("payout_rub", 0); gross += x.get("gross_rub", 0)
-        cpc = sum(v for (dd_, g), v in grp_ad.items() if dd_ == ds)
-        pay -= cpc; gross -= cpc; ad += cpc
-        k = min(1.0, max(0, (d - start).days + 1) / total_days) if d >= start else None
-        daily.append({"date": ds, "revenue": round(rev), "orders": int(qty), "ad": round(ad),
-                      "drr": round(ad / rev * 100, 1) if rev else None,
-                      "payout": round(pay / rev * 100, 1) if rev else None,
-                      "margin": round(gross / rev * 100, 1) if rev else None,
-                      "plan": round(base_day_rev * (1 + k * (base["targets"]["revenue_x"] - 1))) if k is not None else None,
-                      "groups": dict(gq), "partial": d == today, "after_start": d >= start})
+        x = period(d, d); x.update(date=str(d), plan=plan_of(d), partial=d == today, after_start=True)
+        daily.append(x)
         d += timedelta(days=1)
 
-    # ── внутри дня: накопительно по часам — сегодня / вчера / обычный день до старта ──
+    # ── внутри дня: сегодня / вчера / обычный день прошлого месяца (медиана по часам) ──
     now_msk = datetime.utcnow() + timedelta(hours=3)
     now_h = now_msk.hour
-    tday, yday = str(today), str(today - timedelta(days=1))
-    base_days = [str(b0 + timedelta(days=i)) for i in range(14)]
+    tday, yd = str(today), str(yday)
+    base_days = [str(pm_start + timedelta(days=i)) for i in range(n_prev)]
     import statistics as _st
-    # «обычный день» — МЕДИАНА по 14 дням до старта: разовые акционные всплески
-    # (у Алоэ до 100+ заказов в день) не должны задирать норму
     def cum(day, key, arts_=None):
         acc, out = 0.0, []
         for h in range(24):
@@ -405,26 +364,26 @@ async def _build() -> dict:
     def curve(days, key=0):
         cs = [cum(dd_, key) for dd_ in days]
         return [round(_st.median(c[h] for c in cs), 1 if key == 0 else 0) for h in range(24)]
-    cq_t, cq_y, cq_b = curve([tday]), curve([yday]), curve(base_days)
-    cr_t, cr_y, cr_b = curve([tday], 1), curve([yday], 1), curve(base_days, 1)
+    cq_t, cq_y, cq_b = curve([tday]), curve([yd]), curve(base_days)
+    cr_t, cr_y, cr_b = curve([tday], 1), curve([yd], 1), curve(base_days, 1)
     def grp_to_hour(days, hour=None):
         hour = now_h if hour is None else hour
         return {g: _st.median(cum(dd_, 0, ga)[hour] for dd_ in days) for g, ga in GROUPS.items()}
-    gt, gy, gb = grp_to_hour([tday]), grp_to_hour([yday]), grp_to_hour(base_days)
+    gt, gy, gb = grp_to_hour([tday]), grp_to_hour([yd]), grp_to_hour(base_days)
     gfull = grp_to_hour(base_days, 23)
-    intraday = {"now": now_msk.strftime("%H:%M"), "hour": now_h, "today": tday, "yesterday": yday,
-                "base_from": base_days[0], "base_to": base_days[-1],
+    intraday = {"now": now_msk.strftime("%H:%M"), "hour": now_h, "today": tday, "yesterday": yd,
+                "base_from": base_days[0], "base_to": base_days[-1], "base_label": "обычный день " + pm_start.strftime("%m.%Y"),
                 "orders": {"today": cq_t, "yesterday": cq_y, "base": cq_b},
                 "revenue": {"today": cr_t, "yesterday": cr_y, "base": cr_b},
                 "to_hour": {"orders": [cq_t[now_h], cq_y[now_h], cq_b[now_h]],
                             "revenue": [cr_t[now_h], cr_y[now_h], cr_b[now_h]]},
                 "groups": [{"group": g, "today": round(gt[g]), "yesterday": round(gy[g]), "base": round(gb[g], 1),
-                            "base_full_day": round(gfull[g], 1)}
-                           for g in GROUPS],
-                "plan_day": next((x["plan"] for x in daily if x["date"] == tday), None)}
+                            "base_full_day": round(gfull[g], 1)} for g in GROUPS],
+                "plan_day": plan_of(today) if today >= start else None}
     return {"built": (datetime.utcnow() + timedelta(hours=3)).strftime("%d.%m.%Y %H:%M"),
             "base": {k: base[k] for k in ("start", "horizon_end", "kpi", "targets", "notes") if k in base},
-            "current_week": cur, "kpi_now": kpi_now, "series": series, "daily": daily, "intraday": intraday, "groups": groups, "rows": rows,
+            "current_week": None, "kpi_now": kpi_now, "series": [], "daily": daily, "intraday": intraday, "mom": mom,
+            "groups": groups, "rows": rows,
             "campaigns": camps, "journal": await asyncio.to_thread(_kv, _JOURNAL_KEY, [])}
 
 
@@ -466,6 +425,8 @@ async def state(refresh: bool = Query(default=False)):
 async def set_baseline(request: Request, payload: dict):
     """Точка старта: {start, horizon_end, kpi, targets, econ: {арт: {P,c,L,O,cogs,q}}, positions, notes}."""
     _owner(request)
+    cur = await asyncio.to_thread(_kv, _BASE_KEY, None) or {}
+    payload = {**cur, **payload}                       # можно прислать только изменённые поля
     for k in ("start", "horizon_end", "kpi", "targets", "econ"):
         if k not in payload:
             raise HTTPException(400, f"нет поля {k}")
