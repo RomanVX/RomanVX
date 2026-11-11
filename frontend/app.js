@@ -6833,6 +6833,15 @@ function renderGrowth() {
   h += `<details class="gr-more mb-4"><summary>Журнал действий · ${jr.length} записей</summary><div class="gr-jr">` +
     jr.map(j => `<div><span class="dt">${j.date}</span>${j.group ? `<span class="gr-chip">${j.group}</span>` : ''}${esc(j.text)}</div>`).join('') + '</div></details>';
   wrap.innerHTML = h;
+  // графики строим, только когда блок видим: на скрытом (ширина 0) Chart.js
+  // запоминает нулевой размер и рисует столбцы кучкой у левого края
+  if (!wrap.offsetWidth) { clearTimeout(window._grRetry); window._grRetry = setTimeout(() => { if (wrap.offsetWidth) _grCharts(d, iz); else renderGrowth(); }, 500); return; }
+  _grCharts(d, iz);
+}
+
+function _grCharts(d, iz) {
+  const b = d.base, t = b.targets;
+  const dd = s => s ? s.slice(8, 10) + '.' + s.slice(5, 7) : '';
 
   // графики
   // по дням (если бэкенд старый — по неделям)
