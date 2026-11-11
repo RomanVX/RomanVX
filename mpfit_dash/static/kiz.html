@@ -51,15 +51,15 @@ th{color:var(--muted);font-weight:600;font-size:12px}
 /* этикетка: всё считается от единицы --u (высота этикетки, но не больше ширины × 0,69),
    поэтому вёрстка одинаково заполняет и 58×40, и 100×150 */
 .label{--u:min(var(--lh), calc(var(--lw) * .69));width:var(--lw);height:var(--lh);background:#fff;color:#000;box-shadow:0 1px 4px rgba(0,0,0,.25);
-  padding:calc(var(--u) * .04);display:grid;grid-template-columns:auto minmax(0,1fr);grid-template-rows:minmax(0,1fr) auto;
+  padding:calc(var(--u) * .055);display:grid;grid-template-columns:auto minmax(0,1fr);grid-template-rows:minmax(0,1fr) auto;
   gap:calc(var(--u) * .025) calc(var(--u) * .04);overflow:hidden;font-family:Arial,Helvetica,sans-serif}
 .label .dm{grid-row:1;grid-column:1;display:flex;flex-direction:column;align-items:center;gap:calc(var(--u) * .01)}
-.label .dm svg{height:calc(var(--u) * .5);width:auto;display:block}
-.label .hr{font-size:calc(var(--u) * .036);line-height:1.1;max-width:calc(var(--u) * .5);word-break:break-all;text-align:center}
+.label .dm svg{height:calc(var(--u) * .56);width:auto;display:block}
+.label .hr{font-size:calc(var(--u) * .04);line-height:1.1;max-width:calc(var(--u) * .5);word-break:break-all;text-align:center}
 .label .txt{grid-row:1;grid-column:2;display:flex;flex-direction:column;gap:calc(var(--u) * .015);min-width:0;overflow:hidden}
-.label .nm{font-size:calc(var(--u) * .0575);line-height:1.15;font-weight:700;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
+.label .nm{font-size:calc(var(--u) * .062);line-height:1.15;font-weight:700;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
 .label .art{font-size:calc(var(--u) * .05)}
-.label .exp{font-size:calc(var(--u) * .0725);font-weight:700;margin-top:auto;white-space:nowrap}
+.label .exp{font-size:calc(var(--u) * .095);font-weight:700;margin-top:auto;white-space:normal;line-height:1.1}
 .label .bc{grid-row:2;grid-column:1 / span 2;display:flex;justify-content:center;min-width:0}
 .label .bc svg{height:calc(var(--u) * .3);width:auto;max-width:100%;display:block}
 .label.tall{--u:min(var(--lw), calc(var(--lh) * .69));grid-template-columns:minmax(0,1fr);grid-template-rows:auto auto minmax(0,1fr) auto;justify-items:center;text-align:center}
@@ -80,11 +80,11 @@ th{color:var(--muted);font-weight:600;font-size:12px}
   #printArea .label{--lw:100vw;--lh:100vh;box-shadow:none;page-break-after:always;break-after:page}
 }
 @media print and (orientation:portrait){
-#printArea .label{--u:min(var(--lw), calc(var(--lh) * .69));grid-template-columns:minmax(0,1fr);grid-template-rows:auto auto minmax(0,1fr) auto;justify-items:center;text-align:center}
-#printArea .label .dm{grid-row:1;grid-column:1}
-#printArea .label .txt{grid-row:2;grid-column:1;align-items:center;width:100%}
-#printArea .label .exp{margin-top:calc(var(--u) * .02)}
-#printArea .label .bc{grid-row:4;grid-column:1;width:100%}
+#printArea.auto .label{--u:min(var(--lw), calc(var(--lh) * .69));grid-template-columns:minmax(0,1fr);grid-template-rows:auto auto minmax(0,1fr) auto;justify-items:center;text-align:center}
+#printArea.auto .label .dm{grid-row:1;grid-column:1}
+#printArea.auto .label .txt{grid-row:2;grid-column:1;align-items:center;width:100%}
+#printArea.auto .label .exp{margin-top:calc(var(--u) * .02)}
+#printArea.auto .label .bc{grid-row:4;grid-column:1;width:100%}
 
 }
 @media (prefers-reduced-motion:no-preference){.step{transition:background .15s,border-color .15s}}
@@ -395,14 +395,16 @@ function render() {
 }
 
 function svg(opts) { try { return bwipjs.toSVG(opts); } catch (e) { return `<span style="font-size:2mm;color:#b00">${esc(e.message)}</span>`; } }
-function labelHTML(id) {
+function labelHTML(id, forPrint) {
   const p = st.product || {};
   const dm = st.kiz ? svg({ bcid: 'datamatrix', text: st.kiz.dm, parsefnc: true, scale: 3 }) : '';
   const bc = st.bc ? svg(st.bc.bcid === 'ean13'
     ? { bcid: 'ean13', text: st.bc.code, includetext: true, scale: 2, height: 9, textsize: 9 }
     : { bcid: 'code128', text: st.bc.code, includetext: true, scale: 2, height: 9, textsize: 9 }) : '';
   const [pw, ph] = ($('size').value === 'auto' ? '58x40' : $('size').value).split('x').map(Number);
-  return `<div class="label${id && ph > pw ? ' tall' : ''}"${id ? ` id="${id}"` : ''}>
+  // компоновку при явном размере задаём сами: Firefox неверно отдаёт ориентацию листа
+  const tall = ph > pw && (id || (forPrint && $('size').value !== 'auto'));
+  return `<div class="label${tall ? ' tall' : ''}"${id ? ` id="${id}"` : ''}>
     <div class="dm">${dm}${st.kiz ? `<div class="hr">${esc(st.kiz.human)}</div>` : ''}</div>
     <div class="txt">
       <div class="nm">${esc(p.name || (st.kiz ? '' : 'Отсканируйте КИЗ и штрихкод'))}</div>
@@ -424,7 +426,8 @@ async function doPrint(opts = {}) {
       expiry: st.expiry, expiry_src: st.expirySrc, author: opts.author ?? $('who').value.trim() }) });
   } catch (e) { say('Не записалось в журнал: ' + esc(e.message) + '. Этикетку не печатаю.', 'bad'); printing = false; return 'журнал: ' + e.message; }
   const n = Math.max(1, Math.min(5, opts.copies || +$('copies').value || 1));
-  $('printArea').innerHTML = Array.from({ length: n }, () => labelHTML('')).join('');
+  $('printArea').className = $('size').value === 'auto' ? 'auto' : '';
+  $('printArea').innerHTML = Array.from({ length: n }, () => labelHTML('', true)).join('');
   window.print();
   await new Promise(r => setTimeout(r, 300));
   printing = false; reset(true); loadLog();
