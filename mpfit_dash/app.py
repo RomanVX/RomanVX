@@ -675,6 +675,84 @@ async def kiz_expiry_list():
     return {"rows": await _t(store.kiz_expiry_list)}
 
 
+# ── ТСД → станция печати. ТСД (Android-терминал со сканером) открывает /kiz в
+# режиме «сканер»: сканы собираются там же, готовая этикетка уходит заданием на
+# станцию — компьютер с термопринтером, где /kiz открыт в режиме «станция» и
+# раз в ~1,5 с забирает задания. Очередь в памяти процесса (один воркер):
+# задания живут минуты, при рестарте недопечатанное ТСД покажет как «не дошло».
+_KIZ_JOBS: dict[str, dict] = {}            # id → {station, ts, state, author, status}
+_KIZ_STATIONS: dict[str, float] = {}       # станция → время последнего опроса
+
+
+def _kiz_station(name: str) -> str:
+    return (name or "").strip()[:40] or "Упаковка"
+
+
+def _kiz_jobs_gc():
+    import time
+    now = time.time()
+    for k in [k for k, j in _KIZ_JOBS.items() if now - j["ts"] > 3600]:
+        _KIZ_JOBS.pop(k, None)
+
+
+@app.post("/api/kiz/job")
+async def kiz_job_add(request: Request, payload: dict):
+    import time
+    import uuid as _uuid
+    state = payload.get("state") or {}
+    if not (state.get("kiz") or {}).get("canon") or not state.get("bc") or not state.get("expiry"):
+        return JSONResponse({"error": "нужны КИЗ, штрихкод и срок годности"}, status_code=400)
+    _kiz_jobs_gc()
+    jid = _uuid.uuid4().hex[:12]
+    _KIZ_JOBS[jid] = {"id": jid, "station": _kiz_station(payload.get("station")), "ts": time.time(),
+                      "state": state, "author": _kiz_author(request, payload), "status": "new",
+                      "copies": max(1, min(5, int(payload.get("copies") or 1)))}
+    return {"id": jid}
+
+
+@app.get("/api/kiz/job/{jid}")
+async def kiz_job_status(jid: str):
+    j = _KIZ_JOBS.get(jid)
+    return {"status": j["status"] if j else "lost", "error": (j or {}).get("error", "")}
+
+
+@app.get("/api/kiz/jobs")
+async def kiz_jobs_take(station: str = "", wait: int = 0):
+    """Опрос станции: отдаёт новые задания и помечает их взятыми. wait — долгий
+    опрос (до 25 с): ответ приходит сразу, как появится задание. Ответ сети
+    браузер не притормаживает в фоновой вкладке, в отличие от таймеров."""
+    import time
+    st = _kiz_station(station)
+    deadline = time.time() + max(0, min(25, wait))
+    while True:
+        _KIZ_STATIONS[st] = time.time()
+        out = []
+        for j in sorted(_KIZ_JOBS.values(), key=lambda x: x["ts"]):
+            if j["station"] == st and j["status"] == "new":
+                j["status"] = "taken"
+                out.append({k: j[k] for k in ("id", "state", "author", "copies")})
+        if out or time.time() >= deadline:
+            return {"jobs": out}
+        await asyncio.sleep(0.4)
+
+
+@app.post("/api/kiz/job/{jid}/done")
+async def kiz_job_done(jid: str, payload: dict):
+    j = _KIZ_JOBS.get(jid)
+    if j:
+        j["status"] = "error" if payload.get("error") else "printed"
+        j["error"] = str(payload.get("error") or "")[:200]
+    return {"ok": True}
+
+
+@app.get("/api/kiz/stations")
+async def kiz_stations():
+    import time
+    now = time.time()
+    return {"stations": [{"name": k, "online": now - v < 40, "seen_sec": round(now - v)}
+                         for k, v in sorted(_KIZ_STATIONS.items(), key=lambda x: -x[1]) if now - v < 86400]}
+
+
 @app.post("/api/kiz/log")
 async def kiz_log_add(request: Request, payload: dict):
     if not payload.get("kiz"):

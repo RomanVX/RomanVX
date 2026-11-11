@@ -17,6 +17,10 @@ header h1{font-size:18px;margin:0}
 header a{color:var(--acc);text-decoration:none;font-size:14px}
 main{padding:20px 24px;display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:20px;max-width:1300px}
 @media (max-width:900px){main{grid-template-columns:1fr}}
+/* ТСД: маленький экран, только скан и статус */
+body.tsd #labelCard,body.tsd #expCard{display:none}
+
+#jobInfo .msg{margin-top:6px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:var(--rad);padding:16px 18px;display:flex;flex-direction:column;gap:12px;min-width:0}
 h2{font-size:15px;margin:0}
 .steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
@@ -26,6 +30,8 @@ h2{font-size:15px;margin:0}
 .step .s{font-size:12.5px;color:var(--muted)}
 .step.done{border:2px solid var(--ok);background:var(--okb)}
 .step.need{border:2px solid var(--warn);background:var(--warnb)}
+@media (max-width:600px){header{padding:8px 10px;gap:8px}main{padding:10px;gap:10px}.card{padding:12px}
+  .steps{gap:6px}.step{padding:8px;gap:2px}.step .s{display:none}.step .v{font-size:13px;overflow-wrap:anywhere;word-break:normal}}
 .scan{font-size:18px;padding:12px 14px;border:2px solid var(--acc);border-radius:10px;width:100%;font-family:ui-monospace,Consolas,monospace}
 .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
 .btn{border:1px solid var(--line);background:var(--card);border-radius:8px;padding:8px 14px;font:inherit;cursor:pointer}
@@ -97,6 +103,15 @@ th{color:var(--muted);font-weight:600;font-size:12px}
 <header>
   <h1>Упаковка КИЗ</h1>
   <label class="row" style="gap:6px;font-size:14px">Упаковщик <input id="who" placeholder="Имя" style="width:140px"></label>
+  <label class="row" style="gap:6px;font-size:14px">Режим
+    <select id="mode">
+      <option value="pc">Печать с этого компьютера</option>
+      <option value="tsd">ТСД: скан → печать на станции</option>
+      <option value="station">Станция печати для ТСД</option>
+    </select></label>
+  <label class="row" id="stationBox" style="gap:6px;font-size:14px" hidden>Станция
+    <input id="station" list="stationList" placeholder="Упаковка" style="width:130px"><datalist id="stationList"></datalist></label>
+  <span class="muted" id="modeInfo"></span>
   <span class="muted" id="todayCount"></span>
 </header>
 <main>
@@ -110,6 +125,7 @@ th{color:var(--muted);font-weight:600;font-size:12px}
       </div>
       <input class="scan" id="scan" autocomplete="off" spellcheck="false" placeholder="Сюда приходит скан. Можно вставить код и нажать Enter">
       <div id="msg"></div>
+      <div id="jobInfo"></div>
       <div class="row" id="expRow" hidden>
         <label class="f">Срок годности партии (для этого GTIN)
           <input type="date" id="expInput"></label>
@@ -140,7 +156,7 @@ th{color:var(--muted);font-weight:600;font-size:12px}
   </div>
 
   <div style="display:flex;flex-direction:column;gap:20px;min-width:0">
-    <section class="card">
+    <section class="card" id="labelCard">
       <h2>Этикетка</h2>
       <div class="preview"><div class="label" id="label"><div class="txt"><div class="nm muted">Отсканируйте КИЗ и штрихкод</div></div></div></div>
       <div class="row">
@@ -161,7 +177,7 @@ th{color:var(--muted);font-weight:600;font-size:12px}
       <p class="muted">«По бумаге принтера» — этикетка растягивается на весь лист, который выставлен в драйвере термопринтера. Если в окне печати стоят поля — выберите «Поля: нет», масштаб 100%. Печать идёт через окно печати браузера. Чтобы этикетки уходили на термопринтер без окна, запустите Chrome с флагом <code>--kiosk-printing</code> и выберите термопринтер принтером по умолчанию.</p>
     </section>
 
-    <section class="card">
+    <section class="card" id="expCard">
       <div class="row" style="justify-content:space-between">
         <h2>Сроки годности из поставки</h2>
         <span class="muted" id="expCount"></span>
@@ -261,7 +277,7 @@ $('pinForm').addEventListener('submit', async e => {
   const pin = $('pinInput').value.trim();
   document.cookie = `kiz_pin=${encodeURIComponent(pin)}; max-age=31536000; path=/; SameSite=Strict${location.protocol === 'https:' ? '; Secure' : ''}`;
   const r = await fetch('/api/kiz/ping');
-  if (r.ok) { $('pinGate').hidden = true; loadLog(); loadExpiries(); $('scan').focus(); }
+  if (r.ok) { $('pinGate').hidden = true; loadLog(); loadExpiries(); applyMode(); $('scan').focus(); }
   else showGate(r.status === 429 ? 'Слишком много неверных PIN. Подождите 15 минут.' : 'Неверный PIN');
 });
 
@@ -397,22 +413,94 @@ function labelHTML(id) {
 }
 
 let printing = false;
-async function doPrint() {
-  if (!ready() || printing) return;
+async function doPrint(opts = {}) {
+  if (!ready() || printing) return 'не готово к печати';
   printing = true;
   const p = st.product || {};
   try {
     await api('/api/kiz/log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
       kiz: st.kiz.canon, gtin: st.kiz.gtin, serial: st.kiz.serial, barcode: st.bc.code,
       article: p.article || '', name: p.name || '', company: p.company || '',
-      expiry: st.expiry, expiry_src: st.expirySrc, author: $('who').value.trim() }) });
-  } catch (e) { say('Не записалось в журнал: ' + esc(e.message) + '. Этикетку не печатаю.', 'bad'); printing = false; return; }
-  const n = Math.max(1, Math.min(5, +$('copies').value || 1));
+      expiry: st.expiry, expiry_src: st.expirySrc, author: opts.author ?? $('who').value.trim() }) });
+  } catch (e) { say('Не записалось в журнал: ' + esc(e.message) + '. Этикетку не печатаю.', 'bad'); printing = false; return 'журнал: ' + e.message; }
+  const n = Math.max(1, Math.min(5, opts.copies || +$('copies').value || 1));
   $('printArea').innerHTML = Array.from({ length: n }, () => labelHTML('')).join('');
   window.print();
-  setTimeout(() => { printing = false; reset(true); loadLog(); }, 300);
+  await new Promise(r => setTimeout(r, 300));
+  printing = false; reset(true); loadLog();
+  return '';
 }
-function maybeAutoPrint() { if ($('auto').checked && ready() && !st.mismatch && !st.dup) doPrint(); }
+function maybeAutoPrint() { if ($('auto').checked && ready() && !st.mismatch && !st.dup) (mode() === 'tsd' ? sendJob() : doPrint()); }
+
+/* ── ТСД → станция печати ─────────────────────────────────────────────── */
+const mode = () => $('mode').value;
+const stationName = () => $('station').value.trim() || 'Упаковка';
+function jobInfo(text, kind) { $('jobInfo').innerHTML = text ? `<div class="msg ${kind}">${text}</div>` : ''; }
+function applyMode() {
+  const m = mode();
+  document.body.classList.toggle('tsd', m === 'tsd');
+  $('stationBox').hidden = m === 'pc';
+  $('printBtn').textContent = m === 'tsd' ? 'Отправить на печать' : 'Печать этикетки';
+  $('scan').setAttribute('inputmode', m === 'tsd' ? 'none' : 'text');   // на ТСД не выпрыгивает клавиатура
+  $('modeInfo').textContent = '';
+  try { localStorage.setItem('kizMode', m); localStorage.setItem('kizStation', $('station').value.trim()); } catch (e) {}
+  if (m === 'station') stationLoop();
+  if (m === 'tsd') checkStation();
+}
+let sending = false;
+async function sendJob() {
+  if (!ready() || sending) return;
+  sending = true;
+  const station = stationName(), serial = st.kiz.serial;
+  try {
+    const r = await api('/api/kiz/job', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+      station, author: $('who').value.trim(), copies: +$('copies').value || 1,
+      state: { kiz: st.kiz, bc: st.bc, product: st.product, expiry: st.expiry, expirySrc: st.expirySrc } }) });
+    reset(false);
+    jobInfo(`Отправлено на станцию «${esc(station)}»: ${esc(serial)}…`, 'warn');
+    watchJob(r.id, serial, station);
+  } catch (e) { beep(false); jobInfo('Не отправилось: ' + esc(e.message), 'bad'); }
+  sending = false;
+}
+async function watchJob(id, serial, station) {
+  for (let i = 0; i < 40; i++) {
+    await new Promise(r => setTimeout(r, 1000));
+    let s;
+    try { s = await api('/api/kiz/job/' + id); } catch (e) { continue; }
+    if (s.status === 'printed') { jobInfo(`Напечатано на «${esc(station)}»: ${esc(serial)}. Сканируйте следующий товар.`, 'ok'); loadLog(); return; }
+    if (s.status === 'error') { beep(false); jobInfo(`Станция не напечатала ${esc(serial)}: ${esc(s.error)}`, 'bad'); return; }
+    if (s.status === 'lost') { beep(false); jobInfo(`Задание ${esc(serial)} потерялось (сервер перезапустился) — отсканируйте товар ещё раз.`, 'bad'); return; }
+  }
+  beep(false); jobInfo(`Станция «${esc(station)}» не забрала ${esc(serial)} за 40 с. На компьютере открыта «Упаковка КИЗ» в режиме «Станция печати» с тем же названием?`, 'bad');
+}
+async function checkStation() {
+  try {
+    const r = await api('/api/kiz/stations');
+    $('stationList').innerHTML = r.stations.map(x => `<option value="${esc(x.name)}">`).join('');
+    const me = r.stations.find(x => x.name === stationName());
+    $('modeInfo').textContent = me && me.online ? `станция «${stationName()}» на связи` : `станция «${stationName()}» не на связи`;
+  } catch (e) {}
+}
+let stationRun = false;
+async function stationLoop() {
+  if (stationRun) return;
+  stationRun = true;
+  while (mode() === 'station') {
+    if (printing || st.kiz || st.bc) { await new Promise(r => setTimeout(r, 1000)); continue; }   // не мешаем ручному скану
+    try {
+      const r = await api('/api/kiz/jobs?wait=25&station=' + encodeURIComponent(stationName()));
+      $('modeInfo').textContent = `станция «${stationName()}» ждёт сканов с ТСД`;
+      for (const j of r.jobs) {
+        Object.assign(st, { ...j.state, saved: null, dup: null, mismatch: false, crpt: null });
+        render();
+        const err = await doPrint({ author: j.author, copies: j.copies });
+        await api(`/api/kiz/job/${j.id}/done`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ error: err || '' }) }).catch(() => {});
+      }
+    } catch (e) { $('modeInfo').textContent = 'станция: нет связи с сервером, повторяю…'; await new Promise(r => setTimeout(r, 3000)); }
+  }
+  stationRun = false;
+}
 
 function reset(keepMsg) {
   Object.assign(st, { kiz: null, bc: null, product: null, expiry: null, expirySrc: null, saved: null, dup: null, mismatch: false, crpt: null });
@@ -421,7 +509,7 @@ function reset(keepMsg) {
   $('scan').focus();
 }
 
-$('printBtn').onclick = doPrint;
+$('printBtn').onclick = () => (mode() === 'tsd' ? sendJob() : doPrint());
 $('resetBtn').onclick = () => reset(false);
 $('bcFromGtin').onclick = () => {
   const ean = st.kiz.gtin.startsWith('0') ? st.kiz.gtin.slice(1) : st.kiz.gtin;
@@ -498,8 +586,11 @@ $('expUpload').onclick = async () => {
 $('d0').value = $('d1').value = mskToday();
 $('logReload').onclick = loadLog;
 $('logXlsx').onclick = () => { location.href = `/api/kiz/log.xlsx?d0=${$('d0').value}&d1=${$('d1').value}`; };
+try { $('mode').value = localStorage.getItem('kizMode') || 'pc'; $('station').value = localStorage.getItem('kizStation') || ''; } catch (e) {}
+$('mode').onchange = applyMode;
+$('station').onchange = applyMode;
 render();
-fetch('/api/kiz/ping').then(r => { if (r.ok) { loadLog(); loadExpiries(); $('scan').focus(); } else showGate(r.status === 429 ? 'Слишком много неверных PIN. Подождите 15 минут.' : ''); });
+fetch('/api/kiz/ping').then(r => { if (r.ok) { loadLog(); loadExpiries(); applyMode(); $('scan').focus(); } else showGate(r.status === 429 ? 'Слишком много неверных PIN. Подождите 15 минут.' : ''); });
 </script>
 </body>
 </html>
