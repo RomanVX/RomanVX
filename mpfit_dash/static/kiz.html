@@ -106,7 +106,7 @@ th{color:var(--muted);font-weight:600;font-size:12px}
       <div class="steps">
         <div class="step" id="stKiz"><b>КИЗ</b><span class="v">—</span><span class="s">DataMatrix «Честный знак»</span></div>
         <div class="step" id="stBc"><b>Штрихкод</b><span class="v">—</span><span class="s">EAN-13 или ШК маркетплейса</span></div>
-        <div class="step" id="stExp"><b>Годен до</b><span class="v">—</span><span class="s">из КИЗ или на партию</span></div>
+        <div class="step" id="stExp"><b>Годен до</b><span class="v">—</span><span class="s">из КИЗ, «Честного знака» или файла поставки</span></div>
       </div>
       <input class="scan" id="scan" autocomplete="off" spellcheck="false" placeholder="Сюда приходит скан. Можно вставить код и нажать Enter">
       <div id="msg"></div>
@@ -159,6 +159,24 @@ th{color:var(--muted);font-weight:600;font-size:12px}
         <label class="f">Копий <input type="number" id="copies" min="1" max="5" value="1" style="width:70px"></label>
       </div>
       <p class="muted">«По бумаге принтера» — этикетка растягивается на весь лист, который выставлен в драйвере термопринтера. Если в окне печати стоят поля — выберите «Поля: нет», масштаб 100%. Печать идёт через окно печати браузера. Чтобы этикетки уходили на термопринтер без окна, запустите Chrome с флагом <code>--kiosk-printing</code> и выберите термопринтер принтером по умолчанию.</p>
+    </section>
+
+    <section class="card">
+      <div class="row" style="justify-content:space-between">
+        <h2>Сроки годности из поставки</h2>
+        <span class="muted" id="expCount"></span>
+      </div>
+      <p class="muted" style="margin:0">Загрузите Excel поставки со списком сроков: нужны колонки «ЕАН» (штрихкод или GTIN) и «Срок годности», наименование и партия — по желанию. Срок сохранится по каждому штрихкоду и будет подставляться при скане КИЗ, если в самом коде срока нет. Новая поставка перезаписывает сроки старой.</p>
+      <div class="row">
+        <input type="file" id="expFile" accept=".xlsx" style="max-width:100%">
+        <button class="btn pri" id="expUpload">Загрузить сроки</button>
+      </div>
+      <div id="expResult" class="muted"></div>
+      <details id="expListBox">
+        <summary class="muted" style="cursor:pointer">Показать загруженные сроки</summary>
+        <input class="f" id="expFilter" placeholder="Поиск по названию или штрихкоду" style="margin:8px 0;width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:8px;font:inherit">
+        <div class="tw" style="max-height:360px;overflow-y:auto"><table style="table-layout:fixed"><thead><tr><th>Товар</th><th style="width:120px">Штрихкод</th><th style="width:84px">Годен до</th></tr></thead><tbody id="expList"></tbody></table></div>
+      </details>
     </section>
   </div>
 </main>
@@ -243,7 +261,7 @@ $('pinForm').addEventListener('submit', async e => {
   const pin = $('pinInput').value.trim();
   document.cookie = `kiz_pin=${encodeURIComponent(pin)}; max-age=31536000; path=/; SameSite=Strict${location.protocol === 'https:' ? '; Secure' : ''}`;
   const r = await fetch('/api/kiz/ping');
-  if (r.ok) { $('pinGate').hidden = true; loadLog(); $('scan').focus(); }
+  if (r.ok) { $('pinGate').hidden = true; loadLog(); loadExpiries(); $('scan').focus(); }
   else showGate(r.status === 429 ? 'Слишком много неверных PIN. Подождите 15 минут.' : 'Неверный PIN');
 });
 
@@ -446,11 +464,42 @@ async function loadLog() {
     if (d0 === mskToday() && d1 === mskToday()) $('todayCount').textContent = `Сегодня напечатано: ${r.rows.length}`;
   } catch (e) { $('logBody').innerHTML = `<tr><td colspan="8" class="muted">${esc(e.message)}</td></tr>`; }
 }
+let _expRows = [];
+async function loadExpiries() {
+  try {
+    const r = await api('/api/kiz/expiry/list');
+    _expRows = r.rows || [];
+    $('expCount').textContent = _expRows.length ? `сохранено: ${_expRows.length}` : 'пока ничего не загружено';
+    renderExpiries();
+  } catch (e) { /* PIN ещё не введён — загрузится позже */ }
+}
+function renderExpiries() {
+  const q = ($('expFilter').value || '').trim().toLowerCase();
+  const rows = _expRows.filter(x => !q || (x.product || '').toLowerCase().includes(q) || x.gtin.includes(q));
+  $('expList').innerHTML = rows.length ? rows.map(x => `<tr><td style="white-space:normal;word-break:break-word">${esc(x.product || '—')}</td><td>${esc(x.gtin.replace(/^0/, ''))}</td><td><b>${fmtD(x.expiry)}</b></td></tr>`).join('')
+    : '<tr><td colspan="3" class="muted">Ничего не найдено</td></tr>';
+}
+$('expFilter').oninput = renderExpiries;
+$('expUpload').onclick = async () => {
+  const f = $('expFile').files[0];
+  if (!f) { $('expResult').textContent = 'Выберите файл поставки (.xlsx).'; return; }
+  $('expUpload').disabled = true; $('expResult').textContent = 'Загружаю…';
+  try {
+    const r = await api('/api/kiz/expiry/import?author=' + encodeURIComponent($('who').value.trim()),
+      { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: f });
+    $('expResult').innerHTML = `Готово: в файле <b>${r.total}</b> товаров — новых ${r.added}, обновлён срок у ${r.changed}, без изменений ${r.same}.` +
+      (r.notes && r.notes.length ? '<br>' + r.notes.map(esc).join('<br>') : '');
+    $('expFile').value = '';
+    loadExpiries();
+  } catch (e) { $('expResult').textContent = 'Не загрузилось: ' + e.message; }
+  $('expUpload').disabled = false; $('scan').focus();
+};
+
 $('d0').value = $('d1').value = mskToday();
 $('logReload').onclick = loadLog;
 $('logXlsx').onclick = () => { location.href = `/api/kiz/log.xlsx?d0=${$('d0').value}&d1=${$('d1').value}`; };
 render();
-fetch('/api/kiz/ping').then(r => { if (r.ok) { loadLog(); $('scan').focus(); } else showGate(r.status === 429 ? 'Слишком много неверных PIN. Подождите 15 минут.' : ''); });
+fetch('/api/kiz/ping').then(r => { if (r.ok) { loadLog(); loadExpiries(); $('scan').focus(); } else showGate(r.status === 429 ? 'Слишком много неверных PIN. Подождите 15 минут.' : ''); });
 </script>
 </body>
 </html>

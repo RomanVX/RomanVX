@@ -588,6 +588,93 @@ async def kiz_expiry_set(request: Request, payload: dict):
     return {"ok": True}
 
 
+def _parse_expiry_xlsx(data: bytes) -> tuple[list[dict], list[str]]:
+    """Файл поставки/список сроков: ищем на листах строку-заголовок с колонкой
+    штрихкода (ЕАН / EAN / GTIN / ШК) и срока («Срок годности» / «Годен до»).
+    Наименование и партия — если есть. Повтор GTIN с разными сроками → берём
+    более ранний (безопаснее) и сообщаем."""
+    import io
+    import re
+    from datetime import date, datetime
+    from openpyxl import load_workbook
+    wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+
+    def col(hdr, *keys):
+        for i, h in enumerate(hdr):
+            h = str(h or "").strip().lower()
+            if any(k in h for k in keys):
+                return i
+        return None
+
+    def to_date(v):
+        if isinstance(v, (datetime, date)):
+            return v.strftime("%Y-%m-%d")
+        v = str(v or "").strip()
+        m = re.match(r"^(\d{4})-(\d{2})-(\d{2})", v)
+        if m:
+            return "-".join(m.groups())
+        m = re.match(r"^(\d{1,2})[./](\d{1,2})[./](\d{2,4})$", v)
+        if m:
+            d, mo, y = m.groups()
+            y = ("20" + y) if len(y) == 2 else y
+            return f"{y}-{int(mo):02d}-{int(d):02d}"
+        return None
+
+    found: dict[str, dict] = {}
+    notes: list[str] = []
+    for ws in wb.worksheets:
+        rows = ws.iter_rows(values_only=True)
+        hdr = None
+        for _ in range(15):                     # заголовок — в первых строках
+            r = next(rows, None)
+            if r is None:
+                break
+            if col(r, "еан", "ean", "gtin", "штрихкод", "шк") is not None and col(r, "срок год", "годен") is not None:
+                hdr = r
+                break
+        if not hdr:
+            continue
+        ci, ce = col(hdr, "еан", "ean", "gtin", "штрихкод", "шк"), col(hdr, "срок год", "годен")
+        cn, cb = col(hdr, "наименован", "товар", "назван"), col(hdr, "парти", "batch", "lot")
+        for r in rows:
+            if not r or ci >= len(r) or ce >= len(r):
+                continue
+            g = re.sub(r"\D", "", str(r[ci] or ""))
+            e = to_date(r[ce])
+            if not g or not e or len(g) > 14:
+                continue
+            g = g.zfill(14)                     # EAN-13 → GTIN-14 как в КИЗ
+            name = str(r[cn] or "").strip() if cn is not None and cn < len(r) else ""
+            batch = str(r[cb] or "").strip() if cb is not None and cb < len(r) else ""
+            prev = found.get(g)
+            if prev and prev["expiry"] != e:
+                notes.append(f"{name or g}: в файле два срока {prev['expiry']} и {e} — взят ранний")
+                if e > prev["expiry"]:
+                    continue
+            found[g] = {"gtin": g, "expiry": e,
+                        "product": (name + (f" · партия {batch}" if batch else ""))[:200]}
+    return list(found.values()), notes
+
+
+@app.post("/api/kiz/expiry/import")
+async def kiz_expiry_import(request: Request):
+    """Тело — xlsx (файл поставки со сроками). Сохраняет срок по каждому GTIN."""
+    data = await request.body()
+    try:
+        rows, notes = await _t(_parse_expiry_xlsx, data)
+    except Exception as e:
+        return JSONResponse({"error": "файл не прочитался: " + str(e)[:150]}, status_code=400)
+    if not rows:
+        return JSONResponse({"error": "не нашёл колонки штрихкода (ЕАН/GTIN) и срока годности"}, status_code=400)
+    res = await _t(store.kiz_expiry_bulk, rows, _kiz_author(request, {"author": request.query_params.get("author")}))
+    return {**res, "total": len(rows), "notes": notes[:20]}
+
+
+@app.get("/api/kiz/expiry/list")
+async def kiz_expiry_list():
+    return {"rows": await _t(store.kiz_expiry_list)}
+
+
 @app.post("/api/kiz/log")
 async def kiz_log_add(request: Request, payload: dict):
     if not payload.get("kiz"):

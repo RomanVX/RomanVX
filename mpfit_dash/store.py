@@ -380,6 +380,33 @@ def kiz_expiry_set(gtin: str, expiry: str, product: str, author: str):
                    (gtin, expiry, product, now, author))
 
 
+def kiz_expiry_bulk(rows: list[dict], author: str) -> dict:
+    """Сроки годности списком (из файла поставки): [{gtin, expiry, product}].
+    Перезаписывает срок по GTIN — свежая поставка важнее старой партии."""
+    from datetime import datetime
+    now = datetime.utcnow().isoformat(timespec="seconds")
+    have = {g: e for g, e in db.fetchall("SELECT gtin, expiry FROM kiz_expiry")}
+    added = changed = same = 0
+    for r in rows:
+        g, e, p = r["gtin"], r["expiry"], r.get("product") or ""
+        if g not in have:
+            db.execute("INSERT INTO kiz_expiry (gtin, expiry, product, updated_at, author) VALUES (?,?,?,?,?)",
+                       (g, e, p, now, author))
+            added += 1
+        elif have[g] != e:
+            db.execute("UPDATE kiz_expiry SET expiry = ?, product = ?, updated_at = ?, author = ? WHERE gtin = ?",
+                       (e, p, now, author, g))
+            changed += 1
+        else:
+            same += 1
+    return {"added": added, "changed": changed, "same": same}
+
+
+def kiz_expiry_list() -> list[dict]:
+    return [{"gtin": g, "expiry": e, "product": p, "updated_at": u}
+            for g, e, p, u in db.fetchall("SELECT gtin, expiry, product, updated_at FROM kiz_expiry ORDER BY updated_at DESC")]
+
+
 def kiz_log_add(e: dict, author: str) -> dict:
     """Пишет этикетку в журнал. Возвращает, сколько раз этот КИЗ печатали раньше."""
     from datetime import datetime
