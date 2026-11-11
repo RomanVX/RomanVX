@@ -88,7 +88,8 @@ TAX_RATE = 0.07
 
 # колонки, добавленные после первой версии (ALTER без IF NOT EXISTS — для SQLite)
 _ADD_COLUMNS = [("ledger", "invoice", "TEXT"), ("ledger", "recurring_id", "TEXT"),
-                ("m_invoices", "created_ts", "TEXT"), ("ledger", "staff_id", "TEXT")]
+                ("m_invoices", "created_ts", "TEXT"), ("ledger", "staff_id", "TEXT"),
+                ("kiz_expiry", "article", "TEXT"), ("kiz_expiry", "batch", "TEXT")]
 
 # статусы, после которых «Отгрузка FBS» уже должна стоять
 SHIPPED = ("SHIPPED", "DELIVERY", "COMPLETE")
@@ -362,11 +363,11 @@ def kiz_product(barcode: str = "", gtin: str = "") -> dict | None:
 
 
 def kiz_expiry_get(gtin: str) -> dict | None:
-    r = db.fetchall("SELECT gtin, expiry, product, updated_at, author FROM kiz_expiry WHERE gtin = ?", (gtin,))
+    r = db.fetchall("SELECT gtin, expiry, product, updated_at, author, article, batch FROM kiz_expiry WHERE gtin = ?", (gtin,))
     if not r:
         return None
-    g, e, p, u, a = r[0]
-    return {"gtin": g, "expiry": e, "product": p, "updated_at": u, "author": a}
+    g, e, p, u, a, art, b = r[0]
+    return {"gtin": g, "expiry": e, "product": p, "updated_at": u, "author": a, "article": art or "", "batch": b or ""}
 
 
 def kiz_expiry_set(gtin: str, expiry: str, product: str, author: str):
@@ -385,26 +386,32 @@ def kiz_expiry_bulk(rows: list[dict], author: str) -> dict:
     Перезаписывает срок по GTIN — свежая поставка важнее старой партии."""
     from datetime import datetime
     now = datetime.utcnow().isoformat(timespec="seconds")
-    have = {g: e for g, e in db.fetchall("SELECT gtin, expiry FROM kiz_expiry")}
+    have = {g: (e, p or "", a or "", b or "") for g, e, p, a, b in
+            db.fetchall("SELECT gtin, expiry, product, article, batch FROM kiz_expiry")}
     added = changed = same = 0
     for r in rows:
-        g, e, p = r["gtin"], r["expiry"], r.get("product") or ""
+        g, e = r["gtin"], r["expiry"]
+        p, art, b = r.get("product") or "", r.get("article") or "", r.get("batch") or ""
         if g not in have:
-            db.execute("INSERT INTO kiz_expiry (gtin, expiry, product, updated_at, author) VALUES (?,?,?,?,?)",
-                       (g, e, p, now, author))
+            db.execute("INSERT INTO kiz_expiry (gtin, expiry, product, updated_at, author, article, batch) "
+                       "VALUES (?,?,?,?,?,?,?)", (g, e, p, now, author, art, b))
             added += 1
-        elif have[g] != e:
-            db.execute("UPDATE kiz_expiry SET expiry = ?, product = ?, updated_at = ?, author = ? WHERE gtin = ?",
-                       (e, p, now, author, g))
-            changed += 1
+        elif have[g] != (e, p, art, b):
+            db.execute("UPDATE kiz_expiry SET expiry = ?, product = ?, updated_at = ?, author = ?, article = ?, batch = ? "
+                       "WHERE gtin = ?", (e, p, now, author, art, b, g))
+            if have[g][0] != e:
+                changed += 1
+            else:
+                same += 1
         else:
             same += 1
     return {"added": added, "changed": changed, "same": same}
 
 
 def kiz_expiry_list() -> list[dict]:
-    return [{"gtin": g, "expiry": e, "product": p, "updated_at": u}
-            for g, e, p, u in db.fetchall("SELECT gtin, expiry, product, updated_at FROM kiz_expiry ORDER BY updated_at DESC")]
+    return [{"gtin": g, "expiry": e, "product": p, "updated_at": u, "article": a or "", "batch": b or ""}
+            for g, e, p, u, a, b in db.fetchall("SELECT gtin, expiry, product, updated_at, article, batch "
+                                                "FROM kiz_expiry ORDER BY updated_at DESC")]
 
 
 def kiz_log_add(e: dict, author: str) -> dict:

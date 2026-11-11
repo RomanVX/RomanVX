@@ -574,6 +574,12 @@ async def kiz_lookup(gtin: str = "", barcode: str = "", kiz: str = ""):
     и печатали ли уже этот КИЗ."""
     prod = await _t(store.kiz_product, barcode.strip(), gtin.strip())
     exp = await _t(store.kiz_expiry_get, gtin.strip()) if gtin else None
+    if not prod and exp and exp.get("product"):
+        # в остатках МПФИТ товара нет — название и артикул из загруженной поставки
+        g = exp["gtin"]
+        prod = {"product_id": None, "article": exp.get("article") or "", "source": "поставка",
+                "name": exp["product"].split(" · партия ")[0], "company": "",
+                "barcodes": [g[1:] if g.startswith("0") else g]}
     printed = await _t(store.kiz_printed, kiz) if kiz else None
     return {"product": prod, "expiry": exp, "printed": printed}
 
@@ -636,6 +642,7 @@ def _parse_expiry_xlsx(data: bytes) -> tuple[list[dict], list[str]]:
             continue
         ci, ce = col(hdr, "еан", "ean", "gtin", "штрихкод", "шк"), col(hdr, "срок год", "годен")
         cn, cb = col(hdr, "наименован", "товар", "назван"), col(hdr, "парти", "batch", "lot")
+        ca = col(hdr, "артикул", "article", "sku")
         for r in rows:
             if not r or ci >= len(r) or ce >= len(r):
                 continue
@@ -646,13 +653,13 @@ def _parse_expiry_xlsx(data: bytes) -> tuple[list[dict], list[str]]:
             g = g.zfill(14)                     # EAN-13 → GTIN-14 как в КИЗ
             name = str(r[cn] or "").strip() if cn is not None and cn < len(r) else ""
             batch = str(r[cb] or "").strip() if cb is not None and cb < len(r) else ""
+            art = str(r[ca] or "").strip() if ca is not None and ca < len(r) else ""
             prev = found.get(g)
             if prev and prev["expiry"] != e:
                 notes.append(f"{name or g}: в файле два срока {prev['expiry']} и {e} — взят ранний")
                 if e > prev["expiry"]:
                     continue
-            found[g] = {"gtin": g, "expiry": e,
-                        "product": (name + (f" · партия {batch}" if batch else ""))[:200]}
+            found[g] = {"gtin": g, "expiry": e, "product": name[:200], "article": art[:60], "batch": batch[:60]}
     return list(found.values()), notes
 
 

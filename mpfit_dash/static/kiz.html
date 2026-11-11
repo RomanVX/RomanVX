@@ -573,7 +573,7 @@ async function loadExpiries() {
 function renderExpiries() {
   const q = ($('expFilter').value || '').trim().toLowerCase();
   const rows = _expRows.filter(x => !q || (x.product || '').toLowerCase().includes(q) || x.gtin.includes(q));
-  $('expList').innerHTML = rows.length ? rows.map(x => `<tr><td style="white-space:normal;word-break:break-word">${esc(x.product || '—')}</td><td>${esc(x.gtin.replace(/^0/, ''))}</td><td><b>${fmtD(x.expiry)}</b></td></tr>`).join('')
+  $('expList').innerHTML = rows.length ? rows.map(x => `<tr><td style="white-space:normal;word-break:break-word">${esc(x.product || '—')}${x.article ? `<div class="muted">арт. ${esc(x.article)}${x.batch ? ' · партия ' + esc(x.batch) : ''}</div>` : (x.batch ? `<div class="muted">партия ${esc(x.batch)}</div>` : '')}</td><td>${esc(x.gtin.replace(/^0/, ''))}</td><td><b>${fmtD(x.expiry)}</b></td></tr>`).join('')
     : '<tr><td colspan="3" class="muted">Ничего не найдено</td></tr>';
 }
 $('expFilter').oninput = renderExpiries;
