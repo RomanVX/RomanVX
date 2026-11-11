@@ -6678,6 +6678,7 @@ async function loadGrowth(refresh) {
     }
     _gr = d; renderGrowth();
     if (d.building) setTimeout(() => { if (currentTab === 'growth') loadGrowth(); }, 10000);
+    else { clearTimeout(window._grTimer); window._grTimer = setTimeout(() => { if (currentTab === 'growth') loadGrowth(); }, 15 * 60e3); }
   } catch (e) { wrap.innerHTML = `<div class="alert alert-danger">Ошибка: ${e.message}</div>`; }
 }
 
@@ -6726,8 +6727,42 @@ function renderGrowth() {
     <span>Цель: оборот ×${t.revenue_x}, к выводу ≥${t.payout}%, маржа ≥${t.margin}%</span>
     <span>Окно факта: <b>${dd(n.from || n.week)}–${dd(n.to || '')}</b> (последние 7 полных дней)</span></div>`;
 
+  // 0. Внутри дня: накопительно к текущему часу против вчера и обычного дня до старта
+  const iz = d.intraday, dl = d.daily || [];
+  if (iz) {
+    const [qt, qy, qb] = iz.to_hour.orders, [rt, ry, rb] = iz.to_hour.revenue;
+    const vs = (a, b2, lbl, rub) => `<div class="s"><span>${lbl}</span><span>${rub ? fmt(Math.round(b2)) + ' ₽' : Math.round(b2 * 10) / 10}${dlt(a, b2)}</span></div>`;
+    const planDay = iz.plan_day, pp = planDay ? Math.round(rt / planDay * 100) : null;
+    // до / после правок: полные дни с даты старта против 14 дней до старта
+    const pre = dl.filter(x => x.date >= iz.base_from && x.date <= iz.base_to), post = dl.filter(x => x.after_start && !x.partial);
+    const avg = (arr, k2) => arr.length ? arr.reduce((a, x) => a + (x[k2] || 0), 0) / arr.length : null;
+    const sumDrr = arr => { const r = arr.reduce((a, x) => a + x.revenue, 0); return r ? Math.round(arr.reduce((a, x) => a + x.ad, 0) / r * 1000) / 10 : null; };
+    h += `<div class="gr-sec">Сегодня, ${dd(iz.today)} · данные на ${iz.now} МСК</div>
+    <div class="gr-goals">
+      <div class="gr-goal"><div class="t"><span>Заказы с начала дня</span></div><div class="v">${Math.round(qt)} <small>шт</small></div>
+        ${vs(qt, qy, 'вчера к этому часу')}${vs(qt, qb, 'обычно до старта')}</div>
+      <div class="gr-goal"><div class="t"><span>Выручка с начала дня</span></div><div class="v">${fmt(Math.round(rt))} <small>₽</small></div>
+        ${vs(rt, ry, 'вчера к этому часу', 1)}${vs(rt, rb, 'обычно до старта', 1)}</div>
+      <div class="gr-goal"><div class="t"><span>План дня</span>${pp != null ? `<span class="gr-pill ${pp >= 100 ? 'gr-ok' : 'gr-mid'}">${pp}%</span>` : ''}</div>
+        <div class="v">${planDay ? fmt(planDay) + ' <small>₽</small>' : '—'}</div>
+        <div class="gr-bar"><i style="width:${Math.min(100, pp || 0)}%;background:${(pp || 0) >= 100 ? 'var(--pos)' : 'var(--warn-c)'}"></i></div>
+        <div class="s"><span>обычный день до старта</span><span>${fmt(Math.round(iz.orders.base[23] ? iz.revenue.base[23] : 0))} ₽</span></div></div>
+      <div class="gr-goal"><div class="t"><span>После правок (полных дней: ${post.length})</span></div>
+        <div class="v">${post.length ? Math.round(avg(post, 'orders')) : '—'} <small>заказов/день</small></div>
+        <div class="s"><span>до старта</span><span>${pre.length ? Math.round(avg(pre, 'orders')) : '—'}${post.length && pre.length ? dlt(avg(post, 'orders'), avg(pre, 'orders')) : ''}</span></div>
+        <div class="s"><span>выручка/день</span><span>${post.length ? fmt(Math.round(avg(post, 'revenue'))) : '—'} ₽${post.length && pre.length ? dlt(avg(post, 'revenue'), avg(pre, 'revenue')) : ''}</span></div>
+        <div class="s"><span>ДРР до → после</span><span>${sumDrr(pre) ?? '—'}% → ${post.length ? (sumDrr(post) ?? '—') + '%' : '—'}</span></div></div>
+    </div>
+    <div class="gr-charts mt-2">
+      <div class="gr-card"><h6>Выручка по часам, накопительно</h6><div class="note">сегодня — сплошная, вчера — пунктир, обычный день до старта (среднее ${dd(iz.base_from)}–${dd(iz.base_to)}) — серая</div><div style="height:220px"><canvas id="grChartDay"></canvas></div></div>
+      <div class="gr-card" style="padding:4px 6px"><table class="gr-tbl"><thead><tr><th>Группа</th><th>Сегодня</th><th>Вчера</th><th>Обычно</th><th>К обычному</th></tr></thead><tbody>` +
+      iz.groups.map(g => `<tr><td>${g.group}<div class="sub">за полный день обычно ${g.base_full_day}</div></td><td><b>${g.today}</b></td><td>${g.yesterday}</td><td>${g.base}</td><td>${g.base ? dlt(g.today, g.base) : ''}</td></tr>`).join('') +
+      `</tbody></table><div class="note" style="padding:4px 8px">заказы, шт — с начала дня до ${iz.now}</div></div>
+    </div>`;
+  }
+
   // 1. Цели
-  h += `<div class="gr-sec">Где мы сейчас</div><div class="gr-goals">
+  h += `<div class="gr-sec">Где мы сейчас · 7 дней</div><div class="gr-goals">
     ${_grGoal('Оборот за 7 дней', n.revenue, wkStart, n.plan || wkFinal, '₽', 'up')}
     ${_grGoal('К выводу', n.payout, k.payout, t.payout, '%', 'up')}
     ${_grGoal('Маржа', n.margin, k.margin, t.margin, '%', 'up')}
@@ -6743,9 +6778,9 @@ function renderGrowth() {
     : `<div class="gr-alerts ok">Всё в норме: просадок заказов, цен ниже минимальной и низкого «к выводу» нет.</div>`);
 
   // 3. Графики
-  h += `<div class="gr-sec">Динамика по неделям</div><div class="gr-charts">
-    <div class="gr-card"><h6>Оборот за неделю против плана</h6><div class="note">▶ — неделя старта, * — неделя ещё идёт</div><div style="height:240px"><canvas id="grChart"></canvas></div></div>
-    <div class="gr-card"><h6>Доходность и реклама, %</h6><div class="note">пунктир — цели</div><div style="height:240px"><canvas id="grChart2"></canvas></div></div>
+  h += `<div class="gr-sec">Динамика по дням</div><div class="gr-charts">
+    <div class="gr-card"><h6>Выручка за день против плана</h6><div class="note">серые — до старта, ▶ — день старта, последний столбец — сегодня (неполный)</div><div style="height:240px"><canvas id="grChart"></canvas></div></div>
+    <div class="gr-card"><h6>Доходность и реклама, %</h6><div class="note">скользящие 7 дней · пунктир — цели</div><div style="height:240px"><canvas id="grChart2"></canvas></div></div>
   </div>`;
 
   // 4. Группы → товары
@@ -6799,8 +6834,18 @@ function renderGrowth() {
   wrap.innerHTML = h;
 
   // графики
-  const s = d.series, startIdx = s.findIndex(x => x.is_start);
-  const lbl = s.map(x => dd(x.week) + (x.is_start ? ' ▶' : '') + (x.days < 7 ? ' *' : ''));
+  // по дням (если бэкенд старый — по неделям)
+  const daily = (d.daily || []).slice(-35);
+  const useD = daily.length > 0;
+  const s = useD ? daily.map(x => ({ ...x, week: x.date, is_start: x.date === b.start, days: x.partial ? 0 : 7 })) : d.series;
+  const startIdx = useD ? s.findIndex(x => x.after_start) : s.findIndex(x => x.is_start);
+  if (useD) {                               // % — скользящие 7 дней, взвешенно по выручке
+    s.forEach((x, i) => { const w = s.slice(Math.max(0, i - 6), i + 1).filter(y => !y.partial); const rv = w.reduce((a, y) => a + y.revenue, 0);
+      const wsum = k2 => w.reduce((a, y) => a + (y[k2] || 0) * y.revenue / 100, 0);
+      x.payout7 = rv ? Math.round(wsum('payout') / rv * 1000) / 10 : null; x.margin7 = rv ? Math.round(wsum('margin') / rv * 1000) / 10 : null;
+      x.drr7 = rv ? Math.round(w.reduce((a, y) => a + y.ad, 0) / rv * 1000) / 10 : null; });
+  }
+  const lbl = s.map(x => dd(x.week) + (x.is_start ? ' ▶' : '') + (useD ? '' : (x.days < 7 ? ' *' : '')));
   const C = { pos: CHART_C.pos, neg: '#f87171', blue: '#38bdf8', vio: '#a78bfa', gold: 'rgba(201,168,76,.75)', pre: 'rgba(148,163,184,.35)' };
   const barCol = s.map((x, i) => i < startIdx ? C.pre : x.days < 7 ? 'rgba(201,168,76,.35)' : x.plan && x.revenue >= x.plan ? 'rgba(74,222,128,.7)' : C.gold);
   const base = { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
@@ -6820,9 +6865,9 @@ function renderGrowth() {
   charts.growth2 = new Chart(document.getElementById('grChart2'), {
     type: 'line',
     data: { labels: lbl, datasets: [
-      { label: 'К выводу', data: s.map(x => x.payout), borderColor: C.blue, backgroundColor: C.blue, pointRadius: 2, borderWidth: 2 },
-      { label: 'Маржа', data: s.map(x => x.margin), borderColor: C.vio, backgroundColor: C.vio, pointRadius: 2, borderWidth: 2 },
-      { label: 'ДРР', data: s.map(x => x.drr), borderColor: C.neg, backgroundColor: C.neg, pointRadius: 2, borderWidth: 2 },
+      { label: 'К выводу', data: s.map(x => useD ? x.payout7 : x.payout), borderColor: C.blue, backgroundColor: C.blue, pointRadius: 2, borderWidth: 2 },
+      { label: 'Маржа', data: s.map(x => useD ? x.margin7 : x.margin), borderColor: C.vio, backgroundColor: C.vio, pointRadius: 2, borderWidth: 2 },
+      { label: 'ДРР', data: s.map(x => useD ? x.drr7 : x.drr), borderColor: C.neg, backgroundColor: C.neg, pointRadius: 2, borderWidth: 2 },
       tgt(t.payout, C.blue), tgt(t.margin, C.vio), tgt(t.drr, C.neg),
     ] },
     options: { ...base, plugins: { legend: { ...base.plugins.legend, labels: { ...base.plugins.legend.labels, filter: i => !!i.text } },
@@ -6830,4 +6875,21 @@ function renderGrowth() {
       scales: { x: { ticks: { color: CHART_C.tick2 }, grid: { display: false } },
         y: { ticks: { color: CHART_C.tick, callback: v => v + '%' }, grid: { color: CHART_C.grid } } } },
   });
+  // внутри дня
+  if (charts.growthDay) charts.growthDay.destroy();
+  if (iz && document.getElementById('grChartDay')) {
+    const hrs = [...Array(24).keys()].map(x => String(x).padStart(2, '0') + ':00');
+    charts.growthDay = new Chart(document.getElementById('grChartDay'), {
+      type: 'line',
+      data: { labels: hrs, datasets: [
+        { label: 'Сегодня', data: iz.revenue.today.map((v, i) => i <= iz.hour ? v : null), borderColor: CHART_C.pos, backgroundColor: CHART_C.pos, borderWidth: 2.5, pointRadius: 0 },
+        { label: 'Вчера', data: iz.revenue.yesterday, borderColor: C.blue, borderDash: [5, 4], borderWidth: 1.5, pointRadius: 0 },
+        { label: 'Обычно до старта', data: iz.revenue.base, borderColor: 'rgba(148,163,184,.8)', borderWidth: 1.5, pointRadius: 0 },
+        ...(iz.plan_day ? [{ label: 'План дня', data: hrs.map(() => iz.plan_day), borderColor: CHART_C.pos, borderDash: [2, 4], borderWidth: 1, pointRadius: 0 }] : []),
+      ] },
+      options: { ...base, plugins: { ...base.plugins, tooltip: { callbacks: { label: c => `${c.dataset.label}: ${c.raw == null ? '—' : fmt(c.raw) + ' ₽'}` } } },
+        scales: { x: { ticks: { color: CHART_C.tick2, maxTicksLimit: 8 }, grid: { display: false } },
+          y: { ticks: { color: CHART_C.tick, callback: v => Math.round(v / 1e3) + ' тыс' }, grid: { color: CHART_C.grid } } } },
+    });
+  }
 }

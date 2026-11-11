@@ -29,7 +29,7 @@ router = APIRouter(prefix="/api/growth", tags=["growth"])
 _BASE_KEY = "growth_baseline"
 _JOURNAL_KEY = "growth_journal"
 _STATE_KEY = "growth_state"
-_TTL = 3600
+_TTL = 900                     # 15 мин: мониторинг «внутри дня»
 _state: dict = {"building": False, "progress": "", "error": "", "data": None, "ts": 0.0}
 _bg: set = set()
 
@@ -72,11 +72,23 @@ def _msk_today() -> date:
 
 # ── сбор факта ───────────────────────────────────────────────────────────────
 
-async def _orders(since: date, to: date) -> tuple[dict, dict]:
-    """{(день, артикул): [шт, выручка]} и {день: [локальных, всего]} (FBO)."""
+def _msk(ts: str) -> tuple[str, int]:
+    """ISO-время Ozon (UTC) → (день МСК, час МСК)."""
+    try:
+        t = datetime.fromisoformat((ts or "").replace("Z", "+00:00").split(".")[0].replace("+00:00", ""))
+    except ValueError:
+        return (ts or "")[:10], 0
+    t += timedelta(hours=3)
+    return t.strftime("%Y-%m-%d"), t.hour
+
+
+async def _orders(since: date, to: date) -> tuple[dict, dict, dict]:
+    """{(день МСК, артикул): [шт, выручка]}, {день: [локальных, всего]} (FBO)
+    и почасовая раскладка {(день МСК, час, артикул): [шт, выручка]} — для «внутри дня»."""
     import ozon_client as oz
     by = defaultdict(lambda: [0, 0.0])
     loc = defaultdict(lambda: [0, 0])
+    hr = defaultdict(lambda: [0, 0.0])
     s, t = f"{since}T00:00:00Z", f"{to}T23:59:59Z"
     cursor = ""
     for _ in range(200):                                   # FBO v3 с финданными (кластеры)
@@ -87,16 +99,15 @@ async def _orders(since: date, to: date) -> tuple[dict, dict]:
         for p in ps:
             if p.get("status") == "cancelled":
                 continue
-            day = (p.get("created_at") or p.get("in_process_at") or "")[:10]
+            day, hour = _msk(p.get("created_at") or p.get("in_process_at") or "")
             f = p.get("financial_data") or {}
             if f.get("cluster_from") and f.get("cluster_to"):
                 loc[day][1] += 1
                 loc[day][0] += 1 if f["cluster_from"] == f["cluster_to"] else 0
             for pr in p.get("products") or []:
-                x = by[(day, pr.get("offer_id"))]
-                q = int(pr.get("quantity") or 0)
-                x[0] += q
-                x[1] += oz._price_amount(pr.get("price")) * q
+                x = by[(day, pr.get("offer_id"))]; h = hr[(day, hour, pr.get("offer_id"))]
+                q = int(pr.get("quantity") or 0); m = oz._price_amount(pr.get("price")) * q
+                x[0] += q; x[1] += m; h[0] += q; h[1] += m
         cursor = d.get("cursor") or ""
         if not d.get("has_next") or not cursor or not ps:
             break
@@ -104,15 +115,14 @@ async def _orders(since: date, to: date) -> tuple[dict, dict]:
         for p in await oz.fbs_postings_v4(s, t):
             if p.get("status") == "cancelled":
                 continue
-            day = (p.get("in_process_at") or p.get("created_at") or "")[:10]
+            day, hour = _msk(p.get("in_process_at") or p.get("created_at") or "")
             for pr in p.get("products") or []:
-                x = by[(day, pr.get("offer_id"))]
-                q = int(pr.get("quantity") or 0)
-                x[0] += q
-                x[1] += oz._price_amount(pr.get("price")) * q
+                x = by[(day, pr.get("offer_id"))]; h = hr[(day, hour, pr.get("offer_id"))]
+                q = int(pr.get("quantity") or 0); m = oz._price_amount(pr.get("price")) * q
+                x[0] += q; x[1] += m; h[0] += q; h[1] += m
     except Exception as e:
         _log.warning("growth fbs: %s", e)
-    return by, loc
+    return by, loc, hr
 
 
 async def _ads(since: date, to: date) -> tuple[dict, dict, list]:
@@ -196,7 +206,7 @@ async def _build() -> dict:
     today = _msk_today()
     since = start - timedelta(days=28)                 # 4 недели до старта — для сравнения
     _state["progress"] = "заказы и локализация"
-    orders, loc = await _orders(since, today)
+    orders, loc, hourly = await _orders(since, today)
     _state["progress"] = "реклама"
     sku_ad, grp_ad, camps = await _ads(since, today)
     _state["progress"] = "цены, ставки, позиции"
@@ -347,9 +357,71 @@ async def _build() -> dict:
         c.pop("days", None)
     camps.sort(key=lambda c: -c.get("spent_7d", 0))
     cur = series[-2] if len(series) > 1 and series[-1]["days"] < 4 else series[-1]
+
+    # ── по дням: факт каждого дня с начала окна, план дня — линия роста к цели ──
+    base_day_rev = base_week_rev / 7
+    total_days = max(1, (horizon - start).days)
+    daily = []
+    d = since
+    while d <= today:
+        ds = str(d)
+        rev = qty = ad = pay = gross = 0.0
+        gq = defaultdict(int)
+        for a in arts:
+            q, r = orders.get((ds, a), [0, 0])
+            if not q:
+                continue
+            a_sp = sku_ad.get((ds, a), 0)
+            qty += q; rev += r; ad += a_sp; gq[SKU_GROUP[a]] += q
+            e = E.get(a) or E.get(base.get("proxy", {}).get(a, ""), None)
+            if e:
+                x = _econ(e, q, r, a_sp)
+                pay += x.get("payout_rub", 0); gross += x.get("gross_rub", 0)
+        cpc = sum(v for (dd_, g), v in grp_ad.items() if dd_ == ds)
+        pay -= cpc; gross -= cpc; ad += cpc
+        k = min(1.0, max(0, (d - start).days + 1) / total_days) if d >= start else None
+        daily.append({"date": ds, "revenue": round(rev), "orders": int(qty), "ad": round(ad),
+                      "drr": round(ad / rev * 100, 1) if rev else None,
+                      "payout": round(pay / rev * 100, 1) if rev else None,
+                      "margin": round(gross / rev * 100, 1) if rev else None,
+                      "plan": round(base_day_rev * (1 + k * (base["targets"]["revenue_x"] - 1))) if k is not None else None,
+                      "groups": dict(gq), "partial": d == today, "after_start": d >= start})
+        d += timedelta(days=1)
+
+    # ── внутри дня: накопительно по часам — сегодня / вчера / обычный день до старта ──
+    now_msk = datetime.utcnow() + timedelta(hours=3)
+    now_h = now_msk.hour
+    tday, yday = str(today), str(today - timedelta(days=1))
+    base_days = [str(b0 + timedelta(days=i)) for i in range(14)]
+    def curve(days, key=0):
+        out, acc = [], 0.0
+        for h in range(24):
+            acc += sum(hourly.get((dd_, h, a), [0, 0])[key] for dd_ in days for a in arts) / len(days)
+            out.append(round(acc, 1 if key == 0 else 0))
+        return out
+    cq_t, cq_y, cq_b = curve([tday]), curve([yday]), curve(base_days)
+    cr_t, cr_y, cr_b = curve([tday], 1), curve([yday], 1), curve(base_days, 1)
+    def grp_to_hour(days):
+        g = defaultdict(float)
+        for dd_ in days:
+            for h in range(now_h + 1):
+                for a in arts:
+                    g[SKU_GROUP[a]] += hourly.get((dd_, h, a), [0, 0])[0] / len(days)
+        return g
+    gt, gy, gb = grp_to_hour([tday]), grp_to_hour([yday]), grp_to_hour(base_days)
+    intraday = {"now": now_msk.strftime("%H:%M"), "hour": now_h, "today": tday, "yesterday": yday,
+                "base_from": base_days[0], "base_to": base_days[-1],
+                "orders": {"today": cq_t, "yesterday": cq_y, "base": cq_b},
+                "revenue": {"today": cr_t, "yesterday": cr_y, "base": cr_b},
+                "to_hour": {"orders": [cq_t[now_h], cq_y[now_h], cq_b[now_h]],
+                            "revenue": [cr_t[now_h], cr_y[now_h], cr_b[now_h]]},
+                "groups": [{"group": g, "today": round(gt[g]), "yesterday": round(gy[g]), "base": round(gb[g], 1),
+                            "base_full_day": round(sum(r["orders_day_base"] for r in rows if r["group"] == g), 1)}
+                           for g in GROUPS],
+                "plan_day": next((x["plan"] for x in daily if x["date"] == tday), None)}
     return {"built": (datetime.utcnow() + timedelta(hours=3)).strftime("%d.%m.%Y %H:%M"),
             "base": {k: base[k] for k in ("start", "horizon_end", "kpi", "targets", "notes") if k in base},
-            "current_week": cur, "kpi_now": kpi_now, "series": series, "groups": groups, "rows": rows,
+            "current_week": cur, "kpi_now": kpi_now, "series": series, "daily": daily, "intraday": intraday, "groups": groups, "rows": rows,
             "campaigns": camps, "journal": await asyncio.to_thread(_kv, _JOURNAL_KEY, [])}
 
 
