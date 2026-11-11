@@ -393,22 +393,25 @@ async def _build() -> dict:
     now_h = now_msk.hour
     tday, yday = str(today), str(today - timedelta(days=1))
     base_days = [str(b0 + timedelta(days=i)) for i in range(14)]
-    def curve(days, key=0):
-        out, acc = [], 0.0
+    import statistics as _st
+    # «обычный день» — МЕДИАНА по 14 дням до старта: разовые акционные всплески
+    # (у Алоэ до 100+ заказов в день) не должны задирать норму
+    def cum(day, key, arts_=None):
+        acc, out = 0.0, []
         for h in range(24):
-            acc += sum(hourly.get((dd_, h, a), [0, 0])[key] for dd_ in days for a in arts) / len(days)
-            out.append(round(acc, 1 if key == 0 else 0))
+            acc += sum(hourly.get((day, h, a), [0, 0])[key] for a in (arts_ or arts))
+            out.append(acc)
         return out
+    def curve(days, key=0):
+        cs = [cum(dd_, key) for dd_ in days]
+        return [round(_st.median(c[h] for c in cs), 1 if key == 0 else 0) for h in range(24)]
     cq_t, cq_y, cq_b = curve([tday]), curve([yday]), curve(base_days)
     cr_t, cr_y, cr_b = curve([tday], 1), curve([yday], 1), curve(base_days, 1)
-    def grp_to_hour(days):
-        g = defaultdict(float)
-        for dd_ in days:
-            for h in range(now_h + 1):
-                for a in arts:
-                    g[SKU_GROUP[a]] += hourly.get((dd_, h, a), [0, 0])[0] / len(days)
-        return g
+    def grp_to_hour(days, hour=None):
+        hour = now_h if hour is None else hour
+        return {g: _st.median(cum(dd_, 0, ga)[hour] for dd_ in days) for g, ga in GROUPS.items()}
     gt, gy, gb = grp_to_hour([tday]), grp_to_hour([yday]), grp_to_hour(base_days)
+    gfull = grp_to_hour(base_days, 23)
     intraday = {"now": now_msk.strftime("%H:%M"), "hour": now_h, "today": tday, "yesterday": yday,
                 "base_from": base_days[0], "base_to": base_days[-1],
                 "orders": {"today": cq_t, "yesterday": cq_y, "base": cq_b},
@@ -416,7 +419,7 @@ async def _build() -> dict:
                 "to_hour": {"orders": [cq_t[now_h], cq_y[now_h], cq_b[now_h]],
                             "revenue": [cr_t[now_h], cr_y[now_h], cr_b[now_h]]},
                 "groups": [{"group": g, "today": round(gt[g]), "yesterday": round(gy[g]), "base": round(gb[g], 1),
-                            "base_full_day": round(sum(r["orders_day_base"] for r in rows if r["group"] == g), 1)}
+                            "base_full_day": round(gfull[g], 1)}
                            for g in GROUPS],
                 "plan_day": next((x["plan"] for x in daily if x["date"] == tday), None)}
     return {"built": (datetime.utcnow() + timedelta(hours=3)).strftime("%d.%m.%Y %H:%M"),

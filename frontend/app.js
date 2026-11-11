@@ -6734,8 +6734,9 @@ function renderGrowth() {
     const vs = (a, b2, lbl, rub) => `<div class="s"><span>${lbl}</span><span>${rub ? fmt(Math.round(b2)) + ' ₽' : Math.round(b2 * 10) / 10}${dlt(a, b2)}</span></div>`;
     const planDay = iz.plan_day, pp = planDay ? Math.round(rt / planDay * 100) : null;
     // до / после правок: полные дни с даты старта против 14 дней до старта
-    const pre = dl.filter(x => x.date >= iz.base_from && x.date <= iz.base_to), post = dl.filter(x => x.after_start && !x.partial);
+    const pre = dl.filter(x => x.date >= iz.base_from && x.date <= iz.base_to), post = dl.filter(x => x.date > b.start && !x.partial);
     const avg = (arr, k2) => arr.length ? arr.reduce((a, x) => a + (x[k2] || 0), 0) / arr.length : null;
+    const med = (arr, k2) => { if (!arr.length) return null; const v = arr.map(x => x[k2] || 0).sort((a, c) => a - c); const m = v.length >> 1; return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2; };
     const sumDrr = arr => { const r = arr.reduce((a, x) => a + x.revenue, 0); return r ? Math.round(arr.reduce((a, x) => a + x.ad, 0) / r * 1000) / 10 : null; };
     h += `<div class="gr-sec">Сегодня, ${dd(iz.today)} · данные на ${iz.now} МСК</div>
     <div class="gr-goals">
@@ -6747,14 +6748,14 @@ function renderGrowth() {
         <div class="v">${planDay ? fmt(planDay) + ' <small>₽</small>' : '—'}</div>
         <div class="gr-bar"><i style="width:${Math.min(100, pp || 0)}%;background:${(pp || 0) >= 100 ? 'var(--pos)' : 'var(--warn-c)'}"></i></div>
         <div class="s"><span>обычный день до старта</span><span>${fmt(Math.round(iz.orders.base[23] ? iz.revenue.base[23] : 0))} ₽</span></div></div>
-      <div class="gr-goal"><div class="t"><span>После правок (полных дней: ${post.length})</span></div>
+      <div class="gr-goal"><div class="t"><span>После правок ${dd(b.start)} · полных дней: ${post.length}</span></div>
         <div class="v">${post.length ? Math.round(avg(post, 'orders')) : '—'} <small>заказов/день</small></div>
-        <div class="s"><span>до старта</span><span>${pre.length ? Math.round(avg(pre, 'orders')) : '—'}${post.length && pre.length ? dlt(avg(post, 'orders'), avg(pre, 'orders')) : ''}</span></div>
-        <div class="s"><span>выручка/день</span><span>${post.length ? fmt(Math.round(avg(post, 'revenue'))) : '—'} ₽${post.length && pre.length ? dlt(avg(post, 'revenue'), avg(pre, 'revenue')) : ''}</span></div>
+        <div class="s"><span>до старта (медиана)</span><span>${pre.length ? Math.round(med(pre, 'orders')) : '—'}${post.length && pre.length ? dlt(avg(post, 'orders'), med(pre, 'orders')) : ''}</span></div>
+        <div class="s"><span>выручка/день</span><span>${post.length ? fmt(Math.round(avg(post, 'revenue'))) : '—'} ₽${post.length && pre.length ? dlt(avg(post, 'revenue'), med(pre, 'revenue')) : ''}</span></div>
         <div class="s"><span>ДРР до → после</span><span>${sumDrr(pre) ?? '—'}% → ${post.length ? (sumDrr(post) ?? '—') + '%' : '—'}</span></div></div>
     </div>
     <div class="gr-charts mt-2">
-      <div class="gr-card"><h6>Выручка по часам, накопительно</h6><div class="note">сегодня — сплошная, вчера — пунктир, обычный день до старта (среднее ${dd(iz.base_from)}–${dd(iz.base_to)}) — серая</div><div style="height:220px"><canvas id="grChartDay"></canvas></div></div>
+      <div class="gr-card"><h6>Выручка по часам, накопительно</h6><div class="note">сегодня — сплошная, вчера — пунктир, обычный день — медиана ${dd(iz.base_from)}–${dd(iz.base_to)} (серая)</div><div style="height:220px"><canvas id="grChartDay"></canvas></div></div>
       <div class="gr-card" style="padding:4px 6px"><table class="gr-tbl"><thead><tr><th>Группа</th><th>Сегодня</th><th>Вчера</th><th>Обычно</th><th>К обычному</th></tr></thead><tbody>` +
       iz.groups.map(g => `<tr><td>${g.group}<div class="sub">за полный день обычно ${g.base_full_day}</div></td><td><b>${g.today}</b></td><td>${g.yesterday}</td><td>${g.base}</td><td>${g.base ? dlt(g.today, g.base) : ''}</td></tr>`).join('') +
       `</tbody></table><div class="note" style="padding:4px 8px">заказы, шт — с начала дня до ${iz.now}</div></div>
