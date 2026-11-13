@@ -108,6 +108,8 @@
         <a href="#" onclick="goNavTool('tools','nichecalc','navWB');return false">Калькулятор ниши</a>
         <a href="#" onclick="goNavTool('tools','visuals','navWB');return false">Визуалы топ-20</a>
         <a href="#" onclick="goNavTool('tools','competitors','navWB');return false">Конкуренты</a>
+        <div class="mp-drop-sep"></div>
+        <a href="#" onclick="goNav('market','navWB');return false"><b>Рынок по запросам</b></a>
       </div>
     </div>
     <div class="mp-menu-item" id="navOzon">
@@ -536,6 +538,16 @@
     <div id="grWrap"><div class="text-center text-secondary py-4"><span class="spinner-border"></span></div></div>
   </div>
 
+  <!-- ── Рынок WB по запросам (бот на ПК владельца) ── -->
+  <div id="pane-market" style="display:none">
+    <div class="d-flex gap-2 mb-2 flex-wrap align-items-center">
+      <h5 class="mb-0 me-2">Рынок WB по запросам</h5>
+      <span id="mkInfo" class="text-secondary small"></span>
+      <button class="btn btn-sm btn-outline-secondary ms-auto" onclick="loadMarket()"><i class="bi bi-arrow-clockwise"></i> Обновить</button>
+    </div>
+    <div id="mkWrap"><div class="text-center text-secondary py-4"><span class="spinner-border"></span></div></div>
+  </div>
+
   <!-- ── Карточки WB → Ozon: фото и описание ── -->
   <div id="pane-cardsync" style="display:none">
     <div class="d-flex gap-2 mb-2 flex-wrap align-items-center">
@@ -583,6 +595,6 @@
 
 <script src="vendor/bootstrap.bundle.min.js"></script>
 <script src="vendor/chart.umd.min.js"></script>
-<script src="app.js?v=266"></script>
+<script src="app.js?v=267"></script>
 </body>
 </html>

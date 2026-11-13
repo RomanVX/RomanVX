@@ -451,6 +451,8 @@ from routers import growth as _growth_r
 app.include_router(_growth_r.router)
 from routers import pricelock as _pricelock_r
 app.include_router(_pricelock_r.router)
+from routers import market as _market_r
+app.include_router(_market_r.router)
 from routers import wms as _wms
 app.include_router(_wms.router)
 from routers import landing as _landing
@@ -482,7 +484,7 @@ _RO_DENY = (
     "/api/tools/fbs/", "/api/tools/supply/", "/api/tools/ozon/certificate/",
     "/api/tools/adv/sandbox", "/api/tools/agent", "/api/tools/competitors/",
     "/api/tools/niche", "/api/tools/visuals/", "/api/tools/dimensions/",
-    "/api/wms/", "/api/cardsync/apply", "/api/cardsync/auto", "/api/growth/baseline", "/api/growth/journal", "/api/pricelock",  # mp/proxy сам пускает только чтение
+    "/api/wms/", "/api/cardsync/apply", "/api/cardsync/auto", "/api/growth/baseline", "/api/growth/journal", "/api/pricelock", "/api/market/job",  # mp/proxy сам пускает только чтение
 )
 
 

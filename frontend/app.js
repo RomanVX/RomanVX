@@ -25,7 +25,7 @@ document.addEventListener('DOMContentLoaded', _initThemeBtn);
 const API = '';
 let charts = {};
 let sortState = {};
-const dirty = { salesan: true, stocks: true, reviews: true, finance: true, unit: true, tools: true, toolsoz: true, docs: true, fbs: true, dims: true, promo: true, cardsync: true, growth: true };
+const dirty = { salesan: true, stocks: true, reviews: true, finance: true, unit: true, tools: true, toolsoz: true, docs: true, fbs: true, dims: true, promo: true, cardsync: true, growth: true, market: true };
 let _advertData = [];
 let currentTab = 'finance';
 let prodAllData = [];
@@ -121,7 +121,7 @@ function applyProfile() {
   // заголовок «Wildberries» вёл в Продуктолог (ИИ) — ведём в воронку
   const wbTitle = document.querySelector('#navWB .mp-menu-title');
   if (wbTitle) wbTitle.setAttribute('onclick', "goNavTool('tools','wbfunnel','navWB')");
-  const HIDE = ["goNav('fbs'", "'slots'", "'prod'", "'niche'", "'nichecalc'", "'visuals'", "'competitors'", "goNav('cardsync'", "goNav('growth'"];
+  const HIDE = ["goNav('fbs'", "'slots'", "'prod'", "'niche'", "'nichecalc'", "'visuals'", "'competitors'", "goNav('cardsync'", "goNav('growth'", "goNav('market'"];
   document.querySelectorAll('#mainMenu a, #mainMenu button').forEach(el => {
     const oc = el.getAttribute('onclick') || '';
     if (HIDE.some(h => oc.includes(h))) el.style.display = 'none';
@@ -309,7 +309,7 @@ function goNavTool(tab, tool, navId) {
 function switchTab(name, linkEl) {
   document.querySelectorAll('#mainTabs .nav-link').forEach(a => a.classList.remove('active'));
   if (linkEl) linkEl.classList.add('active');
-  ['salesan', 'stocks', 'reviews', 'finance', 'unit', 'tools', 'toolsoz', 'docs', 'fbs', 'dims', 'promo', 'cardsync', 'growth'].forEach(t => {
+  ['salesan', 'stocks', 'reviews', 'finance', 'unit', 'tools', 'toolsoz', 'docs', 'fbs', 'dims', 'promo', 'cardsync', 'growth', 'market'].forEach(t => {
     const el = document.getElementById('pane-' + t);
     if (el) el.style.display = t === name ? 'block' : 'none';
   });
@@ -318,7 +318,7 @@ function switchTab(name, linkEl) {
     dirty[name] = false;
     ({ salesan: loadSalesAnalytics, stocks: loadStocks,
        reviews: loadReviews, finance: loadFinance, tools: loadTools, toolsoz: loadOzTool, docs: loadDocs,
-       unit: loadUnitEconomics, fbs: loadFbs, dims: loadDims, promo: loadPromo, cardsync: loadCardSync, growth: loadGrowth })[name]();
+       unit: loadUnitEconomics, fbs: loadFbs, dims: loadDims, promo: loadPromo, cardsync: loadCardSync, growth: loadGrowth, market: loadMarket })[name]();
   }
 }
 
@@ -6930,4 +6930,168 @@ function _grCharts(d, iz) {
           y: { ticks: { color: CHART_C.tick, callback: v => Math.round(v / 1e3) + ' тыс' }, grid: { color: CHART_C.grid } } } },
     });
   }
+}
+
+// ── Рынок WB по запросам: исследования, которые собирает бот на ПК владельца ──
+// (agent/wb_market.py --agent). Сводка по запросам, лидеры, активные компоненты.
+let _mk = { jobs: [], cur: null, rep: null, q: null };
+
+async function loadMarket() {
+  const wrap = document.getElementById('mkWrap');
+  try {
+    const d = await fetchJSON('/api/market/jobs');
+    _mk.jobs = d.jobs || [];
+    const info = document.getElementById('mkInfo');
+    info.innerHTML = d.agent_online
+      ? '<span class="text-success">● бот на связи</span>'
+      : `<span class="text-danger">● бот не на связи${d.agent_seen_sec != null ? ' (был ' + Math.round(d.agent_seen_sec / 60) + ' мин назад)' : ''}</span>`;
+    if (!_mk.cur && _mk.jobs.length) _mk.cur = _mk.jobs[0].id;
+    if (_mk.cur) _mk.rep = await fetchJSON('/api/market/job/' + _mk.cur);
+    renderMarket();
+    const j = _mk.jobs.find(x => x.id === _mk.cur);
+    clearTimeout(window._mkTimer);
+    if (j && j.status !== 'done') window._mkTimer = setTimeout(() => { if (currentTab === 'market') loadMarket(); }, 20000);
+  } catch (e) {
+    wrap.innerHTML = `<div class="alert alert-danger">${esc(e.message)}</div>`;
+  }
+}
+
+async function mkPost(path, body, method = 'POST') {
+  const r = await fetch(API + path, { method, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.detail || r.status);
+  return d;
+}
+
+async function mkCreate(preset) {
+  try {
+    let body;
+    if (preset) body = { preset };
+    else {
+      const qs = document.getElementById('mkQueries').value.split('\n').map(s => s.trim()).filter(Boolean);
+      body = { title: document.getElementById('mkTitle').value.trim(), queries: qs,
+               expand: +document.getElementById('mkExpand').value, pages: +document.getElementById('mkPages').value };
+    }
+    const d = await mkPost('/api/market/job', body);
+    _mk.cur = d.id; _mk.q = null;
+    loadMarket();
+  } catch (e) { alert('Не создалось: ' + e.message); }
+}
+
+async function mkRerun() {
+  if (!confirm('Собрать все запросы заново? Повторный замер через 3+ дня даст оценку продаж по приросту отзывов.')) return;
+  await mkPost(`/api/market/job/${_mk.cur}/rerun`); loadMarket();
+}
+
+async function mkDelete() {
+  if (!confirm('Удалить исследование?')) return;
+  await mkPost(`/api/market/job/${_mk.cur}`, null, 'DELETE'); _mk.cur = null; _mk.rep = null; loadMarket();
+}
+
+function mkPick(id) { _mk.cur = id; _mk.q = null; loadMarket(); }
+function mkOpenQ(q) { _mk.q = _mk.q === q ? null : q; renderMarket(); }
+
+function renderMarket() {
+  const wrap = document.getElementById('mkWrap');
+  const jobs = _mk.jobs, rep = _mk.rep;
+  const opts = jobs.map(j => `<option value="${j.id}" ${j.id === _mk.cur ? 'selected' : ''}>${esc(j.title)} — ${j.done}/${j.total}${j.status === 'done' ? ' ✓' : ''} (${esc(j.created)})</option>`).join('');
+  let h = `<div class="card mb-3"><div class="card-body py-2">
+    <div class="d-flex flex-wrap gap-2 align-items-center">
+      ${jobs.length ? `<select class="form-select form-select-sm" style="max-width:520px" onchange="mkPick(this.value)">${opts}</select>
+        <button class="btn btn-sm btn-outline-secondary" onclick="mkRerun()">Пересобрать</button>
+        <button class="btn btn-sm btn-outline-danger" onclick="mkDelete()">Удалить</button>` : '<span class="text-secondary">Исследований ещё нет.</span>'}
+      <button class="btn btn-sm btn-primary ms-auto" onclick="mkCreate('hair')">Готовое: волосы — перхоть и выпадение</button>
+      <button class="btn btn-sm btn-outline-primary" data-bs-toggle="collapse" data-bs-target="#mkNew">Своё исследование</button>
+    </div>
+    <div class="collapse mt-2" id="mkNew"><div class="row g-2">
+      <div class="col-md-4"><input id="mkTitle" class="form-control form-control-sm" placeholder="Название (например: Сыворотки для лица)">
+        <div class="d-flex gap-2 mt-2 small align-items-center">Подсказок WB на запрос
+          <select id="mkExpand" class="form-select form-select-sm" style="width:70px"><option>0</option><option>2</option><option selected>3</option><option>5</option></select>
+          Глубина <select id="mkPages" class="form-select form-select-sm" style="width:110px"><option value="1">100 шт.</option><option value="2">200 шт.</option></select></div>
+        <button class="btn btn-sm btn-primary mt-2" onclick="mkCreate()">Запустить сбор</button></div>
+      <div class="col-md-8"><textarea id="mkQueries" class="form-control form-control-sm" rows="5" placeholder="По одному запросу в строке"></textarea></div>
+    </div></div>
+  </div></div>`;
+  if (!rep) { wrap.innerHTML = h; return; }
+  const qs = rep.queries || [];
+  const done = qs.filter(q => q.total != null || q.n);
+  const job = rep.job || {};
+  const pend = qs.length - qs.filter(q => q.status === 'done' || q.status === 'error').length;
+  if (pend) h += `<div class="alert alert-info py-2 small">Собрано ${qs.length - pend} из ${qs.length} запросов. Бот берёт задания сам, страница обновляется каждые 20 секунд.${job.expand ? ' Подсказки WB добавляются в исследование по ходу сбора.' : ''}</div>`;
+
+  // активные компоненты
+  const ing = rep.ingredients || [];
+  if (ing.length && rep.pool_cards) {
+    const maxFb = Math.max(...ing.map(x => x.feedbacks), 1);
+    h += `<div class="card mb-3"><div class="card-body">
+      <h6 class="mb-1">Активные компоненты: что качает</h6>
+      <div class="text-secondary small mb-2">По топ-100 категорийных запросов (${rep.category.map(esc).join(', ')}): ${fmt(rep.pool_cards)} уникальных карточек. Компонент ищется в названии товара. Отзывы ≈ накопленные продажи: доля отзывов показывает, сколько рынка забрали товары с этим компонентом.</div>
+      <div class="table-responsive"><table class="table table-sm align-middle mb-0"><thead><tr class="small text-secondary">
+        <th>Компонент</th><th class="text-end">Карточек в топе</th><th style="min-width:160px">Доля отзывов</th><th class="text-end">Отзывов</th>
+        <th class="text-end">Цена, медиана</th><th class="text-end">Лучшее место</th><th>Лидер</th><th>Своя выдача (найдено товаров)</th><th class="text-end">В подсказках</th></tr></thead><tbody>`;
+    ing.forEach(x => {
+      const w = Math.round(x.feedbacks / maxFb * 100);
+      h += `<tr><td><b>${esc(x.title)}</b></td><td class="text-end">${fmt(x.cards)}</td>
+        <td><div class="d-flex align-items-center gap-2"><div class="progress flex-grow-1" style="height:8px"><div class="progress-bar" style="width:${w}%"></div></div><span class="small">${x.share}%</span></div></td>
+        <td class="text-end">${fmt(x.feedbacks)}</td><td class="text-end">${x.price_med ? fmtRub(x.price_med) : '—'}</td>
+        <td class="text-end">${x.best_pos || '—'}</td><td class="small">${esc(x.leader || '—')}</td>
+        <td class="small">${(x.queries || []).map(q => `${esc(q.query)}: <b>${fmt(q.total)}</b>`).join('<br>') || '—'}</td>
+        <td class="text-end">${x.in_hints || '—'}</td></tr>`;
+    });
+    h += `</tbody></table></div></div></div>`;
+  }
+
+  // запросы
+  h += `<div class="card mb-3"><div class="card-body"><h6 class="mb-1">Запросы</h6>
+    <div class="text-secondary small mb-2">Нажмите на запрос — лидеры и топ-20 товаров. «Продажи/мес» появятся после повторного замера через 3+ дня (по приросту отзывов).</div>
+    <div class="table-responsive"><table class="table table-sm table-hover align-middle mb-0"><thead><tr class="small text-secondary">
+    <th>Запрос</th><th class="text-end">Найдено товаров</th><th class="text-end">Цена, медиана</th><th class="text-end">25–75%</th>
+    <th class="text-end">Отзывы топ-30</th><th class="text-end">Рейтинг топ-30</th><th class="text-end">Остаток топ-30</th><th class="text-end">Реклама в топ-30</th>
+    <th class="text-end">Продажи/мес топ-100</th><th>Лидер (доля отзывов)</th></tr></thead><tbody>`;
+  const sorted = [...qs].sort((a, b) => (b.fb_top30 || -1) - (a.fb_top30 || -1));
+  sorted.forEach(q => {
+    const L = (q.leaders || [])[0];
+    const tag = q.src === 'hint' ? ` <span class="badge text-bg-light" title="подсказка WB к «${esc(q.parent)}»">подсказка</span>` : '';
+    if (q.total == null && !q.n) {
+      h += `<tr class="text-secondary"><td>${esc(q.query)}${tag}</td><td colspan="9" class="small">${q.status === 'error' ? 'ошибка: ' + esc(q.error || '') : 'в очереди у бота…'}</td></tr>`;
+      return;
+    }
+    h += `<tr style="cursor:pointer" onclick="mkOpenQ(${esc(JSON.stringify(q.query)).replace(/"/g, '&quot;')})"><td><b>${esc(q.query)}</b>${tag}</td>
+      <td class="text-end">${fmt(q.total)}</td><td class="text-end">${q.price_med ? fmtRub(q.price_med) : '—'}</td>
+      <td class="text-end small">${q.price_p25 ? fmt(q.price_p25) + '–' + fmt(q.price_p75) : '—'}</td>
+      <td class="text-end">${fmt(q.fb_top30)}</td><td class="text-end">${q.rating30 || '—'}</td>
+      <td class="text-end">${q.stock30 != null ? fmt(q.stock30) : '—'}</td><td class="text-end">${q.ads30 != null ? q.ads30 + '%' : '—'}</td>
+      <td class="text-end">${q.sales_est100 ? fmt(q.sales_est100) : '—'}</td>
+      <td class="small">${L ? esc(L.brand) + ' (' + L.share + '%)' : '—'}</td></tr>`;
+    if (_mk.q === q.query) {
+      const acts = (q.actives || []).length ? `<div class="small mb-2">Компоненты в названиях топ-100: ${q.actives.map(esc).join(', ')}</div>` : '';
+      h += `<tr><td colspan="10" class="bg-body-tertiary"><div class="row g-3 p-2">
+        <div class="col-lg-4"><div class="fw-semibold small mb-1">Лидеры-бренды (топ-100)</div>
+          <table class="table table-sm small mb-0"><thead><tr class="text-secondary"><th>Бренд</th><th class="text-end">Карточек</th><th class="text-end">Отзывов</th><th class="text-end">Доля</th><th class="text-end">Лучшее место</th></tr></thead><tbody>
+          ${(q.leaders || []).map(b => `<tr><td>${esc(b.brand)}</td><td class="text-end">${b.cards}</td><td class="text-end">${fmt(b.feedbacks)}</td><td class="text-end">${b.share}%</td><td class="text-end">${b.best}</td></tr>`).join('')}
+          </tbody></table></div>
+        <div class="col-lg-8">${acts}<div class="fw-semibold small mb-1">Топ-20 выдачи</div>
+          <table class="table table-sm small mb-0"><thead><tr class="text-secondary"><th>#</th><th>Товар</th><th>Бренд</th><th class="text-end">Цена</th><th class="text-end">Рейтинг</th><th class="text-end">Отзывы</th><th class="text-end">Остаток</th><th class="text-end">Продажи/мес</th></tr></thead><tbody>
+          ${(q.top || []).map(r => `<tr><td>${r.pos}${r.ad ? ' <span class="badge text-bg-warning">рекл</span>' : ''}</td>
+            <td><a href="https://www.wildberries.ru/catalog/${r.nm}/detail.aspx" target="_blank" rel="noopener">${esc((r.name || '').slice(0, 70))}</a></td>
+            <td>${esc(r.brand || '')}</td><td class="text-end">${r.price ? fmt(r.price) : '—'}</td><td class="text-end">${r.rating || '—'}</td>
+            <td class="text-end">${fmt(r.feedbacks)}</td><td class="text-end">${r.stock != null ? fmt(r.stock) : '—'}</td><td class="text-end">${r.sales_est != null ? fmt(r.sales_est) : '—'}</td></tr>`).join('')}
+          </tbody></table></div></div></td></tr>`;
+    }
+  });
+  h += `</tbody></table></div></div></div>`;
+
+  // подсказки
+  const hints = rep.hints || [];
+  if (hints.length) {
+    const by = {};
+    hints.forEach(x => (by[x.query] = by[x.query] || []).push(x.hint));
+    h += `<div class="card mb-3"><div class="card-body"><h6 class="mb-1">Подсказки WB: что ищут рядом</h6>
+      <div class="text-secondary small mb-2">Подсказки в строке поиска WB отсортированы по популярности: выше в списке — чаще ищут.</div><div class="row g-2">`;
+    Object.entries(by).forEach(([q, hs]) => {
+      h += `<div class="col-md-6 col-xl-4"><div class="small fw-semibold">${esc(q)}</div><ol class="small mb-0 ps-3">${hs.map(x => `<li>${esc(x)}</li>`).join('')}</ol></div>`;
+    });
+    h += `</div></div></div>`;
+  }
+  wrap.innerHTML = h;
 }

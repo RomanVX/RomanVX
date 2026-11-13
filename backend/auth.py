@@ -91,6 +91,7 @@ _PUBLIC_PREFIXES = ("/api/auth/", "/api/cabinet", "/api/health",
                     # эндпоинты локального агента ниши — защищены собственным
                     # токеном WB_AGENT_TOKEN, сессия-cookie им не нужна
                     "/api/tools/niche/pending", "/api/tools/niche/ingest",
+                    "/api/market/pending", "/api/market/ingest",  # бот «Рынок по запросам»
                     # JPG-копии фото карточек WB для загрузки в Ozon (только wbbasket.ru)
                     "/api/tools/img/wb/")
 # менеджеру закрыты деньги: P&L, выплаты, ручные статьи, загрузка себеса.
