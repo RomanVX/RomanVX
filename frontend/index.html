@@ -65,6 +65,7 @@
       <button type="button" class="mp-menu-title" onclick="goNav('salesan','navAnalytics')">Аналитика</button>
       <div class="mp-menu-drop">
         <a href="#" onclick="goNavTool('tools','margin','navAnalytics');return false">Калькулятор маржи</a>
+        <a href="#" onclick="goNavTool('tools','newprod','navAnalytics');return false">Калькулятор новинки</a>
         <div class="mp-drop-sep"></div>
         <a href="#" onclick="goNav('promo','navAnalytics');return false">Календарь акций</a>
         <a href="#" onclick="goNav('salesan','navAnalytics');return false">Заказы</a>
@@ -459,6 +460,9 @@
       <div id="toolMargin" class="mp-selector-bloc" style="--mp-color:#10b981" onclick="setTool('margin')">
         <span class="mp-selector-dot" style="background:#10b981"></span>Калькулятор маржи
       </div>
+      <div id="toolNewprod" class="mp-selector-bloc" style="--mp-color:#0ea5e9" onclick="setTool('newprod')">
+        <span class="mp-selector-dot" style="background:#0ea5e9"></span>Калькулятор новинки
+      </div>
       <div id="toolNiche" class="mp-selector-bloc" style="--mp-color:#34d399" onclick="setTool('niche')">
         <span class="mp-selector-dot" style="background:#34d399"></span>Спрос WB (Джем)
       </div>
@@ -595,6 +599,6 @@
 
 <script src="vendor/bootstrap.bundle.min.js"></script>
 <script src="vendor/chart.umd.min.js"></script>
-<script src="app.js?v=267"></script>
+<script src="app.js?v=268"></script>
 </body>
 </html>

@@ -1572,6 +1572,62 @@ async def get_margin(mp: str = Query(default="WB")):
     return result
 
 
+_cat_cache: dict = {"ts": 0.0, "items": []}
+
+
+@router.get("/newprod/categories")
+async def newprod_categories(q: str = Query(default=""), limit: int = 30):
+    """Калькулятор новинки: поиск категории WB с официальной комиссией
+    (tariffs/commission, кеш 12ч). fbo — склад WB, fbs — склад продавца."""
+    if not _cat_cache["items"] or _time.monotonic() - _cat_cache["ts"] > _WB_COMM_TTL:
+        import wb_client
+        t = await wb_client.get_commission_tariffs()
+        if t:
+            _cat_cache["items"] = [{"id": k, "name": v["subjectName"], "parent": v["parentName"],
+                                    "fbo": v.get("fbo"), "fbs": v.get("fbs")} for k, v in t.items()]
+            _cat_cache["ts"] = _time.monotonic()
+    qq = q.strip().lower()
+    items = [c for c in _cat_cache["items"]
+             if not qq or qq in c["name"].lower() or qq in c["parent"].lower()]
+    items.sort(key=lambda c: (not c["name"].lower().startswith(qq), len(c["name"])))
+    return {"items": items[:max(1, min(limit, 100))], "total": len(_cat_cache["items"])}
+
+
+@router.get("/newprod/analogs")
+async def newprod_analogs(mp: str = Query(default="WB")):
+    """Калькулятор новинки: наши товары-аналоги с фактическими затратами на
+    штуку (из снапшота калькулятора маржи) + средние по категории WB."""
+    import snapshot as _snap
+    mp = mp.upper()
+    snap = await asyncio.to_thread(_snap.load, f"margin_snap_{mp}", None)
+    if not snap or not snap.get("items"):
+        snap = await get_margin(mp=mp)
+    keys = ("sku", "name", "subject", "comm_pct", "acq_pct", "logist", "storage", "other",
+            "advert", "cogs", "price0", "buyer0", "qty_m", "spp_live", "fbs")
+    items = [{k: it.get(k) for k in keys} for it in (snap.get("items") or [])]
+    for it in items:   # фактические ДРР и СПП аналога — ориентир для ввода
+        p = it.get("price0") or 0
+        it["drr_pct"] = round((it.get("advert") or 0) / p * 100, 1) if p else None
+        if it.get("spp_live") is None and it.get("buyer0") and p:
+            it["spp_live"] = round((1 - it["buyer0"] / p) * 100, 1)
+    subj = {}
+    for it in items:
+        if not it.get("subject"):
+            continue
+        s = subj.setdefault(it["subject"], {"n": 0, "w": 0.0, "acc": {}})
+        w = max(float(it.get("qty_m") or 0), 1.0)
+        s["n"] += 1; s["w"] += w
+        for k in ("acq_pct", "logist", "storage", "other", "drr_pct", "spp_live"):
+            if it.get(k) is not None:
+                a = s["acc"].setdefault(k, [0.0, 0.0])
+                a[0] += float(it[k]) * w; a[1] += w
+    subjects = {name: {"n": s["n"], **{k: round(a[0] / a[1], 1) for k, a in s["acc"].items() if a[1]}}
+                for name, s in subj.items()}
+    ft = (await asyncio.to_thread(_snap.load, "fbs_tariff", None)) or {"base": 89.7, "per": 27.3}
+    return {"mp": mp, "items": items, "subjects": subjects, "stale": bool(snap.get("stale")),
+            "window": snap.get("window_recent"), "fbs_tariff": ft}
+
+
 @router.post("/margin/export")
 async def margin_export(body: dict):
     """Экспорт калькулятора маржи в Excel — с учётом правок пользователя

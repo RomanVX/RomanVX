@@ -137,7 +137,7 @@ function applyProfile() {
     // калькулятор маржи общий, его оставляем
     document.querySelectorAll('#mainMenu a').forEach(el => {
       const oc = el.getAttribute('onclick') || '';
-      if (oc.includes("goNavTool('tools',") && !oc.includes("'margin'")) el.style.display = 'none';
+      if (oc.includes("goNavTool('tools',") && !oc.includes("'margin'") && !oc.includes("'newprod'")) el.style.display = 'none';
     });
   }
   // ИИ-кнопки (тратят наш Anthropic API) в кабинете клиента не показываем
@@ -3063,6 +3063,7 @@ const _TOOL_HINTS = {
   niche: 'Спрос по вашим товарам из Джем: поисковые запросы, частотность, ваша позиция, заказы и точки роста',
   nichecalc: 'Выходить ли с товаром: конкуренты из выдачи WB, цены, спрос и вердикт (сбор через агент)',
   visuals: 'Заглавные фото топ-20 карточек конкурентов + разбор визуала через Claude',
+  newprod: 'Новый товар: категория, цена, СПП, себестоимость и ДРР — сколько он заработает на штуке и за месяц. Логистика и хранение — по нашим похожим товарам',
   margin: 'Затраты на единицу из фактической юнитки: вводите цену/себестоимость — видите прибыль, маржу и точку безубыточности',
   competitors: 'Суточные срезы выдачи WB по вашим запросам: позиции, цены и демпинг конкурентов (сбор через домашний агент)',
   whstocks: 'Остатки WB по складам и сколько денег заморожено в стоке (по себестоимости)',
@@ -3073,7 +3074,7 @@ const _TOOL_HINTS = {
 function setTool(t) {
   if (_toolActive === t) return;
   _toolActive = t;
-  ['Prod', 'Clusters', 'Adv', 'Niche', 'Nichecalc', 'Visuals', 'Margin', 'Competitors', 'Whstocks', 'Wbfunnel', 'Geo'].forEach(k => {
+  ['Prod', 'Clusters', 'Adv', 'Niche', 'Nichecalc', 'Visuals', 'Margin', 'Newprod', 'Competitors', 'Whstocks', 'Wbfunnel', 'Geo'].forEach(k => {
     document.getElementById('tool' + k)?.classList.toggle('active', k.toLowerCase() === t);
   });
   const hint = document.getElementById('toolHint');
@@ -3085,14 +3086,14 @@ function reloadTool() {
   ({ prod: () => loadProductolog(true), clusters: () => loadClusters(true),
      adv: () => loadAdv(true), niche: () => loadDemand(true),
      nichecalc: () => renderNicheForm(), visuals: () => renderVisualsForm(),
-     margin: () => loadMargin(true), competitors: () => loadCompetitors(true),
+     margin: () => loadMargin(true), newprod: () => loadNewprod(true), competitors: () => loadCompetitors(true),
      whstocks: () => loadWhStocks(true), geo: () => loadGeo(true),
      wbfunnel: () => loadWbFunnel(true) })[_toolActive]();
 }
 function loadTools() {
   ({ prod: loadProductolog, clusters: loadClusters, adv: loadAdv,
      niche: loadDemand, nichecalc: renderNicheForm,
-     visuals: renderVisualsForm, margin: loadMargin,
+     visuals: renderVisualsForm, margin: loadMargin, newprod: loadNewprod,
      competitors: loadCompetitors, whstocks: loadWhStocks,
      wbfunnel: loadWbFunnel, geo: loadGeo })[_toolActive]();
 }
@@ -7094,4 +7095,232 @@ function renderMarket() {
     h += `</div></div></div>`;
   }
   wrap.innerHTML = h;
+}
+
+// ── Калькулятор новинки: «что будет, если выведем товар», FBO и FBS рядом ────
+// Вводятся категория, цена, СПП, себестоимость и ДРР. Комиссия — официальный
+// тариф категории WB (склад WB / FBS), логистика и хранение FBO — с нашего
+// товара-аналога или средние по категории (фактическая юнитка), логистика FBS —
+// по литражу и тарифу склада, плюс сборка/упаковка на нашем складе.
+let _np = null;
+const _NP_KEY = 'np_state_v2';
+const _npDefaults = () => ({ mp: 'WB', cat: null, analog: '', price: 1000, spp: 30, cogs: 250, drr: 10,
+  acq: 1.5, other: 3, tax: 0, plan: 300, litres: 0.2,
+  fbo: { comm: 0, logist: 120, storage: 5 }, fbs: { comm: 0, logist: 90, storage: 0, pack: 25 } });
+
+async function loadNewprod(refresh) {
+  const wrap = document.getElementById('toolsWrap');
+  if (!wrap || _toolActive !== 'newprod') return;
+  if (!_np) {
+    let st = _npDefaults();
+    try { const sv = JSON.parse(localStorage.getItem(_NP_KEY) || '{}'); st = { ...st, ...sv, fbo: { ...st.fbo, ...(sv.fbo || {}) }, fbs: { ...st.fbs, ...(sv.fbs || {}) } }; } catch (e) {}
+    _np = { st, analogs: null, subjects: {}, cats: [], ft: { base: 89.7, per: 27.3 } };
+  }
+  if (!_np.analogs || refresh) {
+    wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>Загружаю затраты наших товаров…</div>';
+    try {
+      const d = await fetchJSON('/api/tools/newprod/analogs?mp=' + _np.st.mp, 150000);
+      _np.analogs = d.items || []; _np.subjects = d.subjects || {}; _np.window = d.window; _np.err = '';
+      if (d.fbs_tariff) _np.ft = { base: +d.fbs_tariff.base || 89.7, per: +(d.fbs_tariff.per ?? d.fbs_tariff.liter) || 27.3 };
+    } catch (e) { _np.analogs = []; _np.err = e.message; }
+  }
+  renderNewprod();
+}
+
+function npSave() { try { localStorage.setItem(_NP_KEY, JSON.stringify(_np.st)); } catch (e) {} }
+function npSetMp(mp) { if (_np.st.mp === mp) return; _np.st.mp = mp; _np.st.analog = ''; _np.analogs = null; npSave(); loadNewprod(); }
+const npFbsLogist = l => Math.round(_np.ft.base + Math.max(0, (+l || 0) - 1) * _np.ft.per);
+
+let _npCatTimer = null;
+function npCatSearch(q) {
+  clearTimeout(_npCatTimer);
+  _npCatTimer = setTimeout(async () => {
+    try {
+      const d = await fetchJSON('/api/tools/newprod/categories?limit=25&q=' + encodeURIComponent(q || ''));
+      _np.cats = d.items || [];
+      const box = document.getElementById('npCatList');
+      if (box) box.innerHTML = _np.cats.map((c, i) => `<button type="button" class="list-group-item list-group-item-action py-1 small" onclick="npPickCat(${i})">
+        <b>${esc(c.name)}</b> <span class="text-secondary">· ${esc(c.parent)}</span>
+        <span class="float-end">FBO ${c.fbo ?? '—'}% · FBS ${c.fbs ?? '—'}%</span></button>`).join('')
+        || '<div class="small text-secondary p-2">Ничего не нашлось</div>';
+    } catch (e) {}
+  }, 250);
+}
+
+function npPickCat(i) {
+  const c = _np.cats[i]; if (!c) return;
+  const st = _np.st;
+  st.cat = c;
+  if (c.fbo != null) st.fbo.comm = c.fbo;
+  if (c.fbs != null) st.fbs.comm = c.fbs;
+  const sub = _np.subjects[c.name];             // наши товары этой категории → их средние затраты
+  if (sub) npApplyCosts(sub, 'cat:' + c.name);
+  npSave(); renderNewprod();
+}
+
+function npApplyCosts(src, key) {
+  const st = _np.st, r1 = v => Math.round(v * 10) / 10;
+  if (src.acq_pct != null) st.acq = r1(src.acq_pct);
+  if (src.other != null) st.other = r1(src.other);
+  if (src.logist != null) st.fbo.logist = r1(src.logist);
+  if (src.storage != null) st.fbo.storage = r1(src.storage);
+  if (src.fbs && src.fbs.litres) { st.litres = src.fbs.litres; }
+  st.fbs.logist = src.fbs && src.fbs.logist ? src.fbs.logist : npFbsLogist(st.litres);
+  st.analog = key;
+}
+
+function npPickAnalog(key) {
+  const st = _np.st;
+  if (!key) { st.analog = ''; npSave(); renderNewprod(); return; }
+  if (key.startsWith('cat:')) {
+    const sub = _np.subjects[key.slice(4)]; if (sub) npApplyCosts(sub, key);
+  } else {
+    const a = (_np.analogs || []).find(x => x.sku === key); if (!a) return;
+    npApplyCosts(a, key);
+    if (st.mp !== 'WB' || !st.cat) {            // Ozon или категория не выбрана — комиссия как у аналога
+      if (a.comm_pct != null) st.fbo.comm = a.comm_pct;
+      st.fbs.comm = (a.fbs && a.fbs.comm_pct != null) ? a.fbs.comm_pct : (a.comm_pct ?? st.fbs.comm);
+    }
+  }
+  npSave(); renderNewprod();
+}
+
+function npInput(k, v) {
+  const st = _np.st; let x = parseFloat(String(v).replace(',', '.')); if (isNaN(x)) x = 0;
+  const [a, b] = k.split('.');
+  if (b) st[a][b] = x; else st[a] = x;
+  if (k === 'buyer') st.price = Math.round(x / Math.max(0.01, 1 - st.spp / 100));
+  if (k === 'litres') { st.fbs.logist = npFbsLogist(x); const el = document.getElementById('np_fbs.logist'); if (el) el.value = st.fbs.logist; }
+  npSave(); npRecalc();
+}
+
+function npCalc(st, sc, price, drr) {
+  const s = st[sc]; price = price ?? st.price; drr = drr ?? st.drr;
+  const comm = price * s.comm / 100, acq = price * st.acq / 100, ad = price * drr / 100;
+  const fixed = s.logist + s.storage + (s.pack || 0) + st.other + st.cogs;
+  const pre = price - comm - acq - ad - fixed;
+  const tax = pre > 0 ? pre * st.tax / 100 : 0;
+  const profit = pre - tax;
+  return { price, comm, acq, ad, fixed, tax, profit, margin: price ? profit / price * 100 : 0,
+           roi: st.cogs ? profit / st.cogs * 100 : null };
+}
+
+function npPriceFor(st, sc, m) {   // цена продавца для маржи m% (после налога)
+  const s = st[sc], k = (s.comm + st.acq + st.drr) / 100, t = st.tax / 100;
+  const fixed = s.logist + s.storage + (s.pack || 0) + st.other + st.cogs;
+  const den = (1 - k) * (1 - t) - m / 100;
+  return den > 0 ? fixed * (1 - t) / den : null;
+}
+
+function npRecalc() {
+  const st = _np.st, el = id => document.getElementById(id);
+  const buyerOf = p => p * (1 - st.spp / 100);
+  if (el('npBuyer') && document.activeElement !== el('npBuyer')) el('npBuyer').value = Math.round(buyerOf(st.price));
+  if (el('np_price') && document.activeElement !== el('np_price')) el('np_price').value = Math.round(st.price);
+  const col = v => v >= 0 ? 'var(--pos)' : 'var(--neg)';
+  const SC = [['fbo', st.mp === 'WB' ? 'FBO — склад WB' : 'FBO — склад Ozon'], ['fbs', 'FBS — наш склад']];
+  const R = Object.fromEntries(SC.map(([k]) => [k, npCalc(st, k)]));
+  const best = R.fbo.profit >= R.fbs.profit ? 'fbo' : 'fbs';
+  const card = (k, lbl) => {
+    const r = R[k], month = r.profit * st.plan;
+    return `<div class="col-md-6"><div class="border rounded p-2 h-100 ${best === k ? 'border-success' : ''}">
+      <div class="d-flex justify-content-between"><b>${lbl}</b>${best === k && R.fbo.profit !== R.fbs.profit ? '<span class="badge text-bg-success">выгоднее</span>' : ''}</div>
+      <div class="d-flex gap-3 mt-1 flex-wrap">
+        <div><div class="small text-secondary">Прибыль/шт</div><div class="fs-4 fw-semibold" style="color:${col(r.profit)}">${fmt(r.profit)} ₽</div></div>
+        <div><div class="small text-secondary">Маржа</div><div class="fs-4 fw-semibold" style="color:${col(r.margin)}">${fmt(r.margin, 1)}%</div></div>
+        <div><div class="small text-secondary">За месяц, ${fmt(st.plan)} шт</div><div class="fs-4 fw-semibold" style="color:${col(month)}">${fmt(month)} ₽</div></div>
+      </div>
+      <div class="small text-secondary">ROI ${r.roi == null ? '—' : fmt(r.roi) + '%'} · реклама ${fmt(r.ad * st.plan)} ₽/мес</div></div></div>`;
+  };
+  const line = (lbl, f) => `<tr><td>${lbl}</td>${SC.map(([k]) => { const v = f(k); return `<td class="text-end">${v ? '−' + fmt(Math.abs(v)) + ' ₽' : '—'}</td>`; }).join('')}</tr>`;
+  const refRow = (lbl, m) => `<tr><td>${lbl}</td>${SC.map(([k]) => { const p = npPriceFor(st, k, m); return `<td class="text-end">${p ? fmt(p) + ' ₽<div class="text-secondary" style="font-size:.75em">покупателю ' + fmt(buyerOf(p)) + ' ₽</div>' : 'недостижимо'}</td>`; }).join('')}</tr>`;
+  const maxDrr = k => { const s = st[k]; return st.price ? (st.price * (1 - (s.comm + st.acq) / 100) - (s.logist + s.storage + (s.pack || 0) + st.other + st.cogs)) / st.price * 100 : 0; };
+  const view = st.view === 'fbs' ? 'fbs' : 'fbo';
+  el('npOut').innerHTML = `
+    <div class="row g-2 mb-3">${SC.map(([k, l]) => card(k, l)).join('')}</div>
+    <div class="row g-3">
+      <div class="col-xl-6"><div class="fw-semibold small mb-1">Из чего складывается (на 1 шт)</div>
+        <table class="table table-sm small mb-3"><thead><tr class="text-secondary"><th></th><th class="text-end">FBO</th><th class="text-end">FBS</th></tr></thead><tbody>
+          <tr><td>Цена продавца <span class="text-secondary">· покупателю ${fmt(buyerOf(st.price))} ₽</span></td><td class="text-end fw-semibold">${fmt(st.price)} ₽</td><td class="text-end fw-semibold">${fmt(st.price)} ₽</td></tr>
+          ${line(`Комиссия <span class="text-secondary">${st.fbo.comm}% / ${st.fbs.comm}%</span>`, k => R[k].comm)}
+          ${line(`Эквайринг <span class="text-secondary">${st.acq}%</span>`, k => R[k].acq)}
+          ${line('Логистика', k => st[k].logist)}
+          ${line('Хранение и приёмка', k => st[k].storage)}
+          ${line('Сборка и упаковка', k => st[k].pack || 0)}
+          ${line('Штрафы и удержания', () => st.other)}
+          ${line(`Реклама <span class="text-secondary">ДРР ${st.drr}%</span>`, k => R[k].ad)}
+          ${line('Себестоимость', () => st.cogs)}
+          ${st.tax ? line(`Налог <span class="text-secondary">${st.tax}% с прибыли</span>`, k => R[k].tax) : ''}
+          <tr class="fw-semibold"><td>Прибыль</td>${SC.map(([k]) => `<td class="text-end" style="color:${col(R[k].profit)}">${fmt(R[k].profit)} ₽</td>`).join('')}</tr>
+        </tbody></table>
+        <div class="fw-semibold small mb-1">Ориентиры по цене продавца</div>
+        <table class="table table-sm small mb-0"><thead><tr class="text-secondary"><th></th><th class="text-end">FBO</th><th class="text-end">FBS</th></tr></thead><tbody>
+          ${refRow(`Цена в ноль (ДРР ${st.drr}%)`, 0)}${refRow('Цена для маржи 20%', 20)}${refRow('Цена для маржи 30%', 30)}
+          <tr><td>Максимальный ДРР в ноль</td>${SC.map(([k]) => `<td class="text-end" style="color:${col(maxDrr(k))}">${fmt(maxDrr(k), 1)}%</td>`).join('')}</tr>
+        </tbody></table></div>
+      <div class="col-xl-6"><div class="d-flex align-items-center gap-2 mb-1"><span class="fw-semibold small">Прибыль/шт: ДРР × цена</span>
+        <div class="btn-group btn-group-sm ms-auto">${SC.map(([k]) => `<button class="btn ${view === k ? 'btn-secondary' : 'btn-outline-secondary'}" onclick="_np.st.view='${k}';npSave();npRecalc()">${k.toUpperCase()}</button>`).join('')}</div></div>
+        <table class="table table-sm small text-end mb-0"><thead><tr class="text-secondary"><th class="text-start">ДРР</th>
+          ${[-15, -10, 0, 10, 15].map(d => `<th>${d ? (d > 0 ? '+' : '') + d + '%' : 'ваша цена'}<div class="fw-normal">${fmt(st.price * (1 + d / 100))} ₽</div></th>`).join('')}</tr></thead><tbody>
+          ${[0, 5, 10, 15, 20, 25].map(dr => `<tr${dr === st.drr ? ' class="table-active"' : ''}><td class="text-start">${dr}%</td>${[-15, -10, 0, 10, 15].map(d => {
+            const x = npCalc(st, view, st.price * (1 + d / 100), dr);
+            return `<td style="color:${col(x.profit)}">${fmt(x.profit)} ₽<div class="text-secondary" style="font-size:.75em">${fmt(x.margin, 0)}%</div></td>`; }).join('')}</tr>`).join('')}
+        </tbody></table></div>
+    </div>`;
+}
+
+function renderNewprod() {
+  const wrap = document.getElementById('toolsWrap');
+  if (!wrap || _toolActive !== 'newprod') return;
+  const st = _np.st, A = _np.analogs || [];
+  const val = k => { const [a, b] = k.split('.'); return b ? st[a][b] : st[a]; };
+  const num = (k, lbl, suf, hint = '', step = 'any') => `<div class="col-6"><label class="form-label small mb-0">${lbl}</label>
+    <div class="input-group input-group-sm"><input id="np_${k}" type="number" step="${step}" class="form-control" value="${val(k) ?? ''}" oninput="npInput('${k}', this.value)"><span class="input-group-text">${suf}</span></div>
+    ${hint ? `<div class="text-secondary" style="font-size:.72rem">${hint}</div>` : ''}</div>`;
+  const pair = (k, lbl, suf) => `<tr><td class="small">${lbl}</td>${['fbo', 'fbs'].map(sc => `<td><div class="input-group input-group-sm"><input id="np_${sc}.${k}" type="number" step="any" class="form-control" value="${st[sc][k] ?? 0}" oninput="npInput('${sc}.${k}', this.value)"><span class="input-group-text">${suf}</span></div></td>`).join('')}</tr>`;
+  const subjOpts = Object.entries(_np.subjects).map(([n, s]) => `<option value="cat:${esc(n)}" ${st.analog === 'cat:' + n ? 'selected' : ''}>Среднее по «${esc(n)}» (${s.n} арт.)</option>`).join('');
+  const anOpts = A.map(a => `<option value="${esc(a.sku)}" ${st.analog === a.sku ? 'selected' : ''}>${esc(a.sku)} · ${esc((a.name || '').slice(0, 30))}${a.subject ? ' · ' + esc(a.subject) : ''}</option>`).join('');
+  const an = A.find(a => a.sku === st.analog);
+  const sub = st.analog.startsWith('cat:') ? _np.subjects[st.analog.slice(4)] : null;
+  const ref = an || sub;
+  const refHint = ref ? `У аналога по факту${_np.window ? ' (' + esc(_np.window) + ')' : ''}: ДРР ${ref.drr_pct ?? '—'}%, СПП ${ref.spp_live ?? '—'}%${an ? `, цена ${fmt(an.price0)} ₽, себес ${fmt(an.cogs)} ₽` : ''}` : '';
+  const cat = st.cat;
+  wrap.innerHTML = `<div class="row g-3 mt-1">
+    <div class="col-lg-4"><div class="card"><div class="card-body">
+      <div class="btn-group btn-group-sm mb-2">${['WB', 'OZON'].map(m => `<button class="btn ${st.mp === m ? 'btn-primary' : 'btn-outline-primary'}" onclick="npSetMp('${m}')">${m === 'WB' ? 'WB' : 'Ozon'}</button>`).join('')}</div>
+      ${st.mp === 'WB' ? `<label class="form-label small mb-0">Категория WB</label>
+        <input class="form-control form-control-sm" placeholder="Начните вводить: лубриканты, сыворотки…" value="${esc(cat ? cat.name : '')}" oninput="npCatSearch(this.value)" onfocus="npCatSearch(this.value)">
+        <div id="npCatList" class="list-group mt-1" style="max-height:220px;overflow:auto"></div>
+        ${cat ? `<div class="small text-secondary mt-1">${esc(cat.parent)} · комиссия FBO ${cat.fbo}% · FBS ${cat.fbs}%</div>` : ''}` :
+        `<div class="small text-secondary">Ozon: комиссии FBO/FBS берутся с выбранного аналога, их можно поправить вручную.</div>`}
+      <label class="form-label small mb-0 mt-2">Аналог для логистики и хранения</label>
+      <select class="form-select form-select-sm" onchange="npPickAnalog(this.value)"><option value="">— ввести вручную —</option>
+        ${subjOpts ? `<optgroup label="Средние по категории">${subjOpts}</optgroup>` : ''}<optgroup label="Наши товары">${anOpts}</optgroup></select>
+      ${refHint ? `<div class="text-secondary mt-1" style="font-size:.75rem">${refHint}</div>` : ''}
+      ${_np.err ? `<div class="small text-danger">Затраты товаров не загрузились: ${esc(_np.err)}</div>` : ''}
+      <hr class="my-2">
+      <div class="row g-2">
+        ${num('price', 'Цена продавца', '₽', 'после скидки продавца, до СПП', '1')}
+        <div class="col-6"><label class="form-label small mb-0">Цена покупателя</label>
+          <div class="input-group input-group-sm"><input id="npBuyer" type="number" step="1" class="form-control" value="${Math.round(st.price * (1 - st.spp / 100))}" oninput="npInput('buyer', this.value)"><span class="input-group-text">₽</span></div>
+          <div class="text-secondary" style="font-size:.72rem">что видит покупатель</div></div>
+        ${num('spp', st.mp === 'WB' ? 'СПП' : 'Скидка Ozon', '%')}
+        ${num('cogs', 'Себестоимость', '₽')}
+        ${num('drr', 'ДРР', '%', 'реклама к цене продавца')}
+        ${num('plan', 'План продаж', 'шт/мес', '', '1')}
+        ${num('acq', 'Эквайринг', '%')}
+        ${num('other', 'Штрафы, удержания', '₽/шт')}
+        ${num('tax', 'Налог с прибыли', '%')}
+        ${num('litres', 'Объём упаковки', 'л', 'для логистики FBS')}
+      </div>
+      <table class="table table-sm align-middle mt-2 mb-0"><thead><tr class="small text-secondary"><th></th><th>FBO</th><th>FBS</th></tr></thead><tbody>
+        ${pair('comm', 'Комиссия', '%')}${pair('logist', 'Логистика', '₽')}${pair('storage', 'Хранение', '₽')}${pair('pack', 'Сборка, упаковка', '₽')}
+      </tbody></table>
+      <div class="text-secondary" style="font-size:.72rem">Логистика FBO — фактическая у аналога (с возвратами). FBS — по тарифу склада: ${fmt(_np.ft.base, 1)} ₽ за первый литр + ${fmt(_np.ft.per, 1)} ₽ за каждый следующий.</div>
+      <button class="btn btn-sm btn-link px-0 mt-1" onclick="_np.st = _npDefaults(); npSave(); renderNewprod()">Сбросить</button>
+    </div></div></div>
+    <div class="col-lg-8"><div class="card"><div class="card-body" id="npOut"></div></div>
+      <div class="small text-secondary mt-2">Это оценка до запуска: комиссия WB — официальный тариф категории, остальные затраты — фактические по нашим похожим товарам. Реальная логистика зависит от габаритов, склада и процента выкупа.</div></div>
+  </div>`;
+  npRecalc();
 }
