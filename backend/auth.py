@@ -9,6 +9,7 @@
 каждый деплой (Biomed / Фабрика красоты) хранит своих пользователей.
 """
 import hashlib
+import hmac
 import logging
 import os
 import secrets
@@ -63,6 +64,12 @@ def _session_of(request: Request) -> dict | None:
     from config import USE_MOCK
     if USE_MOCK:
         return {"login": "demo", "role": "owner"}
+    # API-доступ владельца без cookie (ассистент, скрипты): заголовок
+    # X-Owner-Token = env OWNER_API_TOKEN (не короче 24 символов)
+    api_tok = os.getenv("OWNER_API_TOKEN", "")
+    hdr = request.headers.get("x-owner-token", "")
+    if len(api_tok) >= 24 and hdr and hmac.compare_digest(hdr, api_tok):
+        return {"login": "api", "role": "owner"}
     token = request.cookies.get(COOKIE)
     if not token:
         return None
