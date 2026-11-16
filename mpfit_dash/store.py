@@ -440,7 +440,11 @@ def kiz_supply_stats(supply: str = "") -> dict:
     lines = db.fetchall("SELECT gtin, article, name, batch, expiry, qty FROM kiz_supply WHERE supply = ? ORDER BY article",
                         (cur["supply"],))
     done = {g: n for g, n in db.fetchall(
-        "SELECT gtin, COUNT(DISTINCT kiz) FROM kiz_log WHERE ts >= ? GROUP BY gtin", (cur["since"],))}
+        "SELECT gtin, COUNT(DISTINCT kiz) FROM kiz_log WHERE ts >= ? AND kiz <> '' GROUP BY gtin", (cur["since"],))}
+    # этикетки без КИЗ (немаркированный товар): считаем каждую печать
+    for g, n in db.fetchall("SELECT gtin, COUNT(*) FROM kiz_log WHERE ts >= ? AND kiz = '' GROUP BY gtin",
+                            (cur["since"],)):
+        done[g] = done.get(g, 0) + n
     rows = [{"gtin": g, "article": a, "name": nm, "batch": b, "expiry": e, "plan": q, "done": done.get(g, 0)}
             for g, a, nm, b, e, q in lines]
     return {"supplies": lst, "supply": cur["supply"], "since": cur["since"], "rows": rows}

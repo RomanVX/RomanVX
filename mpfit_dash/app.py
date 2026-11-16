@@ -778,8 +778,10 @@ async def kiz_stations():
 
 @app.post("/api/kiz/log")
 async def kiz_log_add(request: Request, payload: dict):
-    if not payload.get("kiz"):
+    if not payload.get("kiz") and not (payload.get("nokiz") and payload.get("barcode")):
         return JSONResponse({"error": "нет КИЗ"}, status_code=400)
+    if payload.get("nokiz"):
+        payload = {**payload, "kiz": ""}      # этикетка без маркировки: только штрихкод и срок
     return await _t(store.kiz_log_add, payload, _kiz_author(request, payload))
 
 

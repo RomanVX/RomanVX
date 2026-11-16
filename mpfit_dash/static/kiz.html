@@ -67,6 +67,14 @@ th{color:var(--muted);font-weight:600;font-size:12px}
 .label .exp{font-size:calc(var(--u) * .095);font-weight:700;margin-top:auto;white-space:normal;line-height:1.1}
 .label .bc{grid-row:2;grid-column:1 / span 2;display:flex;justify-content:center;min-width:0}
 .label .bc svg{height:calc(var(--u) * .3);width:auto;max-width:100%;display:block}
+.label.nokiz{grid-template-columns:minmax(0,1fr)}
+.label.nokiz .dm{display:none}
+.label.nokiz .txt{grid-column:1}
+.label.nokiz .bc{grid-column:1}
+.label.nokiz .bc svg{height:calc(var(--u) * .4)}
+.label.nokiz .nm{font-size:calc(var(--u) * .075);-webkit-line-clamp:3}
+.label.nokiz .exp{font-size:calc(var(--u) * .11)}
+#nokizBtn.on{background:#b45309;border-color:#b45309;color:#fff}
 .label.tall{--u:min(var(--lw), calc(var(--lh) * .69));grid-template-columns:minmax(0,1fr);grid-template-rows:auto auto minmax(0,1fr) auto;justify-items:center;text-align:center}
 .label.tall .dm,.label.tall .dm{grid-row:1;grid-column:1}
 .label.tall .txt,.label.tall .txt{grid-row:2;grid-column:1;align-items:center;width:100%}
@@ -141,6 +149,7 @@ th{color:var(--muted);font-weight:600;font-size:12px}
         <button class="btn pri" id="printBtn" disabled>Печать этикетки</button>
         <button class="btn" id="bcFromGtin" hidden>Взять ШК из КИЗ</button>
         <button class="btn" id="resetBtn">Сбросить</button>
+        <button class="btn" id="nokizBtn" title="Для товаров без маркировки «Честный знак»: на этикетке только штрихкод, название и срок годности">Печать без КИЗ</button>
       </div>
     </section>
 
@@ -218,7 +227,9 @@ th{color:var(--muted);font-weight:600;font-size:12px}
 <script src="/static/kiz-parse.js"></script>
 <script>
 const $ = id => document.getElementById(id);
-const st = { kiz: null, bc: null, product: null, expiry: null, expirySrc: null, saved: null, dup: null, mismatch: false };
+const st = { kiz: null, bc: null, product: null, expiry: null, expirySrc: null, saved: null, dup: null, mismatch: false, nokiz: false };
+// GTIN для срока годности по штрихкоду (режим без КИЗ): EAN-13 → 0 + EAN, 14 цифр — как есть
+const gtinFromBc = c => /^\d{13}$/.test(c || '') ? '0' + c : /^\d{14}$/.test(c || '') ? c : '';
 const fmtD = d => d ? d.split('-').reverse().join('.') : '';
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const mskToday = () => new Date(Date.now() + 3 * 3600e3).toISOString().slice(0, 10);
@@ -302,6 +313,7 @@ async function onScan(raw) {
   if (c.type === 'kiz') {
     const k = c.kiz;
     if (!k || !k.ok) { beep(false); say('Код маркировки не разобран. Отсканируйте ещё раз.', 'bad'); return; }
+    if (st.nokiz) { setNoKiz(false); st.bc = null; st.product = null; }   // отсканировали КИЗ — значит, товар маркированный
     st.kiz = k; st.expiry = k.expiry; st.expirySrc = k.expirySrc; st.saved = null; st.dup = null; st.crpt = null;
     await lookup();
     if (!k.expiry) {
@@ -313,6 +325,7 @@ async function onScan(raw) {
       else st.crpt = r.error || 'не получилось';
     }
   } else if (c.type === 'barcode') {
+    if (st.nokiz && !st.kiz) Object.assign(st, { product: null, expiry: null, expirySrc: null, saved: null });
     st.bc = { code: c.code, bcid: c.bcid };
     if (!st.product || !st.kiz) await lookup();
   } else { beep(false); say('Непонятный код. Сканируйте DataMatrix «Честного знака» или штрихкод товара.', 'bad'); return; }
@@ -365,11 +378,12 @@ async function crptExpiry(k) {
 }
 
 async function lookup() {
-  const q = new URLSearchParams({ gtin: st.kiz?.gtin || '', barcode: st.bc?.code || '', kiz: st.kiz?.canon || '' });
+  const noKiz = st.nokiz && !st.kiz;
+  const q = new URLSearchParams({ gtin: st.kiz?.gtin || (noKiz ? gtinFromBc(st.bc?.code) : ''), barcode: st.bc?.code || '', kiz: st.kiz?.canon || '' });
   try {
     const r = await api('/api/kiz/lookup?' + q);
     if (r.product) st.product = r.product;
-    if (st.kiz && !st.kiz.expiry && r.expiry) { st.expiry = r.expiry.expiry; st.expirySrc = 'партия'; st.saved = r.expiry; }
+    if (r.expiry && ((st.kiz && !st.kiz.expiry) || noKiz)) { st.expiry = r.expiry.expiry; st.expirySrc = 'партия'; st.saved = r.expiry; }
     st.dup = r.printed || null;
   } catch (e) { say('Нет связи с сервером: ' + esc(e.message), 'warn'); }
 }
@@ -384,27 +398,41 @@ function checkMismatch() {
   if (!known && (bcs.length || st.bc.code.length === 13 && !st.bc.code.startsWith('2'))) st.mismatch = true;
 }
 
-function ready() { return !!(st.kiz && st.bc && st.expiry && st.crpt !== 'loading'); }
+function ready() {
+  if (st.nokiz && !st.kiz) return !!(st.bc && st.expiry);
+  return !!(st.kiz && st.bc && st.expiry && st.crpt !== 'loading');
+}
+function setNoKiz(on) {
+  st.nokiz = !!on;
+  $('nokizBtn').classList.toggle('on', st.nokiz);
+  $('nokizBtn').textContent = st.nokiz ? 'Без КИЗ: включено' : 'Печать без КИЗ';
+  try { localStorage.setItem('kizNoKiz', st.nokiz ? '1' : ''); } catch (e) {}
+}
 
 function render() {
   const set = (id, done, v, s) => { const el = $(id); el.className = 'step ' + (done ? 'done' : 'need');
     el.querySelector('.v').textContent = v; if (s !== undefined) el.querySelector('.s').textContent = s; };
-  set('stKiz', !!st.kiz, st.kiz ? st.kiz.serial : 'ждём скан', st.kiz ? 'GTIN ' + st.kiz.gtin : 'DataMatrix «Честный знак»');
+  const noKiz = st.nokiz && !st.kiz;
+  if (noKiz) set('stKiz', true, 'не нужен', 'режим «Печать без КИЗ»');
+  else set('stKiz', !!st.kiz, st.kiz ? st.kiz.serial : 'ждём скан', st.kiz ? 'GTIN ' + st.kiz.gtin : 'DataMatrix «Честный знак»');
   set('stBc', !!st.bc, st.bc ? st.bc.code : 'ждём скан', st.product ? (st.product.article || '') + ' · ' + (st.product.company || '') : 'EAN-13 или ШК маркетплейса');
-  set('stExp', !!st.expiry, st.expiry ? fmtD(st.expiry) : 'нужно указать', st.expiry ? 'источник: ' + st.expirySrc : 'в этом КИЗ срока нет');
-  $('expRow').hidden = !st.kiz;
-  if (st.kiz && st.expirySrc === 'партия' && document.activeElement !== $('expInput')) $('expInput').value = st.expiry;
+  set('stExp', !!st.expiry, st.expiry ? fmtD(st.expiry) : 'нужно указать', st.expiry ? 'источник: ' + st.expirySrc : (noKiz ? 'нет в файлах поставки' : 'в этом КИЗ срока нет'));
+  $('expRow').hidden = !(st.kiz || (noKiz && st.bc));
+  if ((st.kiz || noKiz) && st.expirySrc === 'партия' && document.activeElement !== $('expInput')) $('expInput').value = st.expiry;
   $('expInfo').textContent = st.saved ? `задан ${st.saved.updated_at?.slice(0, 10).split('-').reverse().join('.') || ''}${st.saved.author ? ', ' + st.saved.author : ''}` :
     (st.kiz?.expiry ? 'срок взят из самого КИЗ' : st.crpt === 'ok' ? 'срок взят из «Честного знака»' : '');
   $('bcFromGtin').hidden = !(st.kiz && !st.bc);
   const notes = [];
+  if (noKiz) notes.push(['warn', 'Режим «Печать без КИЗ»: сканируйте только штрихкод — этикетка печатается без DataMatrix. Отсканируете КИЗ — режим выключится сам.']);
+  if (noKiz && st.bc && !st.expiry) notes.push(['warn', 'Срок годности для этого штрихкода не найден в файлах поставки. Укажите срок партии — дальше он подставится сам.']);
+  if (noKiz && st.bc && !st.product) notes.push(['warn', 'Товар не найден в остатках МПФИТ — на этикетке не будет названия.']);
   if (st.crpt === 'loading') notes.push(['warn', 'Запрашиваю срок годности в «Честном знаке»…']);
   else if (st.kiz && !st.expiry) notes.push(['warn', `Срок не нашёлся ни в коде, ни в «Честном знаке» (${esc(st.crpt || '')}). Укажите срок партии — дальше он подставится для этого товара сам.`]);
   else if (st.kiz && st.crpt && st.crpt !== 'ok' && st.expirySrc === 'партия') notes.push(['warn', `«Честный знак» не дал срок (${esc(st.crpt)}), взят срок партии — проверьте дату.`]);
   if (st.dup) notes.push(['warn', `Этот КИЗ уже печатали: ${st.dup.count} раз(а), первый — ${esc(st.dup.first_ts?.replace('T', ' ').slice(0, 16))}. Печатаю повторно — проверьте, не дубль ли.`]);
   if (st.mismatch) notes.push(['bad', 'Штрихкод не совпадает с товаром из КИЗ. Проверьте, тот ли товар в руках, и отсканируйте правильный штрихкод' + (mode() === 'tsd' ? ' или нажмите «Сбросить».' : ' (или «Печать этикетки», если всё верно).')]);
   if (st.kiz && !st.product) notes.push(['warn', 'Товар не найден в остатках МПФИТ — на этикетке не будет названия.']);
-  if (!notes.length && ready()) notes.push(['ok', 'Всё готово к печати.']);
+  if (ready() && !notes.some(n => n[0] === 'bad')) notes.push(['ok', 'Всё готово к печати.']);
   $('msg').innerHTML = notes.map(([k, t]) => `<div class="msg ${k}">${t}</div>`).join('');
   $('printBtn').disabled = !ready();
   $('label').outerHTML = labelHTML('label');
@@ -434,10 +462,11 @@ function labelHTML(id, forPrint) {
   const [pw, ph] = ($('size').value === 'auto' ? '58x40' : $('size').value).split('x').map(Number);
   // компоновку при явном размере задаём сами: Firefox неверно отдаёт ориентацию листа
   const tall = ph > pw && (id || (forPrint && $('size').value !== 'auto'));
-  return `<div class="label${tall ? ' tall' : ''}"${id ? ` id="${id}"` : ''}>
+  const noKiz = st.nokiz && !st.kiz;
+  return `<div class="label${tall ? ' tall' : ''}${noKiz ? ' nokiz' : ''}"${id ? ` id="${id}"` : ''}>
     <div class="dm">${dm}${st.kiz ? `<div class="hr">${esc(st.kiz.human)}</div>` : ''}</div>
     <div class="txt">
-      <div class="nm">${esc(p.name ? shortName(p.name) : (st.kiz ? '' : 'Отсканируйте КИЗ и штрихкод'))}</div>
+      <div class="nm">${esc(p.name ? shortName(p.name) : (st.kiz || st.bc ? '' : (noKiz ? 'Отсканируйте штрихкод' : 'Отсканируйте КИЗ и штрихкод')))}</div>
       ${p.article ? `<div class="art">Арт. ${esc(p.article)}</div>` : ''}
       ${st.expiry ? `<div class="exp">Годен до: ${fmtD(st.expiry)}</div>` : ''}
     </div>
@@ -451,7 +480,8 @@ async function doPrint(opts = {}) {
   const p = st.product || {};
   try {
     await api('/api/kiz/log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-      kiz: st.kiz.canon, gtin: st.kiz.gtin, serial: st.kiz.serial, barcode: st.bc.code,
+      kiz: st.kiz ? st.kiz.canon : '', gtin: st.kiz ? st.kiz.gtin : gtinFromBc(st.bc.code), serial: st.kiz ? st.kiz.serial : '',
+      nokiz: !st.kiz, barcode: st.bc.code,
       article: p.article || '', name: p.name || '', company: p.company || '',
       expiry: st.expiry, expiry_src: st.expirySrc, author: opts.author ?? $('who').value.trim() }) });
   } catch (e) { say('Не записалось в журнал: ' + esc(e.message) + '. Этикетку не печатаю.', 'bad'); printing = false; return 'журнал: ' + e.message; }
@@ -487,11 +517,11 @@ let sending = false;
 async function sendJob() {
   if (!ready() || sending) return;
   sending = true;
-  const station = stationName(), serial = st.kiz.serial;
+  const station = stationName(), serial = st.kiz ? st.kiz.serial : 'без КИЗ ' + st.bc.code;
   try {
     const r = await api('/api/kiz/job', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
       station, author: $('who').value.trim(), copies: +$('copies').value || 1,
-      state: { kiz: st.kiz, bc: st.bc, product: st.product, expiry: st.expiry, expirySrc: st.expirySrc } }) });
+      state: { kiz: st.kiz, bc: st.bc, product: st.product, expiry: st.expiry, expirySrc: st.expirySrc, nokiz: !st.kiz } }) });
     reset(false);
     jobInfo(`Отправлено на станцию «${esc(station)}»: ${esc(serial)}…`, 'warn');
     watchJob(r.id, serial, station);
@@ -527,9 +557,11 @@ async function stationLoop() {
       const r = await api('/api/kiz/jobs?wait=25&station=' + encodeURIComponent(stationName()));
       $('modeInfo').textContent = `станция «${stationName()}» ждёт сканов с ТСД`;
       for (const j of r.jobs) {
+        const myNoKiz = st.nokiz;                       // режим станции не трогаем: задание несёт свой
         Object.assign(st, { ...j.state, saved: null, dup: null, mismatch: false, crpt: null });
         render();
         const err = await doPrint({ author: j.author, copies: j.copies });
+        setNoKiz(myNoKiz); render();
         await api(`/api/kiz/job/${j.id}/done`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ error: err || '' }) }).catch(() => {});
       }
@@ -547,6 +579,8 @@ function reset(keepMsg) {
 
 $('printBtn').onclick = () => (mode() === 'tsd' ? sendJob() : doPrint());
 $('resetBtn').onclick = () => reset(false);
+$('nokizBtn').onclick = () => { setNoKiz(!st.nokiz); if (!st.kiz) Object.assign(st, { bc: null, product: null, expiry: null, expirySrc: null, saved: null }); render(); $('scan').focus(); };
+try { if (localStorage.getItem('kizNoKiz')) setNoKiz(true); } catch (e) {}
 $('bcFromGtin').onclick = () => {
   const ean = st.kiz.gtin.startsWith('0') ? st.kiz.gtin.slice(1) : st.kiz.gtin;
   st.bc = { code: ean, bcid: KIZ.eanCheck(ean) === +ean[12] ? 'ean13' : 'code128' };
@@ -554,10 +588,14 @@ $('bcFromGtin').onclick = () => {
 };
 $('expSave').onclick = async () => {
   const v = $('expInput').value;
-  if (!st.kiz || !/^\d{4}-\d{2}-\d{2}$/.test(v)) { say('Выберите дату срока годности.', 'warn'); return; }
+  if (!(st.kiz || st.bc) || !/^\d{4}-\d{2}-\d{2}$/.test(v)) { say('Выберите дату срока годности.', 'warn'); return; }
+  const gtin = st.kiz ? st.kiz.gtin : gtinFromBc(st.bc.code);
+  if (!gtin) {                       // ШК маркетплейса без EAN — срок только для этой этикетки
+    st.expiry = v; st.expirySrc = 'вручную'; st.saved = null; render(); maybeAutoPrint(); $('scan').focus(); return;
+  }
   try {
     await api('/api/kiz/expiry', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ gtin: st.kiz.gtin, expiry: v, product: st.product?.name || '', author: $('who').value.trim() }) });
+      body: JSON.stringify({ gtin, expiry: v, product: st.product?.name || '', author: $('who').value.trim() }) });
     st.expiry = v; st.expirySrc = 'партия'; st.saved = { updated_at: new Date().toISOString(), author: '' };
     render(); maybeAutoPrint(); $('scan').focus();
   } catch (e) { say('Не сохранилось: ' + esc(e.message), 'bad'); }
@@ -590,7 +628,7 @@ async function loadLog() {
     const r = await api(`/api/kiz/log?d0=${d0}&d1=${d1}`);
     _logRows = r.rows;
     $('logBody').innerHTML = r.rows.length ? r.rows.map((x, i) => `<tr><td>${esc(x.ts.slice(5, 16).replace('T', ' '))}</td><td class="hide-m">${esc(x.company)}</td><td>${esc(x.article)}</td>
-      <td class="hide-m" style="max-width:260px;overflow:hidden;text-overflow:ellipsis">${esc(x.name)}</td><td>${esc(x.serial)}</td><td class="hide-m">${fmtD(x.expiry)}</td><td class="hide-m">${esc(x.expiry_src)}</td><td class="hide-m">${esc(x.author)}</td>
+      <td class="hide-m" style="max-width:260px;overflow:hidden;text-overflow:ellipsis">${esc(x.name)}</td><td>${x.kiz ? esc(x.serial) : '<span class="muted">без КИЗ</span>'}</td><td class="hide-m">${fmtD(x.expiry)}</td><td class="hide-m">${esc(x.expiry_src)}</td><td class="hide-m">${esc(x.author)}</td>
       <td><button class="btn sm" onclick="reprint(${i})" title="Напечатать эту этикетку ещё раз">Перепечатать</button></td></tr>`).join('')
       : '<tr><td colspan="9" class="muted">Пока ничего не печатали</td></tr>';
     if (d0 === mskToday() && d1 === mskToday()) $('todayCount').textContent = `Сегодня напечатано: ${r.rows.length}`;
@@ -603,14 +641,17 @@ async function reprint(i) {
   const x = _logRows[i];
   if (!x) return;
   if (st.kiz || st.bc) { say('Сначала закончите или сбросьте текущий скан.', 'warn'); return; }
-  const k = KIZ.parseKiz(x.kiz || '');
-  if (!k || !k.ok) { say('Не удалось разобрать КИЗ из истории: ' + esc(x.serial), 'bad'); return; }
+  const noKiz = !x.kiz;
+  const k = noKiz ? null : KIZ.parseKiz(x.kiz);
+  if (!noKiz && (!k || !k.ok)) { say('Не удалось разобрать КИЗ из истории: ' + esc(x.serial), 'bad'); return; }
   const code = String(x.barcode || '');
+  const myNoKiz = st.nokiz; st.nokiz = noKiz || st.nokiz;
   Object.assign(st, { kiz: k, bc: { code, bcid: code.length === 13 && KIZ.eanCheck(code) === +code[12] ? 'ean13' : 'code128' },
     product: { name: x.name || '', article: x.article || '', company: x.company || '', barcodes: [code] },
     expiry: x.expiry, expirySrc: x.expiry_src || 'история', saved: null, dup: null, mismatch: false, crpt: null });
   render();
   if (mode() === 'tsd') await sendJob(); else await doPrint();
+  setNoKiz(myNoKiz); render();
 }
 let _statSupply = '';
 async function loadStats() {
