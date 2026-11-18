@@ -342,6 +342,13 @@ async def lifespan(app: FastAPI):
     from config import READ_ONLY
     import catalog_auto
     catalog_auto.load_snapshot()
+    # BG_TASKS=0 — аварийный режим для крупного кабинета на 512 МБ: никаких
+    # фоновых прогревов (заказы 90 дн., отзывы, финотчёт). Данные грузятся
+    # только при открытии раздела, сервер не падает по памяти в цикле.
+    if os.getenv("BG_TASKS", "1").strip() in ("0", "false", "off", "no"):
+        logging.getLogger("main").warning("BG_TASKS=0: фоновые задачи выключены")
+        yield
+        return
     asyncio.create_task(catalog_auto.loop())
     task = asyncio.create_task(_prefetch_weekly())
     task2 = asyncio.create_task(_warm_finance())
