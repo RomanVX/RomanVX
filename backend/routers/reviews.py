@@ -143,6 +143,10 @@ async def analyze_style(platform: str = Query("WB"), sample: int = Query(300)):
 @router.post("/draft")
 async def make_draft(id: str = Query(...)):
     """Generate (or regenerate) an AI draft reply for one review."""
+    if id.startswith("demo-"):
+        import demo_extra
+        await asyncio.sleep(1.2)
+        return {"id": id, "draft": demo_extra.review_draft(id), "status": "pending"}
     review = rc.get_review(id)
     if not review:
         return {"error": "Отзыв не найден"}
@@ -184,6 +188,13 @@ async def approve_draft(
     body: dict = Body(default=None),
 ):
     """Approve a draft (optionally edited). If publish and WB review — post to WB."""
+    if id.startswith("demo-"):
+        return {"id": id, "status": "approved", "published": False, "demo": True,
+                "message": "Пример данных — ответ никуда не отправлен"}
+    if publish:
+        from routers.feedback import write_allowed, _RO_MSG
+        if not write_allowed():
+            return {"id": id, "status": "pending", "published": False, "error": _RO_MSG}
     d = rc.get_draft(id)
     if not d and not (body or {}).get("text"):
         return {"error": "Черновик не найден"}
@@ -212,6 +223,8 @@ async def approve_draft(
 @router.post("/decline")
 async def decline_draft(id: str = Query(...)):
     """Mark a draft as declined."""
+    if id.startswith("demo-"):
+        return {"id": id, "status": "declined"}
     rc.set_draft_status(id, "declined")
     return {"id": id, "status": "declined"}
 
@@ -352,6 +365,9 @@ async def run_auto_pass(limit: int = Query(60)):
     """Ручной запуск прохода автоответов в фоне (Render обрывает запросы
     ~30с, а проход с генерацией может идти минуты). Результат — в поле
     auto ответа /data (строка статуса на фронте)."""
+    from routers.feedback import write_allowed, _RO_MSG
+    if not write_allowed():
+        return {"error": _RO_MSG}
     auto_status["error"] = ""
     auto_status["result"] = None
     t = asyncio.create_task(auto_reply_pass(min(int(limit or 60), 200)))

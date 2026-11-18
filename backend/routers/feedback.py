@@ -48,6 +48,20 @@ CLAIM_STATUS_EX = {0: "на рассмотрении", 1: "товар у пок�
                    8: "вернётся в продажу после проверки", 10: "возвращается продавцу"}
 
 
+def _is_demo(x) -> bool:
+    return str(x or "").startswith("demo-")
+
+
+def write_allowed() -> bool:
+    """Отправка ответов покупателям: в кабинете «только чтение» — только с FEEDBACK_WRITE=1."""
+    import os
+    from config import READ_ONLY
+    return (not READ_ONLY) or os.getenv("FEEDBACK_WRITE", "").strip().lower() in ("1", "true", "yes")
+
+
+_RO_MSG = "Кабинет в режиме «только чтение»: отправка ответов покупателям не включена (FEEDBACK_WRITE=1)."
+
+
 # ── правила ──────────────────────────────────────────────────────────────────
 def _rules() -> dict:
     import snapshot
@@ -222,7 +236,7 @@ def _save_draft(key: str, val) -> None:
 @router.post("/questions/draft")
 async def question_draft(body: dict = Body(...)):
     """{id, mp, text, art, name} → черновик ответа ИИ."""
-    if DEMO_CABINET:
+    if DEMO_CABINET or _is_demo((body or {}).get("id")):
         import demo_extra
         await asyncio.sleep(1.5)
         return {"draft": demo_extra.question_draft(body or {})}
@@ -262,8 +276,10 @@ async def question_answer(body: dict = Body(...)):
     text = str(b.get("text") or "").strip()
     if len(text) < 2:
         return {"error": "Пустой ответ"}
-    if DEMO_CABINET:
+    if DEMO_CABINET or _is_demo(b.get("id")):
         return {"ok": True, "demo": True}
+    if not write_allowed():
+        return {"error": _RO_MSG}
     if b.get("mp") == "WB":
         async with httpx.AsyncClient(timeout=30) as c:
             r = await c.patch(f"{_WB}/api/v1/questions", headers={"Authorization": WB_API_KEY},
@@ -354,7 +370,7 @@ async def claims(refresh: bool = False):
 @router.post("/claims/advise")
 async def claim_advise(body: dict = Body(...)):
     """{claim} → рекомендация ИИ: {verdict, action, reason, comment}. Решает человек."""
-    if DEMO_CABINET:
+    if DEMO_CABINET or _is_demo(((body or {}).get("claim") or {}).get("id")):
         import demo_extra
         await asyncio.sleep(2)
         return demo_extra.claim_advice((body or {}).get("claim") or {})
@@ -429,8 +445,10 @@ async def claim_answer(body: dict = Body(...)):
     action = str(b.get("action") or "")
     if action not in CLAIM_ACTIONS:
         return {"error": "Неизвестное действие"}
-    if DEMO_CABINET:
+    if DEMO_CABINET or _is_demo(b.get("id")):
         return {"ok": True, "demo": True}
+    if not write_allowed():
+        return {"error": _RO_MSG}
     payload = {"id": b.get("id"), "action": action}
     comment = str(b.get("comment") or "").strip()
     if action == "rejectcustom" and len(comment) < 10:

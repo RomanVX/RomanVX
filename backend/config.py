@@ -65,6 +65,10 @@ UI_PROFILE: str = os.getenv("UI_PROFILE", "analytics" if IS_CLIENT_CABINET else 
 # площадок и ИИ не используются (даже если заданы), все разделы наполнены
 # демо-цифрами. Для показа клиенту, «как будет, когда подключим всё».
 DEMO_CABINET: bool = os.getenv("DEMO_CABINET", "").strip().lower() in ("1", "true", "yes", "on")
+# DEMO_FILL=1 — боевой кабинет, но инструменты без реальных данных (нет ключа,
+# подписки и т.п.) показывают пример на настоящих товарах кабинета с пометкой
+# «Пример данных». Ответы на демо-вопросы/отзывы никуда не отправляются.
+DEMO_FILL: bool = os.getenv("DEMO_FILL", "").strip().lower() in ("1", "true", "yes", "on")
 if DEMO_CABINET:
     WB_API_KEY = WB_ADVERT_KEY = ""
     OZON_CLIENT_ID = OZON_API_KEY = ""

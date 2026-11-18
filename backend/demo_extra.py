@@ -6,6 +6,58 @@ from datetime import datetime, timedelta
 import mock_data as md
 
 
+class _Src:
+    """Ассортимент для демо: DEMO_CABINET — выдуманный (mock_data),
+    DEMO_FILL — настоящие товары кабинета из каталога, цифры выдуманные."""
+    def __init__(self, products, arts, prices, costs, comm):
+        self.PRODUCTS, self._arts, self.PRICES, self.COSTS, self.COMM = products, arts, prices, costs, comm
+
+    def art(self, nm):
+        return self._arts[nm]
+
+
+_src_cache: dict = {}
+
+
+def S() -> "_Src":
+    from config import DEMO_CABINET
+    if DEMO_CABINET:
+        if "md" not in _src_cache:
+            _src_cache["md"] = _Src(md.PRODUCTS, {nm: f"{md.ART}{nm}" for nm, *_ in md.PRODUCTS},
+                                    md.PRICES, md.COSTS, md._COMM)
+        return _src_cache["md"]
+    import catalog
+    n = len(catalog.CATALOG)
+    hit = _src_cache.get("cat")
+    if hit and hit[0] == n:
+        return hit[1]
+    by_brand: dict = {}
+    for art, v in sorted(catalog.CATALOG.items()):
+        b = v.get("brand") or "Прочее"
+        if b in ("Прочее", "Нет бренда"):
+            continue
+        by_brand.setdefault(b, []).append((art, v.get("name") or art))
+    order = [b for b in catalog.BRAND_ORDER if b in by_brand] or list(by_brand)
+    prods, arts, prices, costs = [], {}, {}, {}
+    i = 0
+    while len(prods) < 28 and any(by_brand.get(b) for b in order):
+        for b in order:
+            if by_brand.get(b) and len(prods) < 28:
+                art, name = by_brand[b].pop(0)
+                nm = 700000 + i
+                i += 1
+                r = random.Random(art)
+                prods.append((nm, name[:90], b, b))
+                arts[nm] = art
+                prices[nm] = r.randint(390, 7900)
+                costs[art] = round(prices[nm] * 0.45)
+    if not prods:                      # каталог ещё не загрузился
+        prods = []
+    src = _Src(prods, arts, prices, costs, {})
+    _src_cache["cat"] = (n, src)
+    return src
+
+
 def _now():
     return datetime.utcnow() + timedelta(hours=3)
 
@@ -23,9 +75,9 @@ def promo(days: int) -> dict:
         {"id": 4, "title": "Новогодние подарки", "start": str(today + timedelta(days=28)), "end": str(today + timedelta(days=45))},
     ]
     rows = []
-    for i, (nm, name, brand, cat) in enumerate(md.PRODUCTS):
-        art = f"{md.ART}{nm}"
-        price = md.PRICES[nm]
+    for i, (nm, name, brand, cat) in enumerate(S().PRODUCTS):
+        art = S().art(nm)
+        price = S().PRICES[nm]
         base = max(1, int(60 * (0.88 ** i) * days / 7))
         q = max(0, int(rnd.gauss(base, base * 0.25)))
         q0 = max(0, int(rnd.gauss(base, base * 0.3)))
@@ -36,9 +88,9 @@ def promo(days: int) -> dict:
         ad, ad0 = rev * drr, rev0 * drr0
         cpo = ad * rnd.uniform(0.3, 0.7)
         ad_rev = ad * rnd.uniform(4, 11) if ad else 0
-        comm = md._COMM.get(cat, 22.0) + 3
+        comm = S().COMM.get(cat, 22.0) + 3
         logist, storage = rnd.randint(70, 260), rnd.randint(3, 25)
-        cogs = md.COSTS[art]
+        cogs = S().COSTS[art]
         ad_unit = ad / q if q else 0
 
         def marg(p):
@@ -87,49 +139,69 @@ def promo(days: int) -> dict:
             "built": _now().strftime("%d.%m.%Y %H:%M"), "building": False, "progress": "", "error": ""}
 
 
+def _pick(brand: str, k: int = 0):
+    """Товар бренда (k-й), иначе любой — чтобы примеры были на реальных карточках."""
+    P = S().PRODUCTS
+    if not P:
+        return None
+    hits = [p for p in P if p[2] == brand]
+    if hits:
+        return hits[k % len(hits)]
+    return P[(hash(brand) + k) % len(P)]
+
+
+# (площадка, бренд, вопрос, черновик ответа | None)
 _Q = [
-    ("WB", 301001, "Подходит ли для комнаты 25 м²? И как часто менять воду?"),
-    ("Ozon", 301002, "Это оригинал из Венгрии? Есть ли честный знак?"),
-    ("WB", 301003, "Камера заднего вида в комплекте? Какая длина провода?"),
-    ("WB", 301005, "Подойдут на Kia Rio 2018?"),
-    ("Ozon", 301008, "Есть ли поддержка Android Auto?"),
-    ("WB", 301004, "С какого возраста можно? Иголка в наборе есть?"),
-    ("Ozon", 301011, "Какой уровень шума в ночном режиме?"),
-    ("WB", 301014, "Аккумулятор и зарядка в комплекте или покупать отдельно?"),
+    ("WB", "Kallos", "Это оригинал из Венгрии? Есть ли честный знак?",
+     "Здравствуйте! Да, это оригинальная продукция Kallos, мы работаем напрямую с официальным поставщиком. Товар промаркирован «Честным знаком» — код на упаковке можно проверить в приложении."),
+    ("Ozon", "FuturoHome", "Какая гарантия и куда обращаться, если сломается?",
+     "Здравствуйте! На технику FuturoHome действует гарантия производителя, гарантийный талон вложен в коробку. Если что-то пойдёт не так — напишите нам в чат, подскажем ближайший сервис или оформим возврат."),
+    ("WB", "InCar", "Подойдёт на Kia Rio 2018?", None),
+    ("Ozon", "КРАФТИКИ", "С какого возраста можно? Всё необходимое есть в наборе?", None),
+    ("WB", "Bosch", "Это оригинал Bosch? Почему дешевле, чем в магазине?", None),
+    ("Ozon", "HELIA-D", "Подходит для чувствительной кожи?", None),
+    ("WB", "Nakamichi", "Нужен ли переходник для подключения?", None),
+    ("Ozon", "SWAT", "Какой срок годности у товара?", None),
 ]
-_Q_DRAFT = {
-    301001: "Здравствуйте! Да, производительности хватает на комнату до 30 м². Воду лучше менять раз в 1–2 дня, а бак раз в неделю промывать — так не будет налёта и запаха.",
-    301002: "Здравствуйте! Да, это оригинальная продукция Kallos, производство Венгрия. Товар промаркирован «Честным знаком» — код можно проверить в приложении.",
-    301003: "Здравствуйте! Да, камера заднего вида входит в комплект, длина провода к ней — 6 метров, хватает для седана и кроссовера.",
-}
+_Q_GENERIC = ("Здравствуйте! Спасибо за вопрос. Все характеристики указаны в карточке товара в разделе «Характеристики». "
+              "Если не нашли нужное — напишите, уточним у производителя и ответим.")
 _ANSWERED = [
-    ("Можно ли использовать на окрашенных волосах?", "Здравствуйте! Да, маска подходит для окрашенных волос и не вымывает цвет."),
+    ("Можно ли использовать на окрашенных волосах?", "Здравствуйте! Да, подходит для окрашенных волос и не вымывает цвет."),
     ("Какая гарантия?", "Здравствуйте! Гарантия производителя — 12 месяцев, талон вложен в коробку."),
-    ("Работает от прикуривателя?", "Да, питание от прикуривателя 12 В, кабель в комплекте."),
+    ("Есть ли инструкция на русском?", "Здравствуйте! Да, инструкция на русском языке вложена в упаковку."),
 ]
 
 
 def questions() -> dict:
     now = _now()
-    names = {nm: (name, brand) for nm, name, brand, _ in md.PRODUCTS}
     new = []
-    for i, (mp, nm, text) in enumerate(_Q):
+    for i, (mp, brand, text, draft) in enumerate(_Q):
+        p = _pick(brand, i)
+        if not p:
+            break
+        nm, name, br, _ = p
         new.append({"mp": mp, "id": f"demo-q{i}", "text": text,
                     "date": (now - timedelta(hours=5 + i * 9)).strftime("%Y-%m-%d %H:%M"),
-                    "answer": "", "sku": nm if mp == "WB" else nm + 900000000, "art": f"{md.ART}{nm}",
-                    "name": names[nm][0], "brand": names[nm][1], "warned": False,
-                    "draft": _Q_DRAFT.get(nm) if i < 2 else None})
+                    "answer": "", "sku": nm if mp == "WB" else nm + 900000000, "art": S().art(nm),
+                    "name": name, "brand": br, "warned": False, "draft": draft if i < 2 else None})
+    P = S().PRODUCTS
     answered = [{"mp": "WB", "id": f"demo-a{i}", "text": q, "answer": a,
                  "date": (now - timedelta(days=3 + i)).strftime("%Y-%m-%d %H:%M"),
-                 "sku": md.PRODUCTS[i][0], "art": f"{md.ART}{md.PRODUCTS[i][0]}", "name": md.PRODUCTS[i][1]}
-                for i, (q, a) in enumerate(_ANSWERED)]
+                 "sku": P[i][0], "art": S().art(P[i][0]), "name": P[i][1]}
+                for i, (q, a) in enumerate(_ANSWERED) if i < len(P)]
     return {"new": new, "answered": answered, "errors": [], "fetched": now.strftime("%d.%m %H:%M")}
 
 
 def question_draft(q: dict) -> str:
-    return (_Q_DRAFT.get(int(str(q.get("art") or "0").split("-")[-1] or 0))
-            or "Здравствуйте! Спасибо за вопрос. Уточнили у производителя: всё указано в характеристиках карточки, "
-               "если останутся вопросы — напишите, ответим.")
+    i = str(q.get("id") or "")
+    if i.startswith("demo-q"):
+        try:
+            d = _Q[int(i[6:])][3]
+            if d:
+                return d
+        except (ValueError, IndexError):
+            pass
+    return _Q_GENERIC
 
 
 _ACTS = [{"code": c, "title": t} for c, t in [
@@ -139,14 +211,15 @@ _ACTS = [{"code": c, "title": t} for c, t in [
     ("reject1", "Отклонить: брак не обнаружен (шаблон WB)"),
     ("reject2", "Отклонить: попросить фото/видео (шаблон WB)"),
     ("rejectcustom", "Отклонить со своим комментарием")]]
+# (бренд, комментарий покупателя, часов назад/3, совет ИИ)
 _C = [
-    (301026, "Ароматизатор протёк в упаковке, всё липкое", 2, 1, {"verdict": "approve", "action": "autorefund1", "confidence": "высокая",
-      "reason": "Претензия правдоподобна и подтверждена фото, товар дешёвый: возить его обратно дороже, чем вернуть деньги. Рекомендую вернуть деньги без возврата товара.", "comment": ""}),
-    (301001, "Не включается, индикатор не горит", 0, 6, {"verdict": "clarify", "action": "reject2", "confidence": "средняя",
+    ("SWAT", "Пришло вскрытым, содержимое протекло, коробка мокрая", 1, {"verdict": "approve", "action": "autorefund1", "confidence": "высокая",
+      "reason": "Повреждение при доставке правдоподобно, товар недорогой: возить его обратно дороже, чем вернуть деньги. Рекомендую вернуть деньги без возврата товара.", "comment": ""}),
+    ("FuturoHome", "Не включается, индикатор не горит", 6, {"verdict": "clarify", "action": "reject2", "confidence": "средняя",
       "reason": "Фото и видео нет, по тексту нельзя отличить брак от неправильного подключения. Стоит попросить видео с попыткой включения.", "comment": ""}),
-    (301014, "Сломался патрон после неделе работы", 3, 11, {"verdict": "approve", "action": "approve1", "confidence": "средняя",
-      "reason": "На фото виден треснувший патрон, следов падения нет. Похоже на производственный брак — одобрить с проверкой на складе.", "comment": ""}),
-    (301002, "Не подошёл запах, хочу вернуть", 1, 4, {"verdict": "reject", "action": "rejectcustom", "confidence": "высокая",
+    ("Bosch", "Сломался через неделю работы, трещина на корпусе", 11, {"verdict": "approve", "action": "approve1", "confidence": "средняя",
+      "reason": "На фото трещина по шву корпуса, следов удара нет. Похоже на производственный брак — одобрить с проверкой на складе.", "comment": ""}),
+    ("Kallos", "Не подошёл запах, хочу вернуть", 4, {"verdict": "reject", "action": "rejectcustom", "confidence": "высокая",
       "reason": "Это не брак: товар вскрыт, причина — не понравился аромат. Косметика надлежащего качества возврату не подлежит.",
       "comment": "Здравствуйте! Сожалеем, что аромат не понравился. Косметика надлежащего качества после вскрытия возврату не подлежит, поэтому заявку отклоняем. Если заметите проблему с качеством — напишите, разберёмся."}),
 ]
@@ -154,28 +227,35 @@ _C = [
 
 def claims() -> dict:
     now = _now()
-    names = {nm: name for nm, name, *_ in md.PRODUCTS}
     op = []
-    for i, (nm, txt, nph, ago, adv) in enumerate(_C):
-        op.append({"id": f"demo-c{i}", "nm": nm, "art": f"{md.ART}{nm}", "name": names[nm], "comment": txt,
-                   "wb_comment": "", "price": md.PRICES[nm], "date": (now - timedelta(hours=ago * 3)).strftime("%Y-%m-%d %H:%M"),
+    for i, (brand, txt, ago, adv) in enumerate(_C):
+        p = _pick(brand, i)
+        if not p:
+            break
+        nm, name, *_ = p
+        op.append({"id": f"demo-c{i}", "nm": nm, "art": S().art(nm), "name": name, "comment": txt,
+                   "wb_comment": "", "price": S().PRICES[nm], "date": (now - timedelta(hours=ago * 3)).strftime("%Y-%m-%d %H:%M"),
                    "order_date": str((now - timedelta(days=ago + 6)).date()),
                    "delivery_date": str((now - timedelta(days=ago + 2)).date()),
                    "status": "на рассмотрении", "status_ex": "на рассмотрении", "photos": [], "videos": [],
-                   "photos_demo": nph, "actions": _ACTS, "origin_info": "", "source": "портал",
+                   "actions": _ACTS, "origin_info": "", "source": "портал",
                    "advice": ({**adv, "at": now.strftime("%d.%m %H:%M")} if i < 2 else None)})
-    arch = [{"id": f"demo-ca{i}", "nm": md.PRODUCTS[i][0], "art": f"{md.ART}{md.PRODUCTS[i][0]}", "name": md.PRODUCTS[i][1],
+    P = S().PRODUCTS
+    arch = [{"id": f"demo-ca{i}", "nm": P[i][0], "art": S().art(P[i][0]), "name": P[i][1],
              "comment": c, "date": (now - timedelta(days=5 + i)).strftime("%Y-%m-%d %H:%M"), "status": st, "status_ex": sx}
             for i, (c, st, sx) in enumerate([("Пришёл не тот цвет", "одобрено", "возвращается продавцу"),
                                              ("Царапина на корпусе", "одобрено", "товар у покупателя (одобрено)"),
-                                             ("Передумал", "отказ", "товар у покупателя (отклонено)")])]
+                                             ("Передумал", "отказ", "товар у покупателя (отклонено)")]) if i < len(P)]
     return {"open": op, "archive": arch, "errors": [], "fetched": now.strftime("%d.%m %H:%M")}
 
 
 def claim_advice(c: dict) -> dict:
-    for (nm, txt, nph, ago, adv) in _C:
-        if c.get("nm") == nm:
-            return {**adv, "at": _now().strftime("%d.%m %H:%M")}
+    i = str(c.get("id") or "")
+    if i.startswith("demo-c"):
+        try:
+            return {**_C[int(i[6:])][3], "at": _now().strftime("%d.%m %H:%M")}
+        except (ValueError, IndexError):
+            pass
     return {"verdict": "clarify", "action": "reject2", "confidence": "низкая",
             "reason": "Недостаточно данных — попросить фото/видео.", "comment": "", "at": _now().strftime("%d.%m %H:%M")}
 
@@ -186,7 +266,7 @@ def _R(seed):
 
 
 def _arts():
-    return [(f"{md.ART}{nm}", nm, name, brand, cat) for nm, name, brand, cat in md.PRODUCTS]
+    return [(S().art(nm), nm, name, brand, cat) for nm, name, brand, cat in S().PRODUCTS]
 
 
 def wb_adv() -> dict:
@@ -244,7 +324,7 @@ def oz_funnel() -> dict:
         else:
             b, why = "ok", "воронка в норме"
         items.append({"sku": art, "name": name, "group": brand, "search": search, "pdp": pdp, "tocart": tocart,
-                      "orders": orders, "revenue": orders * md.PRICES[nm], "sessions": pdp,
+                      "orders": orders, "revenue": orders * S().PRICES[nm], "sessions": pdp,
                       "position": round(rnd.uniform(3, 60), 1), "ctr": ctr, "cart_pct": cart, "buy_pct": buy,
                       "bottleneck": b, "bottleneck_why": why})
     d1 = _now().date() - timedelta(days=1)
@@ -387,7 +467,7 @@ def wb_funnel(days: int) -> dict:
         po = int(opens * rnd.uniform(0.8, 1.2))
         pord = int(orders * rnd.uniform(0.8, 1.2))
         items.append({"nm": str(nm), "sku": art, "opens": opens, "carts": carts, "orders": orders,
-                      "orders_rub": orders * md.PRICES[nm], "buyouts": buy, "cancels": orders - buy,
+                      "orders_rub": orders * S().PRICES[nm], "buyouts": buy, "cancels": orders - buy,
                       "wishlist": int(opens * 0.03), "cr_cart": round(carts / opens * 100, 1),
                       "cr_order": round(orders / carts * 100, 1) if carts else 0,
                       "cr_buyout": round(buy / orders * 100, 1) if orders else 0,
@@ -427,10 +507,10 @@ def promo_action(mp: str, id_: str) -> dict:
     rnd = _R(91 + len(id_))
     items = []
     for art, nm, name, brand, cat in _arts()[:20]:
-        price = md.PRICES[nm]
+        price = S().PRICES[nm]
         disc = rnd.choice([5, 8, 10, 12, 15, 20, 25, 30])
         ap = round(price * (1 - disc / 100))
-        cost = md.COSTS[art]
+        cost = S().COSTS[art]
         payout = round(ap * 0.72) - 120
         profit = payout - cost
         stock = rnd.randint(0, 300)
@@ -476,3 +556,164 @@ def route(path: str, q: dict):
     if path == "/api/promo/action":
         return promo_action(q.get("mp") or "", q.get("id") or "")
     return None
+
+
+# ── Отзывы и продуктолог (для DEMO_FILL, когда реальных отзывов нет) ────────
+_COSM = ("Kallos", "Kallos Cosmetics", "HELIA-D")
+_RV_COSM = [
+    (5, "Волосы мягкие и блестящие после первого применения, объём большой — надолго."),
+    (5, "Оригинал, пахнет приятно, пользуюсь не первый год."),
+    (4, "Хорошая маска, но аромат резковат."),
+    (3, "Эффект слабее, чем ожидала, но за свою цену нормально."),
+    (2, "Дозатор подтекает, баночка пришла липкая."),
+    (5, ""),
+]
+_RV = [
+    (5, "Всё пришло целым, работает отлично. Упаковка надёжная."),
+    (5, "Пользуюсь неделю — всё как в описании, рекомендую."),
+    (5, "Быстрая доставка, качество на уровне. Спасибо продавцу!"),
+    (4, "Хорошая вещь за свои деньги. Минус звезда за мятую коробку."),
+    (5, "Брали в подарок — очень довольны."),
+    (3, "В целом нормально, но инструкция только на английском."),
+    (5, "Лучшее соотношение цена/качество, сравнивал с аналогами."),
+    (2, "Пришёл с царапиной на корпусе. Продавец, решите вопрос!"),
+    (4, "Хорошо, но шумит громче, чем ожидал."),
+    (1, "Заказывал одно — привезли другое. Оформляю возврат."),
+    (5, "Оригинал, есть гарантийный талон и чек."),
+    (5, ""),
+]
+_RV_DRAFT = {
+    5: "Спасибо за отзыв! Очень рады, что всё понравилось — будем ждать вас снова 🙂",
+    4: "Спасибо за оценку! Жаль, что коробка пришла помятой — передали замечание на склад, усилим упаковку.",
+    3: "Спасибо за отзыв! Подскажите, чего не хватило? Русскую инструкцию можем прислать в чат — напишите нам.",
+    2: "Здравствуйте! Простите за такую ситуацию. Оформите, пожалуйста, возврат через площадку или напишите в чат — решим вопрос.",
+    1: "Здравствуйте! Приносим извинения: это ошибка при комплектации на складе, разбор уже передан. Оформите возврат — деньги вернутся полностью.",
+}
+
+
+def reviews_data() -> dict:
+    rnd = random.Random(11)
+    P = S().PRODUCTS
+    today = _now()
+    out = []
+    for i in range(90):
+        if not P:
+            break
+        nm, name, brand, cat = P[rnd.randrange(len(P))]
+        pool = _RV_COSM if brand in _COSM else _RV
+        rating, text = pool[rnd.randrange(len(pool))]
+        pf = rnd.choices(["WB", "Ozon"], weights=[60, 40])[0]
+        answered = rating >= 4 and rnd.random() < 0.6
+        out.append({"id": f"demo-r{i}", "platform": pf, "sku": S().art(nm), "name": name, "brand": brand,
+                    "group": brand, "rating": rating, "text": text,
+                    "date": (today - timedelta(days=rnd.randint(0, 45))).strftime("%Y-%m-%d"),
+                    "answer": _RV_DRAFT[5] if answered else "", "nm": str(nm)})
+    out.sort(key=lambda r: r["date"], reverse=True)
+    arts, groups = {}, {}
+    for r in out:
+        k = "wb" if r["platform"] == "WB" else "ozon"
+        for tab, key, base in ((arts, r["sku"], {"sku": r["sku"], "name": r["name"], "brand": r["brand"], "group": r["group"]}),
+                               (groups, r["group"], {"group": r["group"]})):
+            a = tab.setdefault(key, {**base, "ozon": None, "wb": None, "ym": None, "ozon_cnt": 0, "wb_cnt": 0,
+                                     "ym_cnt": 0, "ozon_sum": 0, "wb_sum": 0, "ym_sum": 0})
+            a[k + "_cnt"] += 1
+            a[k + "_sum"] += r["rating"]
+            a[k] = round(a[k + "_sum"] / a[k + "_cnt"], 2)
+    months = sorted({r["date"][:7] for r in out})
+    ovr = [{"month": m, "wb": round(4.5 + random.Random(m).random() * 0.4, 2),
+            "ozon": round(4.5 + random.Random(m + "o").random() * 0.4, 2)} for m in months]
+    drafts = {r["id"]: {"draft": _RV_DRAFT[r["rating"]], "status": "pending"}
+              for r in out[:12] if not r["answer"] and r["text"]}
+    byp = {}
+    for r in out:
+        b = byp.setdefault(r["platform"], {"count": 0, "sum": 0})
+        b["count"] += 1
+        b["sum"] += r["rating"]
+    return {"reviews": out,
+            "ratings": {"articles": sorted(arts.values(), key=lambda x: x["sku"]),
+                        "groups": sorted(groups.values(), key=lambda x: x["group"])},
+            "dynamics": {"overview": ovr, "by_article": {}},
+            "stats": {"total": len(out), "by_platform": {k: {"count": v["count"], "avg": round(v["sum"] / v["count"], 2)}
+                                                          for k, v in byp.items()},
+                      "last_review": out[0]["date"] if out else ""},
+            "drafts": drafts, "auto": {"last_run": "", "result": {}, "error": ""}}
+
+
+def review_draft(review_id: str) -> str:
+    for r in reviews_data()["reviews"]:
+        if r["id"] == review_id:
+            return _RV_DRAFT.get(r["rating"], _RV_DRAFT[5])
+    return _RV_DRAFT[5]
+
+
+def productolog() -> dict:
+    rnd = random.Random(5)
+    tpl = [
+        (["Качество сборки", 44], ["Соответствует описанию", 30], ["Быстрая доставка", 17],
+         ["Мятая упаковка при доставке", 13], ["Нет русской инструкции", 9],
+         "Добавить русскую инструкцию (QR-код на вкладыше) и усилить упаковку — уйдёт половина негатива."),
+        (["Большой объём", 39], ["Приятный аромат", 28], ["Результат после первого применения", 21],
+         ["Дозатор подтекает", 12], ["Подделки у других продавцов", 7],
+         "В карточке подчеркнуть оригинальность (сертификат, фото партии) и проверить дозаторы у поставщика."),
+        (["Простая установка", 36], ["Хорошая цена", 27], ["Покупают в подарок", 18],
+         ["Шумит", 11], ["Короткий провод", 8],
+         "Указать уровень шума и длину провода в характеристиках — снимет ожидания; масштабировать рекламу."),
+    ]
+    items = []
+    for idx, (nm, name, brand, cat) in enumerate(S().PRODUCTS[:14]):
+        n, neg, neu = rnd.randint(25, 240), rnd.randint(2, 12), rnd.randint(1, 6)
+        p1, p2, p3, m1, m2, rec = tpl[idx % len(tpl)]
+        items.append({"sku": S().art(nm), "name": name, "group": brand, "count": n,
+                      "avg": round(4.5 + rnd.random() * 0.45, 2), "pos": 100 - neg - neu, "neu": neu, "neg": neg,
+                      "pluses": [{"tag": t, "pct": v} for t, v in (p1, p2, p3)],
+                      "minuses": [{"tag": t, "pct": v} for t, v in (m1, m2)],
+                      "recommendation": rec, "analyzed": True, "analyzable": True,
+                      "text_reviews": n - rnd.randint(0, 10), "built_at": _now().strftime("%Y-%m-%d"), "wb_link": ""})
+    items.sort(key=lambda x: (-x["neg"], -x["count"]))
+    return {"items": items, "building": False, "progress": "", "error": "", "pending": 0}
+
+
+# ── DEMO_FILL: пример данных там, где реальных нет ──────────────────────────
+FILL_NOTE = {
+    "/api/feedback/questions": "Пример данных: вопросы WB появятся после подключения рабочего ключа WB, вопросы Ozon — при подписке Premium Plus.",
+    "/api/feedback/claims": "Пример данных: рекламации WB появятся после подключения рабочего ключа WB (доступ «Возвраты покупателями»).",
+    "/api/reviews/data": "Пример данных: реальные отзывы подтянутся после подключения ключа WB и подписки Ozon Premium Plus.",
+    "/api/tools/productolog": "Пример данных: продуктолог разбирает реальные отзывы WB — нужен рабочий ключ WB.",
+    "/api/tools/adv": "Пример данных: реклама WB появится после подключения ключа WB с доступом «Продвижение».",
+    "/api/tools/wb_funnel": "Пример данных: воронка WB появится после подключения ключа WB с доступом «Аналитика».",
+    "/api/tools/funnel": "Пример данных: воронка Ozon доступна с подпиской Premium.",
+    "/api/tools/ozads2": "Пример данных: реклама Ozon появится после добавления ключей Ozon Performance.",
+    "/api/tools/ozphrases": "Пример данных: поисковые фразы Ozon появятся после добавления ключей Ozon Performance.",
+    "/api/tools/ozon/clusters": "Пример данных: остатки по кластерам Ozon требуют доступа к аналитике Ozon.",
+}
+
+
+def fill_is_empty(path: str, d) -> bool:
+    if not isinstance(d, dict):
+        return False
+    if path == "/api/feedback/questions":
+        return not d.get("new") and not d.get("answered")
+    if path == "/api/feedback/claims":
+        return not d.get("open") and not d.get("archive")
+    if path == "/api/reviews/data":
+        return not d.get("reviews")
+    if path in ("/api/tools/productolog", "/api/tools/funnel", "/api/tools/ozphrases",
+                "/api/tools/ozon/clusters", "/api/tools/wb_funnel"):
+        return not d.get("items")
+    if path == "/api/tools/adv":
+        return not d.get("campaigns")
+    if path == "/api/tools/ozads2":
+        return not d.get("campaigns") and not d.get("skus")
+    return False
+
+
+def fill_route(path: str, q: dict):
+    if path == "/api/feedback/questions":
+        return questions()
+    if path == "/api/feedback/claims":
+        return claims()
+    if path == "/api/reviews/data":
+        return reviews_data()
+    if path == "/api/tools/productolog":
+        return productolog()
+    return route(path, q)

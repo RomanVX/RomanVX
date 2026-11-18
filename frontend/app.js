@@ -279,7 +279,9 @@ async function fetchJSON(path, timeoutMs = 60000) {
     try { const body = await r.json(); detail = body.detail || detail; } catch {}
     throw new Error(detail);
   }
-  return r.json();
+  const _d = await r.json();
+  if (_d && _d.demo_fill) _demoMark(_d.demo_note);
+  return _d;
 }
 
 function fmt(n, dec = 0) {
@@ -311,7 +313,24 @@ function goNavTool(tab, tool, navId) {
   if (navId) markNav(navId);
 }
 
+// «Пример данных»: раздел без реальных данных показывает демо (DEMO_FILL)
+function _demoMark(note) {
+  let el = document.getElementById('demoFillBar');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'demoFillBar';
+    el.style.cssText = 'position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:1050;max-width:min(760px,94vw);' +
+      'background:#fef3c7;color:#78350f;border:1px solid #f59e0b;border-radius:10px;padding:8px 14px;font-size:13px;box-shadow:0 6px 20px rgba(0,0,0,.18)';
+    document.body.appendChild(el);
+  }
+  el.innerHTML = '<b>Пример данных.</b> ' + esc((note || '').replace(/^Пример данных:\s*/, '')) +
+    ' <a href="#" style="color:#78350f;margin-left:8px" onclick="this.parentNode.style.display=\'none\';return false">скрыть</a>';
+  el.style.display = 'block';
+}
+function _demoHide() { const el = document.getElementById('demoFillBar'); if (el) el.style.display = 'none'; }
+
 function switchTab(name, linkEl) {
+  _demoHide();
   document.querySelectorAll('#mainTabs .nav-link').forEach(a => a.classList.remove('active'));
   if (linkEl) linkEl.classList.add('active');
   ['salesan', 'stocks', 'reviews', 'finance', 'unit', 'tools', 'toolsoz', 'docs', 'fbs', 'dims', 'promo', 'cardsync', 'growth', 'market', 'feedback'].forEach(t => {
@@ -3078,6 +3097,7 @@ const _TOOL_HINTS = {
 
 function setTool(t) {
   if (_toolActive === t) return;
+  _demoHide();
   _toolActive = t;
   ['Prod', 'Clusters', 'Adv', 'Niche', 'Nichecalc', 'Visuals', 'Margin', 'Newprod', 'Competitors', 'Whstocks', 'Wbfunnel', 'Geo'].forEach(k => {
     document.getElementById('tool' + k)?.classList.toggle('active', k.toLowerCase() === t);
@@ -3664,6 +3684,7 @@ const _OZ_HINTS = {
 };
 function setOzTool(t) {
   if (_ozTool === t) return;
+  _demoHide();
   _ozTool = t;
   [['ozFunnel', 'funnel'], ['ozClusters', 'clusters'], ['ozPromo', 'ozpromo'], ['ozAds', 'ads'], ['ozPhrases', 'phrases'], ['ozSlots', 'slots']].forEach(([id, k]) =>
     document.getElementById(id)?.classList.toggle('active', k === t));
@@ -5376,7 +5397,9 @@ function _reviewsSignature(data) {
 async function _fetchReviewsData() {
   const res = await fetch(`${API}/api/reviews/data?limit=5000`);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
+  const d = await res.json();
+  if (d && d.demo_fill && currentTab === 'reviews') _demoMark(d.demo_note);
+  return d;
 }
 
 function _applyReviewsData(data) {
@@ -7456,6 +7479,7 @@ async function _fbPost(url, body) {
 function goFb(t) { switchTab('feedback', null); markNav('navFeedback'); setFb(t, true); }
 function setFb(t, force) {
   if (_fbTab === t && !force) return;
+  _demoHide();
   _fbTab = t;
   [['fbQ', 'q'], ['fbC', 'c'], ['fbR', 'r']].forEach(([id, k]) => document.getElementById(id)?.classList.toggle('active', k === t));
   const h = document.getElementById('fbHint'); if (h) h.textContent = _FB_HINTS[t] || '';

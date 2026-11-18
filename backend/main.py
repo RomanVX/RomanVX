@@ -483,7 +483,37 @@ async def _auth_middleware(request, call_next):
         data = demo_extra.route(request.url.path, dict(request.query_params))
         if data is not None:
             return JSONResponse(data)
+    if request.method == "GET" and _cfg_fill():
+        import demo_extra
+        path = request.url.path
+        if path in demo_extra.FILL_NOTE:
+            return await _fill_response(request, call_next, path)
     return await call_next(request)
+
+
+async def _fill_response(request, call_next, path):
+    """DEMO_FILL: сначала реальный ответ; пустой — заменяем примером данных."""
+    import json as _json
+    import demo_extra
+    from fastapi.responses import JSONResponse, Response
+    resp = await call_next(request)
+    body = b"".join([chunk async for chunk in resp.body_iterator])
+    try:
+        data = _json.loads(body) if resp.status_code == 200 else None
+    except ValueError:
+        data = None
+    if data is not None and not demo_extra.fill_is_empty(path, data):
+        return Response(body, status_code=resp.status_code, media_type="application/json")
+    try:
+        demo = demo_extra.fill_route(path, dict(request.query_params))
+    except Exception as e:
+        logging.getLogger(__name__).warning("demo fill %s: %s", path, e)
+        demo = None
+    if not demo:
+        return Response(body, status_code=resp.status_code, headers={
+            k: v for k, v in resp.headers.items() if k.lower() != "content-length"})
+    demo = {**demo, "demo_fill": True, "demo_note": demo_extra.FILL_NOTE[path]}
+    return JSONResponse(demo)
 
 
 # ── Кабинет клиента: только чтение ──────────────────────────────────────────
@@ -510,7 +540,7 @@ def _read_only_block(request):
     if not READ_ONLY or request.method in ("GET", "HEAD", "OPTIONS"):
         return None
     path = request.url.path
-    if path.startswith(_FEEDBACK_PATHS) and (os.getenv("FEEDBACK_WRITE", "").strip() in ("1", "true", "yes") or _cfg_demo()):
+    if path.startswith(_FEEDBACK_PATHS) and (os.getenv("FEEDBACK_WRITE", "").strip() in ("1", "true", "yes") or _cfg_demo() or _cfg_fill()):
         return None
     if path.startswith(_RO_DENY):
         from fastapi.responses import JSONResponse
@@ -536,6 +566,11 @@ def _cfg_demo() -> bool:
     return DEMO_CABINET
 
 
+def _cfg_fill() -> bool:
+    from config import DEMO_FILL
+    return DEMO_FILL
+
+
 @app.get("/api/cabinet")
 def get_cabinet():
     """Конфигурация кабинета: имя, площадки, группировки, ссылка на второй кабинет."""
@@ -547,7 +582,7 @@ def get_cabinet():
            "demo": USE_MOCK and not IS_CLIENT_CABINET, "read_only": READ_ONLY, "profile": UI_PROFILE,
            "mono": CABINET_MONO or _mono(CABINET_NAME),
            "feedback": (not READ_ONLY) or os.getenv("FEEDBACK_WRITE", "").strip() in ("1", "true", "yes")
-                       or _cfg_demo(),
+                       or _cfg_demo() or _cfg_fill(),
            "demo_client": _cfg_demo()}
     import catalog_auto
     if catalog_auto.enabled():
