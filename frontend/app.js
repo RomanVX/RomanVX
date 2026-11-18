@@ -3687,7 +3687,7 @@ async function loadOzPromo(refresh) {
   if (_ozPromo && _ozPromo.days === _ozPromoDays && !refresh && !_ozPromo.building) { renderOzPromo(); return; }
   if (!_ozPromo || !_ozPromo.rows) wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>Загружаем продажи, рекламу и акции Ozon…</div>';
   try {
-    const d = await fetchJSON(`/api/promo/ozon?days=${_ozPromoDays}` + (refresh ? '&refresh=true' : ''), 60000);
+    const d = await fetchJSON(`/api/promosku/ozon?days=${_ozPromoDays}` + (refresh ? '&refresh=true' : ''), 60000);
     _ozPromo = { ...d, days: d.days || _ozPromoDays };
     renderOzPromo();
     if (d.building) _ozPromoTimer = setTimeout(() => loadOzPromo(), 8000);
