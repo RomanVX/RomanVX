@@ -3657,24 +3657,131 @@ const _OZ_HINTS = {
   clusters: 'Остатки по кластерам Ozon: покрытие, скорость, что везти / остальное (Ozon сам считает продажи/день и покрытие)',
   ads: 'Реклама Ozon (Performance): расход, ДРР, ROAS, заказы и куда утекают деньги по каждой кампании',
   phrases: 'По каким поисковым запросам показываются и кликают ваши товары в рекламе Ozon',
+  ozpromo: 'Для продвиженца: продажи и реклама по каждому товару с динамикой к прошлому периоду, ДРР, ROAS, цены, акции и маржа (в т.ч. по цене акции)',
   slots: 'Охота за таймслотами поставки: сервер проверяет слоты каждые 7 минут и пишет в Telegram, как только появятся',
 };
 function setOzTool(t) {
   if (_ozTool === t) return;
   _ozTool = t;
-  [['ozFunnel', 'funnel'], ['ozClusters', 'clusters'], ['ozAds', 'ads'], ['ozPhrases', 'phrases'], ['ozSlots', 'slots']].forEach(([id, k]) =>
+  [['ozFunnel', 'funnel'], ['ozClusters', 'clusters'], ['ozPromo', 'ozpromo'], ['ozAds', 'ads'], ['ozPhrases', 'phrases'], ['ozSlots', 'slots']].forEach(([id, k]) =>
     document.getElementById(id)?.classList.toggle('active', k === t));
   const hint = document.getElementById('ozToolHint');
   if (hint) hint.textContent = _OZ_HINTS[t] || '';
   loadOzTool();
 }
 function loadOzTool() {
-  ({ funnel: loadFunnel, clusters: loadOzClusters, ads: loadOzAds, phrases: loadOzPhrases, slots: loadSlots })[_ozTool]();
+  ({ funnel: loadFunnel, clusters: loadOzClusters, ads: loadOzAds, phrases: loadOzPhrases, slots: loadSlots, ozpromo: loadOzPromo })[_ozTool]();
 }
 function reloadOzTool() {
   ({ funnel: () => loadFunnel(true), clusters: () => loadOzClusters(true),
      ads: () => loadOzAds(true), phrases: () => loadOzPhrases(true),
-     slots: () => loadSlots(true) })[_ozTool]();
+     slots: () => loadSlots(true), ozpromo: () => loadOzPromo(true) })[_ozTool]();
+}
+
+// ── Продвижение по товарам (Ozon): продажи, реклама, цены, акции, маржа ─────
+let _ozPromo = null, _ozPromoDays = 7, _ozPromoQ = '', _ozPromoSort = 'rev', _ozPromoOpen = new Set(), _ozPromoTimer = null;
+async function loadOzPromo(refresh) {
+  const wrap = document.getElementById('toolsOzWrap');
+  if (!wrap || _ozTool !== 'ozpromo') return;
+  clearTimeout(_ozPromoTimer);
+  if (_ozPromo && _ozPromo.days === _ozPromoDays && !refresh && !_ozPromo.building) { renderOzPromo(); return; }
+  if (!_ozPromo || !_ozPromo.rows) wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>Загружаем продажи, рекламу и акции Ozon…</div>';
+  try {
+    const d = await fetchJSON(`/api/promo/ozon?days=${_ozPromoDays}` + (refresh ? '&refresh=true' : ''), 60000);
+    _ozPromo = { ...d, days: d.days || _ozPromoDays };
+    renderOzPromo();
+    if (d.building) _ozPromoTimer = setTimeout(() => loadOzPromo(), 8000);
+  } catch (e) {
+    wrap.innerHTML = `<div class="alert alert-danger mt-3">Ошибка: ${esc(e.message)}</div>`;
+  }
+}
+function ozPromoDays(n) { _ozPromoDays = n; _ozPromo = null; loadOzPromo(); }
+function ozPromoSort(k) { _ozPromoSort = _ozPromoSort === k ? '-' + k : k; renderOzPromo(); }
+function ozPromoSearch(v) {
+  _ozPromoQ = v; renderOzPromo();
+  const el = document.getElementById('ozPromoQ');
+  if (el) { el.focus(); el.setSelectionRange(v.length, v.length); }
+}
+function ozPromoToggle(off) { _ozPromoOpen.has(off) ? _ozPromoOpen.delete(off) : _ozPromoOpen.add(off); renderOzPromo(); }
+function _pDyn(v, invert) {
+  if (v == null) return '';
+  const good = invert ? v < 0 : v > 0;
+  const c = v === 0 ? 'text-secondary' : (good ? 'text-success' : 'text-danger');
+  return `<div class="small ${c}">${v > 0 ? '+' : ''}${v}%</div>`;
+}
+function _pMargin(m) {
+  if (!m) return '<span class="text-secondary">—</span>';
+  const c = m.rub < 0 ? 'text-danger' : (m.pct < 10 ? 'text-warning' : '');
+  return `<span class="${c}">${fmtRub(m.rub)}</span><div class="small text-secondary">${m.pct}%</div>`;
+}
+function _pDate(s) { return s ? s.slice(8, 10) + '.' + s.slice(5, 7) : ''; }
+function renderOzPromo() {
+  if (_ozTool !== 'ozpromo') return;
+  const wrap = document.getElementById('toolsOzWrap');
+  const d = _ozPromo;
+  if (!wrap || !d) return;
+  const per = [7, 14, 28].map(n => `<button class="btn btn-sm ${n === _ozPromoDays ? 'btn-primary' : 'btn-outline-secondary'}" onclick="ozPromoDays(${n})">${n} дн</button>`).join('');
+  let head = `<div class="d-flex flex-wrap gap-2 align-items-center mb-2">
+    <div class="btn-group">${per}</div>
+    <input id="ozPromoQ" class="form-control form-control-sm" style="max-width:240px" placeholder="Поиск: артикул или название" value="${esc(_ozPromoQ)}" oninput="ozPromoSearch(this.value)">
+    <span class="small text-secondary ms-auto">${d.period ? `Период ${_pDate(d.period[0])}–${_pDate(d.period[1])} vs ${_pDate(d.prev[0])}–${_pDate(d.prev[1])}` : ''}${d.built ? ' · собрано ' + esc(d.built) : ''}</span>
+  </div>`;
+  if (d.building) head += `<div class="alert alert-info py-2 small"><span class="spinner-border spinner-border-sm me-2"></span>Собираем данные: ${esc(d.progress || '')}. Отчёты рекламы Ozon строятся несколько минут — страница обновится сама.</div>`;
+  if (d.error) head += `<div class="alert alert-danger py-2 small">Ошибка сборки: ${esc(d.error)}</div>`;
+  if ((d.warnings || []).length) head += `<div class="alert alert-warning py-2 small">Часть данных не загрузилась: ${esc(d.warnings.join('; '))}</div>`;
+  if (!d.rows) { wrap.innerHTML = head; return; }
+  const T = d.totals || {};
+  const kpi = (t, v, dyn, inv) => `<div class="col"><div class="card p-2 h-100"><div class="small text-secondary">${t}</div><div class="fs-5 fw-semibold">${v}</div>${dyn != null ? _pDyn(dyn, inv) : ''}</div></div>`;
+  const dy = (a, b) => b ? Math.round((a / b - 1) * 100) : null;
+  head += `<div class="row row-cols-2 row-cols-md-5 g-2 mb-3">
+    ${kpi('Заказано, шт', fmt(T.qty), dy(T.qty, T.qty_prev))}
+    ${kpi('Выручка (заказы)', fmtRub(T.rev), dy(T.rev, T.rev_prev))}
+    ${kpi('Расход на рекламу', fmtRub(T.ad), dy(T.ad, T.ad_prev), true)}
+    ${kpi('ДРР общий', T.drr != null ? T.drr + '%' : '—', T.drr != null && T.drr_prev != null ? Math.round((T.drr - T.drr_prev) * 10) / 10 : null, true)}
+    ${kpi('ROAS рекламы', T.roas != null ? T.roas : '—')}
+  </div>`;
+  if (!d.has_costs) head += `<div class="alert alert-warning py-2 small">Маржа не считается: в кабинете нет себестоимости товаров (или юнит-экономика Ozon ещё собирается).</div>`;
+  const q = _ozPromoQ.trim().toLowerCase();
+  let rows = d.rows.filter(r => !q || r.offer.toLowerCase().includes(q) || (r.name || '').toLowerCase().includes(q));
+  const sk = _ozPromoSort.replace('-', ''), dir = _ozPromoSort.startsWith('-') ? 1 : -1;
+  const val = r => sk === 'margin' ? (r.margin ? r.margin.rub : -1e9) : sk === 'margin_promo' ? (r.margin_promo ? r.margin_promo.rub : -1e9) : (r[sk] ?? -1e9);
+  rows = rows.slice().sort((a, b) => dir * (val(a) - val(b)));
+  const th = (k, t, cls = '') => `<th class="${cls}" style="cursor:pointer;white-space:nowrap" onclick="ozPromoSort('${k}')">${t}${sk === k ? (dir < 0 ? ' ▾' : ' ▴') : ''}</th>`;
+  let html = `<div class="table-responsive"><table class="table table-sm table-hover align-middle small">
+    <thead><tr><th>Товар</th>${th('qty', 'Заказы, шт', 'text-end')}${th('rev', 'Выручка', 'text-end')}${th('ad', 'Реклама', 'text-end')}${th('drr', 'ДРР', 'text-end')}${th('roas', 'ROAS', 'text-end')}${th('price', 'Цена', 'text-end')}<th>Акция (ближайшая)</th>${th('promo_price', 'Цена в акции', 'text-end')}${th('promo_discount', 'Скидка', 'text-end')}${th('margin', 'Маржа/шт', 'text-end')}${th('margin_promo', 'Маржа в акции', 'text-end')}</tr></thead><tbody>`;
+  for (const r of rows.slice(0, 500)) {
+    const a = r.actions || [], open = _ozPromoOpen.has(r.offer);
+    const near = a[0];
+    const actCell = near ? `<a href="#" class="text-decoration-none" onclick="ozPromoToggle('${esc(r.offer)}');return false">${a.length > 1 ? (open ? '▾ ' : '▸ ') : ''}${esc(near.title)}</a>
+      <div class="small text-secondary">${near.status} · ${_pDate(near.start)}–${_pDate(near.end)}${a.length > 1 ? ` · ещё ${r.actions_total - 1}` : ''}</div>` : '<span class="text-secondary">нет</span>';
+    html += `<tr>
+      <td style="max-width:280px"><div class="fw-semibold">${esc(r.offer)}</div><div class="text-secondary text-truncate" title="${esc(r.name)}">${esc(r.name)}</div></td>
+      <td class="text-end">${fmt(r.qty)}${_pDyn(r.qty_dyn)}</td>
+      <td class="text-end">${fmtRub(r.rev)}${_pDyn(r.rev_dyn)}</td>
+      <td class="text-end" title="За клики: ${fmtRub(r.ad_cpc)} · Оплата за заказ: ${fmtRub(r.ad_cpo)} · Показы ${fmt(r.views)} · Клики ${fmt(r.clicks)} · Заказы с рекламы ${fmt(r.ad_orders)}">${r.ad ? fmtRub(r.ad) : '—'}${_pDyn(r.ad_dyn, true)}</td>
+      <td class="text-end">${r.drr != null ? r.drr + '%' : '—'}${r.drr_prev != null ? `<div class="small text-secondary">было ${r.drr_prev}%</div>` : ''}</td>
+      <td class="text-end">${r.roas != null ? r.roas : '—'}</td>
+      <td class="text-end">${r.price ? fmtRub(r.price) : '—'}${r.buyer_price && r.buyer_price !== r.price ? `<div class="small text-secondary" title="Цена с учётом акций Ozon">${fmtRub(r.buyer_price)}</div>` : ''}</td>
+      <td style="max-width:260px">${actCell}</td>
+      <td class="text-end">${r.promo_price ? fmtRub(r.promo_price) : '—'}</td>
+      <td class="text-end">${r.promo_discount != null ? r.promo_discount + '%' : '—'}</td>
+      <td class="text-end">${_pMargin(r.margin)}</td>
+      <td class="text-end">${_pMargin(r.margin_promo)}</td></tr>`;
+    if (open && a.length > 1) {
+      for (const x of a.slice(1)) {
+        html += `<tr class="table-active"><td></td><td colspan="6"></td>
+          <td><div>${esc(x.title)}</div><div class="small text-secondary">${x.status} · ${_pDate(x.start)}–${_pDate(x.end)}</div></td>
+          <td class="text-end">${x.action_price ? fmtRub(x.action_price) : '—'}</td>
+          <td class="text-end">${x.discount != null ? x.discount + '%' : '—'}</td>
+          <td></td><td class="text-end">${_pMargin(x.margin)}</td></tr>`;
+      }
+    }
+  }
+  html += '</tbody></table></div>';
+  if (rows.length > 500) html += `<div class="small text-secondary">Показаны первые 500 из ${rows.length} — уточните поиск.</div>`;
+  html += `<div class="small text-secondary mt-2">Заказы и выручка — аналитика Ozon (заказано). Реклама = «за клики» + «оплата за заказ»; ДРР = реклама / выручка; ROAS = выручка с рекламы / расход. «Участвует» — цена товара в акции; «можно войти» — максимальная цена, при которой Ozon примет товар в акцию. Маржа — по юнит-экономике кабинета (комиссия, эквайринг, логистика, хранение, себестоимость) с рекламой на штуку.</div>`;
+  if ((d.truncated || []).length) html += `<div class="small text-warning">Не все товары загружены по акциям: ${esc(d.truncated.join(', '))}</div>`;
+  wrap.innerHTML = head + html;
 }
 
 let _ozClustersData = null;

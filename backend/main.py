@@ -455,6 +455,8 @@ from routers import pricelock as _pricelock_r
 app.include_router(_pricelock_r.router)
 from routers import market as _market_r
 app.include_router(_market_r.router)
+from routers import promo as _promo_r
+app.include_router(_promo_r.router)
 from routers import wms as _wms
 app.include_router(_wms.router)
 from routers import landing as _landing

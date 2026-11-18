@@ -117,6 +117,7 @@
       <button type="button" class="mp-menu-title" onclick="goNavTool('toolsoz','funnel','navOzon')">Ozon</button>
       <div class="mp-menu-drop">
         <a href="#" onclick="goNavTool('toolsoz','funnel','navOzon');return false">Воронка продаж</a>
+        <a href="#" onclick="goNavTool('toolsoz','ozpromo','navOzon');return false">Продвижение по товарам</a>
         <a href="#" onclick="goNavTool('toolsoz','ads','navOzon');return false">Реклама (Performance)</a>
         <a href="#" onclick="goNavTool('toolsoz','phrases','navOzon');return false">Запросы</a>
         <div class="mp-drop-sep"></div>
@@ -503,6 +504,9 @@
       <div id="ozClusters" class="mp-selector-bloc" style="--mp-color:#38bdf8" onclick="setOzTool('clusters')">
         <span class="mp-selector-dot" style="background:#38bdf8"></span>Остатки по кластерам
       </div>
+      <div id="ozPromo" class="mp-selector-bloc" style="--mp-color:#8b5cf6" onclick="setOzTool('ozpromo')">
+        <span class="mp-selector-dot" style="background:#8b5cf6"></span>Продвижение по товарам
+      </div>
       <div id="ozAds" class="mp-selector-bloc" style="--mp-color:#f59e0b" onclick="setOzTool('ads')">
         <span class="mp-selector-dot" style="background:#f59e0b"></span>Реклама (Performance)
       </div>
@@ -599,6 +603,6 @@
 
 <script src="vendor/bootstrap.bundle.min.js"></script>
 <script src="vendor/chart.umd.min.js"></script>
-<script src="app.js?v=269"></script>
+<script src="app.js?v=270"></script>
 </body>
 </html>
