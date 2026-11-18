@@ -38,6 +38,9 @@ WB_ID_TO_ART: dict[str, str] = {
     "438964592": "ST-06",
     "438969508": "ST-07",
     "1503595696": "ST-14",
+    "2294272134": "ST-08",
+    "2294272135": "ST-09",
+    "2294272136": "ST-10",
 }
 
 # ozon_sku (product id as str) → article
@@ -170,6 +173,9 @@ CATALOG: dict[str, dict[str, str]] = {
     "ST-06": {"name": "С маслом кокоса оранжевый",     "brand": "Satisfucktion", "group": "Склейка лубрики ST"},
     "ST-07": {"name": "Для фистинга",                  "brand": "Satisfucktion", "group": "Склейка лубрики ST"},
     "ST-14": {"name": "Для фистинга 200 мл",           "brand": "Satisfucktion", "group": "Склейка лубрики ST"},
+    "ST-08": {"name": "Спрей 15 мл клубника",          "brand": "Satisfucktion", "group": "Склейка спреи"},
+    "ST-09": {"name": "Спрей 15 мл ваниль-карамель",   "brand": "Satisfucktion", "group": "Склейка спреи"},
+    "ST-10": {"name": "Спрей 15 мл бабл гам",          "brand": "Satisfucktion", "group": "Склейка спреи"},
 }
 
 BRAND_ORDER = ["Джага", "Satisfucktion", "Aloe"]
