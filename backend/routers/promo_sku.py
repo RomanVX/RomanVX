@@ -270,6 +270,10 @@ async def _run(days: int):
 @router.get("/ozon")
 async def promo_ozon(n: int = Query(default=7, ge=3, le=30), refresh: bool = False):
     days = n   # не «days»: фронт дописывает к запросам общий фильтр периода days=…
+    from config import DEMO_CABINET
+    if DEMO_CABINET:
+        import demo_extra
+        return demo_extra.promo(days)
     st = _state.setdefault(days, {"building": False, "progress": "", "error": "", "ts": 0.0})
     data = await asyncio.to_thread(_kv, f"promosku_ozon_{days}", None)
     fresh = data and st["ts"] and _time.time() - st["ts"] < _TTL

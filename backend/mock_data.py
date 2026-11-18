@@ -43,6 +43,45 @@ PRODUCTS = [
 
 WAREHOUSES = ["Коледино", "Электросталь", "Казань", "Тула"]
 
+# ── Демо-кабинет клиента (DEMO_CABINET=1): ассортимент под кабинет ──────────
+try:
+    from config import DEMO_CABINET as _DEMO_CAB, CABINET as _CAB
+except Exception:
+    _DEMO_CAB, _CAB = False, ""
+ART = "PL-"
+if _DEMO_CAB and _CAB == "tl":
+    ART = "TL-"
+    PRODUCTS = [
+        (301001, "Увлажнитель воздуха ультразвуковой 4 л", "FuturoHome", "Дом"),
+        (301002, "Маска для волос Banana 1000 мл", "Kallos", "Красота"),
+        (301003, "Видеорегистратор с камерой заднего вида", "InCar", "Авто"),
+        (301004, "Набор для творчества «Ферма» из фетра", "КРАФТИКИ", "Детям"),
+        (301005, "Щётки стеклоочистителя Aerotwin 600/450", "Bosch", "Авто"),
+        (301006, "Обогреватель масляный 9 секций", "FuturoHome", "Дом"),
+        (301007, "Маска для волос Keratin 1000 мл", "Kallos", "Красота"),
+        (301008, "Автомагнитола 1DIN Bluetooth", "Nakamichi", "Авто"),
+        (301009, "Шампунь Omega 1000 мл", "Kallos", "Красота"),
+        (301010, "Набор для лепки «Динозавры»", "КРАФТИКИ", "Детям"),
+        (301011, "Очиститель воздуха с HEPA-фильтром", "FuturoHome", "Дом"),
+        (301012, "Крем для лица увлажняющий 50 мл", "HELIA-D", "Красота"),
+        (301013, "Держатель телефона магнитный в дефлектор", "InCar", "Авто"),
+        (301014, "Аккумуляторная дрель-шуруповёрт 12 В", "Bosch", "Инструменты"),
+        (301015, "Пароочиститель ручной", "FuturoHome", "Дом"),
+        (301016, "Сыворотка для лица с гиалуроном 30 мл", "HELIA-D", "Красота"),
+        (301017, "Колонки автомобильные 16 см", "Nakamichi", "Авто"),
+        (301018, "Набор для вышивания «Котики»", "КРАФТИКИ", "Детям"),
+        (301019, "Кондиционер для волос Color 1000 мл", "Kallos", "Красота"),
+        (301020, "Лобзик электрический 500 Вт", "Bosch", "Инструменты"),
+        (301021, "Тепловентилятор керамический 2 кВт", "FuturoHome", "Дом"),
+        (301022, "Компрессор автомобильный 35 л/мин", "InCar", "Авто"),
+        (301023, "Масло для волос аргановое 50 мл", "Kallos", "Красота"),
+        (301024, "Набор бит и свёрл 43 предмета", "Bosch", "Инструменты"),
+        (301025, "Аппликации из пайеток «Единороги»", "КРАФТИКИ", "Детям"),
+        (301026, "Ароматизатор в машину гелевый", "SWAT", "Авто"),
+        (301027, "Метеостанция домашняя с датчиком", "FuturoHome", "Дом"),
+        (301028, "Гель для умывания 150 мл", "HELIA-D", "Красота"),
+    ]
+
 PRICES = {nm: random.randint(450, 3800) for nm, *_ in PRODUCTS}
 # total physical stock per SKU, distributed across warehouses
 STOCKS = {nm: random.randint(0, 420) for nm, *_ in PRODUCTS}
@@ -92,7 +131,7 @@ def generate_sales(date_from: datetime, date_to: datetime) -> list[dict]:
                     "lastChangeDate": current.isoformat(),
                     "warehouseName": random.choice(WAREHOUSES),
                     "regionName": random.choice(["Москва", "СПб", "Екатеринбург", "Казань"]),
-                    "supplierArticle": f"PL-{nm_id}",
+                    "supplierArticle": f"{ART}{nm_id}",
                     "nmId": nm_id,
                     "subject": name,
                     "brand": brand,
@@ -124,7 +163,7 @@ def generate_orders(date_from: datetime, date_to: datetime) -> list[dict]:
                     "lastChangeDate": current.isoformat(),
                     "warehouseName": random.choice(WAREHOUSES),
                     "regionName": random.choice(["Москва", "СПб", "Екатеринбург"]),
-                    "supplierArticle": f"PL-{nm_id}",
+                    "supplierArticle": f"{ART}{nm_id}",
                     "nmId": nm_id,
                     "subject": name,
                     "brand": brand,
@@ -140,20 +179,28 @@ def generate_orders(date_from: datetime, date_to: datetime) -> list[dict]:
 
 
 # ── Демо-данные для остальных вкладок (финансы/юнитка/маржа/отзывы/цены) ──────
-COSTS = {f"PL-{nm}": round(PRICES[nm] * 0.32) for nm, *_ in PRODUCTS}
-NAMES = {f"PL-{nm}": name for nm, name, *_ in PRODUCTS}
+COSTS = {f"{ART}{nm}": round(PRICES[nm] * 0.32) for nm, *_ in PRODUCTS}
+NAMES = {f"{ART}{nm}": name for nm, name, *_ in PRODUCTS}
 
 # комиссия WB по «категориям» демо-кабинета
-_COMM = {"Спортпит": 21.5, "Витамины": 24.5, "Омега": 23.0, "Минералы": 23.0,
+_COMM = {"Дом": 22.0, "Авто": 20.5, "Детям": 23.5, "Инструменты": 19.5,
+         "Спортпит": 21.5, "Витамины": 24.5, "Омега": 23.0, "Минералы": 23.0,
          "Красота": 24.5, "Здоровье": 23.5, "Пробиотики": 23.0}
+
+if ART == "TL-":
+    PRICES = {nm: random.randint(390, 7900) for nm, *_ in PRODUCTS}
+    STOCKS = {nm: random.randint(0, 420) for nm, *_ in PRODUCTS}
+    COSTS = {f"{ART}{nm}": round(PRICES[nm] * 0.45) for nm, *_ in PRODUCTS}
+    NAMES = {f"{ART}{nm}": name for nm, name, *_ in PRODUCTS}
 
 
 def generate_report_detail(date_from: datetime, date_to: datetime) -> list[dict]:
     """Детальный отчёт реализации (сырой формат statistics-api) — понедельно,
     согласован с generate_sales по порядку величин. Кормит P&L/юнитку/маржу."""
-    rnd = random.Random(7)
+    rnd = random.Random(7 + date_from.toordinal())     # месяцы различаются
+    season = 1 + 0.25 * ((date_from.month in (11, 12)) - (date_from.month in (6, 7)))
     rows: list[dict] = []
-    rrd = 1_000_000
+    rrd = 1_000_000 + date_from.toordinal() * 1000
     # выравниваем на понедельник
     cur = date_from - timedelta(days=date_from.weekday())
     while cur <= date_to:
@@ -163,7 +210,7 @@ def generate_report_detail(date_from: datetime, date_to: datetime) -> list[dict]
         for nm_id, name, brand, category in PRODUCTS:
             demand = max(0.4, 22 * (0.86 ** next(
                 i for i, p in enumerate(PRODUCTS) if p[0] == nm_id)))
-            qty = max(0, int(rnd.gauss(demand * 7, demand * 1.5)))
+            qty = max(0, int(rnd.gauss(demand * 7 * season, demand * 1.5)))
             if qty == 0:
                 continue
             price_pre = round(PRICES[nm_id] * 0.78)          # до СПП, после скидки
@@ -171,7 +218,7 @@ def generate_report_detail(date_from: datetime, date_to: datetime) -> list[dict]
             retail_amount = round(price_pre * qty * 0.82)    # что заплатил покупатель
             rrd += 1
             rows.append({
-                "rrd_id": rrd, "nm_id": nm_id, "sa_name": f"PL-{nm_id}",
+                "rrd_id": rrd, "nm_id": nm_id, "sa_name": f"{ART}{nm_id}",
                 "brand_name": brand, "subject_name": category,
                 "doc_type_name": "Продажа", "supplier_oper_name": "Продажа",
                 "sale_dt": sale_dt, "rr_dt": rr_dt, "order_dt": sale_dt,
@@ -187,7 +234,7 @@ def generate_report_detail(date_from: datetime, date_to: datetime) -> list[dict]
             # хранение — отдельной операционной строкой
             rrd += 1
             rows.append({
-                "rrd_id": rrd, "nm_id": nm_id, "sa_name": f"PL-{nm_id}",
+                "rrd_id": rrd, "nm_id": nm_id, "sa_name": f"{ART}{nm_id}",
                 "doc_type_name": "", "supplier_oper_name": "Хранение",
                 "sale_dt": None, "rr_dt": rr_dt, "quantity": 0,
                 "storage_fee": round(qty * 6.5), "delivery_rub": 0,
@@ -198,7 +245,7 @@ def generate_report_detail(date_from: datetime, date_to: datetime) -> list[dict]
             if rnd.random() < 0.03:   # редкий штраф
                 rrd += 1
                 rows.append({
-                    "rrd_id": rrd, "nm_id": nm_id, "sa_name": f"PL-{nm_id}",
+                    "rrd_id": rrd, "nm_id": nm_id, "sa_name": f"{ART}{nm_id}",
                     "doc_type_name": "", "supplier_oper_name": "Штраф",
                     "sale_dt": None, "rr_dt": rr_dt, "quantity": 0,
                     "penalty": rnd.randint(300, 1800), "storage_fee": 0,
@@ -225,6 +272,22 @@ _REVIEW_TEXTS = [
     (5, "Проверенный производитель, состав чистый, сертификаты есть."),
 ]
 
+if ART == "TL-":
+    _REVIEW_TEXTS = [
+        (5, "Всё пришло целым, работает отлично. Упаковка надёжная."),
+        (5, "Пользуюсь неделю — всё как в описании, рекомендую."),
+        (5, "Быстрая доставка, качество на уровне. Спасибо продавцу!"),
+        (4, "Хорошая вещь за свои деньги. Минус звезда за мятую коробку."),
+        (5, "Брали в подарок — очень довольны."),
+        (3, "В целом нормально, но инструкция только на английском."),
+        (5, "Лучшее соотношение цена/качество, сравнивал с аналогами."),
+        (2, "Пришёл с царапиной на корпусе. Продавец, решите вопрос!"),
+        (5, "Аромат приятный, волосы мягкие, объём большой надолго."),
+        (4, "Хорошо, но шумит громче, чем ожидал."),
+        (1, "Заказывал одно — привезли другое. Оформляю возврат."),
+        (5, "Оригинал, есть гарантийный талон и чек."),
+    ]
+
 
 def generate_reviews(platform=None, limit=500) -> list[dict]:
     """Отзывы для демо-кабинета в формате get_all_reviews()."""
@@ -239,7 +302,7 @@ def generate_reviews(platform=None, limit=500) -> list[dict]:
             continue
         answered = rating >= 4 and rnd.random() < 0.8
         out.append({
-            "id": f"demo-{i}", "platform": pf, "sku": f"PL-{nm_id}",
+            "id": f"demo-{i}", "platform": pf, "sku": f"{ART}{nm_id}",
             "name": name, "brand": brand, "group": category,
             "rating": rating, "text": text,
             "date": (today - timedelta(days=rnd.randint(0, 60))).strftime("%Y-%m-%d"),
@@ -262,6 +325,19 @@ _PRODUCTOLOG = [
      "Проверить партию крышек с поставщиком; в остальном карточка здорова — масштабировать рекламу."),
 ]
 
+if ART == "TL-":
+    _PRODUCTOLOG = [
+        (["Качество сборки · 44%", "Соответствует описанию · 30%", "Быстрая доставка · 17%"],
+         ["Мятая упаковка при доставке · 13%", "Нет русской инструкции · 9%"],
+         "Добавить русскую инструкцию (QR-код на вкладыше) и усилить упаковку — уйдёт половина негатива."),
+        (["Большой объём · 39%", "Приятный аромат · 28%", "Результат после первого применения · 21%"],
+         ["Дозатор подтекает · 12%", "Подделки у других продавцов · 7%"],
+         "В карточке подчеркнуть оригинальность (сертификат, фото партии) и проверить дозаторы у поставщика."),
+        (["Простая установка · 36%", "Хорошая цена · 27%", "Покупают в подарок · 18%"],
+         ["Шумит · 11%", "Короткий провод · 8%"],
+         "Указать уровень шума и длину провода в характеристиках — снимет ожидания; масштабировать рекламу."),
+    ]
+
 
 def generate_productolog() -> dict:
     """Готовый ответ «Продуктолога» для демо — без вызовов LLM."""
@@ -273,7 +349,7 @@ def generate_productolog() -> dict:
         neu = rnd.randint(1, 6)
         pluses, minuses, rec = _PRODUCTOLOG[idx % len(_PRODUCTOLOG)]
         items.append({
-            "sku": f"PL-{nm_id}", "name": name, "group": category,
+            "sku": f"{ART}{nm_id}", "name": name, "group": category,
             "count": n, "avg": round(4.5 + rnd.random() * 0.45, 2),
             "pos": 100 - neg - neu, "neu": neu, "neg": neg,
             "pluses": [{"tag": p.split(" · ")[0], "pct": int(p.split(" · ")[1].rstrip("%"))}
@@ -307,7 +383,7 @@ def generate_stocks() -> list[dict]:
             records.append({
                 "lastChangeDate": datetime.utcnow().isoformat(),
                 "warehouseName": wh,
-                "supplierArticle": f"PL-{nm_id}",
+                "supplierArticle": f"{ART}{nm_id}",
                 "nmId": nm_id,
                 "subject": name,
                 "brand": brand,
@@ -331,7 +407,11 @@ try:
     from config import IS_CLIENT_CABINET as _CLIENT
 except Exception:
     _CLIENT = False
-if _CLIENT:
+try:
+    from config import DEMO_CABINET as _DEMO
+except Exception:
+    _DEMO = False
+if _CLIENT and not _DEMO:
     PRICES, STOCKS, COSTS, NAMES = {}, {}, {}, {}
 
     def generate_sales(date_from, date_to):

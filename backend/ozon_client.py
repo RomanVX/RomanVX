@@ -807,3 +807,47 @@ async def fbs_exemplars(posting_number: str) -> dict:
     data = await _post("/v6/fbs/posting/product/exemplar/create-or-get",
                        {"posting_number": posting_number})
     return data.get("result") or data
+
+
+# ── Демо-кабинет (DEMO_CABINET=1): Ozon на выдуманных данных ─────────────────
+try:
+    from config import DEMO_CABINET as _DEMO
+except Exception:
+    _DEMO = False
+if _DEMO:
+    import random as _rnd
+
+    def _demo_rows(date_from: str, date_to: str) -> list[dict]:
+        import mock_data as md
+        d = datetime.strptime(date_from, "%Y-%m-%d")
+        end = datetime.strptime(date_to, "%Y-%m-%d")
+        rows = []
+        while d <= end:
+            r = _rnd.Random(d.toordinal())
+            for i, (nm, name, brand, cat) in enumerate(md.PRODUCTS):
+                lam = max(0.2, 9 * (0.87 ** i))
+                qty = max(0, int(r.gauss(lam * (1.2 if d.weekday() >= 5 else 1), lam * 0.4)))
+                if qty:
+                    ds = d.strftime("%Y-%m-%d")
+                    price = round(md.PRICES[nm] * 0.95)
+                    st = "cancelled" if r.random() < 0.06 else "delivered"
+                    rows.append({"date": ds, "delivered_date": ds, "offer_id": f"{md.ART}{nm}",
+                                 "qty": qty, "revenue": price * qty, "status": st})
+            d += timedelta(days=1)
+        return rows
+
+    async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:   # noqa: F811
+        return _demo_rows(date_from, date_to)
+
+    async def get_stocks() -> dict[str, int]:                                 # noqa: F811
+        import mock_data as md
+        r = _rnd.Random(99)
+        return {f"{md.ART}{nm}": r.choice([0, r.randint(5, 60), r.randint(40, 300)]) for nm, *_ in md.PRODUCTS}
+
+    async def get_sales_28d() -> dict[str, float]:                            # noqa: F811
+        to = datetime.utcnow().date()
+        rows = _demo_rows(str(to - timedelta(days=28)), str(to - timedelta(days=1)))
+        out: dict[str, float] = {}
+        for x in rows:
+            out[x["offer_id"]] = out.get(x["offer_id"], 0) + x["qty"] / 28
+        return {k: round(v, 2) for k, v in out.items()}

@@ -450,7 +450,9 @@ async def _fetch_detail_bg(date_from: str, date_to: str) -> None:
                 except Exception as e:
                     failed.append(f"{mk}: {str(e)[:100]}")
                     _log.warning("statistics-api detail %s failed: %s", mk, e)
-                await asyncio.sleep(62)   # лимит 1 req/мин на метод
+                from config import USE_MOCK as _mock
+                if not _mock:     # демо-данные генерируются локально — без пауз
+                    await asyncio.sleep(62)   # лимит 1 req/мин на метод
             rows, have = await asyncio.to_thread(_assemble_months, months)
             if not rows:
                 rows = await wb_finance_client.get_detailed_report(date_from, date_to)
@@ -2646,6 +2648,30 @@ def _oz_pnl_partial(month_groups: dict, cogs_by_month: dict, costs: dict) -> Non
     _snapmod.save("oz_pnl_payload", _oz_pnl_cache)
 
 
+def _demo_scale(obj, k: float = 0.43):
+    """Демо-кабинет: Ozon = данные WB в другом масштабе (проценты не трогаем)."""
+    import copy
+    keep = ("margin", "pct", "percent", "comm", "rate", "share", "unitcost", "nmid", "drr")
+    def walk(o, key=""):
+        if isinstance(o, dict):
+            return {kk: walk(v, kk) for kk, v in o.items()}
+        if isinstance(o, list):
+            return [walk(v, key) for v in o]
+        if isinstance(o, bool) or not isinstance(o, (int, float)):
+            return o
+        if any(t in key.lower() for t in keep):
+            return o
+        return round(o * k)
+    out = walk(copy.deepcopy(obj))
+    for r in out.get("rows") or []:
+        if isinstance(r.get("label"), str):
+            r["label"] = r["label"].replace("WB", "Ozon").replace(" (Джем, Витрина, отзывы и др.)", "")
+    for r in out.get("rows") or []:          # строки-проценты P&L
+        if r.get("style") == "pct":
+            r["values"] = next((x["values"] for x in (obj.get("rows") or []) if x.get("key") == r.get("key")), r["values"])
+    return out
+
+
 @router.get("/ozon/pnl")
 async def get_ozon_pnl(
     months: int = Query(default=6, ge=1, le=12),
@@ -2653,6 +2679,9 @@ async def get_ozon_pnl(
 ):
     """P&L Ozon по месяцам. Сборка в фоне (несколько запросов к API)."""
     global _oz_pnl_ts, _oz_pnl_cache
+    from config import DEMO_CABINET
+    if DEMO_CABINET:
+        return _demo_scale(await get_wb_pnl(months=months, refresh=False))
     fresh = _oz_pnl_cache and _time.monotonic() - _oz_pnl_ts < _OZ_PNL_TTL
     if not refresh and fresh:
         return _oz_pnl_cache
@@ -2687,6 +2716,9 @@ async def get_ozon_unit(
     привязки к товару (промо «оплата за клик», размещение FBO и т.п.)
     распределяются по SKU пропорционально доле выручки месяца; остаток
     округления — крупнейшему SKU."""
+    from config import DEMO_CABINET
+    if DEMO_CABINET:
+        return _demo_scale(await get_wb_unit(months=months, refresh=False))
     pnl = await get_ozon_pnl(months=months, refresh=refresh)
     st = _oz_unit_state
     sku_m: dict = st.get("sku") or {}

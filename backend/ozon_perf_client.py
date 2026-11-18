@@ -15,6 +15,8 @@ BASE = "https://api-performance.ozon.ru"
 
 CLIENT_ID = os.getenv("OZON_PERF_CLIENT_ID", "").strip()
 CLIENT_SECRET = os.getenv("OZON_PERF_CLIENT_SECRET", "").strip()
+if os.getenv("DEMO_CABINET", "").strip().lower() in ("1", "true", "yes", "on"):
+    CLIENT_ID = CLIENT_SECRET = ""     # демо-кабинет: настоящих запросов нет
 
 _token: str = ""
 _token_exp: float = 0.0

@@ -10,8 +10,11 @@ import db
 _log = logging.getLogger(__name__)
 
 from config import CABINET as _CABINET
+# seed-файлы себестоимости есть только у своих кабинетов (Biomed, ФК);
+# кабинетам клиентов чужой seed не подгружаем
 _SEED_PATH = Path(__file__).parent / "data" / (
-    "cogs_seed_fk.csv" if _CABINET == "fk" else "cogs_seed.csv")
+    "cogs_seed_fk.csv" if _CABINET == "fk" else
+    "cogs_seed.csv" if _CABINET == "biomed" else f"cogs_seed_{_CABINET}.csv")
 
 _costs: dict[str, float] = {}
 _names: dict[str, str]   = {}

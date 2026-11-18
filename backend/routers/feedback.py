@@ -20,7 +20,7 @@ from datetime import datetime, timedelta
 import httpx
 from fastapi import APIRouter, Body, Query
 
-from config import WB_API_KEY, ANTHROPIC_API_KEY
+from config import WB_API_KEY, ANTHROPIC_API_KEY, DEMO_CABINET
 
 _log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/feedback", tags=["feedback"])
@@ -172,6 +172,9 @@ async def _ozon_names(qs: list[dict]) -> None:
 
 @router.get("/questions")
 async def questions(refresh: bool = False):
+    if DEMO_CABINET:
+        import demo_extra
+        return demo_extra.questions()
     hit = _cache.get("q")
     if hit and not refresh and _time.time() - hit[0] < _TTL:
         return hit[1]
@@ -219,6 +222,10 @@ def _save_draft(key: str, val) -> None:
 @router.post("/questions/draft")
 async def question_draft(body: dict = Body(...)):
     """{id, mp, text, art, name} → черновик ответа ИИ."""
+    if DEMO_CABINET:
+        import demo_extra
+        await asyncio.sleep(1.5)
+        return {"draft": demo_extra.question_draft(body or {})}
     if not ANTHROPIC_API_KEY:
         return {"error": "ИИ не подключён (нет ANTHROPIC_API_KEY)"}
     q = body or {}
@@ -255,6 +262,8 @@ async def question_answer(body: dict = Body(...)):
     text = str(b.get("text") or "").strip()
     if len(text) < 2:
         return {"error": "Пустой ответ"}
+    if DEMO_CABINET:
+        return {"ok": True, "demo": True}
     if b.get("mp") == "WB":
         async with httpx.AsyncClient(timeout=30) as c:
             r = await c.patch(f"{_WB}/api/v1/questions", headers={"Authorization": WB_API_KEY},
@@ -318,6 +327,9 @@ def _claim_view(c: dict, adv: dict) -> dict:
 
 @router.get("/claims")
 async def claims(refresh: bool = False):
+    if DEMO_CABINET:
+        import demo_extra
+        return demo_extra.claims()
     hit = _cache.get("c")
     if hit and not refresh and _time.time() - hit[0] < _TTL:
         return hit[1]
@@ -342,6 +354,10 @@ async def claims(refresh: bool = False):
 @router.post("/claims/advise")
 async def claim_advise(body: dict = Body(...)):
     """{claim} → рекомендация ИИ: {verdict, action, reason, comment}. Решает человек."""
+    if DEMO_CABINET:
+        import demo_extra
+        await asyncio.sleep(2)
+        return demo_extra.claim_advice((body or {}).get("claim") or {})
     if not ANTHROPIC_API_KEY:
         return {"error": "ИИ не подключён (нет ANTHROPIC_API_KEY)"}
     c = (body or {}).get("claim") or {}
@@ -413,6 +429,8 @@ async def claim_answer(body: dict = Body(...)):
     action = str(b.get("action") or "")
     if action not in CLAIM_ACTIONS:
         return {"error": "Неизвестное действие"}
+    if DEMO_CABINET:
+        return {"ok": True, "demo": True}
     payload = {"id": b.get("id"), "action": action}
     comment = str(b.get("comment") or "").strip()
     if action == "rejectcustom" and len(comment) < 10:

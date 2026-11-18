@@ -477,6 +477,12 @@ async def _auth_middleware(request, call_next):
     ro = _read_only_block(request)
     if ro is not None:
         return ro
+    if request.method == "GET" and request.url.path.startswith("/api/") and _cfg_demo():
+        import demo_extra
+        from fastapi.responses import JSONResponse
+        data = demo_extra.route(request.url.path, dict(request.query_params))
+        if data is not None:
+            return JSONResponse(data)
     return await call_next(request)
 
 
@@ -504,7 +510,7 @@ def _read_only_block(request):
     if not READ_ONLY or request.method in ("GET", "HEAD", "OPTIONS"):
         return None
     path = request.url.path
-    if path.startswith(_FEEDBACK_PATHS) and os.getenv("FEEDBACK_WRITE", "").strip() in ("1", "true", "yes"):
+    if path.startswith(_FEEDBACK_PATHS) and (os.getenv("FEEDBACK_WRITE", "").strip() in ("1", "true", "yes") or _cfg_demo()):
         return None
     if path.startswith(_RO_DENY):
         from fastapi.responses import JSONResponse
@@ -525,6 +531,11 @@ def get_health():
     }
 
 
+def _cfg_demo() -> bool:
+    from config import DEMO_CABINET
+    return DEMO_CABINET
+
+
 @app.get("/api/cabinet")
 def get_cabinet():
     """Конфигурация кабинета: имя, площадки, группировки, ссылка на второй кабинет."""
@@ -535,7 +546,9 @@ def get_cabinet():
     out = {"id": CABINET, "name": CABINET_NAME, "marketplaces": CABINET_MARKETPLACES,
            "demo": USE_MOCK and not IS_CLIENT_CABINET, "read_only": READ_ONLY, "profile": UI_PROFILE,
            "mono": CABINET_MONO or _mono(CABINET_NAME),
-           "feedback": (not READ_ONLY) or os.getenv("FEEDBACK_WRITE", "").strip() in ("1", "true", "yes")}
+           "feedback": (not READ_ONLY) or os.getenv("FEEDBACK_WRITE", "").strip() in ("1", "true", "yes")
+                       or _cfg_demo(),
+           "demo_client": _cfg_demo()}
     import catalog_auto
     if catalog_auto.enabled():
         out["group_order"] = catalog_auto.group_order()

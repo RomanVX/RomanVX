@@ -61,8 +61,17 @@ CABINET_MONO: str = os.getenv("CABINET_MONO", "").strip() or _CAB_DEFAULTS.get(C
 OTHER_CABINET_MONO: str = os.getenv("OTHER_CABINET_MONO", "").strip() \
     or {"tl": "АВ", "avr": "ТЛ"}.get(CABINET, "")
 UI_PROFILE: str = os.getenv("UI_PROFILE", "analytics" if IS_CLIENT_CABINET else "full").strip().lower()
+# DEMO_CABINET=1 — показательный кабинет клиента на выдуманных данных: ключи
+# площадок и ИИ не используются (даже если заданы), все разделы наполнены
+# демо-цифрами. Для показа клиенту, «как будет, когда подключим всё».
+DEMO_CABINET: bool = os.getenv("DEMO_CABINET", "").strip().lower() in ("1", "true", "yes", "on")
+if DEMO_CABINET:
+    WB_API_KEY = WB_ADVERT_KEY = ""
+    OZON_CLIENT_ID = OZON_API_KEY = ""
+    YM_API_KEY = ""
+    CABINET_MARKETPLACES = [m for m in CABINET_MARKETPLACES if m != "YM"]
 # у кабинета клиента площадка без ключа просто не показывается (без демо-данных)
-if IS_CLIENT_CABINET:
+if IS_CLIENT_CABINET and not DEMO_CABINET:
     if not WB_API_KEY:
         CABINET_MARKETPLACES = [m for m in CABINET_MARKETPLACES if m != "WB"]
     if not OZON_CLIENT_ID:

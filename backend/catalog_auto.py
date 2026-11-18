@@ -100,7 +100,24 @@ def _ozon_brand(item: dict) -> str:
     return ""
 
 
+def _demo_build() -> dict:
+    """Демо-кабинет: каталог из демо-ассортимента (mock_data)."""
+    import mock_data as md
+    from datetime import datetime
+    wb_map, oz_map, cat = {}, {}, {}
+    for nm, name, brand, category in md.PRODUCTS:
+        art = f"{md.ART}{nm}"
+        wb_map[str(nm)] = art
+        oz_map[str(nm + 900000000)] = art          # условный SKU Ozon
+        cat[art] = {"name": name, "brand": brand, "group": brand, "subject": category}
+    return {"wb": wb_map, "ozon": oz_map, "catalog": cat,
+            "updated": datetime.utcnow().strftime("%Y-%m-%d %H:%M")}
+
+
 async def build() -> dict:
+    from config import DEMO_CABINET
+    if DEMO_CABINET:
+        return _demo_build()
     wb_map, oz_map, cat = {}, {}, {}
     errors = []
     try:
@@ -143,6 +160,10 @@ async def build() -> dict:
 def load_snapshot() -> None:
     """Синхронно при старте: последний сохранённый каталог из БД."""
     if not enabled():
+        return
+    from config import DEMO_CABINET
+    if DEMO_CABINET:
+        _apply(_demo_build())
         return
     try:
         import snapshot
