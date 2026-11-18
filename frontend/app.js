@@ -3689,7 +3689,7 @@ async function loadOzPromo(refresh) {
   if (_ozPromo && _ozPromo.days === _ozPromoDays && !refresh && !_ozPromo.building) { renderOzPromo(); return; }
   if (!_ozPromo || !_ozPromo.rows) wrap.innerHTML = '<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>Загружаем продажи, рекламу и акции Ozon…</div>';
   try {
-    const d = await fetchJSON(`/api/promosku/ozon?days=${_ozPromoDays}` + (refresh ? '&refresh=true' : ''), 60000);
+    const d = await fetchJSON(`/api/promosku/ozon?n=${_ozPromoDays}` + (refresh ? '&refresh=true' : ''), 60000);
     _ozPromo = { ...d, days: d.days || _ozPromoDays };
     renderOzPromo();
     if (d.building) _ozPromoTimer = setTimeout(() => loadOzPromo(), 8000);
@@ -3749,7 +3749,7 @@ function renderOzPromo() {
   const val = r => sk === 'margin' ? (r.margin ? r.margin.rub : -1e9) : sk === 'margin_promo' ? (r.margin_promo ? r.margin_promo.rub : -1e9) : (r[sk] ?? -1e9);
   rows = rows.slice().sort((a, b) => dir * (val(a) - val(b)));
   const th = (k, t, cls = '') => `<th class="${cls}" style="cursor:pointer;white-space:nowrap" onclick="ozPromoSort('${k}')">${t}${sk === k ? (dir < 0 ? ' ▾' : ' ▴') : ''}</th>`;
-  let html = `<div class="table-responsive"><table class="table table-sm table-hover align-middle small">
+  let html = `<div class="table-responsive"><style>.ozp td.text-end{white-space:nowrap}</style><table class="table table-sm table-hover align-middle small ozp">
     <thead><tr><th>Товар</th>${th('qty', 'Заказы, шт', 'text-end')}${th('rev', 'Выручка', 'text-end')}${th('ad', 'Реклама', 'text-end')}${th('drr', 'ДРР', 'text-end')}${th('roas', 'ROAS', 'text-end')}${th('price', 'Цена', 'text-end')}<th>Акция (ближайшая)</th>${th('promo_price', 'Цена в акции', 'text-end')}${th('promo_discount', 'Скидка', 'text-end')}${th('margin', 'Маржа/шт', 'text-end')}${th('margin_promo', 'Маржа в акции', 'text-end')}</tr></thead><tbody>`;
   for (const r of rows.slice(0, 500)) {
     const a = r.actions || [], open = _ozPromoOpen.has(r.offer);
