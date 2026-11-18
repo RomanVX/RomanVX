@@ -49,6 +49,20 @@ def ensure_bootstrap():
     try:
         _init_tables()
         n = db.fetchone("SELECT COUNT(*) FROM users")[0]
+        # аварийный сброс: RESET_OWNER_PASSWORD=1 + ADMIN_LOGIN/ADMIN_PASSWORD в env —
+        # при старте владельцу ADMIN_LOGIN ставится пароль ADMIN_PASSWORD (после входа
+        # переменную RESET_OWNER_PASSWORD надо удалить)
+        if n and os.getenv("RESET_OWNER_PASSWORD", "").strip() in ("1", "true", "yes") \
+                and os.getenv("ADMIN_PASSWORD", "").strip():
+            salt = secrets.token_hex(8)
+            if db.fetchone("SELECT 1 FROM users WHERE login = ?", (BOOT_LOGIN,)):
+                db.execute("UPDATE users SET salt = ?, pass_hash = ?, role = 'owner' WHERE login = ?",
+                           (salt, _hash(salt, BOOT_PASSWORD), BOOT_LOGIN))
+            else:
+                db.execute("INSERT INTO users (login, salt, pass_hash, role) VALUES (?,?,?,?)",
+                           (BOOT_LOGIN, salt, _hash(salt, BOOT_PASSWORD), "owner"))
+            db.execute("DELETE FROM sessions WHERE login = ?", (BOOT_LOGIN,))
+            _log.warning("Auth: пароль владельца «%s» сброшен из env (уберите RESET_OWNER_PASSWORD)", BOOT_LOGIN)
         if n == 0:
             salt = secrets.token_hex(8)
             db.execute("INSERT INTO users (login, salt, pass_hash, role) VALUES (?,?,?,?)",
