@@ -98,6 +98,17 @@
         <a href="#" onclick="goNav('dims','navOps');return false">Габариты товаров</a>
       </div>
     </div>
+    <div class="mp-menu-item" id="navFeedback">
+      <button type="button" class="mp-menu-title" onclick="goFb('q')">Покупатели</button>
+      <div class="mp-menu-drop">
+        <a href="#" onclick="goNav('reviews','navFeedback');return false">Отзывы и автоответы</a>
+        <a href="#" onclick="goFb('q');return false">Вопросы</a>
+        <a href="#" onclick="goFb('c');return false">Рекламации WB</a>
+        <a href="#" class="fb-prod" onclick="goNavTool('tools','prod','navFeedback');return false">Продуктолог</a>
+        <div class="mp-drop-sep"></div>
+        <a href="#" onclick="goFb('r');return false">Правила для ИИ</a>
+      </div>
+    </div>
     <div class="mp-menu-item" id="navWB">
       <button type="button" class="mp-menu-title" onclick="goNavTool('tools','prod','navWB')">Wildberries</button>
       <div class="mp-menu-drop">
@@ -406,6 +417,26 @@
     <div id="reviewsFeed"></div>
   </div><!-- /pane-reviews -->
 
+  <!-- ── Покупатели: вопросы, рекламации ── -->
+  <div id="pane-feedback" style="display:none">
+    <div class="d-flex gap-2 mb-3 flex-wrap align-items-center">
+      <div id="fbQ" class="mp-selector-bloc active" style="--mp-color:#6366f1" onclick="setFb('q')">
+        <span class="mp-selector-dot" style="background:#6366f1"></span>Вопросы
+      </div>
+      <div id="fbC" class="mp-selector-bloc" style="--mp-color:#f43f5e" onclick="setFb('c')">
+        <span class="mp-selector-dot" style="background:#f43f5e"></span>Рекламации WB
+      </div>
+      <div id="fbR" class="mp-selector-bloc" style="--mp-color:#94a3b8" onclick="setFb('r')">
+        <span class="mp-selector-dot" style="background:#94a3b8"></span>Правила для ИИ
+      </div>
+      <span id="fbHint" class="text-secondary small"></span>
+      <button class="btn btn-sm btn-outline-secondary ms-auto" onclick="loadFb(true)">
+        <i class="bi bi-arrow-clockwise"></i> Обновить
+      </button>
+    </div>
+    <div id="fbWrap"></div>
+  </div><!-- /pane-feedback -->
+
   <!-- ── Финансы ── -->
   <div id="pane-finance" style="display:none">
     <div class="d-flex gap-2 mb-3 flex-wrap align-items-center">
@@ -603,6 +634,6 @@
 
 <script src="vendor/bootstrap.bundle.min.js"></script>
 <script src="vendor/chart.umd.min.js"></script>
-<script src="app.js?v=270"></script>
+<script src="app.js?v=271"></script>
 </body>
 </html>

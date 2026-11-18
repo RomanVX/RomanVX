@@ -64,7 +64,7 @@ async def _prices() -> tuple[dict, dict]:
         for it in items:
             off = str(it.get("offer_id") or "").strip()
             p = it.get("price") or {}
-            out[off] = {"price": round(_f(p.get("price"))), "marketing_price": round(_f(p.get("marketing_price"))),
+            out[off] = {"price": round(_f(p.get("price"))), "marketing_price": round(_f(p.get("marketing_seller_price") or p.get("marketing_price"))),
                         "min_price": round(_f(p.get("min_price"))), "old_price": round(_f(p.get("old_price")))}
             if it.get("product_id"):
                 pid[int(it["product_id"])] = off

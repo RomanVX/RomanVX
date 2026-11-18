@@ -28,7 +28,7 @@ document.addEventListener('DOMContentLoaded', _initThemeBtn);
 const API = '';
 let charts = {};
 let sortState = {};
-const dirty = { salesan: true, stocks: true, reviews: true, finance: true, unit: true, tools: true, toolsoz: true, docs: true, fbs: true, dims: true, promo: true, cardsync: true, growth: true, market: true };
+const dirty = { salesan: true, stocks: true, reviews: true, finance: true, unit: true, tools: true, toolsoz: true, docs: true, fbs: true, dims: true, promo: true, cardsync: true, growth: true, market: true, feedback: true };
 let _advertData = [];
 let currentTab = 'finance';
 let prodAllData = [];
@@ -127,9 +127,11 @@ function applyProfile() {
   const HIDE = ["goNav('fbs'", "'slots'", "'prod'", "'niche'", "'nichecalc'", "'visuals'", "'competitors'", "goNav('cardsync'", "goNav('growth'", "goNav('market'"];
   document.querySelectorAll('#mainMenu a, #mainMenu button').forEach(el => {
     const oc = el.getAttribute('onclick') || '';
+    if (_cab.feedback && el.closest('#navFeedback')) return;   // блок «Покупатели» клиенту открыт
     if (HIDE.some(h => oc.includes(h))) el.style.display = 'none';
   });
   const hideItem = id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; };
+  if (!_cab.feedback) hideItem('navFeedback');
   hideItem('navOps');
   hideItem('ozSlots');
   const mps = _cab.marketplaces || [];
@@ -312,7 +314,7 @@ function goNavTool(tab, tool, navId) {
 function switchTab(name, linkEl) {
   document.querySelectorAll('#mainTabs .nav-link').forEach(a => a.classList.remove('active'));
   if (linkEl) linkEl.classList.add('active');
-  ['salesan', 'stocks', 'reviews', 'finance', 'unit', 'tools', 'toolsoz', 'docs', 'fbs', 'dims', 'promo', 'cardsync', 'growth', 'market'].forEach(t => {
+  ['salesan', 'stocks', 'reviews', 'finance', 'unit', 'tools', 'toolsoz', 'docs', 'fbs', 'dims', 'promo', 'cardsync', 'growth', 'market', 'feedback'].forEach(t => {
     const el = document.getElementById('pane-' + t);
     if (el) el.style.display = t === name ? 'block' : 'none';
   });
@@ -321,7 +323,7 @@ function switchTab(name, linkEl) {
     dirty[name] = false;
     ({ salesan: loadSalesAnalytics, stocks: loadStocks,
        reviews: loadReviews, finance: loadFinance, tools: loadTools, toolsoz: loadOzTool, docs: loadDocs,
-       unit: loadUnitEconomics, fbs: loadFbs, dims: loadDims, promo: loadPromo, cardsync: loadCardSync, growth: loadGrowth, market: loadMarket })[name]();
+       unit: loadUnitEconomics, fbs: loadFbs, dims: loadDims, promo: loadPromo, cardsync: loadCardSync, growth: loadGrowth, market: loadMarket, feedback: loadFb })[name]();
   }
 }
 
@@ -7433,4 +7435,185 @@ function renderNewprod() {
       <div class="small text-secondary mt-2">Это оценка до запуска: комиссия WB — официальный тариф категории, остальные затраты — фактические по нашим похожим товарам. Реальная логистика зависит от габаритов, склада и процента выкупа.</div></div>
   </div>`;
   npRecalc();
+}
+
+
+// ── Покупатели: вопросы (WB, Ozon), рекламации WB, правила для ИИ ───────────
+let _fbTab = 'q', _fbQ = null, _fbC = null, _fbRules = null, _fbBusy = {};
+const _FB_HINTS = {
+  q: 'Вопросы покупателей WB и Ozon: ИИ пишет черновик по правилам команды, вы правите и отправляете',
+  c: 'Заявки на возврат WB за 14 дней: ИИ смотрит фото и комментарий и советует, решение принимаете вы',
+  r: 'Правила, которые ИИ обязан соблюдать в ответах на вопросы и в советах по рекламациям',
+};
+async function _fbPost(url, body) {
+  const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+  let d = {};
+  try { d = await r.json(); } catch (e) {}
+  if (!r.ok) throw new Error(d.detail || ('HTTP ' + r.status));
+  if (d.error) throw new Error(d.error);
+  return d;
+}
+function goFb(t) { switchTab('feedback', null); markNav('navFeedback'); setFb(t, true); }
+function setFb(t, force) {
+  if (_fbTab === t && !force) return;
+  _fbTab = t;
+  [['fbQ', 'q'], ['fbC', 'c'], ['fbR', 'r']].forEach(([id, k]) => document.getElementById(id)?.classList.toggle('active', k === t));
+  const h = document.getElementById('fbHint'); if (h) h.textContent = _FB_HINTS[t] || '';
+  loadFb();
+}
+async function loadFb(refresh) {
+  const wrap = document.getElementById('fbWrap');
+  if (!wrap) return;
+  const h = document.getElementById('fbHint'); if (h && !h.textContent) h.textContent = _FB_HINTS[_fbTab];
+  const t = _fbTab;
+  const spin = msg => { wrap.innerHTML = `<div class="text-center text-secondary py-4"><span class="spinner-border me-2"></span>${msg}</div>`; };
+  try {
+    if (t === 'q') {
+      if (!_fbQ || refresh) { spin('Загружаем вопросы WB и Ozon…'); _fbQ = await fetchJSON('/api/feedback/questions' + (refresh ? '?refresh=true' : ''), 90000); }
+      if (_fbTab === 'q') renderFbQ();
+    } else if (t === 'c') {
+      if (!_fbC || refresh) { spin('Загружаем заявки на возврат WB…'); _fbC = await fetchJSON('/api/feedback/claims' + (refresh ? '?refresh=true' : ''), 90000); }
+      if (_fbTab === 'c') renderFbC();
+    } else {
+      _fbRules = await fetchJSON('/api/feedback/rules');
+      renderFbR();
+    }
+  } catch (e) {
+    wrap.innerHTML = `<div class="alert alert-danger mt-3">Ошибка: ${esc(e.message)}</div>`;
+  }
+}
+function _fbErrs(list) { return (list || []).map(e => `<div class="alert alert-warning py-2 small">${esc(e)}</div>`).join(''); }
+
+function renderFbQ() {
+  const wrap = document.getElementById('fbWrap'); const d = _fbQ;
+  if (!wrap || !d) return;
+  let html = _fbErrs(d.errors);
+  const qs = d.new || [];
+  html += `<div class="d-flex align-items-center gap-2 mb-2"><b>Без ответа: ${qs.length}</b>
+    <span class="small text-secondary">WB ${qs.filter(q => q.mp === 'WB').length} · Ozon ${qs.filter(q => q.mp === 'Ozon').length}${d.fetched ? ' · обновлено ' + esc(d.fetched) : ''}</span>
+    ${qs.length ? `<button class="btn btn-sm btn-outline-primary ms-auto" onclick="fbDraftAll()">Черновики ИИ для всех без черновика</button>` : ''}</div>`;
+  if (!qs.length) html += '<div class="text-secondary py-3">Новых вопросов нет 🎉</div>';
+  qs.forEach((q, i) => {
+    html += `<div class="card mb-2"><div class="card-body py-2">
+      <div class="d-flex flex-wrap gap-2 small text-secondary mb-1">
+        <span class="badge ${q.mp === 'WB' ? 'bg-primary' : 'bg-info text-dark'}">${q.mp}</span>
+        <span>${esc(q.date)}</span><span>·</span><span class="fw-semibold text-body">${esc(q.art || String(q.sku || ''))}</span>
+        <span class="text-truncate" style="max-width:420px">${esc(q.name || '')}</span>
+        ${q.warned ? '<span class="badge bg-warning text-dark">подозрительное</span>' : ''}
+        ${q.link ? `<a href="${esc(q.link)}" target="_blank" rel="noopener">открыть</a>` : ''}
+      </div>
+      <div class="mb-2">${esc(q.text)}</div>
+      <textarea id="fbqa${i}" class="form-control form-control-sm mb-2" rows="3" placeholder="Ответ покупателю…">${esc(q.draft || '')}</textarea>
+      <div class="d-flex gap-2 flex-wrap">
+        <button class="btn btn-sm btn-outline-secondary" onclick="fbDraft(${i})" ${_fbBusy['q' + i] ? 'disabled' : ''}>${_fbBusy['q' + i] ? '<span class="spinner-border spinner-border-sm"></span> Пишу…' : (q.draft ? '↻ Переписать ИИ' : '✎ Черновик ИИ')}</button>
+        <button class="btn btn-sm btn-primary" onclick="fbSend(${i})">Отправить ответ</button>
+        ${q.mp === 'WB' ? `<button class="btn btn-sm btn-outline-danger ms-auto" onclick="fbSend(${i}, true)" title="Вопрос скроется с сайта; WB требует указать причину в поле ответа">Отклонить вопрос</button>` : ''}
+      </div></div></div>`;
+  });
+  if ((d.answered || []).length) {
+    html += `<details class="mt-3"><summary class="text-secondary">Последние отвеченные WB (${d.answered.length}) — на них ИИ учится стилю</summary>`;
+    d.answered.slice(0, 50).forEach(q => {
+      html += `<div class="border-bottom py-2 small"><div class="text-secondary">${esc(q.date)} · ${esc(q.art || String(q.sku))}</div><div>❓ ${esc(q.text)}</div><div class="text-secondary">↳ ${esc(q.answer)}</div></div>`;
+    });
+    html += '</details>';
+  }
+  wrap.innerHTML = html;
+}
+function _fbKeepEdits() {
+  (_fbQ?.new || []).forEach((q, i) => { const el = document.getElementById('fbqa' + i); if (el) q.draft = el.value; });
+}
+async function fbDraft(i) {
+  _fbKeepEdits();
+  const q = _fbQ.new[i]; _fbBusy['q' + i] = true; renderFbQ();
+  try { const d = await _fbPost('/api/feedback/questions/draft', q); q.draft = d.draft; }
+  catch (e) { alert('Черновик: ' + e.message); }
+  _fbBusy['q' + i] = false; if (_fbTab === 'q') renderFbQ();
+}
+async function fbDraftAll() {
+  _fbKeepEdits();
+  const idx = _fbQ.new.map((q, i) => q.draft ? -1 : i).filter(i => i >= 0).slice(0, 20);
+  for (const i of idx) { await fbDraft(i); }
+}
+async function fbSend(i, reject) {
+  _fbKeepEdits();
+  const q = _fbQ.new[i];
+  const text = (q.draft || '').trim();
+  if (text.length < 2) { alert(reject ? 'Напишите причину отклонения в поле ответа' : 'Ответ пустой'); return; }
+  if (!confirm((reject ? 'Отклонить вопрос' : 'Отправить ответ') + ` на ${q.mp}?\n\n${text}`)) return;
+  try {
+    await _fbPost('/api/feedback/questions/answer', { mp: q.mp, id: q.id, sku: q.sku, text, reject: !!reject });
+    _fbQ.new.splice(i, 1); renderFbQ();
+  } catch (e) { alert('Не отправилось: ' + e.message); }
+}
+
+function renderFbC() {
+  const wrap = document.getElementById('fbWrap'); const d = _fbC;
+  if (!wrap || !d) return;
+  let html = _fbErrs(d.errors);
+  const op = d.open || [];
+  html += `<div class="d-flex align-items-center gap-2 mb-2"><b>На рассмотрении: ${op.length}</b><span class="small text-secondary">${d.fetched ? 'обновлено ' + esc(d.fetched) : ''}</span></div>`;
+  if (!op.length) html += '<div class="text-secondary py-3">Открытых заявок нет</div>';
+  op.forEach((c, i) => {
+    const a = c.advice;
+    const vcol = a ? ({ approve: 'success', reject: 'danger', clarify: 'warning' }[a.verdict] || 'secondary') : '';
+    const vtxt = a ? ({ approve: 'Согласовать', reject: 'Отказать', clarify: 'Запросить фото/уточнить' }[a.verdict] || a.verdict) : '';
+    html += `<div class="card mb-2"><div class="card-body py-2">
+      <div class="d-flex flex-wrap gap-2 small text-secondary mb-1">
+        <span>${esc(c.date)}</span><span>·</span><span class="fw-semibold text-body">${esc(c.art || String(c.nm))}</span>
+        <span class="text-truncate" style="max-width:380px">${esc(c.name)}</span><span>·</span><span>${fmtRub(c.price || 0)}</span>
+        <span>· заказ ${esc(c.order_date)}${c.delivery_date ? ', доставлен ' + esc(c.delivery_date) : ''}</span><span>· ${esc(c.source)}</span>
+      </div>
+      <div class="mb-2">${esc(c.comment || '(без комментария)')}</div>
+      ${c.origin_info ? `<div class="small text-warning mb-2">${esc(c.origin_info)}</div>` : ''}
+      <div class="d-flex flex-wrap gap-2 mb-2">${(c.photos || []).map(p => `<a href="${esc(p)}" target="_blank" rel="noopener"><img src="${esc(p)}" style="height:90px;border-radius:6px;object-fit:cover" loading="lazy"></a>`).join('')}
+        ${(c.videos || []).map(v => `<a href="${esc(v)}" target="_blank" rel="noopener" class="btn btn-sm btn-outline-secondary align-self-center">▶ видео</a>`).join('')}</div>
+      ${a ? `<div class="alert alert-${vcol} py-2 small mb-2"><b>ИИ советует: ${esc(vtxt)}</b>${a.action ? ' — ' + esc((c.actions.find(x => x.code === a.action) || {}).title || a.action) : ''} <span class="text-secondary">(уверенность: ${esc(a.confidence || '—')}, ${esc(a.at || '')})</span><div class="mt-1">${esc(a.reason || '')}</div>${a.note ? `<div class="text-danger">${esc(a.note)}</div>` : ''}</div>` : ''}
+      <div class="d-flex gap-2 flex-wrap align-items-start">
+        <button class="btn btn-sm btn-outline-secondary" onclick="fbAdvise(${i})" ${_fbBusy['c' + i] ? 'disabled' : ''}>${_fbBusy['c' + i] ? '<span class="spinner-border spinner-border-sm"></span> Анализирую…' : (a ? '↻ Спросить ИИ ещё раз' : '🔍 Совет ИИ')}</button>
+        ${(c.actions || []).length ? `<select id="fbca${i}" class="form-select form-select-sm" style="max-width:360px">${c.actions.map(x => `<option value="${x.code}" ${a && a.action === x.code ? 'selected' : ''}>${esc(x.title)}</option>`).join('')}</select>
+        <textarea id="fbcc${i}" class="form-control form-control-sm" rows="2" style="max-width:420px" placeholder="Комментарий покупателю (для «отклонить со своим комментарием»)">${esc((a && a.comment) || '')}</textarea>
+        <button class="btn btn-sm btn-primary" onclick="fbClaimSend(${i})">Отправить решение</button>` : '<span class="small text-secondary">WB не даёт действий по этой заявке</span>'}
+      </div></div></div>`;
+  });
+  if ((d.archive || []).length) {
+    html += `<details class="mt-3"><summary class="text-secondary">Архив (${d.archive.length})</summary><div class="table-responsive"><table class="table table-sm small"><thead><tr><th>Дата</th><th>Товар</th><th>Комментарий</th><th>Решение</th><th>Статус товара</th></tr></thead><tbody>`;
+    d.archive.forEach(c => { html += `<tr><td>${esc(c.date)}</td><td>${esc(c.art || String(c.nm))}</td><td>${esc(c.comment)}</td><td>${esc(String(c.status))}</td><td>${esc(String(c.status_ex))}</td></tr>`; });
+    html += '</tbody></table></div></details>';
+  }
+  wrap.innerHTML = html;
+}
+async function fbAdvise(i) {
+  const c = _fbC.open[i]; _fbBusy['c' + i] = true; renderFbC();
+  try { c.advice = await _fbPost('/api/feedback/claims/advise', { claim: c }); }
+  catch (e) { alert('Совет ИИ: ' + e.message); }
+  _fbBusy['c' + i] = false; if (_fbTab === 'c') renderFbC();
+}
+async function fbClaimSend(i) {
+  const c = _fbC.open[i];
+  const action = document.getElementById('fbca' + i)?.value;
+  const comment = (document.getElementById('fbcc' + i)?.value || '').trim();
+  const title = (c.actions.find(x => x.code === action) || {}).title || action;
+  if (!confirm(`Отправить решение по заявке в WB?\n\n${title}${comment && ['rejectcustom', 'approvecc1'].includes(action) ? '\n\n' + comment : ''}`)) return;
+  try {
+    await _fbPost('/api/feedback/claims/answer', { id: c.id, action, comment });
+    _fbC.open.splice(i, 1); renderFbC();
+  } catch (e) { alert('Не отправилось: ' + e.message); }
+}
+
+function renderFbR() {
+  const wrap = document.getElementById('fbWrap'); const r = _fbRules || {};
+  const box = (k, t, ph) => `<div class="col-md-6"><div class="card h-100"><div class="card-body">
+    <h6>${t}</h6><div class="small text-secondary mb-2">По одному правилу в строке. ИИ обязан их соблюдать.</div>
+    <textarea id="fbr_${k}" class="form-control form-control-sm mb-2" rows="10" placeholder="${ph}">${esc((r[k] || []).join('\n'))}</textarea>
+    <button class="btn btn-sm btn-primary" onclick="fbSaveRules('${k}')">Сохранить</button> <span id="fbr_${k}_ok" class="small text-success"></span></div></div></div>`;
+  wrap.innerHTML = `<div class="row g-3">
+    ${box('questions', 'Ответы на вопросы', 'Например: Всегда обращаться на «Вы»\nПро совместимость отвечать только по данным карточки')}
+    ${box('claims', 'Рекламации', 'Например: Товары дешевле 500 ₽ с понятной претензией — возврат без возврата товара\nБез фото — всегда просить фото')}
+  </div>
+  <div class="small text-secondary mt-3">Правила автоответов на отзывы — во вкладке «Отзывы и автоответы».</div>`;
+}
+async function fbSaveRules(k) {
+  const rules = (document.getElementById('fbr_' + k)?.value || '').split('\n').map(s => s.trim()).filter(Boolean);
+  try { _fbRules = await _fbPost('/api/feedback/rules', { kind: k, rules }); const ok = document.getElementById('fbr_' + k + '_ok'); if (ok) ok.textContent = 'Сохранено'; }
+  catch (e) { alert('Не сохранилось: ' + e.message); }
 }

@@ -457,6 +457,8 @@ from routers import market as _market_r
 app.include_router(_market_r.router)
 from routers import promo_sku as _promo_sku
 app.include_router(_promo_sku.router)
+from routers import feedback as _feedback_r
+app.include_router(_feedback_r.router)
 from routers import wms as _wms
 app.include_router(_wms.router)
 from routers import landing as _landing
@@ -486,10 +488,15 @@ _RO_DENY = (
     "/api/reviews/approve", "/api/reviews/auto-pass", "/api/reviews/draft",
     "/api/reviews/analyze-style", "/api/reviews/decline", "/api/reviews/rules",
     "/api/tools/fbs/", "/api/tools/supply/", "/api/tools/ozon/certificate/",
-    "/api/tools/adv/sandbox", "/api/tools/agent", "/api/tools/competitors/",
+    "/api/feedback/", "/api/tools/adv/sandbox", "/api/tools/agent", "/api/tools/competitors/",
     "/api/tools/niche", "/api/tools/visuals/", "/api/tools/dimensions/",
     "/api/wms/", "/api/cardsync/apply", "/api/cardsync/auto", "/api/growth/baseline", "/api/growth/journal", "/api/pricelock", "/api/market/job",  # mp/proxy сам пускает только чтение
 )
+
+
+# FEEDBACK_WRITE=1 — в кабинете «только чтение» разрешена работа с покупателями:
+# ответы на отзывы/вопросы, решения по рекламациям (клиент сам ведёт обратную связь)
+_FEEDBACK_PATHS = ("/api/reviews/", "/api/feedback/")
 
 
 def _read_only_block(request):
@@ -497,6 +504,8 @@ def _read_only_block(request):
     if not READ_ONLY or request.method in ("GET", "HEAD", "OPTIONS"):
         return None
     path = request.url.path
+    if path.startswith(_FEEDBACK_PATHS) and os.getenv("FEEDBACK_WRITE", "").strip() in ("1", "true", "yes"):
+        return None
     if path.startswith(_RO_DENY):
         from fastapi.responses import JSONResponse
         return JSONResponse({"detail": "Кабинет в режиме «только чтение»: изменения "
@@ -525,7 +534,8 @@ def get_cabinet():
     from config import READ_ONLY, UI_PROFILE, CABINET_MONO, OTHER_CABINET_MONO, IS_CLIENT_CABINET
     out = {"id": CABINET, "name": CABINET_NAME, "marketplaces": CABINET_MARKETPLACES,
            "demo": USE_MOCK and not IS_CLIENT_CABINET, "read_only": READ_ONLY, "profile": UI_PROFILE,
-           "mono": CABINET_MONO or _mono(CABINET_NAME)}
+           "mono": CABINET_MONO or _mono(CABINET_NAME),
+           "feedback": (not READ_ONLY) or os.getenv("FEEDBACK_WRITE", "").strip() in ("1", "true", "yes")}
     import catalog_auto
     if catalog_auto.enabled():
         out["group_order"] = catalog_auto.group_order()
