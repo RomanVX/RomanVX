@@ -5795,3 +5795,27 @@ async def get_ozads2(period: int = Query(default=28, ge=7, le=90), refresh: bool
         return {"building": True, "error": _OZADS2_STATE["error"],
                 "message": "Собираю статистику рекламы Ozon по кампаниям и товарам — 1–3 минуты."}
     return {**res, "refreshing": days in _OZADS2_STATE["building"], "error": _OZADS2_STATE["error"]}
+
+
+@router.post("/wb/media_file", include_in_schema=False)
+async def wb_media_file(request: Request, nm: int = Query(...), n: int = Query(...)):
+    """Owner-only: загрузить одно фото в карточку WB (тело запроса — байты
+    изображения). Проксирует POST /content/v3/media/file (multipart,
+    заголовки X-Nm-Id и X-Photo-Number)."""
+    _owner_only(request)
+    import httpx
+    import wb_client
+    data = await request.body()
+    if not data or len(data) > 32 * 1024 * 1024:
+        raise HTTPException(400, "нужен файл изображения до 32 МБ")
+    ctype = request.headers.get("content-type") or "image/jpeg"
+    hdr = {**wb_client._headers(), "X-Nm-Id": str(nm), "X-Photo-Number": str(n)}
+    hdr.pop("Content-Type", None)
+    async with httpx.AsyncClient(timeout=120) as c:
+        r = await c.post(wb_client.CONTENT_BASE + "/content/v3/media/file", headers=hdr,
+                         files={"uploadfile": (f"{nm}_{n}.jpg", data, ctype)})
+    try:
+        body = r.json()
+    except Exception:
+        body = r.text[:500]
+    return {"status": r.status_code, "body": body}
