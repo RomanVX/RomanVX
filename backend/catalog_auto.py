@@ -65,8 +65,12 @@ async def _wb_cards() -> list[dict]:
             raise RuntimeError(f"WB cards/list {r.status_code}: {r.text[:150]}")
         data = r.json() or {}
         cards = data.get("cards") or []
-        out += cards
+        # только нужные поля: полные карточки (фото, характеристики, размеры)
+        # на тысячах товаров съедают сотни МБ — инстанс падает по памяти
+        out += [{"nmID": c.get("nmID"), "vendorCode": c.get("vendorCode"), "title": c.get("title"),
+                 "brand": c.get("brand"), "subjectName": c.get("subjectName")} for c in cards]
         cur = data.get("cursor") or {}
+        del data
         if len(cards) < cursor["limit"] or not cur.get("nmID"):
             break
         cursor = {"limit": 100, "updatedAt": cur.get("updatedAt"), "nmID": cur.get("nmID")}
@@ -84,8 +88,10 @@ async def _ozon_products() -> list[dict]:
         data = await oz._post("/v4/product/info/attributes",
                               {"filter": {"visibility": "ALL"}, "last_id": last_id, "limit": 1000})
         res = data.get("result") or []
-        out += res
+        out += [{"offer_id": p.get("offer_id"), "sku": p.get("sku"), "id": p.get("id"),
+                 "name": p.get("name"), "brand": _ozon_brand(p)} for p in res]
         last_id = data.get("last_id") or ""
+        del data
         if not last_id or len(res) < 1000:
             break
     return out
@@ -149,7 +155,7 @@ async def build() -> dict:
             if key:
                 oz_map[str(key)] = art
         if art not in cat:
-            brand = _ozon_brand(p) or "Прочее"
+            brand = p.get("brand") or _ozon_brand(p) or "Прочее"
             cat[art] = {"name": (p.get("name") or art)[:120], "brand": brand, "group": brand,
                         "subject": ""}
     from datetime import datetime

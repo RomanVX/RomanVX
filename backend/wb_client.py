@@ -187,8 +187,29 @@ async def get_paid_storage(date_from: str, date_to: str) -> list[dict]:
     return rows
 
 
+_ROW_DROP = ("sticker", "gNumber", "srid", "incomeID", "cancelDate", "isSupply",
+             "isRealization", "countryName")
+
+
+def _slim_rows(rows: list[dict]) -> None:
+    """Заказы/продажи WB за 90 дней у крупного кабинета — сотни тысяч строк:
+    выкидываем неиспользуемые уникальные поля, повторяющиеся строки интернируем
+    (склад, регион, артикул, бренд…) — иначе 512 МБ не хватает."""
+    import sys as _sys
+    for r in rows:
+        for k in _ROW_DROP:
+            r.pop(k, None)
+        for k, v in r.items():
+            if isinstance(v, str) and len(v) < 64:
+                r[k] = _sys.intern(v)
+
+
 def _learn_sku_map(rows: list[dict]) -> list[dict]:
     """Выучиваем связки nmId→артикул (нужны для остатков, где артикула нет)."""
+    try:
+        _slim_rows(rows)
+    except Exception as e:
+        _log.debug("slim rows failed: %s", e)
     try:
         import catalog as _cat
         _cat.learn_wb(rows)
