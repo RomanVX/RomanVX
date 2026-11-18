@@ -1,3 +1,6 @@
+// кабинет клиента агентства (класс client-ui ставит сервер): своя палитра без зелёного
+const _CLIENT_UI = document.documentElement.classList.contains('client-ui');
+const _G = c => _CLIENT_UI ? ({ '#059669': '#6366f1', '#22c55e': '#06b6d4', '#16a34a': '#2563eb', '#4ade80': '#60a5fa' }[c] || c) : c;
 'use strict';
 
 // ── Тема (тёмная/светлая) ─────────────────────────────────────────────────────
@@ -6,8 +9,8 @@
 // подобранные под активную тему. Переключение перерисовывает страницу целиком.
 const _THEME = document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
 const CHART_C = _THEME === 'light'
-  ? { tick: '#5b6472', tick2: '#8a93a5', grid: '#e2e5ee', legend: '#3d4454', gridSoft: 'rgba(20,25,45,.08)', pos: '#16a34a' }
-  : { tick: '#94a3b8', tick2: '#64748b', grid: '#1e2235', legend: '#cbd5e1', gridSoft: 'rgba(255,255,255,.06)', pos: '#4ade80' };
+  ? { tick: '#5b6472', tick2: '#8a93a5', grid: '#e2e5ee', legend: '#3d4454', gridSoft: 'rgba(20,25,45,.08)', pos: _G('#16a34a') }
+  : { tick: '#94a3b8', tick2: '#64748b', grid: '#1e2235', legend: '#cbd5e1', gridSoft: 'rgba(255,255,255,.06)', pos: _G('#4ade80') };
 
 function toggleTheme() {
   const next = _THEME === 'light' ? 'dark' : 'light';
@@ -1058,7 +1061,7 @@ let _ordersData = null;
 let _ordersMp = 'WB';
 let _ordersCompact = false;   // true → показываем только текущую и прошлую неделю
 
-const _MP_COLORS = { WB: '#c026d3', OZON: '#3b82f6', YM: '#b45309', TOTAL: '#059669' };
+const _MP_COLORS = { WB: '#c026d3', OZON: '#3b82f6', YM: '#b45309', TOTAL: _G('#059669') };
 const _MP_LABEL  = { WB: 'WB (Wildberries)', OZON: 'Ozon', YM: 'Яндекс Маркет', TOTAL: 'Все площадки' };
 
 async function loadSalesAnalytics() {
@@ -1272,7 +1275,7 @@ function renderOrdersMonthly() {
     return RU_MONTH_NAMES[parseInt(m)-1] + ' ' + y.slice(2);
   });
 
-  const allMPs = [...MPs, { key: 'total', label: 'Итого', color: '#059669' }];
+  const allMPs = [...MPs, { key: 'total', label: 'Итого', color: _G('#059669') }];
 
   let html = `<div class="card border-0 bg-card mt-2">
     <div class="card-header bg-transparent border-0 py-2 d-flex align-items-center gap-2">
@@ -1386,7 +1389,7 @@ function toggleOrdersCompact() {
 const _GROUP_COLORS = {
   // Biomed
   'Фисты':            '#ef4444',
-  'Aloe':             '#22c55e',
+  'Aloe':             _G('#22c55e'),
   'Спреи для минета': '#f59e0b',
   'Satisfucktion':    '#ec4899',
   'Джага':            '#8b5cf6',
@@ -1397,7 +1400,7 @@ const _GROUP_COLORS = {
 };
 // запасная палитра для любых незнакомых групп (в любом кабинете) —
 // стабильный цвет по имени, чтобы не сваливались все в серый
-const _GROUP_PALETTE = ['#0ea5e9', '#a855f7', '#f59e0b', '#22c55e', '#ec4899',
+const _GROUP_PALETTE = ['#0ea5e9', '#a855f7', '#f59e0b', _G('#22c55e'), '#ec4899',
                         '#8b5cf6', '#ef4444', '#14b8a6', '#eab308', '#6366f1'];
 function _groupColor(g) {
   if (_GROUP_COLORS[g]) return _GROUP_COLORS[g];
@@ -2201,7 +2204,7 @@ function renderFinanceTable() {
   if (_finCompact && months.length > 2) months = months.slice(-2);
   if (!months.length) { wrap.innerHTML = '<div class="text-secondary text-center py-4">Данных нет</div>'; return; }
 
-  const MP_COLOR = { WB: '#c026d3', OZON: '#3b82f6', YM: '#b45309', TOTAL: '#059669' };
+  const MP_COLOR = { WB: '#c026d3', OZON: '#3b82f6', YM: '#b45309', TOTAL: _G('#059669') };
   const col = MP_COLOR[mp] || '#c026d3';
   const SEP = 'border-left:2px solid var(--sep);';
 
@@ -3967,7 +3970,7 @@ function renderOzAds() {
     type: 'bar',
     data: { labels: ch.map(x => _ozDate(x.date).slice(0, 5)), datasets: [
       { label: 'Расход', data: ch.map(x => x.spent), backgroundColor: '#f59e0b', yAxisID: 'y' },
-      { label: 'Выручка с рекламы', data: ch.map(x => x.orders_money), type: 'line', borderColor: '#22c55e', backgroundColor: '#22c55e', tension: .3, pointRadius: 0, yAxisID: 'y' },
+      { label: 'Выручка с рекламы', data: ch.map(x => x.orders_money), type: 'line', borderColor: _G('#22c55e'), backgroundColor: _G('#22c55e'), tension: .3, pointRadius: 0, yAxisID: 'y' },
       { label: 'ДРР, %', data: ch.map(x => x.orders_money ? Math.round(x.spent / x.orders_money * 1000) / 10 : null), type: 'line', borderColor: '#60a5fa', borderDash: [4, 4], pointRadius: 0, yAxisID: 'y2' }] },
     options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
       plugins: { legend: { position: 'bottom', labels: { color: css.getPropertyValue('--ink-2') } } },

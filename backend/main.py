@@ -7,7 +7,9 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+import re
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse
 from fastapi.responses import FileResponse
 
 from datetime import datetime, timedelta
@@ -607,13 +609,37 @@ def _mono(name: str) -> str:
 
 FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
 
+
+def _client_index(name: str, mono: str = "") -> str:
+    """index.html кабинета клиента агентства: своя тема (класс client-ui), без
+    логотипа и подписи Market Partners — вход и шапка с названием кабинета."""
+    import html as _h
+    t = (FRONTEND_DIR / "index.html").read_text(encoding="utf-8")
+    nm = _h.escape(name or "Кабинет")
+    t = t.replace('<html lang="ru" data-bs-theme="dark">', '<html lang="ru" data-bs-theme="dark" class="client-ui">', 1)
+    t = t.replace("Market Partners — аналитика маркетплейсов", f"{nm} — аналитика продаж")
+    t = t.replace('<link rel="stylesheet" href="style.css',
+                  '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" />\n  '
+                  '<link rel="stylesheet" href="style.css', 1)
+    t = re.sub(r'<img src="/api/tools/asset/logo" alt="Market Partners" class="mp-logo"[^>]*/>',
+               f'<div class="cl-brand"><span class="cl-mark">{_h.escape(mono or _mono(name))}</span><span>{nm}</span></div>', t)
+    t = re.sub(r'<img src="/api/tools/asset/logo" alt="Market Partners" style="[^"]*"[^>]*/>',
+               f'<span class="cl-mark cl-mark-sm">{_h.escape(mono or _mono(name))}</span>', t)
+    t = t.replace('<div class="mp-powered">Powered by<b>Market Partners</b></div>', '')
+    t = t.replace('<link rel="icon" href="/api/tools/asset/logo" />', '')
+    return t
+
 if FRONTEND_DIR.exists():
     @app.get("/", include_in_schema=False)
     async def root():
-        return FileResponse(
-            str(FRONTEND_DIR / "index.html"),
-            headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
-        )
+        from config import IS_CLIENT_CABINET, CABINET_NAME, CABINET_MONO
+        if not IS_CLIENT_CABINET:
+            return FileResponse(
+                str(FRONTEND_DIR / "index.html"),
+                headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+            )
+        return HTMLResponse(_client_index(CABINET_NAME, CABINET_MONO),
+                            headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
     @app.get("/wms")
     async def wms_app():
