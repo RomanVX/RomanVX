@@ -554,6 +554,17 @@ async def keys_check():
         out["wb"] = {"_": f"это не похоже на токен WB: в токене должно быть 3 части через точку, "
                           f"а здесь {tok.count('.') + 1} (длина {len(tok)} симв.). Скопируйте токен заново целиком"}
     else:
+        # какой именно токен загружен: открытая часть JWT (id, срок) — без подписи
+        try:
+            import base64 as _b64, json as _js
+            from datetime import datetime as _dt
+            _p = tok.split(".")[1]
+            _c = _js.loads(_b64.urlsafe_b64decode(_p + "=" * (-len(_p) % 4)))
+            out["wb_token"] = {"id": str(_c.get("id", ""))[:13] + "…",
+                               "истекает": _dt.utcfromtimestamp(int(_c.get("exp", 0))).strftime("%d.%m.%Y"),
+                               "окончание": "…" + tok[-4:]}
+        except Exception:
+            out["wb_token"] = {"_": "не удалось разобрать токен"}
         cats = {"Контент": "content-api", "Аналитика": "seller-analytics-api", "Цены и скидки": "discounts-prices-api",
                 "Статистика": "statistics-api", "Продвижение": "advert-api", "Вопросы и отзывы": "feedbacks-api",
                 "Финансы": "finance-api", "Маркетплейс": "marketplace-api"}
