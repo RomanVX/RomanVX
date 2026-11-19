@@ -173,6 +173,16 @@ async def build() -> dict:
             if b and b.get("brand") not in ("Прочее", "", "Нет бренда"):
                 v["brand"] = v["group"] = b["brand"]
                 break
+    # один бренд в разном регистре («ФЕЕЧКИ»/«Феечки») — к самому частому написанию
+    from collections import Counter
+    cnt = Counter(v.get("brand") or "" for v in cat.values())
+    best: dict = {}
+    for b, n in cnt.most_common():
+        best.setdefault(b.lower(), b)
+    for v in cat.values():
+        b = best.get((v.get("brand") or "").lower())
+        if b:
+            v["brand"] = v["group"] = b
     from datetime import datetime
     return {"wb": wb_map, "ozon": oz_map, "catalog": cat,
             "updated": datetime.utcnow().strftime("%Y-%m-%d %H:%M")}
