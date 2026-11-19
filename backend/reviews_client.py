@@ -441,12 +441,23 @@ def _mark_full_scan(platform: str) -> None:
 
 # ─── WB ──────────────────────────────────────────────────────────────────────
 
-async def fetch_wb_reviews():
+async def fetch_wb_reviews(full: bool = True):
+    """Отзывы WB. full=False — только свежие (dateFrom = последний в БД − 3 дня):
+    у крупного кабинета (90+ тыс. отзывов) полная перекачка каждые 15 минут
+    съедала сотни МБ и роняла сервер. Пишем в БД постранично (по 5000)."""
     if not WB_API_KEY:
         return
-    rows = []
     base = "https://feedbacks-api.wildberries.ru"
     headers = {"Authorization": WB_API_KEY}
+    date_from = None
+    if not full:
+        cutoff = _incr_cutoff("WB")
+        if cutoff:
+            try:
+                date_from = int(datetime.fromisoformat(cutoff[:19]).timestamp())
+            except ValueError:
+                date_from = None
+    total = 0
 
     try:
         async with httpx.AsyncClient(timeout=30) as client:
@@ -455,6 +466,8 @@ async def fetch_wb_reviews():
                 while True:
                     params = {"isAnswered": str(answered).lower(),
                               "take": 5000, "skip": skip, "order": "dateDesc"}
+                    if date_from:
+                        params["dateFrom"] = date_from
                     r = await client.get(f"{base}/api/v1/feedbacks", headers=headers, params=params)
                     if not r.is_success:
                         _log.warning("WB feedbacks error: %s %s", r.status_code, r.text[:200])
@@ -463,10 +476,10 @@ async def fetch_wb_reviews():
                     feedbacks = data.get("feedbacks") or []
                     if not feedbacks:
                         break
+                    rows = []
                     for f in feedbacks:
                         details = f.get("productDetails") or {}
                         raw_sku = str(details.get("supplierArticle") or f.get("nmId") or "").strip()
-                        # resolve via nmId first if supplierArticle missing
                         nm_id = f.get("nmId")
                         sku = cat.resolve_wb(nm_id) if nm_id else cat.resolve_wb(raw_sku)
                         answer = ((f.get("answer") or {}).get("text") or "").strip()
@@ -479,15 +492,19 @@ async def fetch_wb_reviews():
                             "answer": answer,
                             "created_at": (f.get("createdDate") or "")[:19],
                         }))
-                    skip += len(feedbacks)
-                    if len(feedbacks) < 5000:
+                    n = len(feedbacks)
+                    del data, feedbacks, r
+                    await asyncio.to_thread(_upsert_reviews, rows)
+                    total += len(rows)
+                    del rows
+                    skip += n
+                    if n < 5000:
                         break
                     await asyncio.sleep(0.5)
     except Exception as e:
         _log.warning("WB reviews exception: %s", e)
 
-    _upsert_reviews(rows)
-    _log.info("WB: fetched %d feedbacks", len(rows))
+    _log.info("WB: fetched %d feedbacks (%s)", total, "полный" if full else "инкремент")
 
 
 # ─── OZON ────────────────────────────────────────────────────────────────────
@@ -649,12 +666,15 @@ async def refresh_all(force=False):
         _last_refresh = time.monotonic()
         full_oz = _full_scan_due("Ozon", force)
         full_ym = _full_scan_due("YM", force)
+        full_wb = _full_scan_due("WB", force)
         await asyncio.gather(
-            fetch_wb_reviews(),
+            fetch_wb_reviews(full=full_wb),
             fetch_ozon_reviews(full=full_oz),
             fetch_ym_reviews(full=full_ym),
             return_exceptions=True,
         )
+        if full_wb:
+            _mark_full_scan("WB")
         if full_oz:
             _mark_full_scan("Ozon")
         if full_ym:

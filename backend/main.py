@@ -35,8 +35,12 @@ async def _accumulate_sales():
     # WB — persist_wb срабатывает write-through при каждом реальном обновлении
     # кеша (weekly_orders/stocks_table только что его загрузили), поэтому
     # принудительный invalidate() здесь означал бы двойную выкачку 90 дней.
+    from config import IS_CLIENT_CABINET
     try:
-        await cache.get_raw_data(dt_from, dt_to)
+        # кабинеты клиентов: история заказов WB пишется из воронки (sales_daily),
+        # 90 дней сырых заказов/продаж ради накопления не держим (сотни МБ)
+        if not IS_CLIENT_CABINET:
+            await cache.get_raw_data(dt_from, dt_to)
     except Exception as exc:
         _log.warning("accumulate WB failed: %s", exc)
     # Ozon / YM — get_sales_detail сами вызывают persist_detail
