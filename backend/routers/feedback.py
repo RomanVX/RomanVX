@@ -330,6 +330,9 @@ def _claim_view(c: dict, adv: dict) -> dict:
     return {"id": c.get("id"), "nm": nm, "art": art if art and art != str(nm) else "",
             "name": c.get("imt_name") or "", "comment": c.get("user_comment") or "",
             "wb_comment": c.get("wb_comment") or "", "price": c.get("price"),
+            # валюта заявки (643 — рубль; 398 — тенге, 933 — бел. рубль, 51 — драм…)
+            "currency": {"643": "₽", "398": "₸", "933": "Br", "51": "֏", "417": "сом",
+                         "860": "сум"}.get(str(c.get("currency_code") or "643"), str(c.get("currency_code") or "")),
             "date": (c.get("dt") or "")[:16].replace("T", " "),
             "order_date": (c.get("order_dt") or "")[:10], "delivery_date": (c.get("delivery_dt") or "")[:10],
             "status": CLAIM_STATUS.get(c.get("status"), c.get("status")),
@@ -405,7 +408,7 @@ async def claim_advise(body: dict = Body(...)):
            + (f"Служебно от WB: {c['origin_info']}\n" if c.get("origin_info") else ""))
     content = [{"type": "text", "text": txt}]
     for url in (c.get("photos") or [])[:6]:
-        if re.match(r"^https://[a-z0-9.-]+\.wbstatic\.net/", url) or re.match(r"^https://[a-z0-9.-]+\.wb\.ru/", url):
+        if re.match(r"^https://[a-z0-9.-]+\.(wbstatic\.net|wb\.ru|wbbasket\.ru)/", url):
             content.append({"type": "image", "source": {"type": "url", "url": url}})
     try:
         raw = await _claude(system, content, max_tokens=6000, effort="medium")

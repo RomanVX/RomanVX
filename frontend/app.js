@@ -1372,7 +1372,25 @@ async function loadSalesAnalysis(refresh = false) {
 }
 
 // стрелка динамики week-over-week (как в остатках): ▲ рост / ▼ падение
-function _dynArrow(cur, prev) {
+// индекс колонки текущего (незаконченного) периода — по ней динамику не красим:
+// 3 дня недели против 7 дней прошлой дают ложное «▼50%»
+let _ordPartialIdx = -1;
+function _ordCalcPartial(weeks) {
+  _ordPartialIdx = -1;
+  const n = (weeks || []).length;
+  if (!n) return;
+  const last = String(weeks[n - 1] || '');
+  if (_ordersMode !== 'week') { _ordPartialIdx = n - 1; return; }
+  const m = last.match(/(\d{1,2})\.(\d{1,2})\s*$/);
+  if (!m) return;
+  const now = new Date();
+  const end = new Date(now.getFullYear(), +m[2] - 1, +m[1], 23, 59, 59);
+  if (end - now > 30 * 864e5) end.setFullYear(end.getFullYear() - 1);
+  if (end >= now) _ordPartialIdx = n - 1;
+}
+function _dynArrow(cur, prev, i) {
+  if (i !== undefined && i === _ordPartialIdx)
+    return `<span class="text-secondary" style="font-size:0.66rem;margin-left:3px" title="Период ещё не закончился — сравнивать с полным прошлым рано">· идёт</span>`;
   if (!prev || !cur) return '';
   const diff = cur - prev;
   if (Math.abs(diff) < 0.005 * Math.max(cur, prev)) return '';  // <0.5% — без стрелки
@@ -1389,7 +1407,7 @@ function _rubCell(arr, i, cls, extra = '') {
   const st = `white-space:nowrap;${extra}`;
   if (!v) return `<td class="text-end ${cls}" style="${st}"><span class="text-muted">—</span></td>`;
   const prev = i > 0 ? arr[i - 1] : 0;
-  return `<td class="text-end ${cls}" style="${st}">${fmtRub(v)}${_dynArrow(v, prev)}</td>`;
+  return `<td class="text-end ${cls}" style="${st}">${fmtRub(v)}${_dynArrow(v, prev, i)}</td>`;
 }
 
 function _qtyCell(v, cls, extra = '') {
@@ -1512,8 +1530,9 @@ function _ordersTableHTML() {
   // thead: Артикул/Название | week1 ₽/шт | week2 ₽/шт | ...
   let thead = '<thead class="sticky-top"><tr>'
     + '<th rowspan="2" style="min-width:200px;vertical-align:bottom">Артикул / Название</th>';
+  _ordCalcPartial(weeks);
   vis.forEach(i => {
-    thead += `<th class="text-end" colspan="2" style="white-space:nowrap;${_WEEK_SEP}">${weeks[i]}</th>`;
+    thead += `<th class="text-end" colspan="2" style="white-space:nowrap;${_WEEK_SEP}">${weeks[i]}${i === _ordPartialIdx ? ' <span class="text-secondary fw-normal" title="Период ещё идёт">· идёт</span>' : ''}</th>`;
   });
   thead += '</tr><tr>';
   vis.forEach(() => {
@@ -1569,7 +1588,7 @@ function _ordersTableHTML() {
       const prev = i > 0 ? bRub[i - 1] : 0;
       const pct  = hasCancel && v > 0 && bCancelRub[i] > 0
         ? Math.round(bCancelRub[i] / v * 100) : null;
-      const dynHtml   = v ? _dynArrow(v, prev) : '';
+      const dynHtml   = v ? _dynArrow(v, prev, i) : '';
       const buyoutHtml = pct !== null
         ? `<div class="buyout-pill" title="«Отменили и вернули» за эту неделю по дате события — как в воронке ЛК WB">↩ ${pct}% отмен</div>`
         : '';
@@ -2918,7 +2937,7 @@ function renderUnitMonth() {
         ? 'Продвижение — точная раскладка по артикулам из статистики кампаний WB (fullstats)'
         : 'Продвижение — по доле выручки' + (_unitData.advert_building ? ' (точная раскладка по кампаниям собирается в фоне, ~5-10 мин)' : ''));
   if ((_unitData.months_pending || []).length) {
-    html += `<div class="text-info small mt-2">⏳ Месяцы ${_unitData.months_pending.join(', ')} появятся по мере сборки ${isOz ? 'SKU-разреза начислений Ozon' : 'раскладки рекламы (по минуте на месяц)'}. Страница обновится сама.</div>`;
+    html += `<div class="text-info small mt-2">⏳ ${isOz ? `Месяцы ${_unitData.months_pending.join(', ')} появятся по мере сборки SKU-разреза начислений Ozon` : `В месяцах ${_unitData.months_pending.join(', ')} реклама пока распределена по доле выручки (предварительно); точная раскладка по кампаниям WB собирается в фоне`}. Страница обновится сама.</div>`;
     if (!window._unitPendingTimer) {
       window._unitPendingTimer = setTimeout(() => {
         window._unitPendingTimer = null;
@@ -3898,7 +3917,7 @@ function renderOzPromo() {
   rows = rows.slice().sort((a, b) => dir * (val(a) - val(b)));
   const th = (k, t, cls = '') => `<th class="${cls}" style="cursor:pointer;white-space:nowrap" onclick="ozPromoSort('${k}')">${t}${sk === k ? (dir < 0 ? ' ▾' : ' ▴') : ''}</th>`;
   let html = `<div class="table-responsive"><style>.ozp td.text-end{white-space:nowrap}</style><table class="table table-sm table-hover align-middle small ozp">
-    <thead><tr><th>Товар</th>${th('qty', 'Заказы, шт', 'text-end')}${th('rev', 'Выручка', 'text-end')}${th('ad', 'Реклама', 'text-end')}${th('drr', 'ДРР', 'text-end')}${th('roas', 'ROAS', 'text-end')}${th('price', 'Цена', 'text-end')}<th>Акция (ближайшая)</th>${th('promo_price', 'Цена в акции', 'text-end')}${th('promo_discount', 'Скидка', 'text-end')}${th('margin', 'Маржа/шт', 'text-end')}${th('margin_promo', 'Маржа в акции', 'text-end')}</tr></thead><tbody>`;
+    <thead><tr><th>Товар</th>${th('qty', 'Заказы, шт', 'text-end')}${th('rev', 'Выручка', 'text-end')}${th('ad', 'Реклама', 'text-end')}${th('drr', 'ДРР общий', 'text-end')}${th('roas', 'ROAS', 'text-end')}${th('price', 'Цена', 'text-end')}<th>Акция (ближайшая)</th>${th('promo_price', 'Цена в акции', 'text-end')}${th('promo_discount', 'Скидка', 'text-end')}${th('margin', 'Маржа/шт', 'text-end')}${th('margin_promo', 'Маржа в акции', 'text-end')}</tr></thead><tbody>`;
   for (const r of rows.slice(0, 500)) {
     const a = r.actions || [], open = _ozPromoOpen.has(r.offer);
     const near = a[0];
@@ -3909,12 +3928,12 @@ function renderOzPromo() {
       <td class="text-end">${fmt(r.qty)}${_pDyn(r.qty_dyn)}</td>
       <td class="text-end">${fmtRub(r.rev)}${_pDyn(r.rev_dyn)}</td>
       <td class="text-end" title="За клики: ${fmtRub(r.ad_cpc)} · Оплата за заказ: ${fmtRub(r.ad_cpo)} · Показы ${fmt(r.views)} · Клики ${fmt(r.clicks)} · Заказы с рекламы ${fmt(r.ad_orders)}">${r.ad ? fmtRub(r.ad) : '—'}${_pDyn(r.ad_dyn, true)}</td>
-      <td class="text-end">${r.drr != null ? r.drr + '%' : '—'}${r.drr_prev != null ? `<div class="small text-secondary">было ${r.drr_prev}%</div>` : ''}</td>
+      <td class="text-end" title="ДРР общий = реклама ÷ вся выручка товара; ДРР рекламы = реклама ÷ выручка с рекламы">${r.ad ? (r.drr != null ? r.drr + '%' : '—') : '—'}${r.ad && r.drr_prev ? `<div class="small text-secondary">было ${r.drr_prev}%</div>` : ''}${r.ad && r.ad_rev ? `<div class="small text-secondary">рекл. ${Math.round(r.ad / r.ad_rev * 1000) / 10}%</div>` : ''}</td>
       <td class="text-end">${r.roas != null ? r.roas : '—'}</td>
       <td class="text-end">${r.price ? fmtRub(r.price) : '—'}${r.buyer_price && r.buyer_price !== r.price ? `<div class="small text-secondary" title="Цена с учётом акций Ozon">${fmtRub(r.buyer_price)}</div>` : ''}</td>
       <td style="max-width:260px">${actCell}</td>
       <td class="text-end">${r.promo_price ? fmtRub(r.promo_price) : '—'}</td>
-      <td class="text-end">${r.promo_discount != null ? r.promo_discount + '%' : '—'}</td>
+      <td class="text-end">${r.promo_discount != null ? ((r.actions || [])[0] || {}).no_discount ? '<span class="text-secondary small">без скидки</span>' : r.promo_discount + '%' : '—'}</td>
       <td class="text-end">${_pMargin(r.margin)}</td>
       <td class="text-end">${_pMargin(r.margin_promo)}</td></tr>`;
     if (open && a.length > 1) {
@@ -5329,7 +5348,7 @@ function renderProductolog() {
   let html = '';
   html += `<div class="d-flex justify-content-end mb-2">
     <a href="/api/tools/productolog/export" class="btn btn-sm btn-outline-success" download>⬇ Экспорт в Excel</a></div>`;
-  if (d.pending > 0 || d.building) {
+  if ((d.pending > 0 || d.building) && !/ANTHROPIC|ключ/i.test(d.error || '')) {
     html += `<div class="alert alert-info py-2 small">⏳ Анализируем отзывы (${d.progress || `осталось ${d.pending} арт.`}) — по 4 товара сразу, страница обновится сама.</div>`;
     if (!_prodTimer) _prodTimer = setTimeout(() => { _prodTimer = null; if (currentTab === 'tools' && _toolActive === 'prod') loadProductolog('poll'); }, 15000);
   }
@@ -5556,6 +5575,8 @@ function _applyReviewsData(data) {
         (r.deferred ? ` · ждут публикации отзыва: ${r.deferred}` : '') +
         (r.failed ? ` · не удалось ${r.failed}` : '') + ' · проходы каждые 20 минут') +
         ((r.errors || []).length ? `<div class="text-warning">Ответы площадок: ${esc(r.errors.join(' | '))}</div>` : '');
+    } else if (_cab && _cab.read_only) {
+      asEl.textContent = 'Автоответы выключены: кабинет в режиме «только чтение» — ответы покупателям из дашборда не отправляются.';
     } else {
       asEl.textContent = 'Автоответы на все отзывы (1-5★) включены: первый прогон в течение ~20 минут после запуска сервера.';
     }
@@ -5956,7 +5977,11 @@ function renderReviewsFeed() {
   window._reviewsFiltered = filtered;
 
   if (!filtered.length) {
-    el.innerHTML = `<p class="text-secondary mt-3">${_revTab === 'un'
+    const platSel = document.getElementById('reviewsPlatform')?.value || '';
+    const noOzon = /ozon/i.test(platSel) && !(_allReviews || []).some(r => r.platform === 'Ozon');
+    el.innerHTML = `<p class="text-secondary mt-3">${noOzon
+      ? 'Отзывы Ozon не подключены: Ozon отдаёт их по API только с подпиской «Управление отзывами» или Premium Pro.'
+      : _revTab === 'un'
       ? 'Неотвеченных отзывов нет — всё разобрано 🎉' : 'Отзывов по выбранным фильтрам нет — сбрось фильтр площадки или артикулов.'}</p>`;
     return;
   }
@@ -7716,7 +7741,7 @@ function renderFbC() {
     html += `<div class="card mb-2"><div class="card-body py-2">
       <div class="d-flex flex-wrap gap-2 small text-secondary mb-1">
         <span>${esc(c.date)}</span><span>·</span><span class="fw-semibold text-body">${esc(c.art || String(c.nm))}</span>
-        <span class="text-truncate" style="max-width:380px">${esc(c.name)}</span><span>·</span><span>${fmtRub(c.price || 0)}</span>
+        <span class="text-truncate" style="max-width:380px">${esc(c.name)}</span><span>·</span><span>${c.currency && c.currency !== '₽' ? `${fmt(c.price || 0)} ${esc(c.currency)}` : fmtRub(c.price || 0)}</span>
         <span>· заказ ${esc(c.order_date)}${c.delivery_date ? ', доставлен ' + esc(c.delivery_date) : ''}</span><span>· ${esc(c.source)}</span>
       </div>
       <div class="mb-2">${esc(c.comment || '(без комментария)')}</div>
@@ -7726,7 +7751,7 @@ function renderFbC() {
       ${a ? `<div class="alert alert-${vcol} py-2 small mb-2"><b>ИИ советует: ${esc(vtxt)}</b>${a.action ? ' — ' + esc((c.actions.find(x => x.code === a.action) || {}).title || a.action) : ''} <span class="text-secondary">(уверенность: ${esc(a.confidence || '—')}, ${esc(a.at || '')})</span><div class="mt-1">${esc(a.reason || '')}</div>${a.note ? `<div class="text-danger">${esc(a.note)}</div>` : ''}</div>` : ''}
       <div class="d-flex gap-2 flex-wrap align-items-start">
         <button class="btn btn-sm btn-outline-secondary" onclick="fbAdvise(${i})" ${_fbBusy['c' + i] ? 'disabled' : ''}>${_fbBusy['c' + i] ? '<span class="spinner-border spinner-border-sm"></span> Анализирую…' : (a ? '↻ Спросить ИИ ещё раз' : '🔍 Совет ИИ')}</button>
-        ${(c.actions || []).length ? `<select id="fbca${i}" class="form-select form-select-sm" style="max-width:360px">${c.actions.map(x => `<option value="${x.code}" ${a && a.action === x.code ? 'selected' : ''}>${esc(x.title)}</option>`).join('')}</select>
+        ${(c.actions || []).length ? `<select id="fbca${i}" class="form-select form-select-sm" style="max-width:360px"><option value="" ${a && a.action ? '' : 'selected'}>— выберите решение —</option>${c.actions.map(x => `<option value="${x.code}" ${a && a.action === x.code ? 'selected' : ''}>${esc(x.title)}</option>`).join('')}</select>
         <textarea id="fbcc${i}" class="form-control form-control-sm" rows="2" style="max-width:420px" placeholder="Комментарий покупателю (для «отклонить со своим комментарием»)">${esc((a && a.comment) || '')}</textarea>
         <button class="btn btn-sm btn-primary" onclick="fbClaimSend(${i})">Отправить решение</button>` : '<span class="small text-secondary">WB не даёт действий по этой заявке</span>'}
       </div></div></div>`;
@@ -7747,6 +7772,7 @@ async function fbAdvise(i) {
 async function fbClaimSend(i) {
   const c = _fbC.open[i];
   const action = document.getElementById('fbca' + i)?.value;
+  if (!action) { alert('Выберите решение по заявке'); return; }
   const comment = (document.getElementById('fbcc' + i)?.value || '').trim();
   const title = (c.actions.find(x => x.code === action) || {}).title || action;
   if (!confirm(`Отправить решение по заявке в WB?\n\n${title}${comment && ['rejectcustom', 'approvecc1'].includes(action) ? '\n\n' + comment : ''}`)) return;

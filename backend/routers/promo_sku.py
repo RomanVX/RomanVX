@@ -101,10 +101,15 @@ async def _actions(pid2off: dict, prices: dict) -> tuple[dict, list, list]:
                     off = pid2off.get(int(p.get("id") or 0))
                     if not off:
                         continue
-                    price = (prices.get(off) or {}).get("price") or _f(p.get("price"))
+                    # база скидки — цена товара из ответа акции (до акции); у
+                    # участвующих текущая цена уже акционная и давала «0 %»
+                    price = _f(p.get("price")) or (prices.get(off) or {}).get("price")
                     ap = _f(p.get("action_price")) if kind == "участвует" else _f(p.get("max_action_price"))
+                    disc = round((1 - ap / price) * 100, 1) if ap and price else None
                     by_off[off].append({**meta, "status": kind, "action_price": round(ap) if ap else None,
-                                        "discount": round((1 - ap / price) * 100, 1) if ap and price else None})
+                                        # цена акции выше текущей — входит без скидки
+                                        "discount": max(disc, 0.0) if disc is not None else None,
+                                        "no_discount": bool(disc is not None and disc <= 0)})
                 pages += 1
                 last = res.get("last_id") or ""
                 if not last or len(prods) < 100:
@@ -112,8 +117,17 @@ async def _actions(pid2off: dict, prices: dict) -> tuple[dict, list, list]:
                 await asyncio.sleep(0.3)
             if pages >= _MAX_PAGES:
                 truncated.append(f"{meta['title']} ({kind})")
-    for off in by_off:   # ближайшая: сначала текущие, потом по дате старта
-        by_off[off].sort(key=lambda x: (x["start"] > today, x["start"], x["status"] != "участвует"))
+    # «ближайшая» — по ближайшей значимой дате: у будущих — старт, у идущих —
+    # окончание; бессрочные (кончаются позже чем через 120 дней) — в конец
+    far = (_msk_today() + timedelta(days=120)).isoformat()
+
+    def _near_key(x):
+        started = x["start"] <= today
+        perpetual = started and (x["end"] or "9999") > far
+        when = x["end"] if started else x["start"]
+        return (perpetual, when or "9999", x["status"] != "участвует")
+    for off in by_off:
+        by_off[off].sort(key=_near_key)
     return by_off, [{"id": a.get("id"), "title": a.get("title"), "start": str(a.get("date_start"))[:10],
                      "end": str(a.get("date_end"))[:10]} for a in live], truncated
 

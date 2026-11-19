@@ -1584,22 +1584,11 @@ async def get_wb_unit(
         adv_sku_by_month[mk] = agg
     adv_spend_total = {mk: sum(v.values()) for mk, v in adv_sku_by_month.items()}
 
-    # «Точные или никакие» на уровне месяца: показываем готовые месяцы сразу,
-    # несобранные (реклама есть, раскладки нет) скрываем, пока не подъедут.
+    # Месяцы без точной раскладки рекламы по артикулам (у крупного кабинета
+    # 1000+ кампаний — часы сборки) не прячем: реклама в них пока делится по
+    # доле выручки (ниже adv_share = share), фронт пишет «предварительно».
     months_needing_ads = [mk for mk in month_keys if advert_m.get(mk, 0.0) > 0]
     imprecise = [mk for mk in months_needing_ads if adv_spend_total.get(mk, 0.0) <= 0]
-    if imprecise:
-        ready = [mk for mk in month_keys if mk not in imprecise]
-        if not ready:
-            if _adv_nm_error and not _adv_nm_building:
-                msg = f"⚠ Раскладка рекламы по артикулам не собралась: {_adv_nm_error}"
-            else:
-                msg = ("⏳ Собираем точную раскладку рекламы по артикулам из статистики "
-                       "кампаний WB (по минуте на месяц, свежие — первыми). "
-                       "Юнитка появится автоматически.")
-            return {"months": [], "skus": [], "message": msg,
-                    "advert_building": _adv_nm_building}
-        month_keys = ready
 
     skus_out = []
     # аллокация с корректировкой остатка: крупнейший SKU месяца добирает разницу
@@ -2389,7 +2378,8 @@ _oz_unit_state: dict = {}
 
 
 # 2: вознаграждение Ozon по возвратам — возврат комиссии (+), а не списание
-_OZ_VER = 2
+# 3: штуки SKU только по начислениям продажи/возврата (не по строкам услуг)
+_OZ_VER = 3
 
 
 def _oz_save_month_db(mk: str, groups: dict, cogs: float,
@@ -2601,8 +2591,12 @@ def _oz_decompose_accrual(a: dict, types: dict, sums: dict,
         comm = abs(_money(c.get("commission")) or _money(c.get("sale_commission")))
         add("Вознаграждение Ozon", comm if sale < 0 else -comm, p_sku)
         prod_skus.append((p_sku, abs(sale)))
-        qty = _money(prod.get("quantity")) or (1 if sale else 0)
-        s_qty(p_sku, qty if sale >= 0 else -qty)
+        # штуки — только у начислений продажи/возврата: товар отправления
+        # приходит и в каждой строке услуг (доставка, обработка…) — раньше
+        # он засчитывался в каждой, и штуки в юнитке завышались в разы
+        if sale:
+            qty = _money(prod.get("quantity")) or 1
+            s_qty(p_sku, qty if sale > 0 else -qty)
         # Баллы за скидки (соинвест Ozon) уже входят в сумму строки продаж —
         # НЕ отдельная статья (иначе двойной счёт). Копим справочно, мимо accounted:
         # остаток строки уйдёт в «Продажи и возвраты», как в кабинете.

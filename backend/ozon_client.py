@@ -261,12 +261,14 @@ async def _fbo_postings(since: str, to: str) -> list[dict]:
     return await _fbo_postings_v2(since, to)
 
 
-def _posting_rows(postings: list[dict]) -> list[dict]:
+def _posting_rows(postings: list[dict], scheme: str = "FBO") -> list[dict]:
     rows: list[dict] = []
     for posting in postings:
-        order_date = (posting.get("created_at") or "")[:10]
+        # FBO: created_at; FBS (v4): in_process_at — момент заказа
+        order_date = (posting.get("created_at") or posting.get("in_process_at") or "")[:10]
         # в v3 нет delivered_at; fact_delivery_date есть в живых ответах
-        delivered_date = ((posting.get("fact_delivery_date") or posting.get("delivered_at") or "")[:10]
+        delivered_date = ((posting.get("fact_delivery_date") or posting.get("delivered_at")
+                           or posting.get("delivering_date") or "")[:10]
                           or order_date)
         status = posting.get("status", "")
         for prod in posting.get("products") or []:
@@ -278,7 +280,7 @@ def _posting_rows(postings: list[dict]) -> list[dict]:
                     "date": order_date,
                     "delivered_date": delivered_date,
                     "offer_id": oid, "qty": qty,
-                    "revenue": price * qty, "status": status,
+                    "revenue": price * qty, "status": status, "scheme": scheme,
                 })
     return rows
 
@@ -291,7 +293,12 @@ async def get_sales_detail(date_from: str, date_to: str) -> list[dict]:
     to    = f"{date_to}T23:59:59.000Z"
     rows: list[dict] = []
     try:
-        rows = _posting_rows(await _fbo_postings(since, to))
+        rows = _posting_rows(await _fbo_postings(since, to), "FBO")
+        # заказы со склада продавца (FBS/rFBS) — раньше в «Заказы» не попадали
+        try:
+            rows += _posting_rows(await fbs_postings_v4(since, to), "FBS")
+        except Exception as e:
+            _log.warning("OZON FBS postings %s–%s: %s", date_from, date_to, e)
     except Exception as e:
         _log.warning("OZON get_sales_detail error: %s", e)
     _log.info("OZON sales_detail: %d rows for %s–%s", len(rows), date_from, date_to)
