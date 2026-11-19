@@ -2388,6 +2388,10 @@ _oz_pnl_progress: str = ""
 _oz_unit_state: dict = {}
 
 
+# 2: вознаграждение Ozon по возвратам — возврат комиссии (+), а не списание
+_OZ_VER = 2
+
+
 def _oz_save_month_db(mk: str, groups: dict, cogs: float,
                       sku_sums: dict | None = None) -> None:
     """Помесячное сохранение статей Ozon — рестарты не теряют прогресс."""
@@ -2397,6 +2401,7 @@ def _oz_save_month_db(mk: str, groups: dict, cogs: float,
     db.execute("DELETE FROM oz_pnl_groups WHERE mk = ?", (mk,))
     rows = [(mk, g, float(v)) for g, v in groups.items()]
     rows.append((mk, "__cogs__", float(cogs)))
+    rows.append((mk, "__ver__", float(_OZ_VER)))
     db.executemany("INSERT INTO oz_pnl_groups (mk, grp, amount) VALUES (?,?,?)", rows)
     if sku_sums is not None:
         db.execute("CREATE TABLE IF NOT EXISTS oz_unit_sku "
@@ -2417,9 +2422,12 @@ def _oz_load_months_db() -> tuple[dict, dict, dict]:
         return {}, {}, {}
     groups: dict = {}
     cogs: dict = {}
+    ver: dict = {}
     for mk, g, v in rows:
         if g == "__cogs__":
             cogs[mk] = float(v or 0)
+        elif g == "__ver__":
+            ver[mk] = int(v or 0)
         else:
             groups.setdefault(mk, {})[g] = float(v or 0)
     sku: dict = {}
@@ -2434,7 +2442,7 @@ def _oz_load_months_db() -> tuple[dict, dict, dict]:
     # инвалидация старых схем: баллы отдельной статьёй (двойной счёт) или
     # месяц без SKU-разреза — такие месяцы пересоберутся заново
     stale = [mk for mk, g in groups.items()
-             if "Баллы за скидки" in g or mk not in sku]
+             if "Баллы за скидки" in g or mk not in sku or ver.get(mk, 1) < _OZ_VER]
     for mk in stale:
         groups.pop(mk, None)
         cogs.pop(mk, None)
@@ -2586,7 +2594,12 @@ def _oz_decompose_accrual(a: dict, types: dict, sums: dict,
         p_sku = _oz_sku_of(prod) or row_sku
         sale = _money(c.get("sale_amount"))
         add("Продажи и возвраты", sale, p_sku)
-        add("Вознаграждение Ozon", -abs(_money(c.get("commission")) or _money(c.get("sale_commission"))), p_sku)
+        # при возврате Ozon ВОЗВРАЩАЕТ продавцу вознаграждение: знак комиссии
+        # противоположен знаку продажи. Раньше здесь всегда был минус — возврат
+        # комиссии списывался повторно, а остаток строки уходил в выручку
+        # (выручка и вознаграждение завышались на 2× комиссию возвратов)
+        comm = abs(_money(c.get("commission")) or _money(c.get("sale_commission")))
+        add("Вознаграждение Ozon", comm if sale < 0 else -comm, p_sku)
         prod_skus.append((p_sku, abs(sale)))
         qty = _money(prod.get("quantity")) or (1 if sale else 0)
         s_qty(p_sku, qty if sale >= 0 else -qty)
