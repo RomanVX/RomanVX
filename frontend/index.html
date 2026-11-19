@@ -140,6 +140,10 @@
   </nav>
   </div>
   <div class="d-flex align-items-center gap-2">
+    <select id="globalBrand" class="form-select form-select-sm" style="width:auto;max-width:200px;display:none"
+            onchange="setGlobalBrand(this.value)" title="Показывать во всех разделах только товары выбранного бренда">
+      <option value="">Все бренды</option>
+    </select>
     <button id="themeBtn" class="btn btn-sm btn-outline-secondary" onclick="toggleTheme()" title="Тема">
       <i class="bi bi-sun"></i>
     </button>
@@ -637,6 +641,6 @@
 
 <script src="vendor/bootstrap.bundle.min.js"></script>
 <script src="vendor/chart.umd.min.js"></script>
-<script src="app.js?v=277"></script>
+<script src="app.js?v=278"></script>
 </body>
 </html>

@@ -74,6 +74,7 @@ async function loadCabinetInfo() {
     grid.appendChild(div);
   }
   applyProfile();
+  try { initGlobalBrand(); } catch (e) { console.warn('brand', e); }
   // скрываем площадки, которых нет в кабинете (ЯМ у Фабрики красоты)
   const mps = _cab.marketplaces || [];
   if (!mps.includes('YM')) {
@@ -251,11 +252,32 @@ function getDateParams() {
   return from && to ? `date_from=${from}&date_to=${to}` : `days=30`;
 }
 
+// ── Общий фильтр по бренду: все разделы показывают только товары бренда ──────
+function _gbKey() { return 'mp_brand_' + ((_cab && _cab.id) || ''); }
+function getGlobalBrand() { try { return localStorage.getItem(_gbKey()) || ''; } catch (e) { return ''; } }
+function setGlobalBrand(b) {
+  try { b ? localStorage.setItem(_gbKey(), b) : localStorage.removeItem(_gbKey()); } catch (e) {}
+  location.reload();
+}
+function initGlobalBrand() {
+  const sel = document.getElementById('globalBrand');
+  const brands = (_cab && (_cab.brand_order || _cab.group_order)) || [];
+  if (!sel || !brands.length) return;
+  const cur = getGlobalBrand();
+  brands.filter(b => b && b !== 'Прочее').forEach(b => { const o = document.createElement('option'); o.value = b; o.textContent = b; sel.appendChild(o); });
+  if (cur && !brands.includes(cur)) { const o = document.createElement('option'); o.value = cur; o.textContent = cur; sel.appendChild(o); }
+  sel.value = cur;
+  sel.style.display = '';
+  if (cur) { sel.classList.add('border-primary', 'fw-semibold'); try { _finBrand = cur; } catch (e) {} }
+}
+
 function getParams() {
   let p = getDateParams();
   const bEl = document.getElementById('brandFilter');
   const cEl = document.getElementById('catFilter');
-  if (bEl && bEl.value) p += `&brand=${encodeURIComponent(bEl.value)}`;
+  const gb = getGlobalBrand();
+  if (gb) p += `&brand=${encodeURIComponent(gb)}`;
+  else if (bEl && bEl.value) p += `&brand=${encodeURIComponent(bEl.value)}`;
   if (cEl && cEl.value) p += `&category=${encodeURIComponent(cEl.value)}`;
   return p;
 }
@@ -1818,6 +1840,7 @@ let _finBrand = '';
 const _finUnit = {};
 function _finBrandFill() {
   const sel = document.getElementById('finBrand');
+  if (sel && getGlobalBrand()) { sel.style.display = 'none'; _finBrand = getGlobalBrand(); return; }
   if (!sel || sel.options.length > 1) return;
   const groups = (typeof GROUP_ORDER !== 'undefined' && GROUP_ORDER.length ? GROUP_ORDER : (_cab && _cab.group_order) || []);
   groups.forEach(g => { const o = document.createElement('option'); o.value = g; o.textContent = g; sel.appendChild(o); });
@@ -5468,7 +5491,8 @@ function _reviewsSignature(data) {
 }
 
 async function _fetchReviewsData() {
-  const res = await fetch(`${API}/api/reviews/data?limit=5000`);
+  const gb = getGlobalBrand();
+  const res = await fetch(`${API}/api/reviews/data?limit=5000` + (gb ? `&brand=${encodeURIComponent(gb)}` : ''));
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const d = await res.json();
   if (d && d.demo_fill && currentTab === 'reviews') _demoMark(d.demo_note);

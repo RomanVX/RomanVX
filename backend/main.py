@@ -508,6 +508,42 @@ async def _auth_middleware(request, call_next):
     return await call_next(request)
 
 
+_BRAND_SKIP = ("/api/cabinet", "/api/auth/", "/api/health", "/api/keys/", "/api/multi")
+
+
+@app.middleware("http")
+async def _brand_middleware(request, call_next):
+    """?brand=… — оставить в ответе только товары бренда (brand_filter.py)."""
+    brand = (request.query_params.get("brand") or "").strip()
+    path = request.url.path
+    if (not brand or request.method != "GET" or not path.startswith("/api/")
+            or path.startswith(_BRAND_SKIP)):
+        return await call_next(request)
+    from fastapi.responses import Response
+    resp = await call_next(request)
+    if "json" not in (resp.headers.get("content-type") or ""):
+        return resp
+    body = b"".join([chunk async for chunk in resp.body_iterator])
+    raw = body
+    if resp.headers.get("content-encoding", "").lower() == "gzip":
+        import gzip as _gz
+        try:
+            raw = _gz.decompress(body)
+        except Exception:
+            raw = b""
+    out = None
+    if resp.status_code == 200 and raw:
+        import brand_filter
+        try:
+            out = await asyncio.to_thread(brand_filter.filter_body, raw, brand)
+        except Exception as e:
+            logging.getLogger(__name__).warning("brand filter %s: %s", path, e)
+    if out is None:
+        return Response(body, status_code=resp.status_code, headers={
+            k: v for k, v in resp.headers.items() if k.lower() != "content-length"})
+    return Response(out, status_code=resp.status_code, media_type="application/json")
+
+
 async def _fill_response(request, call_next, path):
     """DEMO_FILL: сначала реальный ответ; пустой — заменяем примером данных."""
     import json as _json
@@ -622,6 +658,9 @@ def get_cabinet():
         out["group_order"] = catalog_fk.GROUP_ORDER
         out["brand_order"] = catalog_fk.BRAND_ORDER
         out["subgroups"] = []
+    if not out.get("brand_order"):
+        import catalog as _c
+        out["brand_order"] = [b for b in _c.BRAND_ORDER if b and b != "Прочее"]
     if OTHER_CABINET_URL:
         out["other"] = {"name": OTHER_CABINET_NAME, "url": OTHER_CABINET_URL,
                         "mono": OTHER_CABINET_MONO or _mono(OTHER_CABINET_NAME)}
