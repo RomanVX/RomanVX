@@ -118,7 +118,7 @@ async def _keep_awake():
     self_url = os.getenv("KEEP_AWAKE_URL") or os.getenv("RENDER_EXTERNAL_URL") or ""
     from config import OTHER_CABINET_URL
     urls = [u.rstrip("/") + "/api/health"
-            for u in (self_url, OTHER_CABINET_URL or "") if u]
+            for u in (self_url, OTHER_CABINET_URL or "") if u and u.startswith("http")]
     fetch_url = os.getenv("WB_FETCH_URL", "").strip()
     if fetch_url:
         urls.append(fetch_url.rstrip("/") + "/healthz")

@@ -13,6 +13,10 @@
 | mp-postgres | Basic-256mb, $6/мес | ОДНА база на оба кабинета |
 
 - Деплой: пуш в `main` → Render автодеплоит оба дашборда.
+- Несколько кабинетов на одном сервере: `backend/multi.py` (старт `python multi.py`,
+  env `MULTI_CABINETS=tl,avr`; второй кабинет — переменные с префиксом `AVR__`).
+  Маршрутизатор по cookie `mp_cab` (переход `/cab/<id>`), упавший процесс
+  перезапускается, `/multi/health` — состояние.
 - **База**: Render Postgres, кабинеты разведены по схемам через env
   `DB_SCHEMA` = `biomed` / `fk` (см. `backend/db.py`, search_path).
   До 2026-07-15 жили на Neon — там кончилась квота data transfer

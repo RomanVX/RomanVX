@@ -22,7 +22,7 @@ _log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 SESSION_DAYS = 30
-COOKIE = "mp_session"
+COOKIE = os.getenv("SESSION_COOKIE", "mp_session").strip() or "mp_session"   # свой у каждого кабинета на общем сервере (multi.py)
 
 # стартовый владелец: логин/пароль из окружения (по умолчанию — прежние)
 BOOT_LOGIN = os.getenv("ADMIN_LOGIN", "admin").strip()
