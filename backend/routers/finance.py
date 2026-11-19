@@ -2939,6 +2939,7 @@ async def ozon_reconcile():
     """Сверка с Ozon: наш P&L (начисления по дням) против официального «Отчёта
     о реализации» за закрытые месяцы (ЛК → Финансы → Документы)."""
     import snapshot as _snapmod
+    import ozon_client
     pnl = await get_ozon_pnl(months=6, refresh=False)
     rows = {r["key"]: r.get("values") or {} for r in pnl.get("rows") or []}
     if not rows:
