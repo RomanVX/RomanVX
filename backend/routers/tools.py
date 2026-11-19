@@ -111,8 +111,12 @@ async def _build_bg(force: bool = False) -> None:
     _building = True
     _error = ""
     try:
-        if not ANTHROPIC_API_KEY:
-            _error = "ANTHROPIC_API_KEY не настроен"
+        import os as _os
+        use_ai = bool(ANTHROPIC_API_KEY) and _os.getenv("PRODUCTOLOG_AI", "").strip() in ("1", "true", "yes")
+        if not use_ai:
+            # без внешнего ИИ: темы по словарю (review_themes) — быстро и бесплатно,
+            # все артикулы за один проход
+            await _build_lexicon(force)
             return
         import catalog as _cat
         _init_table()
@@ -175,6 +179,47 @@ async def _build_bg(force: bool = False) -> None:
         _progress = ""
 
 
+_LEX_VER = "lex1"
+
+
+async def _build_lexicon(force: bool = False) -> None:
+    """Продуктолог по словарю тем: пересобирает артикулы, где словарь новее
+    или отзывов прибавилось."""
+    global _progress
+    import review_themes
+    _init_table()
+    _set_progress("разбираем отзывы по словарю тем")
+    by_sku = await asyncio.to_thread(_wb_reviews_by_sku)
+    cached = {r[0]: (r[1], r[2]) for r in await asyncio.to_thread(
+        db.fetchall, "SELECT sku, data, reviews_count FROM productolog")}
+
+    def _work():
+        out = []
+        for sku, revs in by_sku.items():
+            n_texts = sum(1 for _, t, _ in revs if t)
+            if n_texts < _MIN_TEXTS:
+                continue
+            old = cached.get(sku)
+            # готовый разбор (в т.ч. прежний ИИ-анализ) не трогаем, пока отзывов не
+            # прибавилось; старые версии словаря — пересобираем
+            if not force and old and n_texts <= (old[1] or 0) and (
+                    _LEX_VER in (old[0] or "") or '"method"' not in (old[0] or "")):
+                continue
+            a = review_themes.analyze(revs)
+            if a:
+                a["ver"] = _LEX_VER
+                out.append((sku, json.dumps(a, ensure_ascii=False), n_texts,
+                            datetime.utcnow().isoformat()))
+        if out:
+            db.executemany(
+                "INSERT INTO productolog (sku, data, reviews_count, built_at) VALUES (?,?,?,?) "
+                "ON CONFLICT (sku) DO UPDATE SET data = excluded.data, "
+                "reviews_count = excluded.reviews_count, built_at = excluded.built_at", out)
+        return len(out)
+    n = await asyncio.to_thread(_work)
+    _log.info("productolog (словарь): обновлено %d SKU", n)
+
+
 # держим ссылки на фоновые задачи (иначе GC их убивает)
 _bg: set = set()
 
@@ -220,12 +265,14 @@ async def get_productolog(refresh: bool = Query(default=False)):
             "pluses": a.get("pluses") or [],
             "minuses": a.get("minuses") or [],
             "recommendation": a.get("recommendation") or "",
+            "method": a.get("method") or ("ИИ" if a else ""),
             "analyzed": bool(a), "analyzable": analyzable,
             "text_reviews": n_texts, "built_at": (built or "")[:10],
             "wb_link": _wb_link(sku),
         })
-    # проблемные сверху: доля негатива, затем количество отзывов
-    items.sort(key=lambda x: (-x["neg"], -x["count"]))
+    # проблемные сверху: по ЧИСЛУ негативных отзывов (а не доле — иначе наверху
+    # товар с 4 отзывами и 75% негатива), затем количество отзывов
+    items.sort(key=lambda x: (-round(x["neg"] * x["count"] / 100), -x["count"]))
     # «ждут анализа» — только те, что реально можно проанализировать
     pending = sum(1 for it in items if not it["analyzed"] and it["analyzable"])
     if pending and not _building:

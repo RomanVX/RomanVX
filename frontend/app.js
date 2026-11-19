@@ -5352,8 +5352,11 @@ function renderProductolog() {
     html += `<div class="alert alert-info py-2 small">⏳ Анализируем отзывы (${d.progress || `осталось ${d.pending} арт.`}) — по 4 товара сразу, страница обновится сама.</div>`;
     if (!_prodTimer) _prodTimer = setTimeout(() => { _prodTimer = null; if (currentTab === 'tools' && _toolActive === 'prod') loadProductolog('poll'); }, 15000);
   }
-  if (d.error) {
-    html += `<div class="alert alert-warning py-2 small">⚠ ${d.error}</div>`;
+  if (d.error && !/ANTHROPIC/i.test(d.error)) {
+    html += `<div class="alert alert-warning py-2 small">⚠ ${esc(d.error)}</div>`;
+  }
+  if (items.some(it => it.method === 'словарь тем')) {
+    html += `<div class="small text-secondary mb-2">Темы найдены по словарю жалоб и похвал (размер, тепло, подошва, брак, пересорт, запах, упаковка и др.) — без внешнего ИИ. Процент — доля текстовых отзывов, где тема упомянута; минусы считаются по отзывам 1–3★ и однозначным жалобам в любых отзывах.</div>`;
   }
   html += `<div class="card border-0 bg-card"><div class="card-body p-0"><div class="table-responsive" style="max-height:78vh">
     <table class="table table-sm align-middle mb-0"><thead><tr>
