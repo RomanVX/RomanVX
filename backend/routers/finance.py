@@ -2936,7 +2936,10 @@ def _oz_realization_summary(res: dict) -> dict:
         t["bonus"] += _money(dc.get("bonus"))
         t["returns"] += _money(rc.get("amount"))
         t["returns_bonus"] += _money(rc.get("bonus"))
-        t["commission"] += _money(dc.get("commission")) - _money(rc.get("commission"))
+        # поле commission Ozon заполнял только до 30.04.2024 — берём базовое
+        # вознаграждение (standard_fee), как в печатном отчёте
+        t["commission"] += (_money(dc.get("standard_fee")) or _money(dc.get("commission"))) \
+            - (_money(rc.get("standard_fee")) or _money(rc.get("commission")))
         t["total"] += _money(dc.get("total")) - _money(rc.get("total"))
         t["qty"] += int(dc.get("quantity") or 0)
         t["ret_qty"] += int(rc.get("quantity") or 0)
@@ -2959,7 +2962,7 @@ async def ozon_reconcile():
     for mk in sorted(rows.get("retailAmount", {}), reverse=True):
         if mk >= cur_mk:
             continue
-        key = f"oz_realization_{mk}"
+        key = f"oz_realization2_{mk}"
         real = await asyncio.to_thread(_snapmod.load, key, None)
         if not real:
             try:
@@ -2991,7 +2994,7 @@ async def ozon_reconcile():
             ok = ok and not bad
             items.append({"label": label, "ours": a, "ozon": b, "diff": a - b, "ok": not bad})
         out.append({"month": mk, "ok": ok, "rows": items,
-                    "qty": real.get("qty"), "ret_qty": real.get("ret_qty")})
+                    "qty": real.get("qty"), "ret_qty": real.get("ret_qty"), "ozon_report": real})
     return {"months": out, "ok": all(m.get("ok") for m in out if "ok" in m) if out else None,
             "note": "Наш P&L — по дате начисления, отчёт о реализации — по дате "
                     "реализации; расхождение до 1% (или 500 ₽) считается совпадением."}
