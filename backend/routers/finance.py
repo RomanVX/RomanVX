@@ -10,6 +10,20 @@ import wb_finance_client
 import cost_store
 
 router = APIRouter(prefix="/api/finance", tags=["finance"])
+
+
+def _cap_months(m: int) -> int:
+    """FIN_MONTHS — потолок окна финансов (детальный отчёт WB держится в памяти
+    построчно: у крупного кабинета 6 мес. = 0,5 млн строк ≈ 1 ГБ). У кабинетов
+    клиентов по умолчанию 3 месяца."""
+    import os
+    from config import IS_CLIENT_CABINET
+    try:
+        cap = int(os.getenv("FIN_MONTHS") or (3 if IS_CLIENT_CABINET else 24))
+    except ValueError:
+        cap = 6
+    return max(1, min(m, cap))
+
 _log = logging.getLogger(__name__)
 
 # Ссылки на фоновые задачи: asyncio держит task'и слабыми ссылками,
@@ -726,6 +740,7 @@ async def get_wb_pnl(
     refresh: bool = Query(default=False),
 ):
     """P&L по месяцам. Сводные данные — сразу, COGS — после фоновой загрузки детального отчёта."""
+    months = _cap_months(months)
     global _pnl_cache, _pnl_cache_ts, _detail_cache_ts
 
     if not refresh and _pnl_cache and _time.monotonic() - _pnl_cache_ts < _WB_TTL:
@@ -1298,6 +1313,7 @@ async def get_wb_unit(
     по SKU пропорционально доле выручки месяца (остаток округления —
     крупнейшему SKU, чтобы итог бился рубль в рубль).
     """
+    months = _cap_months(months)
     # гарантируем свежую сборку P&L (она наполняет _wb_unit_data)
     pnl = await get_wb_pnl(months=months, refresh=refresh)
     if pnl.get("source") != "detail" or not _wb_unit_data:
@@ -1835,6 +1851,7 @@ async def get_ym_pnl(
 
     Отдаёт мгновенно из сохранённого состояния (как WB/Ozon):
     заказы и отчёты услуг пересобираются в фоне."""
+    months = _cap_months(months)
     global _ym_pnl_cache, _ym_pnl_ts
     if not refresh and _ym_pnl_cache and _time.monotonic() - _ym_pnl_ts < _YM_PNL_TTL:
         return _ym_pnl_cache
@@ -1949,6 +1966,7 @@ async def get_ym_unit(
     буст и т.д. привязаны к товару построчно). Услуги без SKU (буст показов,
     транзитные поставки) распределяются по доле выручки; остаток округления —
     крупнейшему SKU. Итоги сходятся со вкладкой Финансы."""
+    months = _cap_months(months)
     pnl = await get_ym_pnl(months=months, refresh=refresh)
     month_keys = sorted(mk for mk in _ym_unit_sku
                         if mk in _ym_unit_rev and _ym_unit_sku[mk])
@@ -2678,6 +2696,7 @@ async def get_ozon_pnl(
     refresh: bool = Query(default=False),
 ):
     """P&L Ozon по месяцам. Сборка в фоне (несколько запросов к API)."""
+    months = _cap_months(months)
     global _oz_pnl_ts, _oz_pnl_cache
     from config import DEMO_CABINET
     if DEMO_CABINET:
@@ -2716,6 +2735,7 @@ async def get_ozon_unit(
     привязки к товару (промо «оплата за клик», размещение FBO и т.п.)
     распределяются по SKU пропорционально доле выручки месяца; остаток
     округления — крупнейшему SKU."""
+    months = _cap_months(months)
     from config import DEMO_CABINET
     if DEMO_CABINET:
         return _demo_scale(await get_wb_unit(months=months, refresh=False))

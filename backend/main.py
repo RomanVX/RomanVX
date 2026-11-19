@@ -98,7 +98,9 @@ async def _warm_finance():
     """Прогрев финансов отдельным циклом со стартовой задержкой и паузами:
     на Render free одновременный старт всех сборок (WB детальный, Ozon по
     дням, YM отчёты) забивает CPU/память и роняет инстанс (502)."""
-    await asyncio.sleep(180)   # даём подняться основным кешам после деплоя
+    # даём подняться основным кешам после деплоя; на общем сервере (multi.py)
+    # кабинеты прогреваются по очереди — WARM_DELAY у каждого свой
+    await asyncio.sleep(int(os.getenv("WARM_DELAY", "180") or 180))
     from routers import finance as _fin
     while True:
         for name, fn in (("WB", _fin.get_wb_pnl),

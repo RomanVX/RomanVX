@@ -54,6 +54,8 @@ def _child_env(cab: str, primary: bool, cabs: list[str]) -> dict:
         env.setdefault("DB_SCHEMA", cab)
         env.setdefault("SESSION_COOKIE", f"mp_session_{cab}")
     env["CABINET"] = env.get("CABINET") or cab
+    # тяжёлый прогрев финансов — по очереди, а не всеми кабинетами разом
+    env.setdefault("WARM_DELAY", str(180 + 420 * cabs.index(cab)))
     # экран выбора кабинета: карточка соседнего кабинета ведёт на /cab/<id>
     others = [c for c in cabs if c != cab]
     if others and not env.get("OTHER_CABINET_URL"):
