@@ -14,12 +14,14 @@ router = APIRouter(prefix="/api/finance", tags=["finance"])
 
 def _cap_months(m: int) -> int:
     """FIN_MONTHS — потолок окна финансов (детальный отчёт WB держится в памяти
-    построчно: у крупного кабинета 6 мес. = 0,5 млн строк ≈ 1 ГБ). У кабинетов
-    клиентов по умолчанию 3 месяца."""
+    построчно: у крупного кабинета 6 мес. = 0,5 млн строк ≈ 1 ГБ). После
+    заморозки закрытых месяцев по умолчанию без ограничения."""
     import os
     from config import IS_CLIENT_CABINET
     try:
-        cap = int(os.getenv("FIN_MONTHS") or (3 if IS_CLIENT_CABINET else 24))
+        # закрытые месяцы WB заморожены (итоги в БД), в памяти только открытые —
+        # окно можно держать полным; FIN_MONTHS — ручной потолок на всякий случай
+        cap = int(os.getenv("FIN_MONTHS") or 24)
     except ValueError:
         cap = 6
     return max(1, min(m, cap))
@@ -206,14 +208,22 @@ def _months_between(date_from: str, date_to: str) -> list[str]:
     return out
 
 
-def _assemble_months(months: list[str]) -> tuple[list[dict], dict]:
+def _assemble_months(months: list[str], parts: dict | None = None) -> tuple[list[dict], dict]:
     """Собирает детальный отчёт из помесячных снапшотов wb_detail_m_YYYY-MM.
     История хранится навсегда: WB отдаёт отчёт только за последние месяцы,
-    а старые месяцы живут в БД. Возвращает (rows, {месяц: ts})."""
+    а старые месяцы живут в БД. Возвращает (rows, {месяц: ts}).
+    Закрытые месяцы построчно НЕ грузятся: их итоги (заморозка) кладутся в
+    parts (если передан), в rows — только открытые месяцы."""
     import snapshot as _snapmod
     rows: list[dict] = []
     have: dict = {}
     for mk in months:
+        if parts is not None and _month_closed(mk):
+            acc, ts = _closed_part(mk)
+            if acc is not None:
+                parts[mk] = acc
+                have[mk] = ts
+            continue
         snap = _snapmod.load(_month_key(mk), None)
         if snap and snap.get("rows"):
             rows.extend(snap["rows"])
@@ -270,9 +280,10 @@ async def _detail_load_snapshot(cache_key: str) -> None:
         n = await asyncio.to_thread(_migrate_legacy_snapshot)
         if n:
             _log.info("Detail: старый снапшот разложен на %d месяцев", n)
-        rows, have = await asyncio.to_thread(_assemble_months, months)
-        if rows:
-            _detail_cache = {"key": cache_key, "rows": rows, "have": have}
+        parts: dict = {}
+        rows, have = await asyncio.to_thread(_assemble_months, months, parts)
+        if rows or parts:
+            _detail_cache = {"key": cache_key, "rows": rows, "have": have, "parts": parts}
             _detail_cache_ts = _time.monotonic()
             _log.info("Detail поднят из помесячных снапшотов: %d строк, месяцы %s",
                       len(rows), ",".join(sorted(have)))
@@ -434,7 +445,7 @@ async def _fetch_detail_bg(date_from: str, date_to: str) -> None:
             import wb_client
             months = _months_between(date_from, date_to)
             await asyncio.to_thread(_migrate_legacy_snapshot)
-            _old, have = await asyncio.to_thread(_assemble_months, months)
+            _old, have = await asyncio.to_thread(_assemble_months, months, {})
             del _old
             now = _time.time()
             # закрытые месяцы (закончились > 45 дней назад), которые уже лежат
@@ -460,6 +471,8 @@ async def _fetch_detail_bg(date_from: str, date_to: str) -> None:
                         await asyncio.to_thread(_snapmod.save_rows, _month_key(mk),
                                                 {"ts": now, "month": mk}, part)
                         have[mk] = now
+                        # месяц перекачан — его замороженные итоги пересчитаются
+                        await asyncio.to_thread(_invalidate_part, mk)
                     _log.info("Detail via statistics-api %s: %d rows", mk, len(part))
                 except Exception as e:
                     failed.append(f"{mk}: {str(e)[:100]}")
@@ -467,11 +480,12 @@ async def _fetch_detail_bg(date_from: str, date_to: str) -> None:
                 from config import USE_MOCK as _mock
                 if not _mock:     # демо-данные генерируются локально — без пауз
                     await asyncio.sleep(62)   # лимит 1 req/мин на метод
-            rows, have = await asyncio.to_thread(_assemble_months, months)
-            if not rows:
+            parts: dict = {}
+            rows, have = await asyncio.to_thread(_assemble_months, months, parts)
+            if not rows and not parts:
                 rows = await wb_finance_client.get_detailed_report(date_from, date_to)
                 _log.info("Detail via finance-api: %d rows", len(rows))
-            _detail_cache = {"key": cache_key, "rows": rows, "have": have}
+            _detail_cache = {"key": cache_key, "rows": rows, "have": have, "parts": parts}
             _detail_cache_ts = _time.monotonic()
             _detail_last_error = ("не скачались: " + "; ".join(failed))[:300] if failed else ""
             _detail_force = False
@@ -484,6 +498,214 @@ async def _fetch_detail_bg(date_from: str, date_to: str) -> None:
         _log.error("Detail report fetch failed: %s", e)
     finally:
         _detail_fetching = False
+
+
+# ── Заморозка закрытых месяцев ───────────────────────────────────────────────
+# Закрытый месяц детального отчёта (кончился > 45 дней назад) больше не
+# меняется: проход P&L по его строкам считаем ОДИН раз и храним итоги в БД
+# (wb_detail_part_YYYY-MM). В памяти построчно живут только открытые месяцы —
+# у крупного кабинета это сотни тысяч строк (~1 ГБ) вместо нескольких МБ итогов.
+# Себестоимость не замораживается: храним количества (артикул × месяц продажи),
+# себес считается при сборке по текущему справочнику.
+_PART_VER = 1
+_DETAIL_SUM_KEYS = ["retailAmount", "forPay", "deliveryService", "paidStorage",
+                    "paidAcceptance", "penalty", "deduction", "cashbackAmount",
+                    "additionalPayment", "cashbackCommission", "bankPayment"]
+_DETAIL_SKU_KEYS = ("revenue", "forPay", "qty", "cogs", "delivery", "storage",
+                    "acceptance", "penalty", "acquiring", "paid",
+                    "fbs_qty", "fbs_revenue", "fbs_forPay", "fbs_delivery")
+
+
+def _month_closed(mk: str) -> bool:
+    m_end = (datetime.strptime(mk + "-01", "%Y-%m-%d") + timedelta(days=32)).replace(day=1)
+    return (datetime.utcnow() - m_end).days > 45
+
+
+def _part_key(mk: str) -> str:
+    return f"wb_detail_part_{mk}"
+
+
+def _new_acc() -> dict:
+    return {"totals": {}, "sku": {}, "cogs_q": {}, "comm": {}, "promo": {},
+            "promo_known": set(), "last_sale": ""}
+
+
+def _ff(v) -> float:
+    try:
+        return float(str(v).replace(",", ".") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _detail_pass(rows: list, acc: dict) -> None:
+    """Проход P&L по строкам детального отчёта WB → аддитивные итоги в acc.
+    Логика 1:1 с прежним проходом в get_wb_pnl; фильтр начала окна (min_mk)
+    применяется при слиянии (_merge_acc), поэтому итоги переиспользуемы."""
+    import catalog as _cat
+    totals, skud, cq = acc["totals"], acc["sku"], acc["cogs_q"]
+    comm, promo, known = acc["comm"], acc["promo"], acc["promo_known"]
+
+    def d_ensure(mk):
+        t = totals.get(mk)
+        if t is None:
+            t = totals[mk] = {k: 0.0 for k in _DETAIL_SUM_KEYS}
+        return t
+
+    def s_ensure(sku, mk):
+        m = skud.setdefault(sku, {})
+        c = m.get(mk)
+        if c is None:
+            c = m[mk] = {k: 0.0 for k in _DETAIL_SKU_KEYS}
+        return c
+
+    def canon(row) -> str:
+        nm = row.get("nmId")
+        if nm:
+            r = _cat.resolve_wb(nm)
+            if r and not str(r).isdigit():
+                return r
+        return (row.get("vendorCode") or "").strip().upper() or "—"
+
+    last = acc["last_sale"]
+    for row in rows:
+        rr = (row.get("rrDate") or row.get("saleDt") or "")[:10]
+        if not rr:
+            continue
+        mk = rr[:7]
+        doc_type = row.get("docTypeName", "")
+        oper = (row.get("operName") or "").lower()
+        is_return = doc_type == "Возврат" or "возврат" in oper
+        if "сторно возврат" in oper:
+            is_return = False
+        elif "сторно продаж" in oper:
+            is_return = True
+        has_sale_amount = (_ff(row.get("retailPreSpp")) != 0
+                           or (_ff(row.get("retailAmount")) != 0
+                               and int(row.get("quantity") or 0) > 0))
+        sign = -1 if is_return else 1
+        if has_sale_amount:
+            sale_date = (row.get("saleDate") or rr)[:10]
+            if not is_return and sale_date > last:
+                last = sale_date
+            mk_sale = sale_date[:7]
+            ms = d_ensure(mk_sale)
+            base = abs(_ff(row.get("retailPreSpp"))) or abs(_ff(row.get("retailAmount")))
+            ms["retailAmount"] += sign * base
+            ms["forPay"] += sign * abs(_ff(row.get("forPay")))
+            qty = int(row.get("quantity") or 0)
+            sku_key = canon(row)
+            if qty > 0:
+                ck = (mk_sale, sku_key, (row.get("vendorCode") or "").strip().upper(),
+                      row.get("nmId") or 0)
+                cq[ck] = cq.get(ck, 0) + sign * qty
+            cp = _ff(row.get("commissionPct"))
+            if cp > 0 and not is_return:
+                prev = comm.get(sku_key)
+                if not prev or sale_date >= prev[0]:
+                    comm[sku_key] = (sale_date, cp)
+            sd = s_ensure(sku_key, mk_sale)
+            sd["revenue"] += sign * base
+            sd["forPay"] += sign * abs(_ff(row.get("forPay")))
+            sd["qty"] += sign * qty
+            sd["acquiring"] += sign * abs(_ff(row.get("acquiringFee")))
+            sd["paid"] += sign * abs(_ff(row.get("retailAmount")))
+            if row.get("isFbs"):
+                sd["fbs_qty"] += sign * qty
+                sd["fbs_revenue"] += sign * base
+                sd["fbs_forPay"] += sign * abs(_ff(row.get("forPay")))
+        m = d_ensure(mk)
+        m["deliveryService"] += _ff(row.get("deliveryService"))
+        m["paidStorage"] += _ff(row.get("paidStorage"))
+        m["paidAcceptance"] += _ff(row.get("paidAcceptance"))
+        m["penalty"] += _ff(row.get("penalty"))
+        m["deduction"] += _ff(row.get("deduction"))
+        m["cashbackAmount"] += _ff(row.get("cashbackAmount"))
+        if row.get("bonusType"):
+            known.add(mk)
+            if "продвижение" in row["bonusType"].lower():
+                promo[mk] = promo.get(mk, 0.0) + _ff(row.get("deduction"))
+        if any(_ff(row.get(k)) for k in ("deliveryService", "paidStorage", "paidAcceptance", "penalty")):
+            sd = s_ensure(canon(row), mk)
+            sd["delivery"] += _ff(row.get("deliveryService"))
+            sd["storage"] += _ff(row.get("paidStorage"))
+            sd["acceptance"] += _ff(row.get("paidAcceptance"))
+            sd["penalty"] += _ff(row.get("penalty"))
+            if row.get("isFbs"):
+                sd["fbs_delivery"] += _ff(row.get("deliveryService"))
+    acc["last_sale"] = last
+
+
+def _merge_acc(dst: dict, src: dict, min_mk: str = "") -> None:
+    """Слияние итогов (суммы), месяцы раньше начала окна отбрасываются."""
+    for mk, t in src["totals"].items():
+        if mk < min_mk:
+            continue
+        d = dst["totals"].setdefault(mk, {k: 0.0 for k in _DETAIL_SUM_KEYS})
+        for k, v in t.items():
+            d[k] = d.get(k, 0.0) + v
+    for sku, ms in src["sku"].items():
+        for mk, c in ms.items():
+            if mk < min_mk:
+                continue
+            d = dst["sku"].setdefault(sku, {}).setdefault(mk, {k: 0.0 for k in _DETAIL_SKU_KEYS})
+            for k, v in c.items():
+                d[k] = d.get(k, 0.0) + v
+    for ck, q in src["cogs_q"].items():
+        if ck[0] >= min_mk:
+            dst["cogs_q"][ck] = dst["cogs_q"].get(ck, 0) + q
+    for sku, (dt, cp) in src["comm"].items():
+        if dt[:7] < min_mk:
+            continue
+        prev = dst["comm"].get(sku)
+        if not prev or dt >= prev[0]:
+            dst["comm"][sku] = (dt, cp)
+    for mk, v in src["promo"].items():
+        if mk >= min_mk:
+            dst["promo"][mk] = dst["promo"].get(mk, 0.0) + v
+    dst["promo_known"].update(mk for mk in src["promo_known"] if mk >= min_mk)
+    if src["last_sale"] > dst["last_sale"]:
+        dst["last_sale"] = src["last_sale"]
+
+
+def _acc_to_json(acc: dict) -> dict:
+    return {"totals": acc["totals"], "sku": acc["sku"],
+            "cogs_q": [[*k, v] for k, v in acc["cogs_q"].items()],
+            "comm": {k: list(v) for k, v in acc["comm"].items()},
+            "promo": acc["promo"], "promo_known": sorted(acc["promo_known"]),
+            "last_sale": acc["last_sale"]}
+
+
+def _acc_from_json(d: dict) -> dict:
+    return {"totals": d.get("totals") or {}, "sku": d.get("sku") or {},
+            "cogs_q": {(r[0], r[1], r[2], r[3]): r[4] for r in d.get("cogs_q") or []},
+            "comm": {k: (v[0], v[1]) for k, v in (d.get("comm") or {}).items()},
+            "promo": d.get("promo") or {}, "promo_known": set(d.get("promo_known") or []),
+            "last_sale": d.get("last_sale") or ""}
+
+
+def _invalidate_part(mk: str) -> None:
+    import snapshot as _snapmod
+    _snapmod.save(_part_key(mk), {"v": 0})
+
+
+def _closed_part(mk: str) -> tuple[dict | None, float]:
+    """Итоги закрытого месяца: из БД, а если их нет — один раз считаются из
+    строк снапшота месяца и сохраняются. (acc, ts снапшота строк)."""
+    import snapshot as _snapmod
+    p = _snapmod.load(_part_key(mk), None)
+    if p and p.get("v") == _PART_VER:
+        return _acc_from_json(p), float(p.get("ts") or 0)
+    snap = _snapmod.load(_month_key(mk), None)
+    if not snap or not snap.get("rows"):
+        return None, 0.0
+    acc = _new_acc()
+    _detail_pass(snap["rows"], acc)
+    ts = float(snap.get("ts") or 0)
+    n = len(snap["rows"])
+    del snap
+    _snapmod.save(_part_key(mk), {"v": _PART_VER, "ts": ts, "rows": n, **_acc_to_json(acc)})
+    _log.info("Detail %s заморожен: %d строк → итоги в БД", mk, n)
+    return acc, ts
 
 
 def _get_detail_if_ready(date_from: str, date_to: str) -> list[dict]:
@@ -781,6 +1003,9 @@ async def get_wb_pnl(
     if not detail_ready:
         _spawn(_fetch_detail_bg(date_from, detail_to))
     detail_rows = _get_detail_if_ready(date_from, detail_to)
+    detail_parts = (_detail_cache.get("parts") or {}) if (
+        _detail_cache.get("key") == cache_key
+        and _time.monotonic() - _detail_cache_ts < _DETAIL_TTL) else {}
 
     # ── Агрегируем сводные отчёты по месяцам (пропорционально дням) ────────────
     SUM_KEYS = ["retailAmount","forPay","deliveryService","paidStorage",
@@ -850,14 +1075,7 @@ async def get_wb_pnl(
     promo_ded_by_month: dict[str, float] = {}
     promo_ded_known: set = set()
 
-    if detail_rows:
-        detail_totals: dict[str, dict] = {}
-
-        def d_ensure(mk):
-            if mk not in detail_totals:
-                detail_totals[mk] = {k: 0.0 for k in SUM_KEYS}
-            return detail_totals[mk]
-
+    if detail_rows or detail_parts:
         import catalog as _cat
 
         def _canon_sku(row) -> str:
@@ -869,98 +1087,44 @@ async def get_wb_pnl(
                     return r
             return (row.get("vendorCode") or "").strip().upper() or "—"
 
-        # v5 отдаёт sa_name в нижнем регистре («al-01») — матчим без учёта регистра
-        costs_upper = {k.upper(): v for k, v in costs.items()}
-
         def _unit_cost(row) -> float:
-            """Закупочная цена: по артикулу (без учёта регистра), иначе по nmId."""
-            sku = (row.get("vendorCode") or "").strip().upper()
-            uc = costs_upper.get(sku, 0.0)
+            """Закупочная цена: по артикулу (без учёта регистра и размера —
+            см. cost_store._Costs), иначе по nmId."""
+            sku = (row.get("vendorCode") or "").strip()
+            uc = costs.get(sku, 0.0) if sku else 0.0
             if uc <= 0 and row.get("nmId"):
                 uc = costs.get(_cat.resolve_wb(row.get("nmId")), 0.0)
             return uc
 
         min_mk = date_from[:7]  # хвосты недель прошлого периода отсекаем
-        last_detail_sale = ""   # последняя дата продажи в отчёте реализации
 
-        for row in detail_rows:
-            rr = (row.get("rrDate") or row.get("saleDt") or "")[:10]
-            if not rr:
-                continue
-            mk = rr[:7]                       # месяц операции (затраты)
-            doc_type = row.get("docTypeName", "")
-            oper = (row.get("operName") or "").lower()
-            # Продажи бывают с разными операциями (в т.ч. ВБ Клуб) и иногда с
-            # пустым doc_type — определяем по сумме продажи, а не только по типу
-            is_return = doc_type == "Возврат" or "возврат" in oper
-            if "сторно возврат" in oper:
-                is_return = False   # сторно возврата = отмена возврата → плюс
-            elif "сторно продаж" in oper:
-                is_return = True    # сторно продажи = минус
-            has_sale_amount = (_f(row.get("retailPreSpp")) != 0
-                               or (_f(row.get("retailAmount")) != 0
-                                   and int(row.get("quantity") or 0) > 0))
-            sign = -1 if is_return else 1
-            if has_sale_amount:
-                # продажи кабинет группирует по ДАТЕ ПРОДАЖИ (sale_dt), а не по
-                # дате операции — иначе недели на стыке месяцев уезжают не туда
-                sale_date = (row.get("saleDate") or rr)[:10]
-                if not is_return and sale_date > last_detail_sale:
-                    last_detail_sale = sale_date
-                mk_sale = sale_date[:7]
-                if mk_sale >= min_mk:
-                    ms = d_ensure(mk_sale)
-                    base = abs(_f(row.get("retailPreSpp"))) or abs(_f(row.get("retailAmount")))
-                    ms["retailAmount"] += sign * base
-                    ms["forPay"]       += sign * abs(_f(row.get("forPay")))
-                    # COGS: количество проданного × закупочная (возврат — минус)
-                    qty = int(row.get("quantity") or 0)
-                    uc = _unit_cost(row)
-                    if uc > 0 and qty > 0:
-                        cogs_by_month[mk_sale] = cogs_by_month.get(mk_sale, 0.0) + sign * uc * qty
-                    # SKU-разрез (юнитка)
-                    sku_key = _canon_sku(row)
-                    cp = _f(row.get("commissionPct"))
-                    if cp > 0 and not is_return:
-                        prev = comm_now.get(sku_key)
-                        if not prev or sale_date >= prev[0]:
-                            comm_now[sku_key] = (sale_date, cp)
-                    sd = s_ensure(sku_key, mk_sale)
-                    sd["revenue"]   += sign * base
-                    sd["forPay"]    += sign * abs(_f(row.get("forPay")))
-                    sd["qty"]       += sign * qty
-                    sd["acquiring"] += sign * abs(_f(row.get("acquiringFee")))
-                    # что реально заплатил покупатель (после СПП)
-                    sd["paid"]      += sign * abs(_f(row.get("retailAmount")))
-                    if uc > 0 and qty > 0:
-                        sd["cogs"] += sign * uc * qty
-                    if row.get("isFbs"):
-                        sd["fbs_qty"]     += sign * qty
-                        sd["fbs_revenue"] += sign * base
-                        sd["fbs_forPay"]  += sign * abs(_f(row.get("forPay")))
-            # операционные затраты — по дате операции, на любых строках
-            if mk < min_mk:
-                continue
-            m = d_ensure(mk)
-            m["deliveryService"] += _f(row.get("deliveryService"))
-            m["paidStorage"]     += _f(row.get("paidStorage"))
-            m["paidAcceptance"]  += _f(row.get("paidAcceptance"))
-            m["penalty"]         += _f(row.get("penalty"))
-            m["deduction"]       += _f(row.get("deduction"))
-            m["cashbackAmount"]  += _f(row.get("cashbackAmount"))
-            if row.get("bonusType"):
-                promo_ded_known.add(mk)
-                if "продвижение" in row["bonusType"].lower():
-                    promo_ded_by_month[mk] = promo_ded_by_month.get(mk, 0.0) + _f(row.get("deduction"))
-            # SKU-разрез операционных затрат (строки несут артикул)
-            if any(_f(row.get(k)) for k in ("deliveryService", "paidStorage", "paidAcceptance", "penalty")):
-                sd = s_ensure(_canon_sku(row), mk)
-                sd["delivery"]   += _f(row.get("deliveryService"))
-                sd["storage"]    += _f(row.get("paidStorage"))
-                sd["acceptance"] += _f(row.get("paidAcceptance"))
-                sd["penalty"]    += _f(row.get("penalty"))
-                if row.get("isFbs"):
-                    sd["fbs_delivery"] += _f(row.get("deliveryService"))
+        # закрытые месяцы — готовые итоги из БД, открытые — проход по строкам
+        acc = _new_acc()
+        for _mk, part in sorted(detail_parts.items()):
+            _merge_acc(acc, part, min_mk)
+        if detail_rows:
+            live = _new_acc()
+            await asyncio.to_thread(_detail_pass, detail_rows, live)
+            _merge_acc(acc, live, min_mk)
+            del live
+        detail_totals: dict[str, dict] = acc["totals"]
+        sku_data = acc["sku"]
+        comm_now = acc["comm"]
+        promo_ded_by_month = acc["promo"]
+        promo_ded_known = acc["promo_known"]
+        last_detail_sale = acc["last_sale"]
+
+        def d_ensure(mk):
+            if mk not in detail_totals:
+                detail_totals[mk] = {k: 0.0 for k in SUM_KEYS}
+            return detail_totals[mk]
+
+        # себестоимость — по текущему справочнику из замороженных количеств
+        for (mk_sale, sku_key, vc, nm), q in acc["cogs_q"].items():
+            uc = _unit_cost({"vendorCode": vc, "nmId": nm or None})
+            if uc > 0 and q:
+                cogs_by_month[mk_sale] = cogs_by_month.get(mk_sale, 0.0) + uc * q
+                s_ensure(sku_key, mk_sale)["cogs"] += uc * q
 
         # ── Хвост месяца: дни после последней сформированной недели отчёта
         # реализации дополняем ОПЕРАТИВНЫМИ продажами statistics-api (кабинетная
