@@ -509,12 +509,21 @@ async def _fill_response(request, call_next, path):
     from fastapi.responses import JSONResponse, Response
     resp = await call_next(request)
     body = b"".join([chunk async for chunk in resp.body_iterator])
+    raw = body
+    if resp.headers.get("content-encoding", "").lower() == "gzip":   # GZipMiddleware стоит внутри
+        import gzip as _gz
+        try:
+            raw = _gz.decompress(body)
+        except Exception:
+            raw = b""
     try:
-        data = _json.loads(body) if resp.status_code == 200 else None
+        data = _json.loads(raw) if resp.status_code == 200 else None
     except ValueError:
         data = None
     if data is not None and not demo_extra.fill_is_empty(path, data):
-        return Response(body, status_code=resp.status_code, media_type="application/json")
+        # реальные данные — отдаём как есть (с исходными заголовками, вкл. gzip)
+        return Response(body, status_code=resp.status_code, headers={
+            k: v for k, v in resp.headers.items() if k.lower() != "content-length"})
     try:
         demo = demo_extra.fill_route(path, dict(request.query_params))
     except Exception as e:
