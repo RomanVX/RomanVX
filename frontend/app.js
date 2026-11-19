@@ -5976,14 +5976,14 @@ function renderReviewsFeed() {
         </div>
         <div class="d-flex align-items-start gap-2 ms-2">
           <div class="text-end">
-            <div class="small">${r.name || r.sku}</div>
-            ${r.group ? `<div class="text-secondary" style="font-size:0.75rem">${r.group}</div>` : ''}
+            <div class="small">${esc(r.name || r.sku)}</div>
+            ${r.group ? `<div class="text-secondary" style="font-size:0.75rem">${esc(r.group)}</div>` : ''}
           </div>
           ${r.nm ? `<img src="${wbPhotoUrl(r.nm)}" loading="lazy" onerror="this.remove()"
                style="width:40px;height:52px;object-fit:cover;border-radius:8px;border:1px solid var(--border-2);flex-shrink:0" />` : ''}
         </div>
       </div>
-      ${r.text ? `<div class="mt-1">${r.text}</div>` : '<div class="text-secondary small fst-italic">без текста</div>'}
+      ${r.text ? `<div class="mt-1">${esc(r.text)}</div>` : '<div class="text-secondary small fst-italic">без текста</div>'}
       ${replyBlock(r)}
     </div>
   `).join('');
