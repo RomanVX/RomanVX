@@ -189,6 +189,7 @@ _detail_lock = asyncio.Lock()
 
 
 _detail_fetching: bool = False  # идёт ли фоновая загрузка
+_wb_by_day: dict = {}   # rrDate → суммы (для сверки с недельными отчётами WB)
 _detail_last_error: str = ""
 _detail_snap_checked: bool = False  # снапшот из БД пробуем поднять один раз
 _detail_force: bool = False  # «Перекачать»: скачать все месяцы окна заново
@@ -507,7 +508,7 @@ async def _fetch_detail_bg(date_from: str, date_to: str) -> None:
 # у крупного кабинета это сотни тысяч строк (~1 ГБ) вместо нескольких МБ итогов.
 # Себестоимость не замораживается: храним количества (артикул × месяц продажи),
 # себес считается при сборке по текущему справочнику.
-_PART_VER = 1
+_PART_VER = 2   # 2: + by_day (сверка с недельными отчётами WB)
 _DETAIL_SUM_KEYS = ["retailAmount", "forPay", "deliveryService", "paidStorage",
                     "paidAcceptance", "penalty", "deduction", "cashbackAmount",
                     "additionalPayment", "cashbackCommission", "bankPayment"]
@@ -527,7 +528,7 @@ def _part_key(mk: str) -> str:
 
 def _new_acc() -> dict:
     return {"totals": {}, "sku": {}, "cogs_q": {}, "comm": {}, "promo": {},
-            "promo_known": set(), "last_sale": ""}
+            "promo_known": set(), "last_sale": "", "by_day": {}}
 
 
 def _ff(v) -> float:
@@ -544,6 +545,7 @@ def _detail_pass(rows: list, acc: dict) -> None:
     import catalog as _cat
     totals, skud, cq = acc["totals"], acc["sku"], acc["cogs_q"]
     comm, promo, known = acc["comm"], acc["promo"], acc["promo_known"]
+    byd = acc.setdefault("by_day", {})
 
     def d_ensure(mk):
         t = totals.get(mk)
@@ -613,6 +615,14 @@ def _detail_pass(rows: list, acc: dict) -> None:
                 sd["fbs_qty"] += sign * qty
                 sd["fbs_revenue"] += sign * base
                 sd["fbs_forPay"] += sign * abs(_ff(row.get("forPay")))
+        bd = byd.get(rr)
+        if bd is None:
+            bd = byd[rr] = {"forPay": 0.0, "deliveryService": 0.0, "paidStorage": 0.0,
+                            "paidAcceptance": 0.0, "penalty": 0.0, "deduction": 0.0}
+        if has_sale_amount:
+            bd["forPay"] += sign * abs(_ff(row.get("forPay")))
+        for k in ("deliveryService", "paidStorage", "paidAcceptance", "penalty", "deduction"):
+            bd[k] += _ff(row.get(k))
         m = d_ensure(mk)
         m["deliveryService"] += _ff(row.get("deliveryService"))
         m["paidStorage"] += _ff(row.get("paidStorage"))
@@ -665,6 +675,11 @@ def _merge_acc(dst: dict, src: dict, min_mk: str = "") -> None:
     dst["promo_known"].update(mk for mk in src["promo_known"] if mk >= min_mk)
     if src["last_sale"] > dst["last_sale"]:
         dst["last_sale"] = src["last_sale"]
+    # по дням — без отсечки окна (нужно для сверки с недельными отчётами)
+    for d, v in (src.get("by_day") or {}).items():
+        t = dst.setdefault("by_day", {}).setdefault(d, {k: 0.0 for k in v})
+        for k, x in v.items():
+            t[k] = t.get(k, 0.0) + x
 
 
 def _acc_to_json(acc: dict) -> dict:
@@ -672,7 +687,7 @@ def _acc_to_json(acc: dict) -> dict:
             "cogs_q": [[*k, v] for k, v in acc["cogs_q"].items()],
             "comm": {k: list(v) for k, v in acc["comm"].items()},
             "promo": acc["promo"], "promo_known": sorted(acc["promo_known"]),
-            "last_sale": acc["last_sale"]}
+            "last_sale": acc["last_sale"], "by_day": acc.get("by_day") or {}}
 
 
 def _acc_from_json(d: dict) -> dict:
@@ -680,7 +695,7 @@ def _acc_from_json(d: dict) -> dict:
             "cogs_q": {(r[0], r[1], r[2], r[3]): r[4] for r in d.get("cogs_q") or []},
             "comm": {k: (v[0], v[1]) for k, v in (d.get("comm") or {}).items()},
             "promo": d.get("promo") or {}, "promo_known": set(d.get("promo_known") or []),
-            "last_sale": d.get("last_sale") or ""}
+            "last_sale": d.get("last_sale") or "", "by_day": d.get("by_day") or {}}
 
 
 def _invalidate_part(mk: str) -> None:
@@ -956,6 +971,50 @@ async def wb_detail_refetch(months: int = Query(default=6, ge=1, le=24)):
                     "(detail_fetching, months_coverage)"}
 
 
+@router.get("/wb/reconcile")
+async def wb_reconcile():
+    """Сверка с WB: каждый недельный отчёт реализации (как в ЛК, «Финансовые
+    отчёты») против суммы строк детального отчёта за те же дни, из которых
+    собран наш P&L. Колонки: к перечислению за товар, логистика, хранение,
+    приёмка, штрафы, удержания."""
+    if not _wb_by_day:
+        await get_wb_pnl(months=6, refresh=False)
+    reports = await _get_wb_reports_cached(6, False)
+    days = sorted(_wb_by_day)
+    if not days:
+        return {"weeks": [], "message": "⏳ Детальный отчёт ещё собирается — сверка появится после сборки P&L"}
+    lo, hi = days[0], days[-1]
+    keys = ("forPay", "deliveryService", "paidStorage", "paidAcceptance", "penalty", "deduction")
+    periods: dict = {}
+    for r in reports:
+        k = (r["dateFrom"], r["dateTo"])
+        p = periods.setdefault(k, {kk: 0.0 for kk in keys} | {"n": 0})
+        for kk in keys:
+            p[kk] += r.get(kk, 0.0) or 0.0
+        p["n"] += 1
+    out = []
+    for (df, dt), wb in sorted(periods.items(), reverse=True):
+        if df < lo or dt > hi:      # неделя не целиком внутри скачанного детального
+            continue
+        ours = {kk: 0.0 for kk in keys}
+        for d, v in _wb_by_day.items():
+            if df <= d <= dt:
+                for kk in keys:
+                    ours[kk] += v.get(kk, 0.0)
+        cols = {}
+        ok = True
+        for kk in keys:
+            a, b = round(ours[kk]), round(wb[kk])
+            diff = a - b
+            bad = abs(diff) > max(100, abs(b) * 0.005)
+            ok = ok and not bad
+            cols[kk] = {"ours": a, "wb": b, "diff": diff, "ok": not bad}
+        out.append({"from": df, "to": dt, "reports": wb["n"], "ok": ok, "cols": cols})
+    return {"weeks": out, "covered": [lo, hi],
+            "ok": all(w["ok"] for w in out) if out else None,
+            "note": "Расхождение до 0,5% (или 100 ₽) считается совпадением."}
+
+
 @router.get("/wb/pnl")
 async def get_wb_pnl(
     months: int = Query(default=6, ge=1, le=24),
@@ -1107,6 +1166,8 @@ async def get_wb_pnl(
             await asyncio.to_thread(_detail_pass, detail_rows, live)
             _merge_acc(acc, live, min_mk)
             del live
+        global _wb_by_day
+        _wb_by_day = acc.get("by_day") or {}
         detail_totals: dict[str, dict] = acc["totals"]
         sku_data = acc["sku"]
         comm_now = acc["comm"]
@@ -2659,6 +2720,7 @@ async def _build_ozon_pnl(months: int) -> None:
             # ── COGS: отчёт о реализации (официальные количества по SKU) ──
             realization_ok = False
             try:
+                import ozon_client
                 res = await ozon_client.get_realization_report(y, m)
                 rows = res.get("rows") or []
                 if rows:
@@ -2852,6 +2914,77 @@ def _demo_scale(obj, k: float = 0.43):
         if r.get("style") == "pct":
             r["values"] = next((x["values"] for x in (obj.get("rows") or []) if x.get("key") == r.get("key")), r["values"])
     return out
+
+
+def _oz_realization_summary(res: dict) -> dict:
+    """Итоги отчёта о реализации Ozon за месяц (продажи − возвраты)."""
+    t = {"sales": 0.0, "bonus": 0.0, "returns": 0.0, "returns_bonus": 0.0,
+         "commission": 0.0, "total": 0.0, "qty": 0, "ret_qty": 0}
+    for r in res.get("rows") or []:
+        dc = r.get("delivery_commission") or {}
+        rc = r.get("return_commission") or {}
+        t["sales"] += _money(dc.get("amount"))
+        t["bonus"] += _money(dc.get("bonus"))
+        t["returns"] += _money(rc.get("amount"))
+        t["returns_bonus"] += _money(rc.get("bonus"))
+        t["commission"] += _money(dc.get("commission")) - _money(rc.get("commission"))
+        t["total"] += _money(dc.get("total")) - _money(rc.get("total"))
+        t["qty"] += int(dc.get("quantity") or 0)
+        t["ret_qty"] += int(rc.get("quantity") or 0)
+    return {k: round(v) if isinstance(v, float) else v for k, v in t.items()}
+
+
+@router.get("/ozon/reconcile")
+async def ozon_reconcile():
+    """Сверка с Ozon: наш P&L (начисления по дням) против официального «Отчёта
+    о реализации» за закрытые месяцы (ЛК → Финансы → Документы)."""
+    import snapshot as _snapmod
+    pnl = await get_ozon_pnl(months=6, refresh=False)
+    rows = {r["key"]: r.get("values") or {} for r in pnl.get("rows") or []}
+    if not rows:
+        return {"months": [], "message": pnl.get("message") or "⏳ P&L Ozon ещё собирается"}
+    today = (datetime.utcnow() + timedelta(hours=3)).date()
+    cur_mk = today.strftime("%Y-%m")
+    out = []
+    for mk in sorted(rows.get("retailAmount", {}), reverse=True):
+        if mk >= cur_mk:
+            continue
+        key = f"oz_realization_{mk}"
+        real = await asyncio.to_thread(_snapmod.load, key, None)
+        if not real:
+            try:
+                y, m = int(mk[:4]), int(mk[5:7])
+                res = await ozon_client.get_realization_report(y, m)
+            except Exception as e:
+                out.append({"month": mk, "error": f"Ozon не отдал отчёт о реализации: {str(e)[:120]}"})
+                continue
+            if not res or not res.get("rows"):
+                out.append({"month": mk, "error": "Отчёт о реализации за месяц ещё не сформирован"})
+                continue
+            real = _oz_realization_summary(res)
+            await asyncio.to_thread(_snapmod.save, key, real)
+        ours_sales = rows.get("revc_sales", {}).get(mk, 0)
+        ours_pts = rows.get("revc_points", {}).get(mk, 0)
+        ours_comm = -(rows.get("cost_0", {}).get(mk, 0))
+        cmp_rows = [
+            ("Выручка с баллами (продажи − возвраты)", rows.get("retailAmount", {}).get(mk, 0),
+             real["sales"] + real["bonus"] - real["returns"] - real["returns_bonus"]),
+            ("Оплачено покупателями", ours_sales, real["sales"] - real["returns"]),
+            ("Баллы за скидки", ours_pts, real["bonus"] - real["returns_bonus"]),
+            ("Вознаграждение Ozon", ours_comm, real["commission"]),
+        ]
+        items = []
+        ok = True
+        for label, a, b in cmp_rows:
+            a, b = round(a or 0), round(b or 0)
+            bad = abs(a - b) > max(500, abs(b) * 0.01)
+            ok = ok and not bad
+            items.append({"label": label, "ours": a, "ozon": b, "diff": a - b, "ok": not bad})
+        out.append({"month": mk, "ok": ok, "rows": items,
+                    "qty": real.get("qty"), "ret_qty": real.get("ret_qty")})
+    return {"months": out, "ok": all(m.get("ok") for m in out if "ok" in m) if out else None,
+            "note": "Наш P&L — по дате начисления, отчёт о реализации — по дате "
+                    "реализации; расхождение до 1% (или 500 ₽) считается совпадением."}
 
 
 @router.get("/ozon/pnl")
