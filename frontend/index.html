@@ -452,6 +452,9 @@
       <div id="finMpTOTAL" class="mp-selector-bloc" style="--mp-color:#059669" onclick="setFinanceMp('TOTAL')">
         <span class="mp-selector-dot" style="background:#059669"></span>Тотал
       </div>
+      <select id="finBrand" class="form-select form-select-sm ms-2" style="width:auto;max-width:220px" onchange="setFinBrand(this.value)" title="P&L по бренду — собирается из юнит-экономики товаров бренда">
+        <option value="">Все бренды</option>
+      </select>
       <button id="finCompactBtn" class="btn btn-sm btn-outline-info ms-auto" onclick="toggleFinCompact()">
         <i class="bi bi-arrows-angle-contract"></i> Последние 2 месяца
       </button>
@@ -634,6 +637,6 @@
 
 <script src="vendor/bootstrap.bundle.min.js"></script>
 <script src="vendor/chart.umd.min.js"></script>
-<script src="app.js?v=274"></script>
+<script src="app.js?v=275"></script>
 </body>
 </html>

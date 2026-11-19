@@ -1798,6 +1798,7 @@ async function loadFinance() {
 
 async function reloadFinance() {
   _financeData = { WB: null, OZON: null, YM: null, TOTAL: null };
+  Object.keys(_finUnit).forEach(k => delete _finUnit[k]);
   await fetch('/api/finance/wb/reports/invalidate', { method: 'POST' }).catch(() => {});
   await loadFinance();
 }
@@ -1810,8 +1811,76 @@ const _FIN_URLS = {
 
 let _manualCosts = null;   // {items: [{id, mk, label, amount}]}
 
+// ── P&L по бренду: из юнит-экономики (сумма по товарам бренда) ──────────────
+let _finBrand = '';
+const _finUnit = {};
+function _finBrandFill() {
+  const sel = document.getElementById('finBrand');
+  if (!sel || sel.options.length > 1) return;
+  const groups = (typeof GROUP_ORDER !== 'undefined' && GROUP_ORDER.length ? GROUP_ORDER : (_cab && _cab.group_order) || []);
+  groups.forEach(g => { const o = document.createElement('option'); o.value = g; o.textContent = g; sel.appendChild(o); });
+}
+function setFinBrand(b) { _finBrand = b; renderFinanceTable(); }
+function _finKey(mp) { return _finBrand && mp !== 'YM' ? mp + '@' + _finBrand : mp; }
+function _brandPnl(unit, brand) {
+  const months = unit.months || [];
+  const sum = {};   // mk → col → value
+  let n = 0;
+  (unit.skus || []).forEach(s => {
+    if (articleGroup({ sku: s.sku, brand: s.brand }) !== brand) return;
+    n++;
+    Object.entries(s.months || {}).forEach(([mk, c]) => {
+      const t = sum[mk] = sum[mk] || {};
+      Object.entries(c).forEach(([k, v]) => { if (typeof v === 'number' && k !== 'margin') t[k] = (t[k] || 0) + v; });
+    });
+  });
+  const vals = f => Object.fromEntries(months.map(m => [m.key, Math.round(f(sum[m.key] || {}))]));
+  const g = (c, k) => c[k] || 0;
+  const rows = [
+    { key: 'retailAmount', label: `📦 Выручка — ${brand} (${n} арт.)`, style: 'header', formula: 'direct', values: vals(c => g(c, 'revenue')) },
+    { key: 'commission', label: '  − Комиссия и эквайринг', style: 'cost', formula: 'direct', values: vals(c => -(g(c, 'commission') + g(c, 'acquiring'))) },
+    { key: 'deliveryService', label: '  − Логистика', style: 'cost', formula: 'direct', values: vals(c => -g(c, 'delivery')) },
+    { key: 'paidStorage', label: '  − Хранение', style: 'cost', formula: 'direct', values: vals(c => -g(c, 'storage')) },
+    { key: 'paidAcceptance', label: '  − Приёмка', style: 'cost', formula: 'direct', values: vals(c => -g(c, 'acceptance')) },
+    { key: 'penalty', label: '  − Штрафы', style: 'cost', formula: 'direct', values: vals(c => -g(c, 'penalty')) },
+    { key: 'deductions', label: '  − Прочие удержания', style: 'cost', formula: 'direct', values: vals(c => -g(c, 'deductions')) },
+    { key: 'advert', label: '  − Продвижение', style: 'cost', formula: 'direct', values: vals(c => -g(c, 'advert')) },
+    { key: 'bankPayment', label: '💳 К перечислению', style: 'subtotal', formula: 'direct', values: vals(c => g(c, 'payout')) },
+    { key: 'cogs', label: '  − Себестоимость', style: 'cost', formula: 'direct', values: vals(c => -g(c, 'cogs')) },
+    { key: 'gross', label: '✅ Валовая прибыль', style: 'total', formula: 'direct', values: vals(c => g(c, 'gross')) },
+    { key: 'gross_pct', label: 'Маржа %', style: 'pct', formula: 'gross_pct', values: vals(c => g(c, 'revenue') ? g(c, 'gross') / g(c, 'revenue') * 100 : 0) },
+  ];
+  return { months, rows, source: 'detail', brand_note: `P&L бренда «${brand}» собран из юнит-экономики ${n} артикулов: затраты без привязки к товару распределены по доле выручки.` };
+}
+async function _loadBrandPnl(key) {
+  const [mp, brand] = [key.split('@')[0], key.slice(key.indexOf('@') + 1)];
+  if (mp === 'TOTAL') {
+    const mps = ((_cab && _cab.marketplaces) || ['WB', 'OZON']).filter(m => m !== 'YM');
+    await Promise.all(mps.map(m => loadFinanceMp(m + '@' + brand)));
+    const parts = mps.map(m => _financeData[m + '@' + brand]).filter(d => d && d.rows);
+    if (!parts.length) return { rows: [], months: [], message: '⏳ Юнит-экономика площадок ещё собирается — P&L бренда появится через минуту' };
+    const mlab = {}; parts.forEach(d => d.months.forEach(m => { mlab[m.key] = m.label; }));
+    const months = Object.keys(mlab).sort().map(k => ({ key: k, label: mlab[k] }));
+    const rows = parts[0].rows.map(r => ({ ...r, label: r.key === 'retailAmount' ? `📦 Выручка — ${brand} (все площадки)` : r.label,
+      values: Object.fromEntries(months.map(m => [m.key, parts.reduce((a, d) => a + ((d.rows.find(x => x.key === r.key) || {}).values || {})[m.key] || 0, 0)])) }));
+    const rev = rows.find(r => r.key === 'retailAmount').values, gr = rows.find(r => r.key === 'gross').values;
+    rows.find(r => r.key === 'gross_pct').values = Object.fromEntries(months.map(m => [m.key, rev[m.key] ? Math.round(gr[m.key] / rev[m.key] * 100) : 0]));
+    return { months, rows, source: 'detail', brand_note: parts[0].brand_note.replace(/ \d+ артикулов/, ' товаров') };
+  }
+  if (!_finUnit[mp]) {
+    const u = await fetchJSON(`/api/finance/${mp.toLowerCase()}/unit`, 120000);
+    if (u.message || !(u.skus || []).length) return { rows: [], months: [], message: u.message || '⏳ Юнит-экономика ещё собирается — P&L бренда появится автоматически' };
+    _finUnit[mp] = u;
+  }
+  return _brandPnl(_finUnit[mp], brand);
+}
+
 async function loadFinanceMp(mp) {
   if (_financeData[mp]) return;
+  if (mp.includes('@')) {
+    try { _financeData[mp] = await _loadBrandPnl(mp); } catch (e) { _financeData[mp] = { rows: [], months: [], error: e.message }; }
+    return;
+  }
   try {
     if (mp === 'TOTAL') {
       const mps = (_cab && _cab.marketplaces) || ['WB', 'OZON', 'YM'];
@@ -2171,8 +2240,9 @@ function manualCostsPanel(months) {
 function renderFinanceTable() {
   const wrap = document.getElementById('financeTableWrap');
   if (!wrap) return;
+  _finBrandFill();
 
-  const mp = _financeMp;
+  const mp = _finKey(_financeMp);
   if (!_financeData[mp]) {
     wrap.innerHTML = '<div class="text-center text-secondary py-5"><span class="spinner-border me-2"></span>Загрузка P&L…</div>';
     loadFinanceMp(mp).then(() => renderFinanceTable());
@@ -2326,6 +2396,7 @@ function renderFinanceTable() {
     html += `<div class="text-secondary small mt-2">Отчёт реализации WB сформирован по ${d.detail_upto}.${tail}</div>`;
   }
   if (d.fetched_at) html += `<div class="text-secondary text-end small mt-1">Обновлено: ${d.fetched_at}</div>`;
+  if (d.brand_note) html += `<div class="small text-secondary mt-2">${esc(d.brand_note)}</div>`;
   if (mp === 'TOTAL') html += manualCostsPanel(d.months || []) + payoutsPanel() + mpComparePanel();
   wrap.innerHTML = html;
 }

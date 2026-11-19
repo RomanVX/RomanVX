@@ -123,13 +123,43 @@ def set_costs(
     _log.info("COGS saved: %d SKUs", len(mapping))
 
 
+class _Costs(dict):
+    """Себестоимость с поиском по родственным артикулам: файл клиента часто
+    задаёт цену на модель («174207-90»), а Ozon продаёт размеры («174207-90_24»);
+    WB отдаёт артикулы в другом регистре."""
+    def _find(self, k):
+        if dict.__contains__(self, k):
+            return k
+        if not isinstance(k, str):
+            return None
+        up = self.__dict__.setdefault("_up", {kk.upper(): kk for kk in self.keys()})
+        for cand in (k, k.rsplit("_", 1)[0], k.split("_")[0], k.rsplit("/", 1)[0]):
+            hit = up.get(cand.strip().upper())
+            if hit is not None:
+                return hit
+        return None
+
+    def get(self, k, default=None):
+        f = self._find(k)
+        return dict.__getitem__(self, f) if f is not None else default
+
+    def __contains__(self, k):
+        return self._find(k) is not None
+
+    def __missing__(self, k):
+        f = self._find(k)
+        if f is None:
+            raise KeyError(k)
+        return dict.__getitem__(self, f)
+
+
 def get_costs() -> dict[str, float]:
     if not _costs:
         from config import USE_MOCK
         if USE_MOCK:
             import mock_data
-            return dict(mock_data.COSTS)
-    return dict(_costs)
+            return _Costs(mock_data.COSTS)
+    return _Costs(_costs)
 
 
 def get_names() -> dict[str, str]:

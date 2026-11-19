@@ -27,9 +27,9 @@ def _parse_xlsx(content: bytes) -> tuple[dict[str, float], dict[str, str]]:
         if art_col is None:
             for i, cell in enumerate(row):
                 s = str(cell or "").lower().strip()
-                if "артикул продавца" in s:
+                if "артикул продавца" in s or (art_col is None and s.startswith("артикул")):
                     art_col = i
-                if "себестоимость ед" in s:
+                if "себестоимость ед" in s or (cost_col is None and s.startswith("себестоимость")):
                     cost_col = i
                 if s == "название":
                     name_col = i
