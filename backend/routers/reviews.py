@@ -12,6 +12,7 @@ router = APIRouter(prefix="/api/reviews", tags=["reviews"])
 _log = logging.getLogger(__name__)
 
 _bg_tasks: set = set()  # ссылки на фоновые задачи, чтобы их не собрал GC
+_data_cache: dict = {}
 
 
 @router.get("/data")
@@ -22,14 +23,22 @@ async def get_reviews_data(
 ):
     """Return reviews, ratings, dynamics, stats. Triggers a background refresh if stale."""
     background_tasks.add_task(rc.refresh_all)
-    return {
-        "reviews":  rc.get_all_reviews(platform=platform, limit=limit),
-        "ratings":  rc.get_rating_table(),
-        "dynamics": rc.get_rating_dynamics(),
-        "stats":    rc.get_stats(),
-        "drafts":   rc.get_drafts(),
-        "auto":     auto_status,
-    }
+    # тяжёлая часть (тысячи отзывов + рейтинги по всем артикулам) кешируется
+    # на минуту и до следующей синхронизации — опрос вкладки не грузит сервер
+    import time as _t
+    key = (platform, limit, getattr(rc, "_last_refresh", 0))
+    hit = _data_cache.get("v")
+    if hit and hit[0] == key and _t.monotonic() - hit[1] < 60:
+        heavy = hit[2]
+    else:
+        def _build():
+            return {"reviews":  rc.get_all_reviews(platform=platform, limit=limit),
+                    "ratings":  rc.get_rating_table(),
+                    "dynamics": rc.get_rating_dynamics(),
+                    "stats":    rc.get_stats()}
+        heavy = await asyncio.to_thread(_build)
+        _data_cache["v"] = (key, _t.monotonic(), heavy)
+    return {**heavy, "drafts": rc.get_drafts(), "auto": auto_status}
 
 
 @router.get("/rules")

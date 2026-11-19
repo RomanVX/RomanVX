@@ -5538,7 +5538,9 @@ async function loadReviews() {
   pollReviewsUpdates();
 }
 
-async function pollReviewsUpdates(times = 8, intervalMs = 7000) {
+async function pollReviewsUpdates(times = 3, intervalMs = 25000) {
+  // у крупного кабинета /data — тяжёлый запрос (тысячи отзывов): опрашиваем
+  // редко и только пока открыта вкладка отзывов, иначе сервер занят и тормозят все разделы
   if (_reviewsPolling) return;
   _reviewsPolling = true;
   const note = document.getElementById('reviewsSyncNote');
@@ -5546,6 +5548,7 @@ async function pollReviewsUpdates(times = 8, intervalMs = 7000) {
   try {
     for (let i = 0; i < times; i++) {
       await new Promise(r => setTimeout(r, intervalMs));
+      if (currentTab !== 'reviews') break;
       try {
         const data = await _fetchReviewsData();
         const sig = _reviewsSignature(data);
