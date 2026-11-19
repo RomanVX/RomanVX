@@ -102,16 +102,27 @@ async def _warm_finance():
     # кабинеты прогреваются по очереди — WARM_DELAY у каждого свой
     await asyncio.sleep(int(os.getenv("WARM_DELAY", "180") or 180))
     from routers import finance as _fin
+    from config import CABINET_MARKETPLACES as _mps
     while True:
-        for name, fn in (("WB", _fin.get_wb_pnl),
-                         ("Ozon", _fin.get_ozon_pnl),
-                         ("YM", _fin.get_ym_pnl)):
+        for name, mp, fn in (("WB", "WB", _fin.get_wb_pnl),
+                             ("Ozon", "OZON", _fin.get_ozon_pnl),
+                             ("YM", "YM", _fin.get_ym_pnl)):
+            if mp not in _mps:      # площадки нет в кабинете — не тратим время
+                continue
             try:
                 await fn(months=6, refresh=False)
                 _log.info("finance warm: %s ok", name)
             except Exception as exc:
                 _log.warning("finance warm %s failed: %s", name, exc)
             await asyncio.sleep(120)   # сборки стартуют по очереди, не разом
+        if "OZON" in _mps:
+            # «Ozon → Продвижение по товарам»: у крупного кабинета первая сборка
+            # идёт минуты — запускаем фоном заранее, к открытию раздела готово
+            try:
+                from routers import promo_sku as _ps
+                await _ps.promo_ozon(n=7, refresh=False)
+            except Exception as exc:
+                _log.warning("promo warm failed: %s", exc)
         await asyncio.sleep(_PREFETCH_INTERVAL)
 
 

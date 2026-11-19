@@ -1813,11 +1813,12 @@ async function wbDetailRefetch() {
 async function loadFinance() {
   const wrap = document.getElementById('financeTableWrap');
   if (wrap) wrap.innerHTML = '<div class="text-center text-secondary py-5"><span class="spinner-border me-2"></span>Загрузка P&L… (может занять до 2 мин)</div>';
-  await loadFinanceMp('WB');
+  const _mps = (_cab && _cab.marketplaces) || ['WB', 'OZON', 'YM'];
+  await loadFinanceMp(_mps.includes('WB') ? 'WB' : _mps[0] || 'WB');
   renderFinanceTable();
-  // остальные площадки подтягиваем в фоне, чтобы переключение было мгновенным
-  loadFinanceMp('OZON');
-  loadFinanceMp('YM');
+  // остальные площадки кабинета подтягиваем в фоне, чтобы переключение было мгновенным
+  if (_mps.includes('OZON')) loadFinanceMp('OZON');
+  if (_mps.includes('YM')) loadFinanceMp('YM');
 }
 
 async function reloadFinance() {
@@ -5401,11 +5402,12 @@ function initDashboard() {
   setInterval(() => { markAllDirty(); switchTab(currentTab); }, 30 * 60 * 1000);
 
   // Preload all other tabs in background so switching feels instant
+  // кабинет клиента: склад скрыт, отзывы тяжёлые — фоном грузим только финансы
   const bgTabs = [
     { name: 'stocks',  fn: loadStocks },
     { name: 'finance', fn: loadFinance },
     { name: 'reviews', fn: loadReviews },
-  ].filter(t => !(_cab && _cab.profile === 'analytics' && t.name === 'reviews'));
+  ].filter(t => !(_cab && _cab.profile === 'analytics' && (t.name === 'reviews' || t.name === 'stocks')));
   bgTabs.forEach(({ name, fn }, i) => {
     setTimeout(() => {
       if (dirty[name]) { dirty[name] = false; fn(); }
