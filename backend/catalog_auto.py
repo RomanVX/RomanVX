@@ -98,12 +98,16 @@ async def _ozon_products() -> list[dict]:
 
 
 def _ozon_brand(item: dict) -> str:
+    # 85 — «Бренд»; 31 — «Бренд в одежде и обуви» (детская одежда и т.п.)
+    found = {}
     for a in item.get("attributes") or []:
-        if a.get("id") == 85:                  # «Бренд»
+        if a.get("id") in (85, 31):
             vals = a.get("values") or []
-            if vals and vals[0].get("value"):
-                return str(vals[0]["value"])
-    return ""
+            v = str(vals[0].get("value") or "").strip() if vals else ""
+            if v:
+                found[a["id"]] = v
+    real = [found[k] for k in (85, 31) if k in found and found[k].lower() not in ("нет бренда", "без бренда")]
+    return real[0] if real else (found.get(85) or found.get(31) or "")
 
 
 def _demo_build() -> dict:
@@ -158,6 +162,17 @@ async def build() -> dict:
             brand = p.get("brand") or _ozon_brand(p) or "Прочее"
             cat[art] = {"name": (p.get("name") or art)[:120], "brand": brand, "group": brand,
                         "subject": ""}
+    # бренд не определился (Ozon без атрибута) — берём с карточки того же товара:
+    # Ozon хранит размер в артикуле («174186-90_24»), WB — без него («174186-90»)
+    up = {k.upper(): v for k, v in cat.items()}
+    for art, v in cat.items():
+        if v.get("brand") not in ("Прочее", "", "Нет бренда"):
+            continue
+        for base in (art.rsplit("_", 1)[0], art.split("_")[0], art.rsplit("-", 1)[0]):
+            b = up.get(base.upper()) if base and base != art else None
+            if b and b.get("brand") not in ("Прочее", "", "Нет бренда"):
+                v["brand"] = v["group"] = b["brand"]
+                break
     from datetime import datetime
     return {"wb": wb_map, "ozon": oz_map, "catalog": cat,
             "updated": datetime.utcnow().strftime("%Y-%m-%d %H:%M")}
