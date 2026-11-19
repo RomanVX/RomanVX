@@ -1845,6 +1845,32 @@ function _finBrandFill() {
   const groups = (typeof GROUP_ORDER !== 'undefined' && GROUP_ORDER.length ? GROUP_ORDER : (_cab && _cab.group_order) || []);
   groups.forEach(g => { const o = document.createElement('option'); o.value = g; o.textContent = g; sel.appendChild(o); });
 }
+// ── Сверка P&L с официальными отчётами площадок ─────────────────────────────
+const _finRecon = {};
+async function loadFinRecon(mp) {
+  const el = document.getElementById('finRecon');
+  if (!el) return;
+  try {
+    const d = _finRecon[mp] || (_finRecon[mp] = await fetchJSON(`/api/finance/${mp.toLowerCase()}/reconcile`, 180000));
+    if (_financeMp !== mp) return;
+    if (d.message) { el.textContent = d.message; return; }
+    if (mp === 'WB') {
+      const ws = d.weeks || [], bad = ws.filter(w => !w.ok);
+      const head = bad.length ? `<span class="text-warning">⚠ Расхождения с отчётами WB: ${bad.length} из ${ws.length} недель</span>`
+                              : `<span class="text-success">✓ Сходится с недельными отчётами реализации WB: ${ws.length} из ${ws.length} недель</span>`;
+      const names = { forPay: 'К перечислению', deliveryService: 'Логистика', paidStorage: 'Хранение', paidAcceptance: 'Приёмка', penalty: 'Штрафы', deduction: 'Удержания' };
+      const rows = ws.map(w => `<tr class="${w.ok ? '' : 'table-warning'}"><td>${esc(w.from)} — ${esc(w.to)}</td>${Object.keys(names).map(k => { const c = w.cols[k]; return `<td class="text-end">${fmtRub(c.ours)}<div class="${c.ok ? 'text-secondary' : 'text-danger'}">WB ${fmtRub(c.wb)}</div></td>`; }).join('')}</tr>`).join('');
+      el.innerHTML = `<details><summary>${head}</summary><div class="table-responsive mt-2"><table class="table table-sm small"><thead><tr><th>Неделя отчёта</th>${Object.values(names).map(n => `<th class="text-end">${n}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div><div>${esc(d.note || '')}</div></details>`;
+    } else {
+      const ms = (d.months || []).filter(m => m.rows), bad = ms.filter(m => !m.ok);
+      const head = bad.length ? `<span class="text-warning">⚠ Расхождения с отчётом о реализации Ozon: ${bad.length} из ${ms.length} мес.</span>`
+                              : `<span class="text-success">✓ Сходится с отчётом о реализации Ozon: ${ms.length} из ${ms.length} закрытых месяцев</span>`;
+      const rows = ms.map(m => m.rows.map((r, i) => `<tr class="${r.ok ? '' : 'table-warning'}"><td>${i ? '' : esc(m.month)}</td><td>${esc(r.label)}</td><td class="text-end">${fmtRub(r.ours)}</td><td class="text-end">${fmtRub(r.ozon)}</td><td class="text-end">${r.diff ? fmtRub(r.diff) : '—'}</td></tr>`).join('')).join('');
+      el.innerHTML = `<details><summary>${head}</summary><div class="table-responsive mt-2"><table class="table table-sm small"><thead><tr><th>Месяц</th><th>Статья</th><th class="text-end">Дашборд</th><th class="text-end">Отчёт Ozon</th><th class="text-end">Разница</th></tr></thead><tbody>${rows}</tbody></table></div><div>${esc(d.note || '')}</div></details>`;
+    }
+  } catch (e) { el.textContent = 'Сверка недоступна: ' + e.message; }
+}
+
 function setFinBrand(b) { _finBrand = b; renderFinanceTable(); }
 function _finKey(mp) { return _finBrand && mp !== 'YM' ? mp + '@' + _finBrand : mp; }
 function _brandPnl(unit, brand) {
@@ -2422,6 +2448,10 @@ function renderFinanceTable() {
   }
   if (d.fetched_at) html += `<div class="text-secondary text-end small mt-1">Обновлено: ${d.fetched_at}</div>`;
   if (d.brand_note) html += `<div class="small text-secondary mt-2">${esc(d.brand_note)}</div>`;
+  if ((mp === 'WB' || mp === 'OZON') && !d.brand_note) {
+    html += `<div id="finRecon" class="mt-3 small text-secondary">Сверка с отчётами площадки…</div>`;
+    setTimeout(() => loadFinRecon(mp), 50);
+  }
   if (mp === 'TOTAL') html += manualCostsPanel(d.months || []) + payoutsPanel() + mpComparePanel();
   wrap.innerHTML = html;
 }
