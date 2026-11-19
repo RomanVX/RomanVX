@@ -2946,9 +2946,13 @@ def _oz_realization_summary(res: dict) -> dict:
         dc = r.get("delivery_commission") or {}
         rc = r.get("return_commission") or {}
         t["sales"] += _money(dc.get("amount"))
-        t["bonus"] += _money(dc.get("bonus"))
+        # баллы за скидки + выплаты по механикам лояльности (звёзды, зелёные
+        # цены, соинвест ПВЗ) — в нашем P&L это одна строка «Баллы за скидки»
+        t["bonus"] += sum(_money(dc.get(k)) for k in ("bonus", "stars", "bank_coinvestment",
+                                                      "pick_up_point_coinvestment"))
         t["returns"] += _money(rc.get("amount"))
-        t["returns_bonus"] += _money(rc.get("bonus"))
+        t["returns_bonus"] += sum(_money(rc.get(k)) for k in ("bonus", "stars", "bank_coinvestment",
+                                                              "pick_up_point_coinvestment"))
         # поле commission Ozon заполнял только до 30.04.2024 — берём базовое
         # вознаграждение (standard_fee), как в печатном отчёте
         t["commission"] += (_money(dc.get("standard_fee")) or _money(dc.get("commission"))) \
@@ -2975,7 +2979,7 @@ async def ozon_reconcile():
     for mk in sorted(rows.get("retailAmount", {}), reverse=True):
         if mk >= cur_mk:
             continue
-        key = f"oz_realization2_{mk}"
+        key = f"oz_realization3_{mk}"
         real = await asyncio.to_thread(_snapmod.load, key, None)
         if not real:
             try:
