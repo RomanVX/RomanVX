@@ -134,6 +134,8 @@ function applyProfile() {
   if (!_cab.feedback) hideItem('navFeedback');
   hideItem('navOps');
   hideItem('ozSlots');
+  // склад/логистику у клиентов агентства не ведём — раздел «Склад» и складские инструменты скрыты
+  ['navWarehouse', 'toolClusters', 'toolWhstocks', 'toolGeo', 'ozClusters'].forEach(hideItem);
   const mps = _cab.marketplaces || [];
   if (!mps.includes('OZON')) hideItem('navOzon');
   if (!mps.includes('WB')) {

@@ -60,10 +60,14 @@ async def _prefetch_weekly():
             _log.info("weekly_orders cache updated")
         except Exception as exc:
             _log.warning("weekly_orders prefetch failed: %s", exc)
+        from config import IS_CLIENT_CABINET
         try:
-            _log.info("Prefetching stocks_table...")
-            await dashboard.get_stocks_table()
-            _log.info("stocks_table cache updated")
+            # кабинеты клиентов: склад/логистику не ведём — раздел скрыт,
+            # тяжёлую сборку остатков в фоне не гоняем (память)
+            if not IS_CLIENT_CABINET:
+                _log.info("Prefetching stocks_table...")
+                await dashboard.get_stocks_table()
+                _log.info("stocks_table cache updated")
         except Exception as exc:
             _log.warning("stocks_table prefetch failed: %s", exc)
         try:
