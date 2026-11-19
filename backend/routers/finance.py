@@ -508,7 +508,7 @@ async def _fetch_detail_bg(date_from: str, date_to: str) -> None:
 # у крупного кабинета это сотни тысяч строк (~1 ГБ) вместо нескольких МБ итогов.
 # Себестоимость не замораживается: храним количества (артикул × месяц продажи),
 # себес считается при сборке по текущему справочнику.
-_PART_VER = 2   # 2: + by_day (сверка с недельными отчётами WB)
+_PART_VER = 3   # 2: + by_day (сверка с недельными отчётами WB); 3: + коррекции продаж
 _DETAIL_SUM_KEYS = ["retailAmount", "forPay", "deliveryService", "paidStorage",
                     "paidAcceptance", "penalty", "deduction", "cashbackAmount",
                     "additionalPayment", "cashbackCommission", "bankPayment"]
@@ -615,12 +615,21 @@ def _detail_pass(rows: list, acc: dict) -> None:
                 sd["fbs_qty"] += sign * qty
                 sd["fbs_revenue"] += sign * base
                 sd["fbs_forPay"] += sign * abs(_ff(row.get("forPay")))
+        elif _ff(row.get("forPay")):
+            # «Коррекция продаж» и т.п.: сумма к перечислению без суммы продажи —
+            # WB включает её в «к перечислению за товар» недельного отчёта
+            fp = _ff(row.get("forPay"))
+            mk_c = ((row.get("saleDate") or rr)[:10])[:7]
+            d_ensure(mk_c)["forPay"] += fp
+            s_ensure(canon(row), mk_c)["forPay"] += fp
         bd = byd.get(rr)
         if bd is None:
             bd = byd[rr] = {"forPay": 0.0, "deliveryService": 0.0, "paidStorage": 0.0,
                             "paidAcceptance": 0.0, "penalty": 0.0, "deduction": 0.0}
         if has_sale_amount:
             bd["forPay"] += sign * abs(_ff(row.get("forPay")))
+        else:
+            bd["forPay"] += _ff(row.get("forPay"))
         for k in ("deliveryService", "paidStorage", "paidAcceptance", "penalty", "deduction"):
             bd[k] += _ff(row.get(k))
         m = d_ensure(mk)
