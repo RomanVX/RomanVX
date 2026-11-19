@@ -654,8 +654,9 @@ def get_cabinet():
     out = {"id": CABINET, "name": CABINET_NAME, "marketplaces": CABINET_MARKETPLACES,
            "demo": USE_MOCK and not IS_CLIENT_CABINET, "read_only": READ_ONLY, "profile": UI_PROFILE,
            "mono": CABINET_MONO or _mono(CABINET_NAME),
-           "feedback": (not READ_ONLY) or os.getenv("FEEDBACK_WRITE", "").strip() in ("1", "true", "yes")
-                       or _cfg_demo() or _cfg_fill(),
+           # блок «Покупатели» виден всегда; отправка ответов из кабинета «только
+           # чтение» — только с FEEDBACK_WRITE=1 (проверка на сервере)
+           "feedback": True,
            "demo_client": _cfg_demo()}
     import catalog_auto
     if catalog_auto.enabled():
