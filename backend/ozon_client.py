@@ -85,14 +85,34 @@ async def _fetch_stocks_v1(skus_info: list[dict]) -> dict[str, int]:
     sku_list = [s["sku"] for s in skus_info if s["sku"]]
     sku_to_offer = {s["sku"]: s["offer_id"] for s in skus_info}
     result: dict[str, int] = {}
-    for i in range(0, len(sku_list), 100):
-        batch = sku_list[i:i + 100]
-        data = await _post("/v1/analytics/stocks", {"skus": batch})
+    bad: list = []
+
+    async def _batch(batch: list) -> None:
+        # Ozon иногда отвечает 500 {"code":2} на пачку из‑за одного «битого» SKU —
+        # делим пачку пополам, пока не отсеем его; остальные остатки не теряем
+        try:
+            data = await _post("/v1/analytics/stocks", {"skus": batch})
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code >= 500 and len(batch) > 1:
+                mid = len(batch) // 2
+                await _batch(batch[:mid])
+                await _batch(batch[mid:])
+                return
+            bad.extend(batch)
+            return
         for item in data.get("items") or []:
             offer_id = sku_to_offer.get(str(item.get("sku", "")))
             if offer_id:
                 result[offer_id] = result.get(offer_id, 0) + (item.get("available_stock_count") or 0)
+        await asyncio.sleep(0.3)
+
+    for i in range(0, len(sku_list), 100):
+        await _batch(sku_list[i:i + 100])
+    if bad:
+        _log.warning("OZON stocks v1: пропущено %d SKU (Ozon 500): %s", len(bad), bad[:10])
     _log.info("OZON stocks v1: %d articles", len(result))
+    if not result and bad:
+        raise RuntimeError("v1/analytics/stocks: все пачки упали")
     return result
 
 
@@ -110,7 +130,7 @@ async def _fetch_stocks_warehouses() -> dict[str, int]:
         if not rows:
             break
         for row in rows:
-            oid = row.get("offer_id", "")
+            oid = row.get("offer_id") or row.get("item_code") or ""   # в v2 артикул — item_code
             if not oid:
                 continue
             result[oid] = result.get(oid, 0) + (row.get("free_to_sell_amount") or 0)
