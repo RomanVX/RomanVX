@@ -905,9 +905,25 @@ async def get_weekly_orders():
                 timeout=25,
             )
         except Exception as _exc:
-            import logging; logging.getLogger(__name__).warning("weekly_orders OZON/YM: %s", _exc)
+            import logging; logging.getLogger(__name__).warning(
+                "weekly_orders OZON/YM: %s — беру из sales_daily", type(_exc).__name__)
+            # крупный кабинет: выгрузка FBO-отправлений за 8 недель не успевает
+            # за 25 с — берём накопленную историю продаж из БД (её пишут
+            # сборки P&L и accumulate_sales)
             oz_rows, ym_rows = [], []
             oz_ok = ym_ok = False
+            try:
+                import sales_history
+                hist = await asyncio.to_thread(sales_history.get_history, date_from_str, date_to_str)
+                oz_rows = [{"date": h["date"], "offer_id": h["sku"], "qty": h["qty"], "revenue": h["revenue"],
+                            "_db": True} for h in hist if h["platform"] == "Ozon"]
+                ym_rows = [{"date": h["date"], "shop_sku": h["sku"], "qty": h["qty"], "revenue": h["revenue"],
+                            "_db": True} for h in hist if h["platform"] == "YM"]
+                from config import CABINET_MARKETPLACES as _mps
+                oz_ok = bool(oz_rows)
+                ym_ok = bool(ym_rows) or "YM" not in _mps
+            except Exception as _e2:
+                logging.getLogger(__name__).warning("weekly_orders sales_daily: %s", _e2)
 
         def agg_rows(rows, sku_field, resolve):
             by_sku: dict = {}
@@ -918,7 +934,8 @@ async def get_weekly_orders():
                 if idx is None:
                     continue
                 raw = r.get(sku_field) or ""
-                sku = resolve(raw) if raw else ""
+                # строки из sales_daily уже с каноническим артикулом
+                sku = (raw if r.get("_db") else resolve(raw)) if raw else ""
                 rev = float(r.get("revenue") or 0)
                 qty = int(r.get("qty") or 0)
                 if sku not in by_sku:
