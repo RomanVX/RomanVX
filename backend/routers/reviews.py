@@ -37,6 +37,11 @@ async def warm(platform: str = "all", limit: int = 5000) -> None:
         ver = getattr(rc, "_data_version", 0)
         heavy = await asyncio.to_thread(_build_heavy, platform, limit)
         _data_cache[key] = (ver, _t.monotonic(), heavy)
+        if key == ("all", 5000):
+            # копия в БД: после перезапуска вкладка открывается сразу, а не ждёт
+            # пересчёта по 90+ тыс. отзывов (до минуты на холодном сервере)
+            import snapshot
+            await asyncio.to_thread(snapshot.save, "reviews_data_cache", heavy)
     except Exception as e:
         _log.warning("reviews warm: %s", e)
     finally:
@@ -57,6 +62,12 @@ async def get_reviews_data(
     background_tasks.add_task(rc.refresh_all)
     key = (platform, limit)
     hit = _data_cache.get(key)
+    if hit is None and key == ("all", 5000):
+        import snapshot
+        snap = await asyncio.to_thread(snapshot.load, "reviews_data_cache", None)
+        if snap:
+            import time as _t
+            hit = _data_cache[key] = (-1, _t.monotonic(), snap)   # -1 → пересчитать фоном
     if hit is None:
         await warm(platform, limit)          # самый первый запрос — ждём
         hit = _data_cache.get(key)
