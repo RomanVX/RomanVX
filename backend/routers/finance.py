@@ -1494,7 +1494,7 @@ async def _build_adv_nm_bg(months: int) -> None:
                 except Exception as e:
                     _log.warning("adv-by-nm save month %s failed: %s", mk, e)
                 _log.info("adv-by-nm: месяц %s готов (%d nm)", mk, len(per_nm))
-            await asyncio.sleep(62)   # 1 req/мин между месяцами
+            # темп держит общая очередь fullstats (advert_client._fullstats_get)
         _adv_nm_ts = _time.monotonic()
         _adv_nm_error = "" if _adv_nm_cache else "fullstats вернул пусто по всем месяцам"
         try:

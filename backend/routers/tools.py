@@ -952,7 +952,9 @@ async def _adv_build_bg(force: bool = False) -> None:
                 m["status"] = cm.get("status")
         end = (datetime.utcnow() + timedelta(hours=3)).date()
         begin = end - timedelta(days=_ADV_DAYS)
-        _adv_progress = "статистика кампаний (fullstats, ~минута)"
+        _act = ac.active_ids(ids, begin.isoformat())
+        _adv_progress = (f"статистика {len(_act)} кампаний: WB отдаёт по 50 за запрос, "
+                         f"3 запроса в минуту — около {max(1, round(len(_act) / 50 / 3))} мин")
         stats = await ac.get_fullstats_campaigns(ids, begin.isoformat(), end.isoformat())
 
         import catalog as _cat
@@ -1114,8 +1116,22 @@ async def get_adv(refresh: bool = Query(default=False)):
             "total_drr": round(total_spend / total_rev * 100, 1) if total_rev else None,
             "waste": waste,
             "advice": advice,
-            "building": _adv_building, "progress": _adv_progress, "error": _adv_error,
+            "building": _adv_building, "progress": _adv_progress_text(), "error": _adv_error,
             "built_at": newest[:16].replace("T", " ")}
+
+
+def _adv_progress_text() -> str:
+    """Статус сборки с живым счётчиком порций fullstats."""
+    if not _adv_building:
+        return _adv_progress
+    try:
+        import advert_client as _ac
+        done, total = _ac.fullstats_progress
+        if total and "статистика" in (_adv_progress or ""):
+            return f"{_adv_progress}; готово {done} из {total}"
+    except Exception:
+        pass
+    return _adv_progress
 
 
 # ══ Калькулятор ниши: выходить с товаром или нет ═══════════════════════════════

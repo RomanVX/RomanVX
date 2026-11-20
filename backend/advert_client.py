@@ -217,7 +217,8 @@ async def get_all_campaign_ids_ext() -> list[int]:
                         seen.add(aid)
                         ids.append(int(aid))
                         _count_meta[int(aid)] = {"type": grp.get("type"),
-                                                 "status": grp.get("status")}
+                                                 "status": grp.get("status"),
+                                                 "changed": str(a.get("changeTime") or "")[:10]}
     except Exception as e:
         _log.warning("[ADVERT] promotion/count failed: %s", e)
     if not ids:
@@ -230,6 +231,63 @@ async def get_all_campaign_ids_ext() -> list[int]:
     return ids
 
 
+# ── /adv/v3/fullstats: лимит персонального токена — 3 запроса/мин (интервал
+# 20 с). Раньше сборщики (вкладка «Реклама», реклама по артикулам для юнитки,
+# расходы для P&L) ходили параллельно со своими паузами и выбивали друг другу
+# 429 — у кабинетов с 1000+ кампаний статистика так и не собиралась. Теперь
+# все вызовы процесса идут через одну очередь с общим интервалом.
+_fs_lock = asyncio.Lock()
+_fs_next = 0.0
+_FS_GAP = 21.0
+
+
+async def _fullstats_get(params: dict):
+    """Один вызов fullstats через общую очередь; 429 → пауза для всей очереди,
+    500/502/503 у WB — повтор. None — если так и не удалось."""
+    import time as _t
+    global _fs_next
+    for attempt in range(6):
+        async with _fs_lock:
+            wait = _fs_next - _t.monotonic()
+            if wait > 0:
+                await asyncio.sleep(wait)
+            try:
+                data = await _get("/adv/v3/fullstats", params)
+                _fs_next = _t.monotonic() + _FS_GAP
+                return data
+            except Exception as e:
+                msg = str(e)
+                if "429" in msg:
+                    _fs_next = _t.monotonic() + 62
+                    _log.warning("[ADVERT] fullstats 429 — очередь ждёт 62с (%d/6)", attempt + 1)
+                    continue
+                _fs_next = _t.monotonic() + _FS_GAP
+                if any(c in msg for c in ("500", "502", "503", "504", "timeout", "Timeout")):
+                    _log.warning("[ADVERT] fullstats %s — повтор (%d/6)", msg[:80], attempt + 1)
+                    continue
+                _log.warning("[ADVERT] fullstats failed: %s", msg[:200])
+                return None
+    return None
+
+
+def active_ids(ids: list[int], begin: str) -> list[int]:
+    """Кампании, у которых МОГЛА быть статистика с даты begin: идущие и на
+    паузе (9, 11) — всегда; завершённые (7) — если менялись не раньше begin;
+    остальные статусы fullstats не отдаёт. Без меты — оставляем."""
+    out = []
+    for i in ids:
+        m = _count_meta.get(int(i))
+        if not m:
+            out.append(i)
+            continue
+        st = m.get("status")
+        if st in (9, 11):
+            out.append(i)
+        elif st == 7 and (not m.get("changed") or m["changed"] >= begin[:10]):
+            out.append(i)
+    return out
+
+
 async def get_fullstats_nm(ids: list[int], begin: str, end: str) -> dict[int, float]:
     """GET /adv/v3/fullstats за период → {nmId: затраты}.
 
@@ -238,25 +296,11 @@ async def get_fullstats_nm(ids: list[int], begin: str, end: str) -> dict[int, fl
     """
     per_nm: dict[int, float] = {}
     CHUNK = 50
+    ids = active_ids(ids, begin)
     for ci in range(0, len(ids), CHUNK):
         chunk = ids[ci:ci + CHUNK]
-        data = None
-        for attempt in range(4):
-            try:
-                data = await _get("/adv/v3/fullstats", {
-                    "ids": ",".join(map(str, chunk)),
-                    "beginDate": begin,
-                    "endDate": end,
-                })
-                break
-            except Exception as e:
-                if "429" in str(e) and attempt < 3:
-                    _log.warning("[ADVERT] fullstats 429 — ждём 62с (%d/3)", attempt + 1)
-                    await asyncio.sleep(62)
-                    continue
-                _log.warning("[ADVERT] fullstats %s–%s failed: %s", begin, end, e)
-                data = None
-                break
+        data = await _fullstats_get({"ids": ",".join(map(str, chunk)),
+                                     "beginDate": begin, "endDate": end})
         for camp in data if isinstance(data, list) else []:
             for day in camp.get("days") or []:
                 for app in day.get("apps") or []:
@@ -264,8 +308,6 @@ async def get_fullstats_nm(ids: list[int], begin: str, end: str) -> dict[int, fl
                         nm_id = nm.get("nmId")
                         if nm_id:
                             per_nm[nm_id] = per_nm.get(nm_id, 0.0) + float(nm.get("sum") or 0)
-        if ci + CHUNK < len(ids):
-            await asyncio.sleep(62)  # rate limit между чанками
     return per_nm
 
 
@@ -340,23 +382,14 @@ async def get_fullstats_campaigns(ids: list[int], begin: str, end: str) -> dict[
     по дням/платформам. Лимит ~1 req/мин на чанк из 50 id."""
     out: dict[int, dict] = {}
     CHUNK = 50
+    ids = active_ids(ids, begin)
+    global fullstats_progress
+    fullstats_progress = (0, (len(ids) + CHUNK - 1) // CHUNK)
     for ci in range(0, len(ids), CHUNK):
         chunk = ids[ci:ci + CHUNK]
-        data = None
-        for attempt in range(4):
-            try:
-                data = await _get("/adv/v3/fullstats", {
-                    "ids": ",".join(map(str, chunk)),
-                    "beginDate": begin, "endDate": end,
-                })
-                break
-            except Exception as e:
-                if "429" in str(e) and attempt < 3:
-                    await asyncio.sleep(62)
-                    continue
-                _log.warning("[ADVERT] fullstats(campaigns) failed: %s", e)
-                data = None
-                break
+        data = await _fullstats_get({"ids": ",".join(map(str, chunk)),
+                                     "beginDate": begin, "endDate": end})
+        fullstats_progress = (ci // CHUNK + 1, fullstats_progress[1])
         for camp in data if isinstance(data, list) else []:
             aid = camp.get("advertId")
             if not aid:
@@ -378,9 +411,10 @@ async def get_fullstats_campaigns(ids: list[int], begin: str, end: str) -> dict[
                             cell = agg["nms"].setdefault(int(nid), {"sum": 0.0, "orders": 0})
                             cell["sum"] += float(nm.get("sum") or 0)
                             cell["orders"] += int(nm.get("orders") or 0)
-        if ci + CHUNK < len(ids):
-            await asyncio.sleep(62)
     return out
+
+
+fullstats_progress = (0, 0)   # (сделано, всего) порций по 50 кампаний — для статуса вкладки
 
 
 async def get_campaign_words(advert_id: int, ctype: int | None = None) -> list[dict]:

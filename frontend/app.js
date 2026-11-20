@@ -150,10 +150,7 @@ function applyProfile() {
   // заголовок «Wildberries» вёл в Продуктолог (ИИ) — ведём в воронку
   const wbTitle = document.querySelector('#navWB .mp-menu-title');
   if (wbTitle) wbTitle.setAttribute('onclick', "goNavTool('tools','wbfunnel','navWB')");
-  // WB «Реклама» у крупных кабинетов не собирается (лимит fullstats WB), Ozon
-  // «Запросы» пусты без SKU-кампаний — у клиентов скрыты до доработки
-  const HIDE = ["goNav('fbs'", "'slots'", "'prod'", "'niche'", "'nichecalc'", "'visuals'", "'competitors'", "goNav('cardsync'", "goNav('growth'", "goNav('market'",
-                "goNavTool('tools','adv'", "goNavTool('toolsoz','phrases'"];
+  const HIDE = ["goNav('fbs'", "'slots'", "'prod'", "'niche'", "'nichecalc'", "'visuals'", "'competitors'", "goNav('cardsync'", "goNav('growth'", "goNav('market'"];
   document.querySelectorAll('#mainMenu a, #mainMenu button').forEach(el => {
     const oc = el.getAttribute('onclick') || '';
     if (_cab.feedback && el.closest('#navFeedback')) return;   // блок «Покупатели» клиенту открыт
@@ -163,8 +160,6 @@ function applyProfile() {
   if (!_cab.feedback) hideItem('navFeedback');
   hideItem('navOps');
   hideItem('ozSlots');
-  hideItem('toolAdv');
-  hideItem('ozPhrases');
   // склад/логистику у клиентов агентства не ведём — раздел «Склад» и складские инструменты скрыты
   ['navWarehouse', 'toolClusters', 'toolWhstocks', 'toolGeo', 'ozClusters'].forEach(hideItem);
   const mps = _cab.marketplaces || [];
