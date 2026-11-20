@@ -62,11 +62,33 @@ except Exception as _e:
     _log.error("reviews _init_db failed (БД недоступна?): %s", _e)
 
 
-def _enrich(row: dict) -> dict:
-    """Add name/brand/group from catalog to a review row."""
+_brand_canon: dict = {"ver": None, "map": {}}
+
+
+def _canon_brand(b: str) -> str:
+    """Бренд из отзыва → написание, как в каталоге кабинета («Феечки»/«ФЕЕЧКИ»)."""
+    b = (b or "").strip()
+    if not b:
+        return ""
+    ver = getattr(cat, "CATALOG_VER", 0)
+    if _brand_canon["ver"] != ver:
+        m: dict = {}
+        for v in cat.CATALOG.values():
+            x = (v.get("brand") or "").strip()
+            if x and x != "Прочее":
+                m.setdefault(x.lower(), x)
+        _brand_canon.update(ver=ver, map=m)
+    return _brand_canon["map"].get(b.lower(), b)
+
+
+def _enrich(row: dict, fb_name: str = "", fb_brand: str = "") -> dict:
+    """Add name/brand/group from catalog to a review row.
+    Карточки нет в каталоге (архивная/старая) — название и бренд из самого
+    отзыва (WB присылает productName/brandName), иначе всё уходит в «Прочее»."""
     info = cat.lookup(row.get("sku") or "")
-    row["name"]  = info.get("name", "")
-    row["brand"] = info.get("brand", "")
+    known = (info.get("brand") or "Прочее") != "Прочее"
+    row["name"]  = info.get("name", "") if known else ((fb_name or "").strip() or info.get("name", ""))
+    row["brand"] = info.get("brand", "") if known else (_canon_brand(fb_brand) or info.get("brand", ""))
     row["grp"]   = info.get("group", "")
     return row
 
@@ -78,7 +100,12 @@ def _upsert_reviews(rows: list[dict]):
         "INSERT INTO reviews (id, platform, sku, name, brand, grp, rating, text, answer, created_at) "
         "VALUES (?,?,?,?,?,?,?,?,?,?) "
         "ON CONFLICT(id) DO UPDATE SET "
-        "answer = COALESCE(NULLIF(excluded.answer, ''), reviews.answer)",
+        "answer = COALESCE(NULLIF(excluded.answer, ''), reviews.answer), "
+        # бренд/название дописываются, если раньше товар был «неизвестен»
+        "brand = CASE WHEN COALESCE(reviews.brand, '') IN ('', 'Прочее') "
+        "             THEN excluded.brand ELSE reviews.brand END, "
+        "name = CASE WHEN COALESCE(reviews.name, '') = '' OR reviews.name = reviews.sku "
+        "            THEN excluded.name ELSE reviews.name END",
         [(r["id"], r["platform"], r["sku"], r["name"], r["brand"], r["grp"],
           r["rating"], r["text"], r["answer"], r["created_at"]) for r in rows],
     )
@@ -283,7 +310,9 @@ def get_rating_table() -> list[dict]:
     # восстановить (avg округлён до 2 знаков), а формула «сколько 5★ до цели»
     # требует точных S и N.
     art_rows = db.fetchall(
-        "SELECT platform, sku, MAX(name), MAX(brand), MAX(grp), ROUND(AVG(rating),2), COUNT(*), SUM(rating) "
+        "SELECT platform, sku, MAX(CASE WHEN name <> sku THEN name END), "
+        "MAX(CASE WHEN brand NOT IN ('', 'Прочее') THEN brand END), MAX(grp), "
+        "ROUND(AVG(rating),2), COUNT(*), SUM(rating) "
         "FROM reviews WHERE rating > 0 GROUP BY platform, sku ORDER BY sku"
     )
     # per group
@@ -430,13 +459,13 @@ def _full_scan_due(platform: str, force: bool) -> bool:
     if force:
         return True
     import snapshot
-    ts = snapshot.load(f"reviews_fullscan_{platform}", 0) or 0
+    ts = snapshot.load(f"reviews_fullscan2_{platform}", 0) or 0
     return time.time() - float(ts) > _FULL_SCAN_EVERY
 
 
 def _mark_full_scan(platform: str) -> None:
     import snapshot
-    snapshot.save(f"reviews_fullscan_{platform}", time.time())
+    snapshot.save(f"reviews_fullscan2_{platform}", time.time())
 
 
 # ─── WB ──────────────────────────────────────────────────────────────────────
@@ -491,7 +520,7 @@ async def fetch_wb_reviews(full: bool = True):
                             "text": (f.get("text") or "").strip(),
                             "answer": answer,
                             "created_at": (f.get("createdDate") or "")[:19],
-                        }))
+                        }, details.get("productName") or "", details.get("brandName") or ""))
                     n = len(feedbacks)
                     del data, feedbacks, r
                     await asyncio.to_thread(_upsert_reviews, rows)

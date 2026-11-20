@@ -264,7 +264,8 @@ async def get_productolog(refresh: bool = Query(default=False)):
         "SUM(CASE WHEN rating >= 4 THEN 1 ELSE 0 END), "
         "SUM(CASE WHEN rating = 3 THEN 1 ELSE 0 END), "
         "SUM(CASE WHEN text IS NOT NULL AND text != '' THEN 1 ELSE 0 END), "
-        "MAX(name), MAX(brand) "
+        "MAX(CASE WHEN name <> sku THEN name END), "
+        "MAX(CASE WHEN brand NOT IN ('', 'Прочее') THEN brand END) "
         "FROM reviews WHERE platform = 'WB' AND sku IS NOT NULL AND sku != '' GROUP BY sku")
     rows = await asyncio.to_thread(
         db.fetchall, "SELECT sku, data, built_at FROM productolog")
@@ -319,13 +320,14 @@ def _prod_enrich(items: list) -> None:
     пока каталог кабинета ещё не залит, почти все товары попадали в «Прочее»
     и оставались там до следующей синхронизации отзывов."""
     import catalog as _cat
+    import reviews_client as _rc
     for it in items:
         sku = it["sku"]
         hit = _cat.lookup(sku)
         rv_name, rv_brand = _prod_rv.get(sku, ("", ""))
         known = (hit.get("brand") or "Прочее") != "Прочее"
         it["name"] = (hit.get("name") if known else "") or rv_name or sku
-        it["group"] = hit.get("brand") if known else (rv_brand or "Прочее")
+        it["group"] = hit.get("brand") if known else (_rc._canon_brand(rv_brand) or "Прочее")
         it["wb_link"] = _wb_link(sku)
 
 
