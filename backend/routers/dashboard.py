@@ -779,9 +779,25 @@ _WO_TTL = 1800
 _wo_lock = asyncio.Lock()
 
 
+_wo_bg: set = set()
+
+
 @router.get("/weekly_orders")
 async def get_weekly_orders():
-    """Заказы по неделям (Пн-Вс) с разбивкой по SKU, все МП."""
+    """Заказы по неделям (Пн-Вс) с разбивкой по SKU, все МП.
+    Есть готовый ответ (даже устаревший) — отдаём сразу, пересобираем в фоне:
+    у крупного кабинета сборка идёт до 30 с (выгрузка Ozon за 8 недель),
+    и платить ими за открытие стартовой вкладки пользователь не должен."""
+    if _wo_cache:
+        if _wtime.monotonic() - _wo_cache_ts >= _WO_TTL and not _wo_lock.locked():
+            t = asyncio.create_task(_build_weekly_orders())
+            _wo_bg.add(t)
+            t.add_done_callback(_wo_bg.discard)
+        return _wo_cache
+    return await _build_weekly_orders()
+
+
+async def _build_weekly_orders():
     global _wo_cache, _wo_cache_ts
     if _wo_cache and _wtime.monotonic() - _wo_cache_ts < _WO_TTL:
         return _wo_cache
