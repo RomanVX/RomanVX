@@ -652,6 +652,7 @@ async def fetch_ym_reviews(full: bool = True):
 # ─── REFRESH ──────────────────────────────────────────────────────────────────
 
 _last_refresh = 0.0
+_data_version = 0
 _refresh_lock = asyncio.Lock()
 REFRESH_INTERVAL = 900  # 15 мин — отзывы подтягиваются сами при открытии вкладки
 
@@ -680,4 +681,6 @@ async def refresh_all(force=False):
         if full_ym:
             _mark_full_scan("YM")
         _save_snapshot()
+        global _data_version
+        _data_version += 1          # кеш /api/reviews/data пересчитается фоном
         _log.info("Reviews refresh done. Total: %d", get_stats()["total"])

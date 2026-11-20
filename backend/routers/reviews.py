@@ -15,29 +15,56 @@ _bg_tasks: set = set()  # ссылки на фоновые задачи, что�
 _data_cache: dict = {}
 
 
+def _build_heavy(platform: str, limit: int) -> dict:
+    return {"reviews":  rc.get_all_reviews(platform=platform, limit=limit),
+            "ratings":  rc.get_rating_table(),
+            "dynamics": rc.get_rating_dynamics(),
+            "stats":    rc.get_stats()}
+
+
+_heavy_building: set = set()
+
+
+async def warm(platform: str = "all", limit: int = 5000) -> None:
+    """Пересчёт тяжёлой части /data в фоне (после синхронизации отзывов и при
+    старте сервера) — пользователь всегда получает готовый результат сразу."""
+    import time as _t
+    key = (platform, limit)
+    if key in _heavy_building:
+        return
+    _heavy_building.add(key)
+    try:
+        ver = getattr(rc, "_data_version", 0)
+        heavy = await asyncio.to_thread(_build_heavy, platform, limit)
+        _data_cache[key] = (ver, _t.monotonic(), heavy)
+    except Exception as e:
+        _log.warning("reviews warm: %s", e)
+    finally:
+        _heavy_building.discard(key)
+
+
 @router.get("/data")
 async def get_reviews_data(
     background_tasks: BackgroundTasks,
     platform: str = Query("all"),
     limit: int = Query(5000),
 ):
-    """Return reviews, ratings, dynamics, stats. Triggers a background refresh if stale."""
+    """Return reviews, ratings, dynamics, stats. Triggers a background refresh if stale.
+
+    Тяжёлая часть (тысячи отзывов, рейтинги и динамика по всем артикулам — у
+    крупного кабинета 15–25 с) отдаётся из кеша мгновенно; если отзывы с тех пор
+    обновились — пересчитывается в фоне (stale-while-revalidate)."""
     background_tasks.add_task(rc.refresh_all)
-    # тяжёлая часть (тысячи отзывов + рейтинги по всем артикулам) кешируется
-    # на минуту и до следующей синхронизации — опрос вкладки не грузит сервер
-    import time as _t
-    key = (platform, limit, getattr(rc, "_last_refresh", 0))
-    hit = _data_cache.get("v")
-    if hit and hit[0] == key and _t.monotonic() - hit[1] < 60:
-        heavy = hit[2]
-    else:
-        def _build():
-            return {"reviews":  rc.get_all_reviews(platform=platform, limit=limit),
-                    "ratings":  rc.get_rating_table(),
-                    "dynamics": rc.get_rating_dynamics(),
-                    "stats":    rc.get_stats()}
-        heavy = await asyncio.to_thread(_build)
-        _data_cache["v"] = (key, _t.monotonic(), heavy)
+    key = (platform, limit)
+    hit = _data_cache.get(key)
+    if hit is None:
+        await warm(platform, limit)          # самый первый запрос — ждём
+        hit = _data_cache.get(key)
+    elif hit[0] != getattr(rc, "_data_version", 0):
+        t = asyncio.create_task(warm(platform, limit))
+        _bg_tasks.add(t)
+        t.add_done_callback(_bg_tasks.discard)
+    heavy = hit[2] if hit else _build_heavy(platform, limit)
     return {**heavy, "drafts": rc.get_drafts(), "auto": auto_status}
 
 
@@ -226,6 +253,8 @@ async def approve_draft(
                                  "ответить на него нельзя. Убрал из очереди."}
             return {"id": id, "status": "pending", "published": False, "error": msg}
     rc.save_draft(id, text, status="approved")
+    if published:
+        rc._data_version += 1     # ответ опубликован — список отзывов пересчитается фоном
     return {"id": id, "status": "approved", "published": published, "message": msg}
 
 

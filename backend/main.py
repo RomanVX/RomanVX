@@ -78,6 +78,11 @@ async def _prefetch_weekly():
             _log.info("Refreshing reviews...")
             await heavy.guard(reviews_client.refresh_all(), "reviews")
             _log.info("reviews refreshed")
+            # прогрев тяжёлых ответов «Отзывы» и «Продуктолог» — вкладки
+            # открываются мгновенно, а не считают 90+ тыс. отзывов при открытии
+            from routers import reviews as _rv, tools as _tl
+            await _rv.warm()
+            await _tl.get_productolog(refresh=False)
         except Exception as exc:
             _log.warning("reviews refresh failed: %s", exc)
         try:

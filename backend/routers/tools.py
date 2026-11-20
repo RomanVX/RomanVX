@@ -105,7 +105,7 @@ def _set_progress(msg: str) -> None:
 
 
 async def _build_bg(force: bool = False) -> None:
-    global _building, _error, _progress
+    global _building, _error, _progress, _prod_version
     if _building:
         return
     _building = True
@@ -171,6 +171,7 @@ async def _build_bg(force: bool = False) -> None:
         if errs:
             _error = f"{len(errs)} арт. с ошибкой (напр. {errs[0]})"
         _log.info("productolog: обновлено %d SKU, ошибок %d", total - len(errs), len(errs))
+        _prod_version += 1
     except Exception as e:
         _error = str(e)[:300]
         _log.error("productolog build: %s", e)
@@ -217,6 +218,9 @@ async def _build_lexicon(force: bool = False) -> None:
                 "reviews_count = excluded.reviews_count, built_at = excluded.built_at", out)
         return len(out)
     n = await asyncio.to_thread(_work)
+    global _prod_version
+    if n:
+        _prod_version += 1
     _log.info("productolog (словарь): обновлено %d SKU", n)
 
 
@@ -241,23 +245,41 @@ async def get_productolog(refresh: bool = Query(default=False)):
         import mock_data
         return mock_data.generate_productolog()
     import catalog as _cat
+    import reviews_client as _rc
     _init_table()
     if refresh and not _building:
         _spawn(_build_bg(force=False))
-    by_sku = await asyncio.to_thread(_wb_reviews_by_sku)
+    # кеш: пересчёт только после синхронизации отзывов или новой сборки разбора
+    ver = (getattr(_rc, "_data_version", 0), _prod_version)
+    hit = _prod_cache.get("v")
+    if hit and hit[0] == ver and not refresh:
+        res = hit[1]
+        return {**res, "building": _building, "progress": _progress, "error": _error}
+    # статистика по артикулам — агрегатом в базе (раньше читались все тексты
+    # 90+ тыс. отзывов на каждый запрос: 8–15 с)
+    stat_rows = await asyncio.to_thread(
+        db.fetchall,
+        "SELECT sku, COUNT(*), AVG(rating), "
+        "SUM(CASE WHEN rating >= 4 THEN 1 ELSE 0 END), "
+        "SUM(CASE WHEN rating = 3 THEN 1 ELSE 0 END), "
+        "SUM(CASE WHEN text IS NOT NULL AND text != '' THEN 1 ELSE 0 END) "
+        "FROM reviews WHERE platform = 'WB' AND sku IS NOT NULL AND sku != '' GROUP BY sku")
     rows = await asyncio.to_thread(
         db.fetchall, "SELECT sku, data, built_at FROM productolog")
     analyzed = {r[0]: (json.loads(r[1] or "{}"), r[2]) for r in rows}
     items = []
-    for sku, revs in by_sku.items():
-        st = _stats(revs)
+    for sku, n, avg, pos_n, neu_n, n_texts in stat_rows:
+        n, pos_n, neu_n, n_texts = int(n or 0), int(pos_n or 0), int(neu_n or 0), int(n_texts or 0)
+        st = {"count": n, "avg": round(float(avg or 0), 2),
+              "pos": round(pos_n / n * 100) if n else 0,
+              "neu": round(neu_n / n * 100) if n else 0,
+              "neg": round((n - pos_n - neu_n) / n * 100) if n else 0}
         if st["count"] < _MIN_TEXTS:
             continue
         info = _cat.lookup(sku)
         a, built = analyzed.get(sku, ({}, None))
         # анализировать можно только по ТЕКСТОВЫМ отзывам; если их мало —
         # товар не «ждёт анализа», а просто не подлежит ему (звёзды без слов)
-        n_texts = sum(1 for _, t, _ in revs if t)
         analyzable = n_texts >= _MIN_TEXTS
         items.append({
             "sku": sku, "name": info.get("name", sku), "group": info.get("brand", ""),
@@ -277,8 +299,14 @@ async def get_productolog(refresh: bool = Query(default=False)):
     pending = sum(1 for it in items if not it["analyzed"] and it["analyzable"])
     if pending and not _building:
         _spawn(_build_bg(force=False))
-    return {"items": items, "building": _building, "progress": _progress,
-            "error": _error, "pending": pending}
+    res = {"items": items, "pending": pending}
+    if not pending:
+        _prod_cache["v"] = (ver, res)
+    return {**res, "building": _building, "progress": _progress, "error": _error}
+
+
+_prod_cache: dict = {}
+_prod_version = 0
 
 
 _ART_TO_NM: dict = {}
