@@ -662,6 +662,10 @@ def get_cabinet():
            # блок «Покупатели» виден всегда; отправка ответов из кабинета «только
            # чтение» — только с FEEDBACK_WRITE=1 (проверка на сервере)
            "feedback": True,
+           # ИИ-черновики и отправка ответов: без ключа/без права записи кнопки
+           # не показываются (иначе клик кончается ошибкой)
+           "ai": bool(__import__("config").ANTHROPIC_API_KEY),
+           "feedback_write": __import__("routers.feedback", fromlist=["write_allowed"]).write_allowed(),
            "demo_client": _cfg_demo()}
     import catalog_auto
     if catalog_auto.enabled():
