@@ -154,7 +154,12 @@ async def login(payload: dict, response: Response):
     def _check():
         _init_tables()
         return db.fetchone("SELECT salt, pass_hash, role FROM users WHERE login = ?", (login_,))
-    row = await asyncio.to_thread(_check)
+    try:
+        row = await asyncio.to_thread(_check)
+    except Exception as e:      # база недоступна — это не «неверный пароль»
+        _log.warning("login: БД недоступна: %s", e)
+        raise HTTPException(status_code=503,
+                            detail="База данных временно недоступна — попробуйте через минуту")
     if not row or _hash(row[0], password) != row[1]:
         raise HTTPException(status_code=401, detail="Неверный логин или пароль")
     token = secrets.token_hex(32)

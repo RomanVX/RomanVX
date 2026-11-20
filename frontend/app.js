@@ -223,7 +223,9 @@ async function doLogin() {
       body: JSON.stringify({ login: u, password: p }),
     });
     if (!r.ok) {
-      err.textContent = (await r.json().catch(() => ({}))).detail || 'Неверный логин или пароль';
+      const fallback = r.status >= 500 ? 'Сервер временно недоступен — попробуйте через минуту'
+                                       : 'Неверный логин или пароль';
+      err.textContent = (await r.json().catch(() => ({}))).detail || fallback;
       return;
     }
     _me = await r.json();
