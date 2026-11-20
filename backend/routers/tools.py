@@ -1492,8 +1492,49 @@ def _sales_forecast(platform: str) -> dict:
     return out
 
 
+_margin_mem: dict = {}          # mp → (monotonic, результат)
+_margin_building: set = set()
+_MARGIN_TTL = 1800
+
+
+async def _margin_refresh(mp: str) -> None:
+    if mp in _margin_building:
+        return
+    _margin_building.add(mp)
+    try:
+        res = await _build_margin(mp)
+        if res.get("items") and not res.get("stale"):
+            _margin_mem[mp] = (_time.monotonic(), res)
+    except Exception as e:
+        _log.warning("margin refresh %s: %s", mp, str(e)[:150])
+    finally:
+        _margin_building.discard(mp)
+
+
 @router.get("/margin")
-async def get_margin(mp: str = Query(default="WB")):
+async def get_margin(mp: str = "WB", refresh: bool = False):   # простые дефолты: зовётся и из кода
+    """Калькулятор маржи: готовый расчёт из памяти (пересчёт раз в 30 мин в
+    фоне), после рестарта — последний снапшот из БД; ждём сборку только если
+    нет ни того, ни другого (раньше каждый запрос считался 8–90 с)."""
+    mp = (mp or "WB").upper()
+    hit = _margin_mem.get(mp)
+    if hit and not refresh:
+        if _time.monotonic() - hit[0] > _MARGIN_TTL:
+            _spawn(_margin_refresh(mp))
+        return hit[1]
+    if not refresh:
+        import snapshot as _snap
+        snap = await asyncio.to_thread(_snap.load, f"margin_snap_{mp}", None)
+        if snap and snap.get("items"):
+            _margin_mem[mp] = (_time.monotonic() - _MARGIN_TTL - 1, snap)   # сразу пересчитать фоном
+            _spawn(_margin_refresh(mp))
+            return snap
+    await _margin_refresh(mp)
+    hit = _margin_mem.get(mp)
+    return hit[1] if hit else await _build_margin(mp)
+
+
+async def _build_margin(mp: str = "WB"):
     """Затраты на единицу товара из фактической юнитки — для калькулятора
     цены/маржи. По каждому SKU: цена (средняя), % комиссии/эквайринга,
     логистика/хранение/продвижение/себес на штуку."""

@@ -134,7 +134,10 @@ function applyProfile() {
   // заголовок «Wildberries» вёл в Продуктолог (ИИ) — ведём в воронку
   const wbTitle = document.querySelector('#navWB .mp-menu-title');
   if (wbTitle) wbTitle.setAttribute('onclick', "goNavTool('tools','wbfunnel','navWB')");
-  const HIDE = ["goNav('fbs'", "'slots'", "'prod'", "'niche'", "'nichecalc'", "'visuals'", "'competitors'", "goNav('cardsync'", "goNav('growth'", "goNav('market'"];
+  // WB «Реклама» у крупных кабинетов не собирается (лимит fullstats WB), Ozon
+  // «Запросы» пусты без SKU-кампаний — у клиентов скрыты до доработки
+  const HIDE = ["goNav('fbs'", "'slots'", "'prod'", "'niche'", "'nichecalc'", "'visuals'", "'competitors'", "goNav('cardsync'", "goNav('growth'", "goNav('market'",
+                "goNavTool('tools','adv'", "goNavTool('toolsoz','phrases'"];
   document.querySelectorAll('#mainMenu a, #mainMenu button').forEach(el => {
     const oc = el.getAttribute('onclick') || '';
     if (_cab.feedback && el.closest('#navFeedback')) return;   // блок «Покупатели» клиенту открыт
@@ -144,6 +147,8 @@ function applyProfile() {
   if (!_cab.feedback) hideItem('navFeedback');
   hideItem('navOps');
   hideItem('ozSlots');
+  hideItem('toolAdv');
+  hideItem('ozPhrases');
   // склад/логистику у клиентов агентства не ведём — раздел «Склад» и складские инструменты скрыты
   ['navWarehouse', 'toolClusters', 'toolWhstocks', 'toolGeo', 'ozClusters'].forEach(hideItem);
   const mps = _cab.marketplaces || [];
@@ -3976,7 +3981,8 @@ function renderOzPromo() {
     <input id="ozPromoQ" class="form-control form-control-sm" style="max-width:240px" placeholder="Поиск: артикул или название" value="${esc(_ozPromoQ)}" oninput="ozPromoSearch(this.value)">
     <span class="small text-secondary ms-auto">${d.period ? `Период ${_pDate(d.period[0])}–${_pDate(d.period[1])} vs ${_pDate(d.prev[0])}–${_pDate(d.prev[1])}` : ''}${d.built ? ' · собрано ' + esc(d.built) : ''}</span>
   </div>`;
-  if (d.building) head += `<div class="alert alert-info py-2 small"><span class="spinner-border spinner-border-sm me-2"></span>Собираем данные: ${esc(d.progress || '')}. Отчёты рекламы Ozon строятся несколько минут — страница обновится сама.</div>`;
+  if (d.building && !d.rows) head += `<div class="alert alert-info py-2 small"><span class="spinner-border spinner-border-sm me-2"></span>Собираем данные: ${esc(d.progress || '')}. Отчёты рекламы Ozon строятся несколько минут — страница обновится сама.</div>`;
+  else if (d.building) head += `<div class="small text-secondary mb-2"><span class="spinner-border spinner-border-sm me-1" style="width:.7rem;height:.7rem"></span>Показаны данные${d.built ? ' от ' + esc(d.built) : ''}, свежие подтягиваются в фоне.</div>`;
   if (d.error) head += `<div class="alert alert-danger py-2 small">Ошибка сборки: ${esc(d.error)}</div>`;
   if ((d.warnings || []).length) head += `<div class="alert alert-warning py-2 small">Часть данных не загрузилась: ${esc(d.warnings.join('; '))}</div>`;
   if (!d.rows) { wrap.innerHTML = head; return; }
