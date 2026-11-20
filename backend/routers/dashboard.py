@@ -929,8 +929,10 @@ async def _build_weekly_orders():
             oz_rows, ym_rows = [], []
             oz_ok = ym_ok = False
             try:
-                import sales_history
-                hist = await asyncio.to_thread(sales_history.get_history, date_from_str, date_to_str)
+                import sales_history as _sh_fb   # локальный import под другим именем: иначе
+                # «sales_history» внутри функции становится локальной переменной и
+                # WB-блок выше падал (UnboundLocalError) → заказы брались из /orders
+                hist = await asyncio.to_thread(_sh_fb.get_history, date_from_str, date_to_str)
                 oz_rows = [{"date": h["date"], "offer_id": h["sku"], "qty": h["qty"], "revenue": h["revenue"],
                             "_db": True} for h in hist if h["platform"] == "Ozon"]
                 ym_rows = [{"date": h["date"], "shop_sku": h["sku"], "qty": h["qty"], "revenue": h["revenue"],

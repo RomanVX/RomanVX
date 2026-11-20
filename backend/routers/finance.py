@@ -1024,10 +1024,9 @@ async def wb_reconcile():
             "note": "Расхождение до 0,5% (или 100 ₽) считается совпадением."}
 
 
-@router.get("/wb/pnl")
-async def get_wb_pnl(
-    months: int = Query(default=6, ge=1, le=24),
-    refresh: bool = Query(default=False),
+async def _get_wb_pnl_raw(
+    months: int = 6,
+    refresh: bool = False,
 ):
     """P&L по месяцам. Сводные данные — сразу, COGS — после фоновой загрузки детального отчёта."""
     months = _cap_months(months)
@@ -1535,10 +1534,9 @@ async def wb_adv_debug():
     return out
 
 
-@router.get("/wb/unit")
-async def get_wb_unit(
-    months: int = Query(default=6, ge=1, le=12),
-    refresh: bool = Query(default=False),
+async def _get_wb_unit_raw(
+    months: int = 6,
+    refresh: bool = False,
 ):
     """Юнит-экономика WB по SKU × месяц.
 
@@ -3425,3 +3423,60 @@ async def get_ozon_reports():
 @router.get("/ym/reports")
 async def get_ym_reports():
     return {"reports": [], "message": "YM финансовые отчёты будут добавлены позже"}
+
+
+# ── «Последний точный результат»: пока детальный отчёт WB перекачивается
+# (после рестарта / раз в сутки, лимит WB 1 req/мин — до 15 мин), P&L и юнитка
+# показывают последние точные цифры, а не «собираются». Память + снапшот БД.
+_last_good: dict = {}
+
+
+def _lg_load(key: str):
+    if key not in _last_good:
+        import snapshot as _snap
+        _last_good[key] = _snap.load(key, None)
+    return _last_good.get(key)
+
+
+def _lg_save(key: str, val: dict) -> None:
+    _last_good[key] = val
+    import snapshot as _snap
+    _snap.save(key, val)
+
+
+@router.get("/wb/pnl")
+async def get_wb_pnl(
+    months: int = Query(default=6, ge=1, le=24),
+    refresh: bool = Query(default=False),
+):
+    """P&L по месяцам. Сводные данные — сразу, COGS — после фоновой загрузки детального отчёта."""
+    months = months if isinstance(months, int) else 6
+    refresh = refresh is True
+    res = await _get_wb_pnl_raw(months=months, refresh=refresh)
+    key = f"wb_pnl_last_{_cap_months(months)}"
+    if isinstance(res, dict) and res.get("source") == "detail":
+        await asyncio.to_thread(_lg_save, key, res)
+        return res
+    last = await asyncio.to_thread(_lg_load, key)
+    if last:
+        return {**last, "refreshing": True, "detail_fetching": res.get("detail_fetching", True)}
+    return res
+
+
+@router.get("/wb/unit")
+async def get_wb_unit(
+    months: int = Query(default=6, ge=1, le=12),
+    refresh: bool = Query(default=False),
+):
+    """Юнит-экономика WB по SKU × месяц (см. _get_wb_unit_raw)."""
+    months = months if isinstance(months, int) else 6
+    refresh = refresh is True
+    res = await _get_wb_unit_raw(months=months, refresh=refresh)
+    key = f"wb_unit_last_{_cap_months(months)}"
+    if isinstance(res, dict) and res.get("skus"):
+        await asyncio.to_thread(_lg_save, key, res)
+        return res
+    last = await asyncio.to_thread(_lg_load, key)
+    if last and last.get("skus"):
+        return {**last, "refreshing": True}
+    return res

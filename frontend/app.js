@@ -92,15 +92,12 @@ async function loadCabinetInfo() {
   // отзывы: ИИ-генерация/анализ стиля/автоответ — только при подключённом ИИ,
   // публикация — только с правом записи
   if (!_cab.ai) {
-    ['analyzeStyleBtn', 'genBatchBtn', 'batchPlatform', 'autoPassBtn', 'autoRevStatus'].forEach(id => {
-      const el = document.getElementById(id); if (el) el.style.display = 'none'; });
-    document.querySelectorAll('details[ontoggle*="loadReplyRules"]').forEach(el => { el.style.display = 'none'; });
-  }
-  if (_cab.feedback_write === false) { const el = document.getElementById('autoPassBtn'); if (el) el.style.display = 'none'; }
-  // без ИИ «Правила для ИИ» не нужны
-  if (!_cab.ai) {
-    document.getElementById('fbR')?.style.setProperty('display', 'none');
-    document.querySelectorAll('#mainMenu a').forEach(a => { if ((a.getAttribute('onclick') || '').includes("goFb('r')")) a.style.display = 'none'; });
+    ['analyzeStyleBtn', 'genBatchBtn', 'batchPlatform', 'autoPassBtn'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) { el.disabled = true; el.title = _AI_OFF_TIP; el.style.cursor = 'not-allowed'; el.style.pointerEvents = 'auto'; }
+    });
+    const st = document.getElementById('autoRevStatus');
+    if (st && !st.textContent) st.textContent = '🤖 ИИ-ответы на отзывы подключаются — генерация черновиков и автоответы станут активны после подключения ключа ИИ.';
   }
   // кабинет без WB (ключ ещё не подключён) — прячем WB и открываем Ozon
   if (!mps.includes('WB') && mps.includes('OZON')) {
@@ -6272,10 +6269,9 @@ function replyBlock(r) {
     </div>`;
   }
   const d = _drafts[r.id];
-  if (!d && !_fbAI()) return '';      // ИИ не подключён — генерировать нечем
   if (!d) {
     return `<div class="mt-2">
-      <button class="btn btn-sm btn-outline-info py-0" onclick="genDraft('${r.id}')">✨ Сгенерировать ответ</button>
+      <button class="btn btn-sm btn-outline-info py-0" onclick="genDraft('${r.id}')"${_offAttr(_fbAI(), _AI_OFF_TIP)}>✨ Сгенерировать ответ</button>
     </div>`;
   }
   if (d.status === 'approved') {
@@ -7761,9 +7757,17 @@ const _FB_HINTS = {
   r: 'Правила, которые ИИ обязан соблюдать в ответах на вопросы и в советах по рекламациям',
 };
 const _fbAI = () => !!(_cab && _cab.ai);
+const _AI_OFF_TIP = 'ИИ подключается — кнопка заработает после подключения ключа ИИ';
+const _W_OFF_TIP = 'Отправка ответов включается вместе с ИИ (сейчас кабинет в режиме просмотра)';
+// атрибуты для кнопки, которая пока не работает: видна, но неактивна, с пояснением
+const _offAttr = (on, tip) => on ? '' : ` disabled title="${tip}" style="pointer-events:auto;cursor:not-allowed"`;
+function _aiBanner() {
+  if (_fbAI()) return '';
+  return `<div class="alert alert-info py-2 small mb-2">🤖 <b>ИИ-ответы подключаются.</b> Черновики ответов на вопросы и отзывы по правилам команды, автоответы, анализ стиля и советы по рекламациям станут активны после подключения ключа ИИ.</div>`;
+}
 const _fbW = () => !_cab || _cab.feedback_write !== false;
 function _fbHint(t) {
-  if (_fbAI() && _fbW()) return _FB_HINTS[t] || '';
+  return _FB_HINTS[t] || '';
   return ({ q: 'Вопросы покупателей WB и Ozon без ответа — с товаром и ссылкой на карточку',
             c: 'Заявки на возврат WB за 14 дней: комментарий и фото покупателя, архив решений',
             r: '' })[t] || '';
@@ -7815,8 +7819,8 @@ function renderFbQ() {
   const qs = d.new || [];
   html += `<div class="d-flex align-items-center gap-2 mb-2"><b>Без ответа: ${qs.length}</b>
     <span class="small text-secondary">WB ${qs.filter(q => q.mp === 'WB').length} · Ozon ${qs.filter(q => q.mp === 'Ozon').length}${d.fetched ? ' · обновлено ' + esc(d.fetched) : ''}</span>
-    ${qs.length && _fbAI() ? `<button class="btn btn-sm btn-outline-primary ms-auto" onclick="fbDraftAll()">Черновики ИИ для всех без черновика</button>` : ''}</div>`;
-  if (!_fbW()) html += `<div class="small text-secondary mb-2">Режим просмотра: ответы покупателям даются в кабинете площадки (ссылка «открыть» у вопроса).</div>`;
+    ${qs.length ? `<button class="btn btn-sm btn-outline-primary ms-auto" onclick="fbDraftAll()"${_offAttr(_fbAI(), _AI_OFF_TIP)}>Черновики ИИ для всех без черновика</button>` : ''}</div>`;
+  html += _aiBanner();
   if (!qs.length) html += '<div class="text-secondary py-3">Новых вопросов нет 🎉</div>';
   qs.forEach((q, i) => {
     html += `<div class="card mb-2"><div class="card-body py-2">
@@ -7827,16 +7831,16 @@ function renderFbQ() {
         ${q.warned ? '<span class="badge bg-warning text-dark">подозрительное</span>' : ''}
         ${q.link ? `<a href="${esc(q.link)}" target="_blank" rel="noopener">открыть</a>` : ''}
       </div>
-      <div class="${_fbW() || _fbAI() ? 'mb-2' : ''}">${esc(q.text)}</div>
-      ${_fbW() || _fbAI() ? `<textarea id="fbqa${i}" class="form-control form-control-sm mb-2" rows="3" placeholder="Ответ покупателю…">${esc(q.draft || '')}</textarea>
+      <div class="mb-2">${esc(q.text)}</div>
+      <textarea id="fbqa${i}" class="form-control form-control-sm mb-2" rows="3" placeholder="${_fbAI() ? 'Ответ покупателю…' : 'Здесь появится черновик ответа ИИ'}">${esc(q.draft || '')}</textarea>
       <div class="d-flex gap-2 flex-wrap">
-        ${_fbAI() ? `<button class="btn btn-sm btn-outline-secondary" onclick="fbDraft(${i})" ${_fbBusy['q' + i] ? 'disabled' : ''}>${_fbBusy['q' + i] ? '<span class="spinner-border spinner-border-sm"></span> Пишу…' : (q.draft ? '↻ Переписать ИИ' : '✎ Черновик ИИ')}</button>` : ''}
-        ${_fbW() ? `<button class="btn btn-sm btn-primary" onclick="fbSend(${i})">Отправить ответ</button>
-        ${q.mp === 'WB' ? `<button class="btn btn-sm btn-outline-danger ms-auto" onclick="fbSend(${i}, true)" title="Вопрос скроется с сайта; WB требует указать причину в поле ответа">Отклонить вопрос</button>` : ''}` : ''}
-      </div>` : ''}</div></div>`;
+        <button class="btn btn-sm btn-outline-secondary" onclick="fbDraft(${i})" ${_fbBusy['q' + i] ? 'disabled' : ''}${_offAttr(_fbAI(), _AI_OFF_TIP)}>${_fbBusy['q' + i] ? '<span class="spinner-border spinner-border-sm"></span> Пишу…' : (q.draft ? '↻ Переписать ИИ' : '✎ Черновик ИИ')}</button>
+        <button class="btn btn-sm btn-primary" onclick="fbSend(${i})"${_offAttr(_fbW(), _W_OFF_TIP)}>Отправить ответ</button>
+        ${q.mp === 'WB' ? `<button class="btn btn-sm btn-outline-danger ms-auto" onclick="fbSend(${i}, true)" title="Вопрос скроется с сайта; WB требует указать причину в поле ответа"${_offAttr(_fbW(), _W_OFF_TIP)}>Отклонить вопрос</button>` : ''}
+      </div></div></div>`;
   });
   if ((d.answered || []).length) {
-    html += `<details class="mt-3"><summary class="text-secondary">Последние отвеченные WB (${d.answered.length})${_fbAI() ? ' — на них ИИ учится стилю' : ''}</summary>`;
+    html += `<details class="mt-3"><summary class="text-secondary">Последние отвеченные WB (${d.answered.length}) — на них ИИ учится стилю</summary>`;
     d.answered.slice(0, 50).forEach(q => {
       html += `<div class="border-bottom py-2 small"><div class="text-secondary">${esc(q.date)} · ${esc(q.art || String(q.sku))}</div><div>❓ ${esc(q.text)}</div><div class="text-secondary">↳ ${esc(q.answer)}</div></div>`;
     });
@@ -7874,7 +7878,7 @@ async function fbSend(i, reject) {
 function renderFbC() {
   const wrap = document.getElementById('fbWrap'); const d = _fbC;
   if (!wrap || !d) return;
-  let html = _fbErrs(d.errors);
+  let html = _fbErrs(d.errors) + _aiBanner();
   const op = d.open || [];
   html += `<div class="d-flex align-items-center gap-2 mb-2"><b>На рассмотрении: ${op.length}</b><span class="small text-secondary">${d.fetched ? 'обновлено ' + esc(d.fetched) : ''}</span></div>`;
   if (!op.length) html += '<div class="text-secondary py-3">Открытых заявок нет</div>';
@@ -7893,12 +7897,12 @@ function renderFbC() {
       <div class="d-flex flex-wrap gap-2 mb-2">${(c.photos || []).map(p => `<a href="${esc(p)}" target="_blank" rel="noopener"><img src="${esc(p)}" style="height:90px;border-radius:6px;object-fit:cover" loading="lazy"></a>`).join('')}
         ${(c.videos || []).map(v => `<a href="${esc(v)}" target="_blank" rel="noopener" class="btn btn-sm btn-outline-secondary align-self-center">▶ видео</a>`).join('')}</div>
       ${a ? `<div class="alert alert-${vcol} py-2 small mb-2"><b>ИИ советует: ${esc(vtxt)}</b>${a.action ? ' — ' + esc((c.actions.find(x => x.code === a.action) || {}).title || a.action) : ''} <span class="text-secondary">(уверенность: ${esc(a.confidence || '—')}, ${esc(a.at || '')})</span><div class="mt-1">${esc(a.reason || '')}</div>${a.note ? `<div class="text-danger">${esc(a.note)}</div>` : ''}</div>` : ''}
-      ${_fbAI() || _fbW() ? `<div class="d-flex gap-2 flex-wrap align-items-start">
-        ${_fbAI() ? `<button class="btn btn-sm btn-outline-secondary" onclick="fbAdvise(${i})" ${_fbBusy['c' + i] ? 'disabled' : ''}>${_fbBusy['c' + i] ? '<span class="spinner-border spinner-border-sm"></span> Анализирую…' : (a ? '↻ Спросить ИИ ещё раз' : '🔍 Совет ИИ')}</button>` : ''}
-        ${!_fbW() ? '' : (c.actions || []).length ? `<select id="fbca${i}" class="form-select form-select-sm" style="max-width:360px"><option value="" ${a && a.action ? '' : 'selected'}>— выберите решение —</option>${c.actions.map(x => `<option value="${x.code}" ${a && a.action === x.code ? 'selected' : ''}>${esc(x.title)}</option>`).join('')}</select>
+      <div class="d-flex gap-2 flex-wrap align-items-start">
+        <button class="btn btn-sm btn-outline-secondary" onclick="fbAdvise(${i})" ${_fbBusy['c' + i] ? 'disabled' : ''}${_offAttr(_fbAI(), _AI_OFF_TIP)}>${_fbBusy['c' + i] ? '<span class="spinner-border spinner-border-sm"></span> Анализирую…' : (a ? '↻ Спросить ИИ ещё раз' : '🔍 Совет ИИ')}</button>
+        ${(c.actions || []).length ? `<select id="fbca${i}" class="form-select form-select-sm" style="max-width:360px"><option value="" ${a && a.action ? '' : 'selected'}>— выберите решение —</option>${c.actions.map(x => `<option value="${x.code}" ${a && a.action === x.code ? 'selected' : ''}>${esc(x.title)}</option>`).join('')}</select>
         <textarea id="fbcc${i}" class="form-control form-control-sm" rows="2" style="max-width:420px" placeholder="Комментарий покупателю (для «отклонить со своим комментарием»)">${esc((a && a.comment) || '')}</textarea>
-        <button class="btn btn-sm btn-primary" onclick="fbClaimSend(${i})">Отправить решение</button>` : '<span class="small text-secondary">WB не даёт действий по этой заявке</span>'}
-      </div>` : ''}</div></div>`;
+        <button class="btn btn-sm btn-primary" onclick="fbClaimSend(${i})"${_offAttr(_fbW(), _W_OFF_TIP)}>Отправить решение</button>` : '<span class="small text-secondary">WB не даёт действий по этой заявке</span>'}
+      </div></div></div>`;
   });
   if ((d.archive || []).length) {
     html += `<details class="mt-3"><summary class="text-secondary">Архив (${d.archive.length})</summary><div class="table-responsive"><table class="table table-sm small"><thead><tr><th>Дата</th><th>Товар</th><th>Комментарий</th><th>Решение</th><th>Статус товара</th></tr></thead><tbody>`;

@@ -285,7 +285,18 @@ async def _funnel_daily():
         try:
             import sales_history
             deep = not sales_history.funnel_fresh(24 * 14)
-            res = await wb_funnel.fetch(92 if deep else 7)
+            days = 92 if deep else 7
+            # сервис простаивал (переезд, сон) — окно от последнего покрытого дня,
+            # иначе в «Заказах» остаётся дыра: 7-дневный прогон её не закроет
+            try:
+                from datetime import date as _d
+                hi = str(sales_history._funnel_state().get("hi") or "")[:10]
+                if hi and not deep:
+                    gap = (_d.today() - _d.fromisoformat(hi)).days
+                    days = max(7, min(92, gap + 7))
+            except Exception:
+                pass
+            res = await wb_funnel.fetch(days)
             if res.get("error"):
                 log.warning("funnel: %s", res["error"])
             else:
