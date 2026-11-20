@@ -975,6 +975,8 @@ html.client-ui .mp-box .mp-input:-webkit-autofill:focus {
 .cl-mark { display: inline-flex; align-items: center; justify-content: center; width: 56px; height: 56px;
   border-radius: 12px; background: var(--gold-grad); color: #fff; font: 800 20px 'Manrope', sans-serif; letter-spacing: .04em; }
 .cl-mark-sm { width: 38px; height: 38px; font-size: 14px; border-radius: 9px; }
+/* название кабинета на экране входа: фон всегда тёмный — текст светлый */
+.mp-box .cl-brand { color: rgba(255, 255, 255, .9); }
 html.client-ui .cab-mono { background: var(--gold-grad); }
 html.client-ui .mp-box { background: rgba(18, 20, 40, .72); border-color: rgba(129, 140, 248, .22); }
 html.client-ui .cab-mono { box-shadow: 0 6px 18px rgba(79, 70, 229, .35); }

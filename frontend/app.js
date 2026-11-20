@@ -99,7 +99,16 @@ async function loadCabinetInfo() {
     });
   }
 }
-document.addEventListener('DOMContentLoaded', loadCabinetInfo);
+let _cabPromise = null;
+document.addEventListener('DOMContentLoaded', () => { _cabPromise = loadCabinetInfo(); });
+
+// экран выбора кабинета — только когда есть из чего выбирать; на своём домене
+// клиента (tl./aurora.marketpartners.ru) кабинет один — сразу внутрь
+async function showCabinetPick() {
+  try { if (_cabPromise) await _cabPromise; } catch (e) {}
+  if (_cab && !(_cab.other && _cab.other.url)) { enterCabinet(); return; }
+  showOverlay('cabinet');
+}
 
 // Выпадающие меню не должны уезжать за край экрана: меню аккаунта
 // выровнено вправо, но если шапка перенеслась и кнопка оказалась слева —
@@ -219,7 +228,7 @@ async function doLogin() {
     }
     _me = await r.json();
     applyRole();
-    showOverlay('cabinet');
+    showCabinetPick();
   } catch (e) {
     err.textContent = 'Сервер недоступен: ' + e.message;
   }
@@ -5541,7 +5550,7 @@ document.addEventListener('DOMContentLoaded', () => {
       showOverlay('app');
       initDashboard();
     } else {
-      showOverlay('cabinet');
+      showCabinetPick();
     }
   }).catch(() => showOverlay('login'));
 });
