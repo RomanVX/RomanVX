@@ -34,6 +34,7 @@ def _apply(data: dict) -> None:
     _cat.CATALOG.clear(); _cat.CATALOG.update(data.get("catalog") or {})
     _cat._CATALOG_UP.clear()
     _cat._CATALOG_UP.update({k.upper(): v for k, v in _cat.CATALOG.items()})
+    _cat.CATALOG_VER = getattr(_cat, "CATALOG_VER", 0) + 1
     brands: dict[str, int] = {}
     for v in _cat.CATALOG.values():
         b = v.get("brand") or "Прочее"

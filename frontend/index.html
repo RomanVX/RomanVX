@@ -617,6 +617,9 @@
         <span class="mp-selector-dot" style="background:#b45309"></span>ЯМ
       </div>
       <div id="unitMonthBtns" class="d-flex gap-1 flex-wrap"></div>
+      <input id="unitQ" type="search" class="form-control form-control-sm" style="max-width:260px"
+             placeholder="Артикул или название, через запятую" oninput="setUnitQ(this.value)">
+      <span id="unitQInfo" class="text-secondary small"></span>
       <div class="d-flex align-items-center gap-1 ms-2">
         <span class="text-secondary small">Налог</span>
         <input id="unitTaxPct" type="number" min="0" max="30" step="0.5" placeholder="—"
@@ -641,6 +644,6 @@
 
 <script src="vendor/bootstrap.bundle.min.js"></script>
 <script src="vendor/chart.umd.min.js"></script>
-<script src="app.js?v=283"></script>
+<script src="app.js?v=284"></script>
 </body>
 </html>

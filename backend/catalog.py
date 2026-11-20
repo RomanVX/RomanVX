@@ -305,6 +305,11 @@ def canon(article) -> str:
     return a
 
 
+# растёт при каждой заливке каталога (catalog_auto._apply) — кеши, где
+# зашиты бренд/название/ссылка, сверяют её и пересчитываются
+CATALOG_VER = 0
+
+
 def lookup(article: str) -> dict[str, str]:
     """Return {name, brand, group} from CATALOG or fallback (без учёта регистра)."""
     a = _norm(article)

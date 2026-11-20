@@ -158,6 +158,17 @@ function applyProfile() {
   });
 }
 
+// Фильтр по артикулу: «174205-91, 20468» — несколько через запятую; ищет
+// подстроку в артикуле, nmId/SKU и названии (без учёта регистра)
+function _artTerms(q) {
+  return String(q || '').toLowerCase().split(/[,;\n]+/).map(t => t.trim()).filter(Boolean);
+}
+function _artMatch(terms, ...fields) {
+  if (!terms.length) return true;
+  const hay = fields.map(f => f == null ? '' : String(f)).join(' ').toLowerCase();
+  return terms.some(t => hay.includes(t));
+}
+
 function articleGroup(r) {
   const sku = r.supplierArticle || r.sku || '';
   for (const sg of SUBGROUPS) if (sg.skus.includes(sku)) return sg.name;
@@ -2606,6 +2617,32 @@ async function loadUnitEconomics() {
   }
 }
 
+// фильтр по артикулу: товары + итоги, пересчитанные по найденным товарам
+let _unitQ = '', _unitQTimer = null;
+function setUnitQ(v) {
+  _unitQ = v;
+  clearTimeout(_unitQTimer);
+  _unitQTimer = setTimeout(renderUnitTable, 250);
+}
+function _unitView() {
+  const all = _unitData.skus || [];
+  const terms = _artTerms(_unitQ);
+  if (!terms.length) return { skus: all, totals: _unitData.totals || {}, total: all.length };
+  const skus = all.filter(r => _artMatch(terms, r.sku, r.nmId, r.name));
+  const totals = {};
+  skus.forEach(r => Object.entries(r.months || {}).forEach(([mk, c]) => {
+    const t = totals[mk] = totals[mk] || {};
+    Object.keys(c).forEach(k => {
+      if (k === 'fbs' && c.fbs) {
+        t.fbs = t.fbs || {};
+        Object.keys(c.fbs).forEach(f => { t.fbs[f] = (t.fbs[f] || 0) + (c.fbs[f] || 0); });
+      } else if (typeof c[k] === 'number' && k !== 'margin') t[k] = (t[k] || 0) + c[k];
+    });
+  }));
+  Object.values(totals).forEach(t => { if (t.revenue) t.margin = Math.round((t.gross || 0) / t.revenue * 100); });
+  return { skus, totals, total: all.length };
+}
+
 function setUnitMetric(m) {
   _unitMetric = m;
   renderUnitTable();
@@ -2687,6 +2724,12 @@ function renderUnitTable() {
     }
   }
 
+  const qInfo = document.getElementById('unitQInfo');
+  if (qInfo) {
+    const v = _artTerms(_unitQ).length ? _unitView() : null;
+    qInfo.textContent = v ? `найдено ${v.skus.length} из ${v.total}` : '';
+  }
+
   if (_unitMode === 'month') { renderUnitMonth(); return; }
   renderUnitDynamics();
 }
@@ -2699,7 +2742,7 @@ function renderUnitPerUnit() {
   const wrap = document.getElementById('unitTableWrap');
   const months = _unitData.months || [];
   const selMonths = _unitSelMonths(months);
-  const skus = _unitData.skus || [];
+  const skus = _unitView().skus;
   _perUnitBase = {};
 
   const rows = [];
@@ -2819,8 +2862,9 @@ function renderUnitMonth() {
   const wrap = document.getElementById('unitTableWrap');
   const months = _unitData.months || [];
   const selMonths = _unitSelMonths(months);
-  const skus = _unitData.skus || [];
-  const totalsCell = _unitCellSum(_unitData.totals || {}, selMonths);
+  const _uv = _unitView();
+  const skus = _uv.skus;
+  const totalsCell = _unitCellSum(_uv.totals, selMonths);
 
   const isOz = _unitMp === 'OZON';
   const isYm = _unitMp === 'YM';
@@ -2962,8 +3006,9 @@ function renderUnitDynamics() {
     `<button class="btn btn-sm btn-outline-info ${k === _unitMetric ? 'active' : ''}" onclick="setUnitMetric('${k}')">${label}</button>`).join('') + `</div>`;
 
   const months = _unitData.months || [];
-  const skus = _unitData.skus || [];
-  const totals = _unitData.totals || {};
+  const _uv = _unitView();
+  const skus = _uv.skus;
+  const totals = _uv.totals;
   const SEP = 'border-left:2px solid var(--sep);';
 
   let html = `<div class="table-responsive"><table class="table table-sm align-middle mb-0 text-nowrap" style="font-size:0.85rem">`;
@@ -5335,19 +5380,37 @@ function _prodChips(list, kind) {
   return list.map(p => `<span style="${style};border-radius:7px;padding:2px 8px;font-size:.76rem;display:inline-block;margin:2px 3px 2px 0;white-space:nowrap">${esc(p.tag)} · ${p.pct}%</span>`).join('');
 }
 
+let _prodQ = '', _prodQTimer = null;
+function setProdQ(v) {
+  _prodQ = v;
+  clearTimeout(_prodQTimer);
+  _prodQTimer = setTimeout(() => {
+    renderProductolog();
+    const el = document.getElementById('prodQ');      // таблица перерисована — вернуть курсор в поле
+    if (el) { el.focus(); el.setSelectionRange(v.length, v.length); }
+  }, 250);
+}
+
 function renderProductolog() {
   if (_toolActive !== 'prod') return;
   const wrap = document.getElementById('toolsWrap');
   if (!wrap || !_prodData) return;
   const d = _prodData;
-  const items = d.items || [];
-  if (!items.length) {
+  const allItems = d.items || [];
+  const terms = _artTerms(_prodQ);
+  const items = allItems.filter(it => _artMatch(terms, it.sku, it.name));
+  if (!allItems.length) {
     wrap.innerHTML = `<div class="alert alert-info">${d.error ? '⚠ ' + d.error : 'Отзывов WB пока мало для анализа — сводка появится, когда накопятся.'}</div>`;
     return;
   }
   let html = '';
-  html += `<div class="d-flex justify-content-end mb-2">
-    <a href="/api/tools/productolog/export" class="btn btn-sm btn-outline-success" download>⬇ Экспорт в Excel</a></div>`;
+  const expQ = new URLSearchParams({ q: _prodQ || '', brand: getGlobalBrand() || '' }).toString();
+  html += `<div class="d-flex align-items-center gap-2 mb-2 flex-wrap">
+    <input id="prodQ" type="search" class="form-control form-control-sm" style="max-width:320px"
+           placeholder="Артикул или название, можно несколько через запятую"
+           value="${esc(_prodQ)}" oninput="setProdQ(this.value)">
+    <span class="text-secondary small">${terms.length ? `найдено ${items.length} из ${allItems.length}` : `${allItems.length} арт.`}</span>
+    <a href="/api/tools/productolog/export?${expQ}" class="btn btn-sm btn-outline-success ms-auto" download>⬇ Экспорт в Excel</a></div>`;
   if ((d.pending > 0 || d.building) && !/ANTHROPIC|ключ/i.test(d.error || '')) {
     html += `<div class="alert alert-info py-2 small">⏳ Анализируем отзывы (${d.progress || `осталось ${d.pending} арт.`}) — по 4 товара сразу, страница обновится сама.</div>`;
     if (!_prodTimer) _prodTimer = setTimeout(() => { _prodTimer = null; if (currentTab === 'tools' && _toolActive === 'prod') loadProductolog('poll'); }, 15000);
@@ -5401,6 +5464,7 @@ function renderProductolog() {
     </tr>`;
     return row;
   };
+  if (!items.length) html += `<tr><td colspan="6" class="text-center text-secondary py-4">По запросу «${esc(_prodQ)}» артикулов нет</td></tr>`;
   orderedGroups.forEach(([gname, list]) => {
     html += `<tr class="table-secondary"><td colspan="6" style="padding:6px 12px"><strong>${gname}</strong> <span class="text-secondary small">(${list.length} арт.)</span></td></tr>`;
     list.forEach(it => { html += rowHtml(it); });

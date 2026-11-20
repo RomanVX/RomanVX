@@ -254,6 +254,7 @@ async def get_productolog(refresh: bool = Query(default=False)):
     hit = _prod_cache.get("v")
     if hit and hit[0] == ver and not refresh:
         res = hit[1]
+        _prod_enrich(res["items"])
         return {**res, "building": _building, "progress": _progress, "error": _error}
     # статистика по артикулам — агрегатом в базе (раньше читались все тексты
     # 90+ тыс. отзывов на каждый запрос: 8–15 с)
@@ -262,13 +263,14 @@ async def get_productolog(refresh: bool = Query(default=False)):
         "SELECT sku, COUNT(*), AVG(rating), "
         "SUM(CASE WHEN rating >= 4 THEN 1 ELSE 0 END), "
         "SUM(CASE WHEN rating = 3 THEN 1 ELSE 0 END), "
-        "SUM(CASE WHEN text IS NOT NULL AND text != '' THEN 1 ELSE 0 END) "
+        "SUM(CASE WHEN text IS NOT NULL AND text != '' THEN 1 ELSE 0 END), "
+        "MAX(name), MAX(brand) "
         "FROM reviews WHERE platform = 'WB' AND sku IS NOT NULL AND sku != '' GROUP BY sku")
     rows = await asyncio.to_thread(
         db.fetchall, "SELECT sku, data, built_at FROM productolog")
     analyzed = {r[0]: (json.loads(r[1] or "{}"), r[2]) for r in rows}
     items = []
-    for sku, n, avg, pos_n, neu_n, n_texts in stat_rows:
+    for sku, n, avg, pos_n, neu_n, n_texts, rv_name, rv_brand in stat_rows:
         n, pos_n, neu_n, n_texts = int(n or 0), int(pos_n or 0), int(neu_n or 0), int(n_texts or 0)
         st = {"count": n, "avg": round(float(avg or 0), 2),
               "pos": round(pos_n / n * 100) if n else 0,
@@ -276,13 +278,13 @@ async def get_productolog(refresh: bool = Query(default=False)):
               "neg": round((n - pos_n - neu_n) / n * 100) if n else 0}
         if st["count"] < _MIN_TEXTS:
             continue
-        info = _cat.lookup(sku)
+        _prod_rv[sku] = (rv_name or "", rv_brand or "")
         a, built = analyzed.get(sku, ({}, None))
         # анализировать можно только по ТЕКСТОВЫМ отзывам; если их мало —
         # товар не «ждёт анализа», а просто не подлежит ему (звёзды без слов)
         analyzable = n_texts >= _MIN_TEXTS
         items.append({
-            "sku": sku, "name": info.get("name", sku), "group": info.get("brand", ""),
+            "sku": sku, "name": sku, "group": "",
             **st,
             "pluses": a.get("pluses") or [],
             "minuses": a.get("minuses") or [],
@@ -290,8 +292,9 @@ async def get_productolog(refresh: bool = Query(default=False)):
             "method": a.get("method") or ("ИИ" if a else ""),
             "analyzed": bool(a), "analyzable": analyzable,
             "text_reviews": n_texts, "built_at": (built or "")[:10],
-            "wb_link": _wb_link(sku),
+            "wb_link": "",
         })
+    _prod_enrich(items)
     # проблемные сверху: по ЧИСЛУ негативных отзывов (а не доле — иначе наверху
     # товар с 4 отзывами и 75% негатива), затем количество отзывов
     items.sort(key=lambda x: (-round(x["neg"] * x["count"] / 100), -x["count"]))
@@ -307,17 +310,38 @@ async def get_productolog(refresh: bool = Query(default=False)):
 
 _prod_cache: dict = {}
 _prod_version = 0
+_prod_rv: dict = {}      # sku → (название, бренд) из самих отзывов WB — запасной вариант
+
+
+def _prod_enrich(items: list) -> None:
+    """Название, бренд и ссылка на карточку — по каталогу НА МОМЕНТ ЗАПРОСА.
+    Раньше зашивались в кеш при сборке: если сборка шла сразу после рестарта,
+    пока каталог кабинета ещё не залит, почти все товары попадали в «Прочее»
+    и оставались там до следующей синхронизации отзывов."""
+    import catalog as _cat
+    for it in items:
+        sku = it["sku"]
+        hit = _cat.lookup(sku)
+        rv_name, rv_brand = _prod_rv.get(sku, ("", ""))
+        known = (hit.get("brand") or "Прочее") != "Прочее"
+        it["name"] = (hit.get("name") if known else "") or rv_name or sku
+        it["group"] = hit.get("brand") if known else (rv_brand or "Прочее")
+        it["wb_link"] = _wb_link(sku)
 
 
 _ART_TO_NM: dict = {}
+_ART_TO_NM_VER = -1
 
 
 def _wb_link(sku: str) -> str:
     """Ссылка на карточку WB по артикулу (через nmId из каталога)."""
-    global _ART_TO_NM
-    if not _ART_TO_NM:
+    global _ART_TO_NM, _ART_TO_NM_VER
+    import catalog as _cat
+    cver = getattr(_cat, "CATALOG_VER", 0)
+    if not _ART_TO_NM or _ART_TO_NM_VER != cver:
+        _ART_TO_NM = {}
+        _ART_TO_NM_VER = cver
         try:
-            import catalog as _cat
             m = getattr(_cat, "WB_ID_TO_ART", {}) or {}
             # nmId→art  ⇒  art(upper)→nmId (первый выигрывает)
             for nm, art in m.items():
@@ -340,7 +364,7 @@ def _prod_reason(it: dict) -> str:
 
 
 @router.get("/productolog/export")
-async def export_productolog():
+async def export_productolog(q: str = Query(default=""), brand: str = Query(default="")):
     """Выгрузка продуктолога в Excel: лист 1 — сводка с обоснованием,
     лист 2 — подробные плюсы/минусы/рекомендации."""
     import io
@@ -351,6 +375,13 @@ async def export_productolog():
 
     data = await get_productolog(refresh=False)
     items = data.get("items", [])
+    if brand.strip():
+        want = brand.strip().lower()
+        items = [it for it in items if str(it.get("group") or "").lower() == want]
+    terms = [t.strip().lower() for t in re.split(r"[,;\n]+", q) if t.strip()]
+    if terms:
+        items = [it for it in items
+                 if any(t in f"{it.get('sku','')} {it.get('name','')}".lower() for t in terms)]
 
     # нейтральный порядок — по числу отзывов (сортировку делает сам пользователь)
     verdict_items = sorted(items, key=lambda x: -int(x.get("count") or 0))
