@@ -185,6 +185,17 @@
         <button class="mp-refresh" onclick="reloadOrders()" title="Обновить"><i class="bi bi-arrow-clockwise"></i></button>
       </div>
     </div>
+    <details class="ord-legend mb-2" id="ordersLegend" open ontoggle="try{localStorage.setItem('mp_ordLegend',this.open?'1':'0')}catch(e){}">
+      <summary class="small text-secondary" style="cursor:pointer">Как читать таблицу</summary>
+      <div class="small text-secondary mt-1" style="max-width:980px;line-height:1.5">
+        Столбцы — недели (Пн–Вс), в каждой: <b>₽</b> — сумма заказов, <b>шт</b> — количество заказанных товаров (как «Заказали» в воронке личного кабинета WB). Остатков на складе здесь нет.<br>
+        <b>Первая строка</b> — итог по площадке за неделю. <b>Ниже — бренды</b>: в скобках число артикулов, нажмите ▶ на строке бренда, чтобы раскрыть каждый артикул.<br>
+        <b>▲▼ %</b> — изменение суммы к прошлой неделе; <b>«· идёт»</b> — неделя ещё не закончилась.
+        <b>«↩ % отмен»</b> (WB, по неделям) — сколько от суммы заказов недели покупатели отменили или вернули (по дате отмены/возврата, как в воронке WB).<br>
+        <b>Кольца внизу</b> — доля каждого бренда в заказах недели. «День / Неделя / Месяц» справа меняют шаг таблицы, «Wildberries / Ozon / Общий» — площадку.
+      </div>
+    </details>
+    <script>try{if(localStorage.getItem('mp_ordLegend')==='0')document.getElementById('ordersLegend').open=false}catch(e){}</script>
     <div class="card border-0 bg-card mb-3" id="ordersWeekCard">
       <div class="card-body p-0">
         <div class="table-responsive" id="ordersTableWrap">
@@ -644,6 +655,6 @@
 
 <script src="vendor/bootstrap.bundle.min.js"></script>
 <script src="vendor/chart.umd.min.js"></script>
-<script src="app.js?v=291"></script>
+<script src="app.js?v=292"></script>
 </body>
 </html>
