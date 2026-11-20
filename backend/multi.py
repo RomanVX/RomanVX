@@ -107,10 +107,17 @@ _ALIASES = {a.split(":")[0].strip().lower(): a.split(":")[1].strip().lower()
             for a in os.getenv("MULTI_ALIASES", "aurora:avr,technolux:tl").split(",") if ":" in a}
 
 
+# публичные адреса кабинетов: карточка соседнего кабинета на своём домене ведёт туда
+_DOMAINS = {k.strip(): v.strip() for k, v in
+            (x.split("=", 1) for x in os.getenv(
+                "MULTI_DOMAINS", "tl=tl.marketpartners.ru,avr=aurora.marketpartners.ru").split(",")
+             if "=" in x)}
+
+
 def _pick(scope) -> tuple[str, bool]:
     """(кабинет, закреплён_адресом). Свой домен (tl./aurora.marketpartners.ru:
-    Caddy шлёт X-MP-Cab и X-Forwarded-Host) намертво открывает свой кабинет —
-    без карточки соседнего; на общем адресе Render выбор по cookie mp_cab."""
+    Caddy шлёт X-MP-Cab и X-Forwarded-Host) открывает свой кабинет; переход в
+    соседний — на его домен. На общем адресе Render выбор по cookie mp_cab."""
     headers = {k.decode().lower(): v.decode() for k, v in scope.get("headers") or []}
     v = headers.get("x-mp-cab", "").strip().lower()
     v = _ALIASES.get(v, v)
@@ -157,8 +164,10 @@ async def app(scope, receive, send):
     # переход в кабинет: /cab/<id>[/...] → cookie + редирект на главную
     cab, locked = _pick(scope)
     m = re.match(r"^/cab/([a-z0-9_-]+)/?$", path)
-    if m and locked:                       # на своём домене кабинет не переключается
-        await _plain(send, 302, b"", [(b"location", b"/?enter=1")])
+    if m and locked:          # свой домен: cookie не поможет — уводим на домен соседа
+        dom = _DOMAINS.get(m.group(1)) if m.group(1) != cab else None
+        loc = f"https://{dom}/?enter=1" if dom else "/?enter=1"
+        await _plain(send, 302, b"", [(b"location", loc.encode())])
         return
     if m and m.group(1) in CHILDREN:
         qs = scope.get("query_string", b"").decode()
@@ -183,9 +192,7 @@ async def app(scope, receive, send):
     if qs:
         url += "?" + qs
     hdrs = [(k.decode(), v.decode("latin-1")) for k, v in scope.get("headers") or []
-            if k.decode().lower() not in _HOP and k.decode().lower() != "x-mp-locked"]
-    if locked:
-        hdrs.append(("x-mp-locked", "1"))   # кабинет скрывает карточку соседнего
+            if k.decode().lower() not in _HOP]
     client_ip = (scope.get("client") or ["", 0])[0]
     hdrs.append(("x-forwarded-for", client_ip))
     host = next((v.decode() for k, v in scope.get("headers") or [] if k.lower() == b"host"), "")

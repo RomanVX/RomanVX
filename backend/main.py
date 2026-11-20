@@ -650,7 +650,7 @@ def _cfg_fill() -> bool:
 
 
 @app.get("/api/cabinet")
-def get_cabinet(request: Request):
+def get_cabinet():
     """Конфигурация кабинета: имя, площадки, группировки, ссылка на второй кабинет."""
     from config import (CABINET, CABINET_NAME, CABINET_MARKETPLACES,
                         OTHER_CABINET_URL, OTHER_CABINET_NAME)
@@ -678,10 +678,7 @@ def get_cabinet(request: Request):
     if not out.get("brand_order"):
         import catalog as _c
         out["brand_order"] = [b for b in _c.BRAND_ORDER if b and b != "Прочее"]
-    # на собственном домене кабинета (tl./aurora.marketpartners.ru) соседний
-    # кабинет того же сервера не показываем — клиенты не видят друг друга
-    locked = request.headers.get("x-mp-locked") == "1" and OTHER_CABINET_URL.startswith("/cab/")
-    if OTHER_CABINET_URL and not locked:
+    if OTHER_CABINET_URL:
         out["other"] = {"name": OTHER_CABINET_NAME, "url": OTHER_CABINET_URL,
                         "mono": OTHER_CABINET_MONO or _mono(OTHER_CABINET_NAME)}
     return out

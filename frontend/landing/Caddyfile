@@ -32,8 +32,8 @@
         header_up Host mpfit-dashboard.onrender.com
     }
 }
-# tl-dashboard держит два кабинета (backend/multi.py): какой открыть, сервер
-# понимает по X-MP-Cab — на своём домене соседний кабинет не виден
+# tl-dashboard держит два кабинета одного владельца (backend/multi.py): какой
+# открыть, сервер понимает по X-MP-Cab; карточка соседнего ведёт на его домен
 (render_tl) {
     reverse_proxy 127.0.0.1:10443 {
         transport http {
