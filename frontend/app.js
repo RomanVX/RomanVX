@@ -279,7 +279,32 @@ function _gbKey() { return 'mp_brand_' + ((_cab && _cab.id) || ''); }
 function getGlobalBrand() { try { return localStorage.getItem(_gbKey()) || ''; } catch (e) { return ''; } }
 function setGlobalBrand(b) {
   try { b ? localStorage.setItem(_gbKey(), b) : localStorage.removeItem(_gbKey()); } catch (e) {}
+  // перезагрузка нужна (все кеши разделов — под старый бренд), но открыть надо
+  // тот же раздел/инструмент, а не «Заказы»
+  try { sessionStorage.setItem('mp_nav', JSON.stringify(_navSnapshot())); } catch (e) {}
   location.reload();
+}
+function _navSnapshot() {
+  const act = document.querySelector('#mainMenu .mp-menu-item.active');
+  return { tab: currentTab, tool: _toolActive, oztool: _ozTool, fb: _fbTab,
+           nav: act ? act.id : null, ordMp: _ordersMp, ordMode: _ordersMode };
+}
+function _navRestore(s) {
+  if (s.tab === 'tools' && s.tool) {
+    dirty.tools = false; switchTab('tools', null); _toolActive = null; setTool(s.tool);
+  } else if (s.tab === 'toolsoz' && s.oztool) {
+    dirty.toolsoz = false; switchTab('toolsoz', null); _ozTool = null; setOzTool(s.oztool);
+  } else if (s.tab === 'feedback') {
+    dirty.feedback = false; switchTab('feedback', null); setFb(s.fb || 'q', true);
+  } else {
+    if (s.tab === 'salesan' && s.ordMp && s.ordMp !== _ordersMp) {
+      _ordersMp = s.ordMp;
+      ['WB', 'OZON', 'YM', 'TOTAL'].forEach(m => document.getElementById('ordMp' + m)?.classList.toggle('active', m === s.ordMp));
+    }
+    switchTab(s.tab, s.tab === 'salesan' ? document.querySelector('#mainTabs .nav-link') : null);
+    if (s.tab === 'salesan' && s.ordMode && s.ordMode !== _ordersMode) setOrdersMode(s.ordMode);
+  }
+  if (s.nav) markNav(s.nav);
 }
 function initGlobalBrand() {
   const sel = document.getElementById('globalBrand');
@@ -5495,7 +5520,13 @@ function renderProductolog() {
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 function initDashboard() {
-  switchTab('salesan', document.querySelector('#mainTabs .nav-link'));
+  let saved = null;
+  try { saved = JSON.parse(sessionStorage.getItem('mp_nav') || 'null'); sessionStorage.removeItem('mp_nav'); } catch (e) {}
+  let restored = false;
+  if (saved && saved.tab && document.getElementById('pane-' + saved.tab)) {
+    try { _navRestore(saved); restored = true; } catch (e) { console.warn('nav restore', e); }
+  }
+  if (!restored) switchTab('salesan', document.querySelector('#mainTabs .nav-link'));
   setInterval(() => { markAllDirty(); switchTab(currentTab); }, 30 * 60 * 1000);
 
   // Preload all other tabs in background so switching feels instant
