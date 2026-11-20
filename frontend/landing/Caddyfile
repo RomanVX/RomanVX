@@ -32,6 +32,8 @@
         header_up Host mpfit-dashboard.onrender.com
     }
 }
+# tl-dashboard держит два кабинета (backend/multi.py): какой открыть, сервер
+# понимает по X-MP-Cab — на своём домене соседний кабинет не виден
 (render_tl) {
     reverse_proxy 127.0.0.1:10443 {
         transport http {
@@ -39,6 +41,17 @@
             tls_server_name tl-dashboard-huqh.onrender.com
         }
         header_up Host tl-dashboard-huqh.onrender.com
+        header_up X-MP-Cab tl
+    }
+}
+(render_avr) {
+    reverse_proxy 127.0.0.1:10443 {
+        transport http {
+            tls
+            tls_server_name tl-dashboard-huqh.onrender.com
+        }
+        header_up Host tl-dashboard-huqh.onrender.com
+        header_up X-MP-Cab avr
     }
 }
 
@@ -86,4 +99,7 @@ fk.marketpartners.ru {
 }
 tl.marketpartners.ru {
     import render_tl
+}
+aurora.marketpartners.ru {
+    import render_avr
 }

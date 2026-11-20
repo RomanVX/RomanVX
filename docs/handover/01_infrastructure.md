@@ -76,7 +76,8 @@
 | `marketpartners.ru/api/*` | wb-dashboard (заявки с сайта, `/api/landing/*`) |
 | `biomed.marketpartners.ru` | wb-dashboard |
 | `fk.marketpartners.ru` | fk-dashboard |
-| `tl.marketpartners.ru` | tl-dashboard |
+| `tl.marketpartners.ru` | tl-dashboard, кабинет Технолюкса (заголовок `X-MP-Cab: tl`) |
+| `aurora.marketpartners.ru` | tl-dashboard, кабинет Авроры (`X-MP-Cab: avr`) |
 
 - **Туннель до Render.** Caddy ходит в Render через локальный Xray:
   `127.0.0.1:10443` (dokodemo-door) → VPN владельца → `216.24.57.16:443`

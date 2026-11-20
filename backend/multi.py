@@ -102,16 +102,31 @@ _HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
 _client = None
 
 
-def _pick(scope) -> str:
+# поддомен → кабинет, кроме совпадающих с id: MULTI_ALIASES="aurora:avr,technolux:tl"
+_ALIASES = {a.split(":")[0].strip().lower(): a.split(":")[1].strip().lower()
+            for a in os.getenv("MULTI_ALIASES", "aurora:avr,technolux:tl").split(",") if ":" in a}
+
+
+def _pick(scope) -> tuple[str, bool]:
+    """(кабинет, закреплён_адресом). Свой домен (tl./aurora.marketpartners.ru:
+    Caddy шлёт X-MP-Cab и X-Forwarded-Host) намертво открывает свой кабинет —
+    без карточки соседнего; на общем адресе Render выбор по cookie mp_cab."""
     headers = {k.decode().lower(): v.decode() for k, v in scope.get("headers") or []}
-    host = headers.get("host", "").split(":")[0]
-    sub = host.split(".")[0] if host.count(".") >= 2 else ""
-    if sub in CHILDREN:
-        return sub
+    v = headers.get("x-mp-cab", "").strip().lower()
+    v = _ALIASES.get(v, v)
+    if v in CHILDREN:
+        return v, True
+    for raw in (headers.get("x-forwarded-host", ""), headers.get("host", "")):
+        for host in raw.split(","):
+            host = host.strip().split(":")[0].lower()
+            sub = host.split(".")[0] if host.count(".") >= 2 else ""
+            sub = _ALIASES.get(sub, sub)
+            if sub in CHILDREN:
+                return sub, True
     m = re.search(r"(?:^|;\s*)mp_cab=([a-z0-9_-]+)", headers.get("cookie", ""))
     if m and m.group(1) in CHILDREN:
-        return m.group(1)
-    return DEFAULT
+        return m.group(1), False
+    return DEFAULT, False
 
 
 async def _plain(send, status: int, body: bytes, headers=None):
@@ -140,7 +155,11 @@ async def app(scope, receive, send):
         return
     path = scope.get("path") or "/"
     # переход в кабинет: /cab/<id>[/...] → cookie + редирект на главную
+    cab, locked = _pick(scope)
     m = re.match(r"^/cab/([a-z0-9_-]+)/?$", path)
+    if m and locked:                       # на своём домене кабинет не переключается
+        await _plain(send, 302, b"", [(b"location", b"/?enter=1")])
+        return
     if m and m.group(1) in CHILDREN:
         qs = scope.get("query_string", b"").decode()
         loc = "/" + (("?" + qs) if qs else "?enter=1")
@@ -151,7 +170,7 @@ async def app(scope, receive, send):
         st = {c: ("up" if ch.alive() else "down") + f", перезапусков {ch.restarts}" for c, ch in CHILDREN.items()}
         await _plain(send, 200, repr(st).encode())
         return
-    ch = CHILDREN[_pick(scope)]
+    ch = CHILDREN[cab]
     body = b""
     while True:
         msg = await receive()
@@ -163,7 +182,10 @@ async def app(scope, receive, send):
     url = f"http://127.0.0.1:{ch.port}{raw.decode('latin-1')}"
     if qs:
         url += "?" + qs
-    hdrs = [(k.decode(), v.decode("latin-1")) for k, v in scope.get("headers") or [] if k.decode().lower() not in _HOP]
+    hdrs = [(k.decode(), v.decode("latin-1")) for k, v in scope.get("headers") or []
+            if k.decode().lower() not in _HOP and k.decode().lower() != "x-mp-locked"]
+    if locked:
+        hdrs.append(("x-mp-locked", "1"))   # кабинет скрывает карточку соседнего
     client_ip = (scope.get("client") or ["", 0])[0]
     hdrs.append(("x-forwarded-for", client_ip))
     host = next((v.decode() for k, v in scope.get("headers") or [] if k.lower() == b"host"), "")
