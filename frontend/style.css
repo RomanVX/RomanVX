@@ -1025,3 +1025,15 @@ html.client-ui .mp-cab-card:hover { box-shadow: 0 12px 36px rgba(79, 70, 229, .3
   #ordersTable { font-size: .74rem; }
   #ordersTable canvas { max-width: 64px; max-height: 64px; }
 }
+
+@media (max-width: 768px) {
+  /* календарь акций: шкала 6 недель не сжимается до слипания дат — прокрутка вбок */
+  .promo-gantt-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .promo-gantt { min-width: 620px; }
+}
+@media (max-width: 420px) {
+  /* четыре раздела меню + логотип в одну строку */
+  .mp-menu-title { padding: 5px 6px; font-size: .82rem; }
+  #mainNav .cl-mark-sm, #mainNav img[alt="Market Partners"] { width: 30px !important; height: 30px !important; font-size: 11px; }
+  #mainNav > .d-flex { gap: .35rem !important; }
+}

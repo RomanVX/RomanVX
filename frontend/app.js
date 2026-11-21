@@ -7033,7 +7033,7 @@ function renderPromo() {
   wrap.innerHTML = `${(d.errors || []).length ? `<div class="alert alert-warning py-2 small">${esc(d.errors.join('; '))}</div>` : ''}${autoWarn}
     <div class="mb-3" style="background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:12px 14px">
       <div class="fw-bold mb-2">Ближайшие 6 недель <span class="text-secondary small fw-normal">— нажмите на акцию, чтобы увидеть товары и рекомендации</span></div>
-      ${acts.length ? scale + rows : '<div class="text-secondary">Активных и будущих акций нет</div>'}</div>
+      ${acts.length ? `<div class="promo-gantt-scroll"><div class="promo-gantt">${scale + rows}</div></div>` : '<div class="text-secondary">Активных и будущих акций нет</div>'}</div>
     <div class="mb-3" style="background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:12px 14px">
       <div class="table-responsive"><table class="table table-sm mb-0 align-middle" style="font-size:.85rem"><thead><tr class="text-secondary small">
       <th class="text-start">Акция</th><th>Даты</th><th>Дедлайн</th><th>Участвуют / можно</th><th title="Скидка для входа в акцию как рекламный расход: скидка ÷ исходная цена. Рядом — ДРР рекламы этих же товаров">ДРР акции / рекламы</th><th class="text-start">Рекомендации по товарам</th></tr></thead><tbody>${cards}</tbody></table></div>
