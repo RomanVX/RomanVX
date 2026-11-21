@@ -1715,6 +1715,172 @@ function renderOrdersTable() {
   const tbl = document.getElementById('ordersTable');
   if (tbl) tbl.innerHTML = _ordersTableHTML();
   _renderTfootDonuts();
+  try { renderOrdersSummary(); } catch (e) { console.warn('orders summary', e); }
+}
+
+// ── Сводка над матрицей: что с заказами прямо сейчас (KPI, дни, бренды, лидеры) ──
+function _ordBlockFrom(d, mp) {
+  if (!d) return null;
+  const n = (d.weeks || []).length;
+  if (mp !== 'TOTAL') {
+    const b = d[mp];
+    return b ? { skus: b.skus || [], total_rub: b.total_rub || Array(n).fill(0), total_qty: b.total_qty || Array(n).fill(0), n } : null;
+  }
+  const merged = {}, tr = Array(n).fill(0), tq = Array(n).fill(0);
+  ['WB', 'OZON', 'YM'].forEach(m => (d[m]?.skus || []).forEach(s => {
+    const t = merged[s.sku] || (merged[s.sku] = { sku: s.sku, name: s.name, brand: s.brand, group: s.group,
+      rub: Array(n).fill(0), qty: Array(n).fill(0), cancel_rub: Array(n).fill(0) });
+    (s.rub || []).forEach((v, i) => { t.rub[i] += v; tr[i] += v; });
+    (s.qty || []).forEach((v, i) => { t.qty[i] += v; tq[i] += v; });
+    (s.cancel_rub || []).forEach((v, i) => { t.cancel_rub[i] += v; });
+  }));
+  return { skus: Object.values(merged), total_rub: tr, total_qty: tq, n };
+}
+function _pctDelta(cur, prev) {
+  if (!prev || cur == null) return '';
+  const p = Math.round((cur - prev) / Math.abs(prev) * 100);
+  if (!p) return '<span class="mc-delta">0%</span>';
+  return `<span class="mc-delta ${p > 0 ? 'up' : 'down'}">${p > 0 ? '▲' : '▼'}${Math.abs(p)}%</span>`;
+}
+function _weekPartial(weeks) {
+  const n = (weeks || []).length; if (!n) return false;
+  const m = String(weeks[n - 1]).match(/(\d{1,2})\.(\d{1,2})\s*$/);
+  if (!m) return true;
+  const now = new Date();
+  const end = new Date(now.getFullYear(), +m[2] - 1, +m[1], 23, 59, 59);
+  if (end - now > 30 * 864e5) end.setFullYear(end.getFullYear() - 1);
+  return end >= now;
+}
+let _ordDaysLoading = false;
+function renderOrdersSummary() {
+  const box = document.getElementById('ordersSummary');
+  if (!box) return;
+  const mp = _ordersMp;
+  const w = _ordBlockFrom(_ordersData, mp);
+  if (!w || !w.n) { box.innerHTML = ''; return; }
+  const dd = _ordersDataBy.days;
+  if (!dd && !_ordDaysLoading) {
+    _ordDaysLoading = true;
+    fetchJSON('/api/dashboard/orders_matrix?period=day', 60000)
+      .then(d => { _ordersDataBy.days = d; })
+      .catch(() => {})
+      .finally(() => { _ordDaysLoading = false; if (_ordersDataBy.days) renderOrdersSummary(); });
+  }
+  const dblk = _ordBlockFrom(dd, mp);
+  const lbl = mp === 'TOTAL' ? 'все площадки' : ({ WB: 'Wildberries', OZON: 'Ozon', YM: 'Яндекс Маркет' }[mp] || mp);
+  const card = (head, val, sub) => `<div class="col-6 col-lg-3"><div class="metric-card"><div class="mc-head">${head}</div>
+      <div class="mc-val">${val}</div><div class="mc-sub" style="font-size:11px">${sub || ''}</div></div></div>`;
+  const cards = [];
+
+  // по дням: вчера и текущая неделя к тем же дням прошлой
+  if (dblk && dblk.n >= 9) {
+    const n = dblk.n, R = dblk.total_rub, Q = dblk.total_qty, L = dd.weeks;
+    const y = n - 2;
+    cards.push(card(`Вчера, ${esc(String(L[y]))}`, fmtRub(R[y]),
+      `${fmt(Q[y])} шт · к ${esc(String(L[y - 7] || ''))}: ${_pctDelta(R[y], R[y - 7])}`));
+    let mon = -1;
+    for (let i = n - 1; i >= 0; i--) { if (/пн/i.test(String(L[i]))) { mon = i; break; } }
+    if (mon >= 0 && mon <= n - 2 && mon - 7 >= 0) {
+      let cr = 0, cq = 0, pr = 0;
+      for (let i = mon; i <= n - 2; i++) { cr += R[i]; cq += Q[i]; pr += R[i - 7] || 0; }
+      const days = n - 1 - mon;
+      cards.push(card(`Эта неделя, ${days} дн.`, fmtRub(cr),
+        `${fmt(cq)} шт · к тем же дням прошлой: ${_pctDelta(cr, pr)}`));
+    } else if (mon === n - 1) {
+      cards.push(card('Эта неделя', fmtRub(R[n - 1]), 'неделя началась сегодня, день ещё идёт'));
+    }
+  } else if (_ordDaysLoading) {
+    cards.push(card('Вчера', '<span class="spinner-border spinner-border-sm text-secondary"></span>', ''));
+  }
+
+  // по неделям: прошлая полная неделя к позапрошлой + отмены
+  const wk = _ordersData.weeks || [];
+  const Lw = _weekPartial(wk) ? w.n - 2 : w.n - 1;
+  const Pw = Lw - 1;
+  if (Lw >= 0) {
+    const r = w.total_rub[Lw], q = w.total_qty[Lw];
+    const avg = q ? r / q : 0, avgP = w.total_qty[Pw] ? w.total_rub[Pw] / w.total_qty[Pw] : 0;
+    cards.push(card(`Прошлая неделя, ${esc(String(wk[Lw]))}`, fmtRub(r),
+      `${fmt(q)} шт · ${_pctDelta(r, w.total_rub[Pw])} · ср. чек ${fmtRub(Math.round(avg))} ${_pctDelta(avg, avgP)}`));
+    const cancel = i => w.skus.reduce((a, s) => a + ((s.cancel_rub || [])[i] || 0), 0);
+    const cL = cancel(Lw), cP = Pw >= 0 ? cancel(Pw) : 0;
+    if (cL > 0 && r) {
+      const pc = cL / r * 100, pp = (Pw >= 0 && w.total_rub[Pw]) ? cP / w.total_rub[Pw] * 100 : null;
+      const dpp = pp != null ? Math.round(pc - pp) : null;
+      cards.push(card('Отменили и вернули, прошлая неделя', `${Math.round(pc)}%`,
+        `${fmtRub(Math.round(cL))}` + (dpp != null && dpp !== 0
+          ? ` · <span class="mc-delta ${dpp > 0 ? 'down' : 'up'}">${dpp > 0 ? '▲' : '▼'}${Math.abs(dpp)} п.п.</span>` : '')
+        + ' <span title="Сумма отмен и возвратов за неделю по дате события к сумме заказов недели">ⓘ</span>'));
+    }
+  }
+
+  // бренды и лидеры: прошлая полная неделя против позапрошлой
+  const groups = {};
+  w.skus.forEach(s => {
+    const g = articleGroup(s);
+    const t = groups[g] || (groups[g] = { r: 0, p: 0, c: 0 });
+    t.r += s.rub[Lw] || 0; t.p += (Pw >= 0 ? s.rub[Pw] : 0) || 0; t.c += ((s.cancel_rub || [])[Lw] || 0);
+  });
+  const totL = w.total_rub[Lw] || 0;
+  const gRows = Object.entries(groups).filter(([, t]) => t.r || t.p).sort((a, b) => b[1].r - a[1].r);
+  const brandTbl = gRows.length > 1 ? `<div class="card border-0 bg-card h-100"><div class="card-body p-2">
+      <div class="fw-semibold small mb-1">Бренды за прошлую неделю</div>
+      <div class="table-responsive"><table class="table table-sm mb-0 ord-sum-tbl"><thead><tr>
+        <th>Бренд</th><th class="text-end">₽</th><th class="text-end">к пред.</th><th class="text-end">доля</th>${gRows.some(([, t]) => t.c) ? '<th class="text-end">отмены</th>' : ''}
+      </tr></thead><tbody>${gRows.slice(0, 12).map(([g, t]) => `<tr>
+        <td><span class="me-1" style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${_groupColor(g)}"></span>${esc(g)}</td>
+        <td class="text-end">${_fmtShort(t.r)}</td><td class="text-end">${_pctDelta(t.r, t.p)}</td>
+        <td class="text-end">${totL ? Math.round(t.r / totL * 100) : 0}%</td>${gRows.some(([, x]) => x.c) ? `<td class="text-end">${t.r && t.c ? Math.round(t.c / t.r * 100) + '%' : '—'}</td>` : ''}
+      </tr>`).join('')}</tbody></table></div></div></div>` : '';
+  const movers = w.skus.map(s => ({ s, cur: s.rub[Lw] || 0, prev: (Pw >= 0 ? s.rub[Pw] : 0) || 0 }))
+    .map(x => ({ ...x, d: x.cur - x.prev })).filter(x => x.d);
+  const up = movers.filter(x => x.d > 0).sort((a, b) => b.d - a.d).slice(0, 5);
+  const down = movers.filter(x => x.d < 0).sort((a, b) => a.d - b.d).slice(0, 5);
+  const mvList = (arr, title, cls) => `<div class="fw-semibold small mb-1 ${cls}">${title}</div>` + (arr.length ? arr.map(x => `
+      <div class="d-flex align-items-baseline gap-2 py-1 border-bottom small" style="border-color:var(--border)!important">
+        <span class="text-truncate" style="min-width:0;flex:1" title="${esc(x.s.name || '')}"><b>${esc(x.s.sku)}</b> <span class="text-secondary">${esc(x.s.name || '')}</span></span>
+        <span class="text-nowrap">${_fmtShort(x.cur)}</span>
+        <span class="text-nowrap mc-delta ${x.d > 0 ? 'up' : 'down'}" style="min-width:64px;text-align:right">${x.d > 0 ? '+' : '−'}${_fmtShort(Math.abs(x.d))}</span>
+      </div>`).join('') : '<div class="small text-secondary">—</div>');
+  const moversCard = movers.length ? `<div class="card border-0 bg-card h-100"><div class="card-body p-2">
+      <div class="small text-secondary mb-1">Артикулы: прошлая неделя против позапрошлой, ₽</div>
+      <div class="row g-3"><div class="col-12 col-md-6">${mvList(up, '▲ Рост', 'text-success')}</div>
+      <div class="col-12 col-md-6">${mvList(down, '▼ Падение', 'text-danger')}</div></div></div></div>` : '';
+
+  box.innerHTML = `
+    <div class="small text-secondary mb-2">Сводка: ${esc(lbl)}${getGlobalBrand() ? ' · бренд ' + esc(getGlobalBrand()) : ''}</div>
+    <div class="row g-2 mb-2">${cards.join('')}</div>
+    <div class="card border-0 bg-card mb-2"><div class="card-body p-2">
+      <div class="d-flex align-items-baseline gap-2 mb-1"><span class="fw-semibold small">Заказы по дням, ₽</span>
+        <span class="small text-secondary">последние 14 дней · сегодняшний день ещё идёт (светлый)</span></div>
+      <div style="position:relative;height:190px"><canvas id="ordDaysChart"></canvas></div>
+    </div></div>
+    <div class="row g-2 mb-3">
+      ${brandTbl ? `<div class="col-12 col-lg-5">${brandTbl}</div>` : ''}
+      ${moversCard ? `<div class="col-12 ${brandTbl ? 'col-lg-7' : ''}">${moversCard}</div>` : ''}
+    </div>`;
+  _renderOrdDaysChart(dd, mp);
+}
+function _renderOrdDaysChart(dd, mp) {
+  const cv = document.getElementById('ordDaysChart');
+  if (charts.ordDays) { try { charts.ordDays.destroy(); } catch (e) {} charts.ordDays = null; }
+  if (!cv || !dd) return;
+  const labels = (dd.weeks || []).map(String);
+  const n = labels.length;
+  const mps = mp === 'TOTAL' ? ['WB', 'OZON', 'YM'].filter(m => dd[m] && (dd[m].total_rub || []).some(v => v)) : [mp];
+  const datasets = mps.map(m => {
+    const c = _MP_COLORS[m] || '#6366f1';
+    return { label: { WB: 'WB', OZON: 'Ozon', YM: 'ЯМ' }[m] || m, data: (dd[m]?.total_rub || Array(n).fill(0)),
+             backgroundColor: labels.map((_, i) => i === n - 1 ? c + '55' : c), borderRadius: 4, stack: 's' };
+  });
+  charts.ordDays = new Chart(cv.getContext('2d'), {
+    type: 'bar', data: { labels, datasets },
+    options: { responsive: true, maintainAspectRatio: false, animation: false,
+      plugins: { legend: { display: mps.length > 1, position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } },
+                 tooltip: { callbacks: { label: c => `${c.dataset.label}: ${fmtRub(c.raw)}` } } },
+      scales: { x: { stacked: true, grid: { display: false }, ticks: { font: { size: 10 }, maxRotation: 0, autoSkip: true } },
+                y: { stacked: true, ticks: { font: { size: 10 }, callback: v => _fmtShort(v) }, grid: { color: 'rgba(127,127,127,.12)' } } } },
+  });
 }
 
 // рендерит Chart.js бублики в canvas-ы внутри tfoot (уже вставленного в DOM)
@@ -1863,7 +2029,7 @@ function renderHistory(d) {
 let _financeData = { WB: null, OZON: null, YM: null, TOTAL: null };
 let _financeMp = 'WB';
 let _wbPnlPolling = false;
-let _finCompact = false;
+let _finCompact = window.innerWidth < 768;   // на телефоне — последние 2 месяца, иначе таблица не влезает
 
 function toggleFinCompact() {
   _finCompact = !_finCompact;
@@ -5216,8 +5382,10 @@ function renderAdvTool() {
   if (!wrap || !_advToolData) return;
   const d = _advToolData;
   let html = '';
-  if (d.building || (!d.campaigns?.length && !d.error)) {
+  if ((d.building || !d.error) && !d.campaigns?.length) {
     html += `<div class="alert alert-info py-2 small">⏳ Собираем статистику рекламы (${d.progress || 'старт'}) — страница обновится сама.</div>`;
+  } else if (d.building) {
+    html += `<div class="small text-secondary mb-2"><span class="spinner-border spinner-border-sm me-1" style="width:.7rem;height:.7rem"></span>Показаны данные от ${esc(d.built_at || '')}, свежая статистика подтягивается в фоне.</div>`;
     if (!_advTimer) _advTimer = setTimeout(() => { _advTimer = null; _advToolData = null; if (currentTab === 'tools' && _toolActive === 'adv') loadAdv(); }, 25000);
   }
   if (d.error) html += `<div class="alert alert-warning py-2 small">⚠ ${d.error}</div>`;
@@ -5474,8 +5642,8 @@ function renderProductolog() {
   if (items.some(it => it.method === 'словарь тем')) {
     html += `<div class="small text-secondary mb-2">Темы найдены по словарю жалоб и похвал (размер, тепло, подошва, брак, пересорт, запах, упаковка и др.) — без внешнего ИИ. Процент — доля текстовых отзывов, где тема упомянута; минусы считаются по отзывам 1–3★ и однозначным жалобам в любых отзывах.</div>`;
   }
-  html += `<div class="card border-0 bg-card"><div class="card-body p-0"><div class="table-responsive" style="max-height:78vh">
-    <table class="table table-sm align-middle mb-0"><thead><tr>
+  html += `<div class="card border-0 bg-card"><div class="card-body p-0"><div class="table-responsive prod-wrap" style="max-height:78vh">
+    <table class="table table-sm align-middle mb-0 prod-tbl"><thead><tr>
       <th style="min-width:190px;position:sticky;left:0;background:var(--t-sticky);z-index:2">Товар</th>
       <th class="text-center" style="min-width:120px">Отзывы</th>
       <th style="min-width:230px">Плюсы (%)</th>
@@ -7942,3 +8110,8 @@ async function fbSaveRules(k) {
   try { _fbRules = await _fbPost('/api/feedback/rules', { kind: k, rules }); const ok = document.getElementById('fbr_' + k + '_ok'); if (ok) ok.textContent = 'Сохранено'; }
   catch (e) { alert('Не сохранилось: ' + e.message); }
 }
+
+// кнопка «Последние 2 месяца» в Финансах — сразу в правильном состоянии (на телефоне включена)
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('finCompactBtn')?.classList.toggle('active', _finCompact);
+});

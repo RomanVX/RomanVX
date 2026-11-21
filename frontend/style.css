@@ -981,3 +981,47 @@ html.client-ui .cab-mono { background: var(--gold-grad); }
 html.client-ui .mp-box { background: rgba(18, 20, 40, .72); border-color: rgba(129, 140, 248, .22); }
 html.client-ui .cab-mono { box-shadow: 0 6px 18px rgba(79, 70, 229, .35); }
 html.client-ui .mp-cab-card:hover { box-shadow: 0 12px 36px rgba(79, 70, 229, .3); border-color: var(--brand); }
+
+
+/* ═══ Телефон: все вкладки читаются без «мотания» страницы ═══ */
+/* широкое (таблицы, гант) прокручивается внутри своих блоков, страница — нет;
+   overflow: clip не создаёт контейнер прокрутки, липкие шапки продолжают работать */
+.container-fluid { overflow-x: clip; }
+@media (max-width: 768px) {
+  /* меню — компактно, в одну-две короткие строки */
+  .mp-menu { gap: 2px; }
+  .mp-menu-title { padding: 6px 9px; font-size: .88rem; }
+  .mp-menu-drop { min-width: 220px; max-width: calc(100vw - 16px); }
+  .mp-menu-item:last-child .mp-menu-drop,
+  .mp-menu-item:nth-last-child(2) .mp-menu-drop { left: auto; right: 0; }
+
+  /* ряды кнопок месяцев/фильтров — прокрутка вбок, а не вылет за экран */
+  #unitMonthBtns { flex-wrap: nowrap !important; overflow-x: auto; max-width: 100%;
+                   scrollbar-width: none; padding-bottom: 2px; }
+  #unitMonthBtns::-webkit-scrollbar { display: none; }
+  #unitMonthBtns .btn, #unitMonthBtns select, #unitMonthBtns span { white-space: nowrap; flex-shrink: 0; }
+  #unitQ, #prodQ, #ozPromoQ { max-width: 100% !important; width: 100%; }
+
+  /* таблицы: колонка названий не шире ~половины экрана и переносится */
+  .table-responsive .table > :is(thead, tbody, tfoot) > tr > :first-child {
+    min-width: 0 !important; max-width: 46vw; white-space: normal !important; }
+  .table-responsive .table th { white-space: normal; }
+  .table th, .table td { padding-left: 5px; padding-right: 5px; }
+
+  /* продуктолог: каждая строка — карточка (5 широких колонок на телефон не лезут) */
+  .prod-wrap { max-height: none !important; }
+  .table-responsive .table.prod-tbl > thead { display: none; }
+  .table-responsive .table.prod-tbl,
+  .table-responsive .table.prod-tbl > tbody,
+  .table-responsive .table.prod-tbl > tbody > tr { display: block; width: 100%; }
+  .table-responsive .table.prod-tbl > tbody > tr { border-bottom: 1px solid var(--border); padding: 6px 0; }
+  .table-responsive .table.prod-tbl > tbody > tr > td {
+    display: block; width: 100% !important; max-width: none !important; position: static !important;
+    border: 0 !important; padding: 3px 8px !important; text-align: left !important; }
+
+  /* сводка заказов и матрица */
+  .ord-sum-tbl th, .ord-sum-tbl td { font-size: .76rem; }
+  .metric-card .mc-sub { white-space: normal; }
+  #ordersTable { font-size: .74rem; }
+  #ordersTable canvas { max-width: 64px; max-height: 64px; }
+}
