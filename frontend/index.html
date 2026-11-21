@@ -187,8 +187,8 @@
     </div>
     <div id="ordersSummary"></div>
     <div class="d-flex align-items-baseline gap-2 mb-1"><h6 class="mb-0 fw-semibold">Подробно: по неделям и артикулам</h6></div>
-    <details class="ord-legend mb-2" id="ordersLegend" open ontoggle="try{localStorage.setItem('mp_ordLegend',this.open?'1':'0')}catch(e){}">
-      <summary class="small text-secondary" style="cursor:pointer">Как читать таблицу</summary>
+    <details class="ord-legend mb-2" id="ordersLegend">
+      <summary class="small text-secondary" style="cursor:pointer" onclick="setTimeout(function(){try{localStorage.setItem('mp_ordLegend2',document.getElementById('ordersLegend').open?'1':'0')}catch(e){}},0)">Как читать таблицу</summary>
       <div class="small text-secondary mt-1" style="max-width:980px;line-height:1.5">
         Столбцы — недели (Пн–Вс), в каждой: <b>₽</b> — сумма заказов, <b>шт</b> — количество заказанных товаров (как «Заказали» в воронке личного кабинета WB). Остатков на складе здесь нет.<br>
         <b>Первая строка</b> — итог по площадке за неделю. <b>Ниже — бренды</b>: в скобках число артикулов, нажмите ▶ на строке бренда, чтобы раскрыть каждый артикул.<br>
@@ -197,7 +197,7 @@
         <b>Кольца внизу</b> — доля каждого бренда в заказах недели. «День / Неделя / Месяц» справа меняют шаг таблицы, «Wildberries / Ozon / Общий» — площадку.
       </div>
     </details>
-    <script>try{var _lg=localStorage.getItem('mp_ordLegend');if(_lg==='0'||(_lg===null&&window.matchMedia('(max-width: 768px)').matches))document.getElementById('ordersLegend').open=false}catch(e){}</script>
+    <script>try{var _lg=localStorage.getItem('mp_ordLegend2');if(_lg==='1'||(_lg===null&&!window.matchMedia('(max-width: 768px)').matches))document.getElementById('ordersLegend').open=true}catch(e){}</script>
     <div class="card border-0 bg-card mb-3" id="ordersWeekCard">
       <div class="card-body p-0">
         <div class="table-responsive" id="ordersTableWrap">
