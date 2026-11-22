@@ -15,6 +15,7 @@ import sys as _sys
 from pathlib import Path as _Path
 _sys.path.insert(0, str(_Path(__file__).resolve().parent.parent / "backend"))  # backend/db.py
 import asyncio
+import json
 import logging
 import os
 from datetime import datetime, timedelta
@@ -178,6 +179,69 @@ async def check_services():
         f"SELECT COUNT(*) FROM m_orders WHERE status IN ({ph}) AND svc_checked = 0", store.SHIPPED)[0]
 
 
+ARRIVALS_SYNC_INTERVAL = timedelta(hours=1)
+ARRIVALS_PAGE_LIMIT = 100
+ARRIVALS_MAX_PAGES = 1000
+
+
+def _save_arrivals(rows: list[tuple], synced_at: str):
+    """Публикуем только полный снимок, вместе с отметкой об обновлении."""
+    with db._conn() as con:
+        cur = con.cursor()
+        cur.execute("""CREATE TABLE IF NOT EXISTS m_arrival_items (
+            arrival_id BIGINT NOT NULL, item_id BIGINT NOT NULL,
+            warehouse_id BIGINT, company_id BIGINT, accepted_at TEXT NOT NULL,
+            product_id BIGINT, article TEXT, name TEXT, fact_quantity BIGINT,
+            PRIMARY KEY (arrival_id, item_id)
+        )""")
+        cur.execute("CREATE INDEX IF NOT EXISTS m_arrival_items_article ON m_arrival_items (article)")
+        cur.execute("DELETE FROM m_arrival_items")
+        sql = db._tr("INSERT INTO m_arrival_items VALUES (?,?,?,?,?,?,?,?,?)")
+        if db.IS_PG:
+            from psycopg2.extras import execute_batch
+            execute_batch(cur, sql, rows, page_size=500)
+        else:
+            cur.executemany(sql, rows)
+        cur.execute(db._tr("INSERT INTO kv (k, v) VALUES (?,?) "
+                          "ON CONFLICT (k) DO UPDATE SET v = excluded.v"),
+                    ("arrivals_synced_at", json.dumps(synced_at)))
+        con.commit()
+
+
+async def sync_arrivals():
+    now = datetime.utcnow()
+    last = await asyncio.to_thread(store.kv_get, "arrivals_synced_at")
+    if last and now - datetime.fromisoformat(last) < ARRIVALS_SYNC_INTERVAL:
+        return
+    cursor = 0
+    rows = {}
+    for _ in range(ARRIVALS_MAX_PAGES):
+        response = await mp.call("POST", "/v1/arrivals/list",
+                                 {"limit": ARRIVALS_PAGE_LIMIT, "last_id": cursor})
+        result = response["result"]
+        arrivals = result["data"]
+        if not isinstance(arrivals, list):
+            raise ValueError("МПФИТ: неожиданный формат списка приёмок")
+        for arrival in arrivals:
+            if arrival["status"] != "COMPLETED" or not arrival.get("accepted_at"):
+                continue
+            for item in arrival["items"]:
+                product = item.get("product") or {}
+                key = (arrival["id"], item["id"])
+                rows[key] = (*key, arrival.get("to_warehouse_id"), item.get("company_id"),
+                             arrival["accepted_at"], product.get("id"), product.get("article"),
+                             product.get("name"), item["fact_quantity"])
+        next_cursor = result["last_id"]
+        if not arrivals or next_cursor is None:
+            await asyncio.to_thread(_save_arrivals, list(rows.values()), _now())
+            _log.info("arrivals: snapshot saved (%d items)", len(rows))
+            return
+        if next_cursor <= cursor:
+            raise ValueError("МПФИТ: курсор приёмок не продвинулся")
+        cursor = next_cursor
+    raise RuntimeError("МПФИТ: достигнут лимит страниц приёмок")
+
+
 async def sync_invoices():
     rows = await mp.paginate("/v1/invoices/list", limit=200, max_pages=50)
     import json
@@ -277,6 +341,10 @@ async def run_once():
         return
     state["running"] = True
     try:
+        try:
+            await asyncio.wait_for(sync_arrivals(), timeout=45)
+        except Exception as e:
+            _log.warning("arrivals: %s", str(e) or type(e).__name__)
         await sync_companies()
         await sync_orders()
         await sync_invoices()
