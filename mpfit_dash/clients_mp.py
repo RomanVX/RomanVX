@@ -22,10 +22,11 @@ _sys.path.insert(0, str(_Path(__file__).resolve().parent.parent / "backend"))
 import asyncio
 import base64
 import hashlib
+import json
 import logging
 import os
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import httpx
 
@@ -47,6 +48,9 @@ SCHEMA = [
         client TEXT, mp TEXT, day TEXT, model TEXT, warehouse TEXT,
         qty INTEGER, sum REAL, cancels INTEGER,
         PRIMARY KEY (client, mp, day, model, warehouse))""",
+    """CREATE TABLE IF NOT EXISTS mp_wb_fbs_item_snapshot (
+        key_id TEXT NOT NULL, article TEXT NOT NULL, collected_at TEXT NOT NULL,
+        orders_json TEXT NOT NULL, PRIMARY KEY (key_id, article))""",
     "CREATE TABLE IF NOT EXISTS mp_wh_flags (warehouse TEXT PRIMARY KEY, ours INTEGER)",
     "CREATE TABLE IF NOT EXISTS mp_client_start (client TEXT PRIMARY KEY, start TEXT)",
 ]
@@ -105,6 +109,7 @@ def key_add(client: str, mp: str, secret: str, client_id: str = "") -> str:
 def key_delete(i: str):
     row = db.fetchall("SELECT client, mp FROM mp_keys WHERE id = ?", (i,))
     db.execute("DELETE FROM mp_keys WHERE id = ?", (i,))
+    db.execute("DELETE FROM mp_wb_fbs_item_snapshot WHERE key_id = ?", (i,))
     if row:
         db.execute("DELETE FROM mp_orders_daily WHERE client = ? AND mp = ?", row[0])
 
@@ -195,8 +200,9 @@ def _agg_wb(rows: list[dict], since_day: str) -> dict:
 WB_MP = "https://marketplace-api.wildberries.ru"
 
 
-async def _wb_fbs_agg(token: str, since: datetime) -> dict:
+async def _wb_fbs_agg(token: str, since: datetime, article: str = "") -> dict:
     agg: dict = {}
+    matching = {}
     async with httpx.AsyncClient(timeout=90) as cl:
         h = {"Authorization": token}
         r = await cl.get(WB_MP + "/api/v3/warehouses", headers=h)
@@ -208,13 +214,19 @@ async def _wb_fbs_agg(token: str, since: datetime) -> dict:
         while start < now:                         # не больше 30 дней за запрос
             end = min(start + timedelta(days=29), now)
             nxt = 0
+            rate_retries = 0
             for _ in range(200):
                 r = await cl.get(WB_MP + "/api/v3/orders", headers=h, params={
                     "limit": 1000, "next": nxt,
-                    "dateFrom": int(start.timestamp()), "dateTo": int(end.timestamp())})
+                    "dateFrom": int(start.replace(tzinfo=timezone.utc).timestamp()),
+                    "dateTo": int(end.replace(tzinfo=timezone.utc).timestamp())})
                 if r.status_code == 429:
+                    rate_retries += 1
+                    if rate_retries >= 4:
+                        raise RuntimeError("WB orders FBS: rate limit")
                     await asyncio.sleep(10)
                     continue
+                rate_retries = 0
                 if not r.is_success:
                     raise RuntimeError(f"WB orders FBS {r.status_code}: {r.text[:150]}")
                 data = r.json() or {}
@@ -222,6 +234,13 @@ async def _wb_fbs_agg(token: str, since: datetime) -> dict:
                 for o in orders:
                     day = _msk_day(o.get("createdAt") or "")
                     wh = names.get(o.get("warehouseId"), str(o.get("warehouseId") or "—"))
+                    if article:
+                        if str(o.get("article") or "").strip() == article:
+                            matching[o["id"]] = {
+                                "created_at": o.get("createdAt"), "warehouse": wh,
+                                "supply_id": o.get("supplyId"),
+                            }
+                        continue
                     a = agg.setdefault((day, "FBS", wh), [0, 0.0, 0])
                     a[0] += 1
                     a[1] += float(o.get("convertedPrice") or o.get("price") or 0) / 100
@@ -229,8 +248,42 @@ async def _wb_fbs_agg(token: str, since: datetime) -> dict:
                 if len(orders) < 1000 or not nxt:
                     break
                 await asyncio.sleep(0.4)
+            else:
+                raise RuntimeError("WB orders FBS: page limit")
             start = end
+        if article:
+            ids = list(matching)
+            for offset in range(0, len(ids), 1000):
+                chunk = ids[offset:offset + 1000]
+                for attempt in range(4):
+                    r = await cl.post(WB_MP + "/api/v3/orders/status", headers=h,
+                                      json={"orders": chunk})
+                    if r.status_code != 429:
+                        break
+                    await asyncio.sleep(5 * (attempt + 1))
+                if not r.is_success:
+                    raise RuntimeError(f"WB FBS order status: HTTP {r.status_code}")
+                for row in r.json()["orders"]:
+                    matching[row["id"]].update(
+                        supplier_status=row.get("supplierStatus"), wb_status=row.get("wbStatus"))
+            return matching
     return agg
+
+
+async def _collect_marzipan_fbs(k: dict):
+    if k["mp"] != "wb" or not k["client"].endswith(", 7715772939"):
+        return
+    article = "850236"
+    orders = await _wb_fbs_agg(k["secret"], datetime(2026, 10, 12, 21), article)
+    collected_at = datetime.utcnow().isoformat(timespec="seconds")
+    await asyncio.to_thread(
+        db.execute,
+        "INSERT INTO mp_wb_fbs_item_snapshot (key_id, article, collected_at, orders_json) "
+        "SELECT id, ?, ?, ? FROM mp_keys WHERE id = ? "
+        "ON CONFLICT (key_id, article) DO UPDATE SET "
+        "collected_at = excluded.collected_at, orders_json = excluded.orders_json",
+        (article, collected_at, json.dumps(orders, ensure_ascii=False), k["id"]))
+    _log.info("WB FBS %s: snapshot saved (%d orders)", article, len(orders))
 
 
 # ── сбор: Ozon ──────────────────────────────────────────────────────────────
@@ -358,6 +411,10 @@ async def collect_all(only_id: str | None = None):
             if only_id and k["id"] != only_id:
                 continue
             try:
+                try:
+                    await _collect_marzipan_fbs(k)
+                except Exception as e:
+                    _log.warning("WB FBS 850236: %s", str(e)[:200])
                 res = await collect_one(k)
                 await asyncio.to_thread(_mark, k["id"], True)
                 if res.get("note"):
