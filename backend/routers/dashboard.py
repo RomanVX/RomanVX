@@ -1,6 +1,6 @@
 import asyncio
 import time as _time
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Query, HTTPException, Request
@@ -1044,7 +1044,6 @@ async def get_orders_matrix(period: str = Query(default="day")):
 
     from datetime import date as _date
     import calendar as _cal
-    import catalog as _cat
     today = (datetime.utcnow() + timedelta(hours=3)).date()
     if period == "day":
         days = [today - timedelta(days=i) for i in range(13, -1, -1)]
@@ -1076,6 +1075,58 @@ async def get_orders_matrix(period: str = Query(default="day")):
                 return None
             return pos.get((d.year, d.month))
 
+    result = await _build_orders_matrix(period, d_from, d_to, labels, idx)
+    _om_cache[period] = (_wtime.monotonic(), result)
+    return result
+
+
+@router.get("/development/orders_matrix", include_in_schema=False)
+async def get_development_orders_matrix(
+    request: Request,
+    date_from: date,
+    date_to: date,
+    period: str = Query(pattern="^(day|week|month)$"),
+):
+    from config import CABINET
+
+    if CABINET != "biomed" or request.state.user["role"] != "owner":
+        raise HTTPException(status_code=403, detail="Раздел доступен владельцу кабинета Биомеда")
+    span = (date_to - date_from).days
+    if not 0 <= span < 366 or (period == "day" and span != 0):
+        raise HTTPException(status_code=422, detail="Укажите корректный период до 366 дней")
+
+    labels = []
+    positions = {}
+    start = date_from
+    while start <= date_to:
+        if period == "week":
+            boundary = start + timedelta(days=7 - start.weekday())
+        elif period == "month":
+            boundary = (start.replace(day=28) + timedelta(days=4)).replace(day=1)
+        else:
+            boundary = start + timedelta(days=1)
+        end = min(date_to, boundary - timedelta(days=1))
+        label = start.strftime("%d.%m.%Y")
+        if start != end:
+            label += "–" + end.strftime("%d.%m.%Y")
+        for offset in range((end - start).days + 1):
+            positions[(start + timedelta(days=offset)).isoformat()] = len(labels)
+        labels.append(label)
+        start = boundary
+
+    result = await _build_orders_matrix(
+        period, date_from, date_to, labels,
+        lambda value: positions.get(str(value or "")[:10]),
+        wb_sales_fallback=False,
+    )
+    today = (datetime.utcnow() + timedelta(hours=3)).date()
+    result["partial_index"] = positions.get(today.isoformat())
+    return result
+
+
+async def _build_orders_matrix(period, d_from, d_to, labels, idx, *, wb_sales_fallback=True):
+    import catalog as _cat
+
     n = len(labels)
     rows = await asyncio.to_thread(
         sales_history.get_history,
@@ -1092,7 +1143,7 @@ async def get_orders_matrix(period: str = Query(default="day")):
         if plat == "WB_ORDERS":
             b = blocks["WB"]
         elif plat == "WB":
-            b = wb_sales_fb
+            b = wb_sales_fb if wb_sales_fallback else None
         else:
             b = blocks.get(plat)
         i = idx(r.get("date"))
@@ -1128,7 +1179,6 @@ async def get_orders_matrix(period: str = Query(default="day")):
         result[p] = {"total_rub": [round(v, 2) for v in blocks[p]["rub"]],
                      "total_qty": blocks[p]["qty"],
                      "skus": clean(blocks[p]["by"])}
-    _om_cache[period] = (_wtime.monotonic(), result)
     return result
 
 
