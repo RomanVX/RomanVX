@@ -412,12 +412,16 @@ def kiz_expiry_bulk(rows: list[dict], author: str) -> dict:
     return {"added": added, "changed": changed, "same": same}
 
 
-def kiz_manual_supply_save(request_id: str, row: dict, author: str) -> str:
+def kiz_manual_supply_save(request_id: str, rows: list[dict], author: str) -> str:
     """Сохраняет план и срок одной транзакцией. Повтор запроса не создаёт дубль."""
     from datetime import datetime, timedelta
     now = datetime.utcnow()
     msk = (now + timedelta(hours=3)).isoformat(timespec="seconds")
-    supply = f"Вручную {row['article'][:40]} · {request_id[:12]}"
+    local = now + timedelta(hours=3)
+    supply = f"Ручная партия · {local:%d.%m.%Y %H:%M:%S}"
+    if len(rows) == 1:
+        supply += f" · {rows[0]['article'][:24]}"
+    supply += f" · {request_id[-5:]}"
     with db._conn() as con:
         cur = con.cursor()
         cur.execute(db._tr("INSERT INTO kv (k, v) VALUES (?,?) ON CONFLICT (k) DO NOTHING"),
@@ -425,17 +429,18 @@ def kiz_manual_supply_save(request_id: str, row: dict, author: str) -> str:
         if not cur.rowcount:
             cur.execute(db._tr("SELECT v FROM kv WHERE k = ?"), ("kiz_manual_" + request_id,))
             return json.loads(cur.fetchone()[0])
-        cur.execute(db._tr(
-            "INSERT INTO kiz_supply (supply, gtin, article, name, batch, expiry, qty, since, uploaded_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?)"),
-            (supply, row["gtin"], row["article"], row["name"], "", row["expiry"], row["qty"], msk, msk))
-        cur.execute(db._tr(
-            "INSERT INTO kiz_expiry (gtin, expiry, product, updated_at, author, article, batch) "
-            "VALUES (?,?,?,?,?,?,?) ON CONFLICT (gtin) DO UPDATE SET expiry = excluded.expiry, "
-            "product = excluded.product, updated_at = excluded.updated_at, author = excluded.author, "
-            "article = excluded.article, batch = excluded.batch"),
-            (row["gtin"], row["expiry"], row["name"], now.isoformat(timespec="seconds"),
-             author, row["article"], ""))
+        for row in rows:
+            cur.execute(db._tr(
+                "INSERT INTO kiz_supply (supply, gtin, article, name, batch, expiry, qty, since, uploaded_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?)"),
+                (supply, row["gtin"], row["article"], row["name"], "", row["expiry"], row["qty"], msk, msk))
+            cur.execute(db._tr(
+                "INSERT INTO kiz_expiry (gtin, expiry, product, updated_at, author, article, batch) "
+                "VALUES (?,?,?,?,?,?,?) ON CONFLICT (gtin) DO UPDATE SET expiry = excluded.expiry, "
+                "product = excluded.product, updated_at = excluded.updated_at, author = excluded.author, "
+                "article = excluded.article, batch = excluded.batch"),
+                (row["gtin"], row["expiry"], row["name"], now.isoformat(timespec="seconds"),
+                 author, row["article"], ""))
         con.commit()
     return supply
 

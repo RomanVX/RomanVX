@@ -772,28 +772,44 @@ async def kiz_supply_product(article: str):
 async def kiz_supply_manual(request: Request, payload: dict):
     from datetime import date
     from uuid import UUID
-    article = str(payload.get("article") or "").strip()
-    gtin = str(payload.get("gtin") or "").strip()
-    qty = payload.get("qty")
     try:
         request_id = UUID(str(payload.get("request_id"))).hex
-        expiry = date.fromisoformat(str(payload.get("expiry") or "")).isoformat()
-        if not 0 < len(article) <= 200 or type(qty) is not int or not 0 < qty <= 2147483647:
-            raise ValueError
-        if not gtin.isascii() or not gtin.isdigit() or len(gtin) not in (13, 14):
-            raise ValueError
-        gtin = gtin.zfill(14)
-    except ValueError:
-        return JSONResponse({"error": "Проверьте артикул, количество, срок и штрихкод"}, status_code=400)
-    try:
-        product = await _kiz_article_product(article)
-        if product["gtins"] and gtin not in product["gtins"]:
-            raise ValueError("Штрихкод не найден в карточке этого товара МПФИТ")
+        entries = payload.get("rows")
+        if entries is None:
+            entries = [payload]
+        if not isinstance(entries, list) or not 1 <= len(entries) <= 50:
+            raise ValueError("Добавьте от 1 до 50 позиций")
+        rows = []
+        seen = set()
+        for index, entry in enumerate(entries, 1):
+            if not isinstance(entry, dict):
+                raise ValueError(f"Строка {index}: проверьте данные")
+            article = str(entry.get("article") or "").strip()
+            gtin = str(entry.get("gtin") or "").strip()
+            qty = entry.get("qty")
+            try:
+                expiry = date.fromisoformat(str(entry.get("expiry") or "")).isoformat()
+            except ValueError:
+                raise ValueError(f"Строка {index}: укажите дату годности") from None
+            if (not 0 < len(article) <= 200 or type(qty) is not int or not 0 < qty <= 2147483647
+                    or not gtin.isascii() or not gtin.isdigit() or len(gtin) not in (13, 14)):
+                raise ValueError(f"Строка {index}: проверьте артикул, количество и штрихкод")
+            gtin = gtin.zfill(14)
+            if gtin in seen:
+                raise ValueError(f"Строка {index}: этот штрихкод уже добавлен в партию")
+            seen.add(gtin)
+            rows.append({"article": article, "gtin": gtin, "expiry": expiry, "qty": qty})
+        for index, row in enumerate(rows, 1):
+            try:
+                product = await _kiz_article_product(row["article"])
+                if product["gtins"] and row["gtin"] not in product["gtins"]:
+                    raise ValueError("Штрихкод не найден в карточке этого товара МПФИТ")
+                row["name"] = product["name"]
+            except ValueError as e:
+                raise ValueError(f"Строка {index}: {e}") from None
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
-    supply = await _t(store.kiz_manual_supply_save, request_id,
-                      {**product, "gtin": gtin, "expiry": expiry, "qty": qty},
-                      _kiz_author(request, payload))
+    supply = await _t(store.kiz_manual_supply_save, request_id, rows, _kiz_author(request, payload))
     return {"ok": True, "supply": supply}
 
 

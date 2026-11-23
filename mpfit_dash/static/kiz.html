@@ -4,7 +4,20 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Упаковка КИЗ · МПФИТ</title>
-<style id="pageSize">@page{size:58mm 40mm;margin:0}</style>
+<style id="pageSize">@page{size:58mm 40mm;margin:0}  .manual-items{display:grid;gap:10px;margin:12px 0}
+  .manual-item{border:1px solid var(--line);border-radius:10px;padding:12px;min-width:0}
+  .manual-fields{display:grid;grid-template-columns:minmax(0,1fr) minmax(72px,.55fr) minmax(0,1fr);gap:10px}
+  .manual-item input{width:100%;min-width:0;box-sizing:border-box}
+  .manual-product{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:8px 0 0;overflow-wrap:anywhere}
+  .manual-product .btn{white-space:nowrap}
+  .manual-barcode{margin-top:8px}
+  .manual-actions{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px}
+  .manual-result:empty{display:none}
+  @media(max-width:480px){
+    .manual-fields{grid-template-columns:minmax(0,.75fr) minmax(0,1fr)}
+    .manual-article{grid-column:1/-1}
+  }
+</style>
 <style>
 :root{--bg:#f5f6f8;--card:#fff;--ink:#16191d;--muted:#6b7280;--line:#e6e8eb;--acc:#2563eb;
  --ok:#059669;--okb:#d1fae5;--warn:#b45309;--warnb:#fef3c7;--bad:#dc2626;--badb:#fee2e2;--rad:12px;
@@ -222,21 +235,29 @@ th{color:var(--muted);font-weight:600;font-size:12px}
     <section class="card">
       <h2>Добавить партию вручную</h2>
       <form id="manualBatchForm">
-        <div class="row">
-          <label class="f">Артикул <input id="manualArticle" maxlength="200" required></label>
-          <button type="button" class="btn" id="manualFind">Найти в МПФИТ</button>
+        <div class="manual-items" id="manualItems"></div>
+        <div class="manual-actions">
+          <button type="button" class="btn" id="manualAdd">+ Добавить артикул</button>
+          <button type="submit" class="btn pri" id="manualSave" disabled>Сохранить партию</button>
         </div>
-        <p id="manualName" aria-live="polite"></p>
-        <div class="row">
-          <label class="f">Количество <input id="manualQty" type="number" min="1" max="2147483647" step="1" required style="width:100px"></label>
-          <label class="f">Годен до <input id="manualExpiry" type="date" required></label>
-          <label class="f" id="manualBarcodeField" hidden>Штрихкод
-            <input id="manualBarcode" inputmode="numeric" pattern="[0-9]{13,14}" maxlength="14">
-          </label>
-        </div>
-        <button type="submit" class="btn pri" id="manualSave" disabled>Сохранить партию</button>
-        <p class="muted" id="manualResult" role="status"></p>
+        <p class="muted manual-result" id="manualResult" role="status"></p>
       </form>
+      <template id="manualItem">
+        <fieldset class="manual-item">
+          <div class="manual-fields">
+            <label class="f manual-article">Артикул <input name="article" maxlength="200" required></label>
+            <label class="f">Количество <input name="qty" type="number" min="1" max="2147483647" step="1" required></label>
+            <label class="f">Годен до <input name="expiry" type="date" required></label>
+          </div>
+          <div class="manual-product">
+            <span class="muted" data-name aria-live="polite"></span>
+            <button type="button" class="btn" data-remove>Удалить</button>
+          </div>
+          <label class="f manual-barcode" hidden>Штрихкод
+            <input name="gtin" inputmode="numeric" pattern="[0-9]{13,14}" maxlength="14">
+          </label>
+        </fieldset>
+      </template>
     </section>
   </div>
 </main>
@@ -725,67 +746,102 @@ $('expUpload').onclick = async () => {
   $('expUpload').disabled = false; $('scan').focus();
 };
 
-let manualProduct = null;
+const manualItems = $('manualItems');
+const manualRows = new Map();
 let manualRequestId = null;
-$('manualArticle').oninput = () => {
-  manualProduct = null;
-  $('manualName').textContent = '';
-  $('manualBarcode').value = '';
-  $('manualBarcode').required = false;
-  $('manualBarcodeField').hidden = true;
-  $('manualSave').disabled = true;
-};
-$('manualFind').onclick = async () => {
-  const article = $('manualArticle').value.trim();
-  if (!article || $('manualFind').disabled) return;
-  $('manualFind').disabled = true;
-  $('manualResult').textContent = 'Ищу товар…';
-  try {
-    const r = await api('/api/kiz/supply/product?article=' + encodeURIComponent(article));
-    if ($('manualArticle').value.trim() !== article) return;
-    manualProduct = r;
-    $('manualName').textContent = r.name;
-    const needsBarcode = r.gtins.length !== 1;
-    $('manualBarcode').value = needsBarcode ? '' : r.gtins[0];
-    $('manualBarcode').required = needsBarcode;
-    $('manualBarcodeField').hidden = !needsBarcode;
-    $('manualSave').disabled = false;
-    $('manualResult').textContent = needsBarcode ? 'Отсканируйте EAN или введите GTIN товара.' : '';
-  } catch (e) {
-    $('manualResult').textContent = 'Не удалось найти товар: ' + e.message;
-  } finally { $('manualFind').disabled = false; }
-};
-$('manualArticle').onchange = () => $('manualFind').onclick();
-$('manualArticle').onkeydown = e => {
-  if (e.key === 'Enter') { e.preventDefault(); $('manualFind').onclick(); }
-};
+let manualSaving = false;
+function updateManual() {
+  const single = manualRows.size === 1;
+  for (const row of manualRows.keys()) row.querySelector('[data-remove]').hidden = single;
+  $('manualAdd').disabled = manualSaving || manualRows.size >= 50;
+  $('manualSave').disabled = manualSaving || !manualRows.size || [...manualRows.values()].some(r => !r.product);
+}
+
+function addManualRow(focus = false) {
+  const row = $('manualItem').content.firstElementChild.cloneNode(true);
+  const article = row.querySelector('[name=article]');
+  const qty = row.querySelector('[name=qty]');
+  const expiry = row.querySelector('[name=expiry]');
+  const gtin = row.querySelector('[name=gtin]');
+  const name = row.querySelector('[data-name]');
+  const state = {article, qty, expiry, gtin, product: null, lookup: 0};
+  manualRows.set(row, state);
+  manualItems.append(row);
+  manualRequestId = null;
+  $('manualResult').textContent = '';
+  const lookup = async () => {
+    const code = article.value.trim();
+    if (!code || state.product?.article === code) return;
+    const lookupId = ++state.lookup;
+    name.textContent = 'Ищу в МПФИТ…';
+    try {
+      const product = await api('/api/kiz/supply/product?article=' + encodeURIComponent(code));
+      if (lookupId !== state.lookup || !row.isConnected) return;
+      state.product = product;
+      const needsBarcode = product.gtins.length !== 1;
+      gtin.value = needsBarcode ? '' : product.gtins[0];
+      gtin.required = needsBarcode;
+      gtin.parentElement.hidden = !needsBarcode;
+      name.textContent = product.name;
+    } catch (e) {
+      if (lookupId === state.lookup) name.textContent = 'Не удалось найти товар. ' + e.message;
+    } finally { updateManual(); }
+  };
+  article.oninput = () => {
+    ++state.lookup;
+    state.product = null;
+    gtin.value = '';
+    gtin.required = false;
+    gtin.parentElement.hidden = true;
+    name.textContent = '';
+    updateManual();
+  };
+  article.onchange = lookup;
+  article.onkeydown = e => {
+    if (e.key === 'Enter') { e.preventDefault(); lookup(); }
+  };
+  row.querySelector('[data-remove]').onclick = () => {
+    manualRows.delete(row);
+    row.remove();
+    manualRequestId = null;
+    updateManual();
+  };
+  updateManual();
+  if (focus) article.focus();
+}
+
+$('manualAdd').onclick = () => addManualRow(true);
 $('manualBatchForm').oninput = () => { manualRequestId = null; };
 $('manualBatchForm').onsubmit = async e => {
   e.preventDefault();
-  if (!manualProduct || manualProduct.article !== $('manualArticle').value.trim()) return;
+  if ($('manualSave').disabled) return;
   manualRequestId ||= crypto.randomUUID();
-  const fields = [...$('manualBatchForm').querySelectorAll('input, button')];
-  const payload = {article: manualProduct.article, qty: Number($('manualQty').value),
-    expiry: $('manualExpiry').value, gtin: $('manualBarcode').value, request_id: manualRequestId,
-    author: $('who').value.trim()};
-  fields.forEach(field => { field.disabled = true; });
+  const rows = [...manualRows.values()].map(r => ({
+    article: r.product.article, qty: Number(r.qty.value), expiry: r.expiry.value, gtin: r.gtin.value
+  }));
+  manualSaving = true;
+  for (const row of manualRows.keys()) row.disabled = true;
+  updateManual();
   $('manualResult').textContent = 'Сохраняю партию…';
   try {
     const r = await api('/api/kiz/supply/manual', {method: 'POST',
-      headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)});
-    $('manualBatchForm').reset();
-    $('manualArticle').oninput();
-    manualRequestId = null;
-    $('manualResult').textContent = 'Партия сохранена. Срок будет подставляться при сканировании.';
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({rows, request_id: manualRequestId, author: $('who').value.trim()})});
+    manualItems.replaceChildren();
+    manualRows.clear();
+    addManualRow();
+    $('manualResult').textContent = 'Партия сохранена.';
     _statSupply = r.supply;
     loadExpiries(); loadStats();
   } catch (e) {
-    $('manualResult').textContent = 'Не удалось сохранить: ' + e.message;
+    $('manualResult').textContent = 'Не удалось сохранить. ' + e.message;
   } finally {
-    fields.forEach(field => { field.disabled = false; });
-    $('manualSave').disabled = !manualProduct;
+    manualSaving = false;
+    for (const row of manualRows.keys()) row.disabled = false;
+    updateManual();
   }
 };
+addManualRow();
 
 $('d0').value = $('d1').value = mskToday();
 $('logReload').onclick = loadLog;
