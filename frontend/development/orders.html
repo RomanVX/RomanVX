@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="ru" data-bs-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Заказы · Разработка</title>
+  <script>
+    const theme = localStorage.getItem('mp_theme') || 'light';
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.dataset.bsTheme = theme;
+  </script>
+  <link rel="stylesheet" href="/vendor/bootstrap.min.css">
+  <link rel="stylesheet" href="/vendor/bootstrap-icons.min.css">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
+  <link rel="stylesheet" href="/style.css?v=33">
+</head>
+<body>
+  <main class="container-fluid pb-3 px-0">
+  <div id="ordersAccessError" class="alert alert-danger" role="alert" hidden></div>
+  <div id="pane-salesan">
+    <div class="d-flex gap-3 mb-3 flex-wrap align-items-center">
+      <h3 class="mb-0 fw-bold">Заказы</h3>
+      <div class="mp-seg">
+        <button type="button" id="ordMpWB" class="mp-seg-btn active" onclick="setOrdersMp('WB')">Wildberries</button>
+        <button type="button" id="ordMpOZON" class="mp-seg-btn" onclick="setOrdersMp('OZON')">Ozon</button>
+        <button type="button" id="ordMpYM" class="mp-seg-btn" onclick="setOrdersMp('YM')">YM</button>
+        <button type="button" id="ordMpTOTAL" class="mp-seg-btn" onclick="setOrdersMp('TOTAL')">Общий</button>
+      </div>
+      <button type="button" id="salesAnalysisBtn" class="mp-ai-link" onclick="loadSalesAnalysis()">AI Анализ</button>
+      <div class="ms-auto d-flex align-items-center gap-2">
+        <div class="mp-seg">
+          <button type="button" id="ordModeDays" class="mp-seg-btn" onclick="setOrdersMode('days')">День</button>
+          <button type="button" id="ordModeWeek" class="mp-seg-btn active" onclick="setOrdersMode('week')">Неделя</button>
+          <button type="button" id="ordModeMonth" class="mp-seg-btn" onclick="setOrdersMode('month')">Месяц</button>
+        </div>
+        <button class="mp-refresh" onclick="reloadOrders()" title="Обновить"><i class="bi bi-arrow-clockwise"></i></button>
+      </div>
+    </div>
+    <div id="ordersSummary"></div>
+    <div class="d-flex align-items-baseline gap-2 mb-1"><h6 class="mb-0 fw-semibold">Подробно: по неделям и артикулам</h6></div>
+    <details class="ord-legend mb-2" id="ordersLegend">
+      <summary class="small text-secondary" style="cursor:pointer" onclick="setTimeout(function(){try{localStorage.setItem('mp_development_ordLegend',document.getElementById('ordersLegend').open?'1':'0')}catch(e){}},0)">Как читать таблицу</summary>
+      <div class="small text-secondary mt-1" style="max-width:980px;line-height:1.5">
+        Столбцы — недели (Пн–Вс), в каждой: <b>₽</b> — сумма заказов, <b>шт</b> — количество заказанных товаров (как «Заказали» в воронке личного кабинета WB). Остатков на складе здесь нет.<br>
+        <b>Первая строка</b> — итог по площадке за неделю. <b>Ниже — бренды</b>: в скобках число артикулов, нажмите ▶ на строке бренда, чтобы раскрыть каждый артикул.<br>
+        <b>▲▼ %</b> — изменение суммы к прошлой неделе; <b>«· идёт»</b> — неделя ещё не закончилась.
+        <b>«↩ % отмен»</b> (WB, по неделям) — сколько от суммы заказов недели покупатели отменили или вернули (по дате отмены/возврата, как в воронке WB).<br>
+        <b>Кольца внизу</b> — доля каждого бренда в заказах недели. «День / Неделя / Месяц» справа меняют шаг таблицы, «Wildberries / Ozon / Общий» — площадку.
+      </div>
+    </details>
+    <script>try{var _lg=localStorage.getItem('mp_development_ordLegend');if(_lg==='1'||(_lg===null&&!window.matchMedia('(max-width: 768px)').matches))document.getElementById('ordersLegend').open=true}catch(e){}</script>
+    <div class="card border-0 bg-card mb-3" id="ordersWeekCard">
+      <div class="card-body p-0">
+        <div class="table-responsive" id="ordersTableWrap">
+          <table class="table table-sm align-middle mb-0 text-nowrap" id="ordersTable"></table>
+        </div>
+      </div>
+    </div>
+    <div id="ordersMonthlyWrap" style="display:none"></div>
+    <div id="ordersDailyWrap" style="display:none"></div>
+
+  </div><!-- /pane-salesan -->
+
+  <div class="modal fade" id="salesAnalysisModal" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+      <div class="modal-content" style="background:var(--surface-2);color:var(--ink);border:1px solid var(--border-2)">
+        <div class="modal-header" style="border-bottom:1px solid var(--border)">
+          <h5 class="modal-title">✨ Анализ текущих продаж</h5>
+          <div class="ms-auto d-flex align-items-center gap-2">
+            <span id="salesAnalysisAt" class="text-secondary small"></span>
+            <button class="btn btn-sm btn-outline-secondary" onclick="loadSalesAnalysis(true)">🔄 Обновить</button>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+          </div>
+        </div>
+        <div class="modal-body" id="salesAnalysisBody" style="white-space:pre-wrap;font-size:14px;line-height:1.7">
+          <div class="text-center text-secondary py-4"><span class="spinner-border"></span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  </main>
+  <script src="/vendor/bootstrap.bundle.min.js"></script>
+  <script src="/vendor/chart.umd.min.js"></script>
+  <script src="/development/orders.js?v=1"></script>
+</body>
+</html>

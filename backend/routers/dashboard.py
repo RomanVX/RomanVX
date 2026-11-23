@@ -3,7 +3,7 @@ import time as _time
 from datetime import datetime, timedelta
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, Query, HTTPException, Request
 import analytics
 import cache
 import catalog as _catalog
@@ -406,21 +406,33 @@ async def invalidate_reco_cache():
 
 # ── Анализ текущих продаж через Claude ────────────────────────────────────────
 
-_sales_analysis_cache: dict = {}
-_sales_analysis_ts: float = 0.0
+_sales_analysis_cache: dict[bool, tuple[float, dict]] = {}
 _SALES_ANALYSIS_TTL = 3600  # 1 час
 
 
 @router.get("/sales_analysis")
 async def get_sales_analysis(refresh: bool = False):
     """Анализ недельных продаж через Claude."""
+    return await _get_sales_analysis(refresh, development=False)
+
+
+@router.get("/development/sales_analysis", include_in_schema=False)
+async def get_development_sales_analysis(request: Request, refresh: bool = False):
+    from config import CABINET
+
+    if CABINET != "biomed" or request.state.user["role"] != "owner":
+        raise HTTPException(status_code=403, detail="Раздел доступен владельцу кабинета Биомеда")
+    return await _get_sales_analysis(refresh, development=True)
+
+
+async def _get_sales_analysis(refresh: bool, *, development: bool):
     from config import ANTHROPIC_API_KEY
     if not ANTHROPIC_API_KEY:
         raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY не настроен")
 
-    global _sales_analysis_cache, _sales_analysis_ts
-    if not refresh and _sales_analysis_cache and _time.monotonic() - _sales_analysis_ts < _SALES_ANALYSIS_TTL:
-        return _sales_analysis_cache
+    cached = _sales_analysis_cache.get(development)
+    if not refresh and cached and _time.monotonic() - cached[0] < _SALES_ANALYSIS_TTL:
+        return cached[1]
 
     # Берём данные из weekly_orders кэша
     data = _wo_cache
@@ -476,8 +488,7 @@ async def get_sales_analysis(refresh: bool = False):
 
     text = message.content[0].text
     result = {"text": text, "generated_at": datetime.utcnow().strftime("%d.%m.%Y %H:%M UTC")}
-    _sales_analysis_cache = result
-    _sales_analysis_ts = _time.monotonic()
+    _sales_analysis_cache[development] = (_time.monotonic(), result)
     return result
 
 

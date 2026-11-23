@@ -435,6 +435,13 @@ function switchTab(name, linkEl) {
     if (el) el.style.display = t === name ? 'block' : 'none';
   });
   currentTab = name;
+  if (name === 'development') {
+    const frame = document.getElementById('developmentOrders');
+    if (!frame.hasAttribute('src')) {
+      const params = new URLSearchParams({ brand: getGlobalBrand() });
+      frame.src = '/development/orders?' + params;
+    }
+  }
   if (dirty[name]) {
     dirty[name] = false;
     ({ salesan: loadSalesAnalytics, stocks: loadStocks,

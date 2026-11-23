@@ -4,7 +4,7 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 import re
@@ -799,6 +799,18 @@ if FRONTEND_DIR.exists():
             )
         return HTMLResponse(_client_index(CABINET_NAME, CABINET_MONO),
                             headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+
+    @app.get("/development/orders", include_in_schema=False)
+    async def development_orders(request: Request):
+        from config import CABINET
+
+        user = _auth._session_of(request)
+        if CABINET != "biomed" or not user or user["role"] != "owner":
+            raise HTTPException(status_code=403, detail="Раздел доступен владельцу кабинета Биомеда")
+        return FileResponse(
+            FRONTEND_DIR / "development" / "orders.html",
+            headers={"Cache-Control": "no-store", "Content-Security-Policy": "frame-ancestors 'self'"},
+        )
 
     @app.get("/wms")
     async def wms_app():
