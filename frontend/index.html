@@ -24,7 +24,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" />
-  <link rel="stylesheet" href="style.css?v=34" />
+  <link rel="stylesheet" href="style.css?v=35" />
 </head>
 <body>
 
@@ -60,7 +60,7 @@
   <div class="d-flex align-items-center gap-3">
     <img src="/api/tools/asset/logo" alt="Market Partners" style="width:46px;height:46px;object-fit:contain" onerror="this.style.display='none'" />
     <span id="cabBrandName" class="d-none"></span>
-    <nav class="mp-menu" id="mainMenu">
+    <div class="mp-menu" id="mainMenu" role="navigation" aria-label="Разделы дашборда">
     <div class="mp-menu-item active" id="navAnalytics">
       <button type="button" class="mp-menu-title" onclick="goNav('salesan','navAnalytics')">Аналитика</button>
       <div class="mp-menu-drop">
@@ -140,7 +140,7 @@
       <button type="button" class="mp-menu-title" onclick="goNav('development','navDevelopment')">Разработка</button>
     </div>
     </div>
-  </nav>
+  </div>
   </div>
   <div class="d-flex align-items-center gap-2" id="navAccountControls">
     <select id="globalBrand" class="form-select form-select-sm" style="width:auto;max-width:200px;display:none"
@@ -153,7 +153,6 @@
     <div class="mp-menu-item mp-acc">
       <button type="button" class="mp-menu-title" id="accCabName">Biomed Nutrition <i class="bi bi-chevron-down small"></i></button>
       <div class="mp-menu-drop mp-drop-right">
-        <a href="#" onclick="loadAll();return false">Обновить данные</a>
         <a href="#" id="changeCabBtn" onclick="changeCabinet();return false">Сменить кабинет</a>
         <div id="developmentCabinets" hidden>
           <a href="https://main.marketpartners.ru/?open=tl">Филипок</a>
@@ -163,6 +162,7 @@
         </div>
         <a href="#" id="usersBtn" style="display:none" onclick="openUsers();return false">Доступы</a>
         <div class="mp-drop-sep"></div>
+        <a href="#" onclick="loadAll();return false">Обновить данные</a>
         <a href="#" onclick="doLogout();return false">Выйти</a>
         <div class="mp-drop-note">обновлено: <span id="lastUpdated">—</span> · v2.6</div>
       </div>

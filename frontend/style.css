@@ -1039,25 +1039,38 @@ html.client-ui .mp-cab-card:hover { box-shadow: 0 12px 36px rgba(79, 70, 229, .3
 }
 
 /* Biomed development preview */
-.development-nav #navAccountControls {
-  margin-inline-start: auto;
+#mainNav.development-nav > .d-flex:first-child {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+#mainNav.development-nav #navAccountControls {
+  flex: 0 0 auto;
+  justify-content: flex-end;
+  margin-left: auto;
   align-self: flex-start;
 }
 
 @media (max-width: 991px) {
-  .development-nav #navAccountControls {
+  #mainNav.development-nav #navAccountControls {
     order: -1;
+    flex-basis: 100%;
   }
 
-  .development-nav > .d-flex:first-child {
+  #mainNav.development-nav > .d-flex:first-child {
     flex-basis: 100%;
   }
 }
 
 .development-brand-filter {
   background-color: var(--surface-2);
-  border-color: var(--border-2);
-  color: var(--ink);
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  padding-left: 12px;
+  color: var(--ink-2);
+  font-size: .88rem;
+  font-weight: 600;
+  min-height: calc(1.32rem + 20px);
   width: auto;
   max-width: 100%;
 }
