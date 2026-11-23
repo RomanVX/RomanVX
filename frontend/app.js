@@ -37,7 +37,7 @@ let prodAllData = [];
 // Дефолты — кабинет Biomed; для других кабинетов переопределяется из /api/cabinet
 let BRAND_ORDER = ['Джага', 'Satisfucktion', 'Aloe'];
 let SUBGROUPS = [
-  { name: 'Фисты',             skus: ['BMN-0013', 'BMN-0028', 'BMN-0035', 'BMN-0036', 'ST-07'] },
+  { name: 'Фисты',             skus: ['BMN-0013', 'BMN-0028', 'BMN-0035', 'BMN-0036', 'ST-07', 'ST-14'] },
   { name: 'Спреи для минета',  skus: ['BMN-0115', 'BMN-0116', 'BMN-0110'] },
 ];
 let GROUP_ORDER = ['Фисты', 'Aloe', 'Спреи для минета', 'Satisfucktion', 'Джага', 'Прочее'];
