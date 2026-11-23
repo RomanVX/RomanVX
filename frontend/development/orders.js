@@ -57,19 +57,38 @@ function moscowToday() {
   return `${date.year}-${date.month}-${date.day}`;
 }
 
-function defaultDates() {
-  const today = new Date(moscowToday() + 'T00:00:00Z');
-  const from = new Date(today);
-  const to = new Date(today);
-  if (periodFilter.value === 'week') {
-    from.setUTCDate(today.getUTCDate() - (today.getUTCDay() + 6) % 7);
-    to.setTime(from.getTime() + 6 * 86400000);
-  } else if (periodFilter.value === 'month') {
-    from.setUTCDate(1);
-    to.setUTCMonth(today.getUTCMonth() + 1, 0);
+const REPORT_COLUMNS = 7;
+
+function isoDate(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function reportRange(value, anchorStart = false) {
+  const start = new Date(value + 'T00:00:00Z');
+  const mode = periodFilter.value;
+  if (mode === 'month') start.setUTCDate(1);
+  else start.setUTCDate(start.getUTCDate() - (start.getUTCDay() + 6) % 7);
+
+  if (mode !== 'day' && !anchorStart) {
+    if (mode === 'month') start.setUTCMonth(start.getUTCMonth() - (REPORT_COLUMNS - 1));
+    else start.setUTCDate(start.getUTCDate() - (REPORT_COLUMNS - 1) * 7);
   }
-  fromDate.value = from.toISOString().slice(0, 10);
-  toDate.value = periodFilter.value === 'day' ? '' : to.toISOString().slice(0, 10);
+
+  const end = new Date(start);
+  if (mode === 'month') end.setUTCMonth(start.getUTCMonth() + REPORT_COLUMNS, 0);
+  else end.setUTCDate(start.getUTCDate() + (mode === 'day' ? REPORT_COLUMNS : REPORT_COLUMNS * 7) - 1);
+  return { from: isoDate(start), to: isoDate(end) };
+}
+
+function setReportDates(value, anchorStart = false) {
+  if (periodFilter.value === 'day') {
+    fromDate.value = value;
+    toDate.value = '';
+    return;
+  }
+  const range = reportRange(value, anchorStart);
+  fromDate.value = range.from;
+  toDate.value = range.to;
 }
 
 function saveOrdersFilters() {
@@ -88,14 +107,14 @@ async function loadOrders() {
   _ordersData = null;
   renderOrdersTable();
   table.innerHTML = '<tr><td class="text-secondary py-3">Загрузка…</td></tr>';
-  const end = toDate.disabled ? fromDate.value : toDate.value;
-  if (!fromDate.value || !end) {
+  if (!fromDate.value || (!toDate.disabled && !toDate.value)) {
     table.innerHTML = '<tr><td class="text-secondary py-3">Выберите даты отчёта</td></tr>';
     return;
   }
   saveOrdersFilters();
+  const range = toDate.disabled ? reportRange(fromDate.value) : { from: fromDate.value, to: toDate.value };
   const query = new URLSearchParams({
-    period: periodFilter.value, date_from: fromDate.value, date_to: end,
+    period: periodFilter.value, date_from: range.from, date_to: range.to,
   });
   if (brandFilter.value) query.set('brand', brandFilter.value);
   try {
@@ -386,17 +405,12 @@ function renderOrdersSummary() {
     return;
   }
 
-  const rub = block.total_rub.reduce((sum, value) => sum + value, 0);
-  const qty = block.total_qty.reduce((sum, value) => sum + value, 0);
-  const metrics = [
-    ['Сумма заказов', fmtRub(rub)],
-    ['Заказано товаров', fmt(qty) + ' шт.'],
-    ['Средняя сумма за единицу', qty ? fmtRub(Math.round(rub / qty)) : '—'],
-  ];
   box.innerHTML = `
-    <div class="row g-2 mb-2">${metrics.map(([title, value]) => `
-      <div class="col-6 col-lg-3"><div class="metric-card">
-        <div class="mc-head">${title}</div><div class="mc-val">${value}</div>
+    <div class="row row-cols-2 row-cols-md-4 g-2 mb-2">${_ordersData.weeks.map((label, index) => `
+      <div class="col col-xl"><div class="metric-card h-100">
+        <div class="mc-head">${esc(label)}</div>
+        <div class="mc-val">${fmtRub(block.total_rub[index])}</div>
+        <div class="mc-sub">${fmt(block.total_qty[index])} шт.</div>
       </div></div>`).join('')}</div>
     <div class="card border-0 bg-card mb-3"><div class="card-body p-2">
       <div class="fw-semibold small mb-1">Динамика заказов, ₽</div>
@@ -516,11 +530,7 @@ async function initDevelopmentOrders() {
     periodFilter.value = savedMode === 'days' ? 'day' :
       ['day', 'week', 'month'].includes(savedMode) ? savedMode : 'week';
     toDate.disabled = periodFilter.value === 'day';
-    defaultDates();
-    if (!toDate.disabled && filters.get('from') && filters.get('to')) {
-      fromDate.value = filters.get('from');
-      toDate.value = filters.get('to');
-    }
+    setReportDates((toDate.disabled ? filters.get('from') : filters.get('to')) || moscowToday());
 
     marketplace.addEventListener('change', () => {
       saveOrdersFilters();
@@ -529,15 +539,15 @@ async function initDevelopmentOrders() {
     brandFilter.addEventListener('change', loadOrders);
     periodFilter.addEventListener('change', () => {
       toDate.disabled = periodFilter.value === 'day';
-      defaultDates();
+      setReportDates(moscowToday());
       loadOrders();
     });
     fromDate.addEventListener('change', () => {
-      if (!toDate.disabled && fromDate.value > toDate.value) toDate.value = fromDate.value;
+      if (fromDate.value) setReportDates(fromDate.value, true);
       loadOrders();
     });
     toDate.addEventListener('change', () => {
-      if (toDate.value && toDate.value < fromDate.value) fromDate.value = toDate.value;
+      if (toDate.value) setReportDates(toDate.value);
       loadOrders();
     });
     document.getElementById('ordersFilters').hidden = false;

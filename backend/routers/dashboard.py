@@ -1092,7 +1092,7 @@ async def get_development_orders_matrix(
     if CABINET != "biomed" or request.state.user["role"] != "owner":
         raise HTTPException(status_code=403, detail="Раздел доступен владельцу кабинета Биомеда")
     span = (date_to - date_from).days
-    if not 0 <= span < 366 or (period == "day" and span != 0):
+    if not 0 <= span < 366 or (period == "day" and span > 6):
         raise HTTPException(status_code=422, detail="Укажите корректный период до 366 дней")
 
     labels = []
@@ -1106,9 +1106,15 @@ async def get_development_orders_matrix(
         else:
             boundary = start + timedelta(days=1)
         end = min(date_to, boundary - timedelta(days=1))
-        label = start.strftime("%d.%m.%Y")
-        if start != end:
-            label += "–" + end.strftime("%d.%m.%Y")
+        if period == "day":
+            weekdays = ("Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс")
+            label = f"{weekdays[start.weekday()]} {start:%d.%m}"
+        elif period == "month":
+            months = ("Янв", "Фев", "Мар", "Апр", "Май", "Июн",
+                      "Июл", "Авг", "Сен", "Окт", "Ноя", "Дек")
+            label = f"{months[start.month - 1]} {start.year}"
+        else:
+            label = f"{start:%d.%m}–{end:%d.%m}"
         for offset in range((end - start).days + 1):
             positions[(start + timedelta(days=offset)).isoformat()] = len(labels)
         labels.append(label)
