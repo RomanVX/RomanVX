@@ -210,6 +210,10 @@ function avgPerDay(r) {
 
 let _me = null;   // {login, role} — текущий пользователь (серверная сессия)
 
+function canOpenDevelopment() {
+  return _cab?.id === 'biomed' && _me?.role === 'owner';
+}
+
 function applyRole() {
   if (!_me) return;
   // менеджеру скрываем пункт Финансы (юнитка остаётся)
@@ -218,6 +222,7 @@ function applyRole() {
   // владельцу — кнопка управления доступами
   const btn = document.getElementById('usersBtn');
   if (btn) btn.style.display = _me.role === 'owner' ? '' : 'none';
+  document.getElementById('navDevelopment').hidden = !canOpenDevelopment();
 }
 
 function showOverlay(name) {
@@ -306,6 +311,10 @@ function _navSnapshot() {
            nav: act ? act.id : null, ordMp: _ordersMp, ordMode: _ordersMode };
 }
 function _navRestore(s) {
+  if (s.tab === 'development') {
+    goNav('development', 'navDevelopment');
+    return;
+  }
   if (s.tab === 'tools' && s.tool) {
     dirty.tools = false; switchTab('tools', null); _toolActive = null; setTool(s.tool);
   } else if (s.tab === 'toolsoz' && s.oztool) {
@@ -390,7 +399,7 @@ function markNav(id) {
 }
 
 function goNav(tab, navId) {
-  switchTab(tab, null);
+  if (switchTab(tab, null) === false) return;
   if (navId) markNav(navId);
 }
 
@@ -417,10 +426,11 @@ function _demoMark(note) {
 function _demoHide() { const el = document.getElementById('demoFillBar'); if (el) el.style.display = 'none'; }
 
 function switchTab(name, linkEl) {
+  if (name === 'development' && !canOpenDevelopment()) return false;
   _demoHide();
   document.querySelectorAll('#mainTabs .nav-link').forEach(a => a.classList.remove('active'));
   if (linkEl) linkEl.classList.add('active');
-  ['salesan', 'stocks', 'reviews', 'finance', 'unit', 'tools', 'toolsoz', 'docs', 'fbs', 'dims', 'promo', 'cardsync', 'growth', 'market', 'feedback'].forEach(t => {
+  ['salesan', 'stocks', 'reviews', 'finance', 'unit', 'tools', 'toolsoz', 'docs', 'fbs', 'dims', 'promo', 'cardsync', 'growth', 'market', 'feedback', 'development'].forEach(t => {
     const el = document.getElementById('pane-' + t);
     if (el) el.style.display = t === name ? 'block' : 'none';
   });
@@ -5708,7 +5718,8 @@ function initDashboard() {
   let saved = null;
   try { saved = JSON.parse(sessionStorage.getItem('mp_nav') || 'null'); sessionStorage.removeItem('mp_nav'); } catch (e) {}
   let restored = false;
-  if (saved && saved.tab && document.getElementById('pane-' + saved.tab)) {
+  if (saved && saved.tab && document.getElementById('pane-' + saved.tab) &&
+      (saved.tab !== 'development' || canOpenDevelopment())) {
     try { _navRestore(saved); restored = true; } catch (e) { console.warn('nav restore', e); }
   }
   if (!restored) switchTab('salesan', document.querySelector('#mainTabs .nav-link'));

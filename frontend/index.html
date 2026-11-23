@@ -136,6 +136,9 @@
         <a href="#" onclick="goNav('cardsync','navOzon');return false">Карточки WB → Ozon</a>
       </div>
     </div>
+    <div class="mp-menu-item" id="navDevelopment" hidden>
+      <button type="button" class="mp-menu-title" onclick="goNav('development','navDevelopment')">Разработка</button>
+    </div>
     </div>
   </nav>
   </div>
@@ -164,6 +167,13 @@
 <!-- ══ MAIN CONTENT ══ -->
 <div id="mainContent" style="display:none">
 <div class="container-fluid py-3">
+
+  <section id="pane-development" style="display:none" aria-labelledby="developmentTitle">
+    <h3 id="developmentTitle" class="fw-bold mb-3">Разработка</h3>
+    <div class="card">
+      <div class="card-body text-secondary">Здесь будут тестовые функции. Пока их нет.</div>
+    </div>
+  </section>
 
   <!-- ── Заказы ── -->
   <div id="pane-salesan" style="display:none">
@@ -657,6 +667,6 @@
 
 <script src="vendor/bootstrap.bundle.min.js"></script>
 <script src="vendor/chart.umd.min.js"></script>
-<script src="app.js?v=295"></script>
+<script src="app.js?v=296"></script>
 </body>
 </html>
