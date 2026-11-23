@@ -21,6 +21,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "backend"))
+import portal  # noqa: E402
 import db  # noqa: E402  (backend/db.py: пул Postgres + схема)
 
 import mpfit_client  # noqa: E402
@@ -35,7 +36,12 @@ HERE = Path(__file__).resolve().parent
 app = FastAPI(title="MPFIT Analytics")
 app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
 
-_PUBLIC = ("/health",)
+_PUBLIC = ("/health", "/api/auth/portal/exchange")
+
+
+@app.post("/api/auth/portal/exchange")
+async def portal_exchange(request: Request):
+    return await portal.exchange(request, "mpfit")
 # «Упаковка КИЗ» открыта без пароля (рабочее место упаковщика); финансы и
 # остальной дашборд — по-прежнему под Basic Auth
 _PUBLIC_PREFIX = ("/kiz", "/api/kiz/", "/static/kiz-parse.js", "/static/bwip-js-min.js")
@@ -101,6 +107,9 @@ async def basic_auth(request: Request, call_next):
         #     if st == "need":
         #         return JSONResponse({"error": "pin", "message": "Нужен PIN"}, status_code=401)
         return await call_next(request)
+    request.state.portal_user = await asyncio.to_thread(portal.dashboard_user, request, "mpfit")
+    if request.state.portal_user:
+        return await call_next(request)
     if not (os.environ.get("DASH_PASSWORD") or "").strip():
         return Response("Задайте DASH_PASSWORD в настройках Render", status_code=503)
     if not _basic_ok(request):
@@ -122,6 +131,8 @@ async def _startup():
 
 
 def _user(request: Request) -> str:
+    if portal_user := getattr(request.state, "portal_user", None):
+        return portal_user["login"]
     auth = request.headers.get("authorization", "")
     try:
         return base64.b64decode(auth[6:]).decode().partition(":")[0]

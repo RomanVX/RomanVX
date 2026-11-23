@@ -103,3 +103,36 @@ tl.marketpartners.ru {
 aurora.marketpartners.ru {
     import render_avr
 }
+
+main.marketpartners.ru {
+    handle / {
+        rewrite * /portal
+        import render_wb
+    }
+    @portalAssets path /static/portal.css /static/portal.js
+    handle @portalAssets {
+        import render_wb
+    }
+    @portalApi path /api/auth/portal/login /api/auth/portal/me /api/auth/portal/logout /api/auth/portal/launch/*
+    handle @portalApi {
+        import render_wb
+    }
+    handle /api/auth/portal/mpfit-exchange {
+        rewrite * /api/auth/portal/exchange
+        import render_mpfit
+    }
+    handle /mpfit {
+        rewrite * /
+        import render_mpfit
+    }
+    @warehouse {
+        path /api/* /static/*
+        not path /api/auth/portal/* /api/kiz/* /static/portal.css /static/portal.js
+    }
+    handle @warehouse {
+        import render_mpfit
+    }
+    handle {
+        respond 404
+    }
+}

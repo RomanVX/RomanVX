@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Портал Market Partners</title>
+  <link rel="stylesheet" href="/static/portal.css">
+  <script defer src="/static/portal.js"></script>
+</head>
+<body>
+  <div class="shell">
+    <header class="top">
+      <div class="brand"><span class="brand-mark" aria-hidden="true">MP</span><span>Market Partners</span></div>
+      <div class="account" id="account" hidden><span id="account-name"></span><button type="button" id="logout">Выйти</button></div>
+    </header>
+    <main>
+      <section id="login" class="login" hidden>
+        <h1>Вход в портал</h1>
+        <p class="muted">Кабинеты маркетплейсов и фулфилмент</p>
+        <form id="login-form">
+          <label for="login-name">Логин администратора</label>
+          <input id="login-name" name="login" autocomplete="username" required maxlength="128">
+          <label for="login-password">Пароль</label>
+          <input id="login-password" type="password" name="password" autocomplete="current-password" required maxlength="1024">
+          <button id="login-submit" class="primary" type="submit">Войти</button>
+        </form>
+      </section>
+      <section id="dashboards" hidden>
+        <h1>Дашборды</h1>
+        <div class="grid" aria-label="Кабинеты маркетплейсов">
+          <button class="tile" type="button" data-cabinet="tl"><span class="monogram" aria-hidden="true">Ф</span><span><strong>Филипок</strong><small>Технолюкс · Wildberries и Ozon</small></span></button>
+          <button class="tile" type="button" data-cabinet="avr"><span class="monogram" aria-hidden="true">А</span><span><strong>Аврора</strong><small>Wildberries</small></span></button>
+          <button class="tile" type="button" data-cabinet="biomed"><span class="monogram" aria-hidden="true">Б</span><span><strong>Biomed</strong><small>Wildberries, Ozon и Яндекс Маркет</small></span></button>
+          <button class="tile" type="button" data-cabinet="fk"><span class="monogram" aria-hidden="true">М</span><span><strong>Миагра</strong><small>Фабрика красоты · Wildberries и Ozon</small></span></button>
+        </div>
+        <div class="warehouse">
+          <div><h2>Фулфилмент</h2><p class="muted">Склад и финансы в МПФИТ</p></div>
+          <button type="button" data-cabinet="mpfit">Открыть МПФИТ</button>
+        </div>
+      </section>
+      <p id="status" class="status" role="status" aria-live="polite">Проверяем вход…</p>
+    </main>
+  </div>
+</body>
+</html>

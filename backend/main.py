@@ -511,6 +511,8 @@ app.include_router(_landing.router)
 import auth as _auth
 app.include_router(_auth.router)
 app.include_router(_auth.users_router)
+import portal as _portal
+app.include_router(_portal.router)
 
 
 @app.middleware("http")

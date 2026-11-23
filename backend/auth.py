@@ -84,6 +84,11 @@ def _session_of(request: Request) -> dict | None:
     hdr = request.headers.get("x-owner-token", "")
     if len(api_tok) >= 24 and hdr and hmac.compare_digest(hdr, api_tok):
         return {"login": "api", "role": "owner"}
+    from config import CABINET
+    from portal import dashboard_user
+    portal_user = dashboard_user(request, CABINET)
+    if portal_user:
+        return portal_user
     token = request.cookies.get(COOKIE)
     if not token:
         return None
@@ -183,6 +188,9 @@ async def logout(request: Request, response: Response):
     if token:
         await asyncio.to_thread(db.execute, "DELETE FROM sessions WHERE token = ?", (token,))
     response.delete_cookie(COOKIE)
+    from config import CABINET
+    from portal import dashboard_logout
+    await asyncio.to_thread(dashboard_logout, request, response, CABINET)
     return {"ok": True}
 
 
