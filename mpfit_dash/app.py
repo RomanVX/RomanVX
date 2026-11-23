@@ -8,6 +8,7 @@ Env: DATABASE_URL, DB_SCHEMA=mpfit, MPFIT_TOKEN (когда выдадут),
 DASH_USER / DASH_PASSWORD (вход в дашборд, Basic Auth).
 """
 import asyncio
+import httpx
 import base64
 import logging
 import os
@@ -570,18 +571,53 @@ async def kiz_set_pin(payload: dict):
     return {"ok": True}
 
 
+async def _kiz_live_product(barcode: str) -> dict | None:
+    response = await mpfit_client.call("POST", "/v1/products/stocks",
+                                       {"limit": 2, "last_id": 0, "filter": {"barcode": barcode}})
+    result = response["result"]
+    rows = result["data"]
+    if len(rows) != 1 or result.get("total", len(rows)) != 1:
+        return None
+    stock = rows[0]
+    if not any((row.get("free") or 0) > 0 or (row.get("booked") or 0) > 0
+               for row in stock.get("stocks") or []):
+        return None
+    product_id = stock["product_id"]
+    company_id = stock["company_id"]
+    catalog = await mpfit_client.call("POST", "/v1/products/list",
+                                     {"limit": 1, "last_id": 0,
+                                      "filter": {"ids": [product_id], "company_id": company_id}})
+    products = catalog["result"]["data"]
+    if not products or products[0]["id"] != product_id or not products[0].get("name"):
+        return None
+    product = products[0]
+    codes = {barcode, *(product.get("barcodes") or [])}
+    for external in (product.get("external_barcodes") or {}).values():
+        codes.update(external or [])
+    return {"product_id": product_id, "article": product.get("article") or stock.get("article"),
+            "name": product["name"], "company": "", "barcodes": sorted(codes),
+            "source": "МПФИТ"}
+
+
 @app.get("/api/kiz/lookup")
 async def kiz_lookup(gtin: str = "", barcode: str = "", kiz: str = ""):
-    """Товар (по ШК/GTIN из снимка остатков), сохранённый срок годности по GTIN
-    и печатали ли уже этот КИЗ."""
-    prod = await _t(store.kiz_product, barcode.strip(), gtin.strip())
-    exp = await _t(store.kiz_expiry_get, gtin.strip()) if gtin else None
+    gtin, barcode = gtin.strip(), barcode.strip()
+    if not gtin and barcode.isascii() and barcode.isdigit() and len(barcode) in (13, 14):
+        gtin = barcode.zfill(14)
+    # С КИЗ карточку определяет GTIN, чтобы неправильный ШК не прошёл сверку.
+    prod = await _t(store.kiz_product, "" if kiz and gtin else barcode, gtin)
+    exp = await _t(store.kiz_expiry_get, gtin) if gtin else None
     if not prod and exp and exp.get("product"):
-        # в остатках МПФИТ товара нет — название и артикул из загруженной поставки
         g = exp["gtin"]
         prod = {"product_id": None, "article": exp.get("article") or "", "source": "поставка",
                 "name": exp["product"].split(" · партия ")[0], "company": "",
-                "barcodes": [g[1:] if g.startswith("0") else g]}
+                "barcodes": [g, g[1:]] if g.startswith("0") else [g]}
+    live_code = gtin.removeprefix("0") if kiz and gtin else barcode
+    if not prod and 0 < len(live_code) <= 40 and mpfit_client.token():
+        try:
+            prod = await asyncio.wait_for(_kiz_live_product(live_code), timeout=3)
+        except (TimeoutError, RuntimeError, ValueError, KeyError, httpx.HTTPError):
+            pass
     printed = await _t(store.kiz_printed, kiz) if kiz else None
     return {"product": prod, "expiry": exp, "printed": printed}
 

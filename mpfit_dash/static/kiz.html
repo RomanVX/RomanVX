@@ -314,8 +314,9 @@ async function onScan(raw) {
     const k = c.kiz;
     if (!k || !k.ok) { beep(false); say('Код маркировки не разобран. Отсканируйте ещё раз.', 'bad'); return; }
     if (st.nokiz) { setNoKiz(false); st.bc = null; st.product = null; }   // отсканировали КИЗ — значит, товар маркированный
-    st.kiz = k; st.expiry = k.expiry; st.expirySrc = k.expirySrc; st.saved = null; st.dup = null; st.crpt = null;
+    st.kiz = k; st.expiry = k.expiry; st.expirySrc = k.expirySrc; st.saved = null; st.dup = null; st.crpt = k.expiry ? null : 'loading';
     await lookup();
+    if (st.kiz !== k) return;
     if (!k.expiry) {
       st.crpt = 'loading'; render();
       const r = await crptExpiry(k);
@@ -325,9 +326,11 @@ async function onScan(raw) {
       else st.crpt = r.error || 'не получилось';
     }
   } else if (c.type === 'barcode') {
-    if (st.nokiz && !st.kiz) Object.assign(st, { product: null, expiry: null, expirySrc: null, saved: null });
+    if (!st.kiz) Object.assign(st, { product: null, expiry: null, expirySrc: null, saved: null });
     st.bc = { code: c.code, bcid: c.bcid };
+    const bc = st.bc;
     if (!st.product || !st.kiz) await lookup();
+    if (st.bc !== bc) return;
   } else { beep(false); say('Непонятный код. Сканируйте DataMatrix «Честного знака» или штрихкод товара.', 'bad'); return; }
   checkMismatch();
   render();
@@ -378,12 +381,13 @@ async function crptExpiry(k) {
 }
 
 async function lookup() {
-  const noKiz = st.nokiz && !st.kiz;
-  const q = new URLSearchParams({ gtin: st.kiz?.gtin || (noKiz ? gtinFromBc(st.bc?.code) : ''), barcode: st.bc?.code || '', kiz: st.kiz?.canon || '' });
+  const kiz = st.kiz, bc = st.bc;
+  const q = new URLSearchParams({ gtin: kiz?.gtin || gtinFromBc(bc?.code), barcode: bc?.code || '', kiz: kiz?.canon || '' });
   try {
     const r = await api('/api/kiz/lookup?' + q);
+    if (st.kiz !== kiz || (!kiz && st.bc !== bc)) return;
     if (r.product) st.product = r.product;
-    if (r.expiry && ((st.kiz && !st.kiz.expiry) || noKiz)) { st.expiry = r.expiry.expiry; st.expirySrc = 'партия'; st.saved = r.expiry; }
+    if (r.expiry && !st.expiry) { st.expiry = r.expiry.expiry; st.expirySrc = 'партия'; st.saved = r.expiry; }
     st.dup = r.printed || null;
   } catch (e) { say('Нет связи с сервером: ' + esc(e.message), 'warn'); }
 }
