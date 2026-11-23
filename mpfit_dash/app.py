@@ -724,6 +724,79 @@ async def kiz_expiry_import(request: Request):
     return {**res, "total": len(rows), "notes": notes[:20], "supply": supply, "plan_lines": n_plan}
 
 
+async def _kiz_article_product(article: str) -> dict:
+    rows = await _t(db.fetchall,
+                    "SELECT product_id, company_id, name, barcodes FROM m_stock_snap "
+                    "WHERE article = ? AND snap_date = (SELECT MAX(snap_date) FROM m_stock_snap WHERE article = ?)",
+                    (article, article))
+    if not rows and await _t(store.kv_get, "arrivals_synced_at"):
+        rows = await _t(db.fetchall,
+                        "SELECT DISTINCT product_id, company_id, name, '' FROM m_arrival_items "
+                        "WHERE article = ? AND product_id IS NOT NULL AND name IS NOT NULL", (article,))
+    if not rows:
+        raise ValueError("Артикул не найден в синхронизированных данных МПФИТ")
+    ids = {(r[0], r[1]) for r in rows}
+    if len(ids) != 1:
+        raise ValueError("В МПФИТ несколько товаров с этим артикулом")
+    pid, cid, name, barcodes = rows[0]
+    codes = {x.strip() for x in (barcodes or "").split(",")}
+    if mpfit_client.token() and (not any(codes) or not name):
+        try:
+            data = await asyncio.wait_for(mpfit_client.call(
+                "POST", "/v1/products/list",
+                {"limit": 1, "last_id": 0, "filter": {"ids": [pid], "company_id": cid}}), timeout=3)
+            for item in data["result"]["data"]:
+                if item["id"] == pid:
+                    name = item.get("name") or name
+                    codes.update(item.get("barcodes") or [])
+        except (TimeoutError, RuntimeError, ValueError, KeyError, httpx.HTTPError):
+            pass
+    if not name:
+        raise ValueError("В МПФИТ нет названия для этого артикула")
+    gtins = sorted({c.zfill(14) for c in codes if c.isascii() and c.isdigit() and len(c) in (13, 14)})
+    return {"article": article, "name": name, "gtins": gtins}
+
+
+@app.get("/api/kiz/supply/product")
+async def kiz_supply_product(article: str):
+    article = article.strip()
+    if not 0 < len(article) <= 200:
+        return JSONResponse({"error": "Введите артикул"}, status_code=400)
+    try:
+        return await _kiz_article_product(article)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+@app.post("/api/kiz/supply/manual")
+async def kiz_supply_manual(request: Request, payload: dict):
+    from datetime import date
+    from uuid import UUID
+    article = str(payload.get("article") or "").strip()
+    gtin = str(payload.get("gtin") or "").strip()
+    qty = payload.get("qty")
+    try:
+        request_id = UUID(str(payload.get("request_id"))).hex
+        expiry = date.fromisoformat(str(payload.get("expiry") or "")).isoformat()
+        if not 0 < len(article) <= 200 or type(qty) is not int or not 0 < qty <= 2147483647:
+            raise ValueError
+        if not gtin.isascii() or not gtin.isdigit() or len(gtin) not in (13, 14):
+            raise ValueError
+        gtin = gtin.zfill(14)
+    except ValueError:
+        return JSONResponse({"error": "Проверьте артикул, количество, срок и штрихкод"}, status_code=400)
+    try:
+        product = await _kiz_article_product(article)
+        if product["gtins"] and gtin not in product["gtins"]:
+            raise ValueError("Штрихкод не найден в карточке этого товара МПФИТ")
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    supply = await _t(store.kiz_manual_supply_save, request_id,
+                      {**product, "gtin": gtin, "expiry": expiry, "qty": qty},
+                      _kiz_author(request, payload))
+    return {"ok": True, "supply": supply}
+
+
 @app.get("/api/kiz/supply/stats")
 async def kiz_supply_stats(supply: str = ""):
     return await _t(store.kiz_supply_stats, supply)

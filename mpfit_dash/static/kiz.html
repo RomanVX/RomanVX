@@ -219,6 +219,25 @@ th{color:var(--muted);font-weight:600;font-size:12px}
         <div class="tw" style="max-height:360px;overflow-y:auto"><table style="table-layout:fixed"><thead><tr><th>Товар</th><th style="width:120px">Штрихкод</th><th style="width:84px">Годен до</th></tr></thead><tbody id="expList"></tbody></table></div>
       </details>
     </section>
+    <section class="card">
+      <h2>Добавить партию вручную</h2>
+      <form id="manualBatchForm">
+        <div class="row">
+          <label class="f">Артикул <input id="manualArticle" maxlength="200" required></label>
+          <button type="button" class="btn" id="manualFind">Найти в МПФИТ</button>
+        </div>
+        <p id="manualName" aria-live="polite"></p>
+        <div class="row">
+          <label class="f">Количество <input id="manualQty" type="number" min="1" max="2147483647" step="1" required style="width:100px"></label>
+          <label class="f">Годен до <input id="manualExpiry" type="date" required></label>
+          <label class="f" id="manualBarcodeField" hidden>Штрихкод
+            <input id="manualBarcode" inputmode="numeric" pattern="[0-9]{13,14}" maxlength="14">
+          </label>
+        </div>
+        <button type="submit" class="btn pri" id="manualSave" disabled>Сохранить партию</button>
+        <p class="muted" id="manualResult" role="status"></p>
+      </form>
+    </section>
   </div>
 </main>
 <div id="printArea"></div>
@@ -704,6 +723,68 @@ $('expUpload').onclick = async () => {
     loadExpiries(); _statSupply = r.supply || ''; loadStats();
   } catch (e) { $('expResult').textContent = 'Не загрузилось: ' + e.message; }
   $('expUpload').disabled = false; $('scan').focus();
+};
+
+let manualProduct = null;
+let manualRequestId = null;
+$('manualArticle').oninput = () => {
+  manualProduct = null;
+  $('manualName').textContent = '';
+  $('manualBarcode').value = '';
+  $('manualBarcode').required = false;
+  $('manualBarcodeField').hidden = true;
+  $('manualSave').disabled = true;
+};
+$('manualFind').onclick = async () => {
+  const article = $('manualArticle').value.trim();
+  if (!article || $('manualFind').disabled) return;
+  $('manualFind').disabled = true;
+  $('manualResult').textContent = 'Ищу товар…';
+  try {
+    const r = await api('/api/kiz/supply/product?article=' + encodeURIComponent(article));
+    if ($('manualArticle').value.trim() !== article) return;
+    manualProduct = r;
+    $('manualName').textContent = r.name;
+    const needsBarcode = r.gtins.length !== 1;
+    $('manualBarcode').value = needsBarcode ? '' : r.gtins[0];
+    $('manualBarcode').required = needsBarcode;
+    $('manualBarcodeField').hidden = !needsBarcode;
+    $('manualSave').disabled = false;
+    $('manualResult').textContent = needsBarcode ? 'Отсканируйте EAN или введите GTIN товара.' : '';
+  } catch (e) {
+    $('manualResult').textContent = 'Не удалось найти товар: ' + e.message;
+  } finally { $('manualFind').disabled = false; }
+};
+$('manualArticle').onchange = () => $('manualFind').onclick();
+$('manualArticle').onkeydown = e => {
+  if (e.key === 'Enter') { e.preventDefault(); $('manualFind').onclick(); }
+};
+$('manualBatchForm').oninput = () => { manualRequestId = null; };
+$('manualBatchForm').onsubmit = async e => {
+  e.preventDefault();
+  if (!manualProduct || manualProduct.article !== $('manualArticle').value.trim()) return;
+  manualRequestId ||= crypto.randomUUID();
+  const fields = [...$('manualBatchForm').querySelectorAll('input, button')];
+  const payload = {article: manualProduct.article, qty: Number($('manualQty').value),
+    expiry: $('manualExpiry').value, gtin: $('manualBarcode').value, request_id: manualRequestId,
+    author: $('who').value.trim()};
+  fields.forEach(field => { field.disabled = true; });
+  $('manualResult').textContent = 'Сохраняю партию…';
+  try {
+    const r = await api('/api/kiz/supply/manual', {method: 'POST',
+      headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)});
+    $('manualBatchForm').reset();
+    $('manualArticle').oninput();
+    manualRequestId = null;
+    $('manualResult').textContent = 'Партия сохранена. Срок будет подставляться при сканировании.';
+    _statSupply = r.supply;
+    loadExpiries(); loadStats();
+  } catch (e) {
+    $('manualResult').textContent = 'Не удалось сохранить: ' + e.message;
+  } finally {
+    fields.forEach(field => { field.disabled = false; });
+    $('manualSave').disabled = !manualProduct;
+  }
 };
 
 $('d0').value = $('d1').value = mskToday();
