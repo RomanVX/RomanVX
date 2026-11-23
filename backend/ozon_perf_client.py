@@ -171,13 +171,15 @@ async def get_phrases(campaign_ids: list[str], date_from: str, date_to: str) -> 
     return out
 
 
-async def get_daily(date_from: str, date_to: str) -> list[dict]:
+async def get_daily(date_from: str, date_to: str, *, strict: bool = False) -> list[dict]:
     """Ежедневная статистика по кампаниям: показы, клики, расход, заказы,
     выручка. Один вызов даёт все кампании за период."""
     st, data = await api_get("/api/client/statistics/daily/json",
                              {"dateFrom": date_from, "dateTo": date_to})
     if st != 200 or not isinstance(data, dict):
         _log.warning("Ozon Perf daily: HTTP %s %s", st, str(data)[:200])
+        if strict:
+            raise RuntimeError(f"Ozon Performance daily HTTP {st}")
         return []
     out = []
     for r in data.get("rows") or []:

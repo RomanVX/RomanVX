@@ -42,8 +42,6 @@ async function fetchJSON(path, timeoutMs = 60000) {
 const marketplace = document.getElementById('ordersMarketplace');
 const brandFilter = document.getElementById('ordersBrand');
 const periodFilter = document.getElementById('ordersPeriod');
-const fromDate = document.getElementById('ordersFrom');
-const toDate = document.getElementById('ordersTo');
 const _MP_COLORS = { WB: '#c026d3', OZON: '#3b82f6', YM: '#b45309', TOTAL: '#059669' };
 const _MP_LABEL = { WB: 'Wildberries', OZON: 'Ozon', YM: 'Яндекс Маркет', TOTAL: 'Все площадки' };
 let _ordersData = null;
@@ -63,13 +61,13 @@ function isoDate(date) {
   return date.toISOString().slice(0, 10);
 }
 
-function reportRange(value, anchorStart = false) {
+function reportRange(value) {
   const start = new Date(value + 'T00:00:00Z');
   const mode = periodFilter.value;
   if (mode === 'month') start.setUTCDate(1);
   else start.setUTCDate(start.getUTCDate() - (start.getUTCDay() + 6) % 7);
 
-  if (mode !== 'day' && !anchorStart) {
+  if (mode !== 'day') {
     if (mode === 'month') start.setUTCMonth(start.getUTCMonth() - (REPORT_COLUMNS - 1));
     else start.setUTCDate(start.getUTCDate() - (REPORT_COLUMNS - 1) * 7);
   }
@@ -80,23 +78,12 @@ function reportRange(value, anchorStart = false) {
   return { from: isoDate(start), to: isoDate(end) };
 }
 
-function setReportDates(value, anchorStart = false) {
-  if (periodFilter.value === 'day') {
-    fromDate.value = value;
-    toDate.value = '';
-    return;
-  }
-  const range = reportRange(value, anchorStart);
-  fromDate.value = range.from;
-  toDate.value = range.to;
-}
-
 function saveOrdersFilters() {
-  for (const [key, control] of Object.entries({
-    mp: marketplace, brand: brandFilter, mode: periodFilter, from: fromDate, to: toDate,
-  })) {
-    filters.set(key, control.value);
-  }
+  filters.set('mp', marketplace.value);
+  filters.set('brand', brandFilter.value);
+  filters.set('mode', periodFilter.value);
+  filters.delete('from');
+  filters.delete('to');
   sessionStorage.setItem('mp_development_orders', filters.toString());
 }
 
@@ -107,12 +94,9 @@ async function loadOrders() {
   _ordersData = null;
   renderOrdersTable();
   table.innerHTML = '<tr><td class="text-secondary py-3">Загрузка…</td></tr>';
-  if (!fromDate.value || (!toDate.disabled && !toDate.value)) {
-    table.innerHTML = '<tr><td class="text-secondary py-3">Выберите даты отчёта</td></tr>';
-    return;
-  }
   saveOrdersFilters();
-  const range = toDate.disabled ? reportRange(fromDate.value) : { from: fromDate.value, to: toDate.value };
+  const range = reportRange(moscowToday());
+  loadOrderMetrics();
   const query = new URLSearchParams({
     period: periodFilter.value, date_from: range.from, date_to: range.to,
   });
@@ -406,17 +390,97 @@ function renderOrdersSummary() {
   }
 
   box.innerHTML = `
-    <div class="row row-cols-2 row-cols-md-4 g-2 mb-2">${_ordersData.weeks.map((label, index) => `
-      <div class="col col-xl"><div class="metric-card h-100">
-        <div class="mc-head">${esc(label)}</div>
-        <div class="mc-val">${fmtRub(block.total_rub[index])}</div>
-        <div class="mc-sub">${fmt(block.total_qty[index])} шт.</div>
-      </div></div>`).join('')}</div>
     <div class="card border-0 bg-card mb-3"><div class="card-body p-2">
       <div class="fw-semibold small mb-1">Динамика заказов, ₽</div>
       <div style="position:relative;height:190px"><canvas id="ordDaysChart"></canvas></div>
     </div></div>`;
   _renderOrdDaysChart(_ordersData, mp);
+}
+
+let metricsVersion = 0;
+
+function aggregateMetrics(blocks) {
+  const platforms = Object.values(blocks || {});
+  const sum = (key, allowPartial = false) => {
+    const values = platforms.map(platform => platform[key]).filter(Number.isFinite);
+    if (!values.length || (!allowPartial && values.length !== platforms.length)) return null;
+    return values.reduce((total, value) => total + value, 0);
+  };
+  const revenue = sum('revenue');
+  const units = sum('units');
+  const expenses = sum('expenses', true);
+  return {
+    revenue, units, expenses, average: units > 0 && revenue != null ? revenue / units : null,
+    expensesPartial: expenses != null && platforms.some(p => p.expenses == null || p.expenses_partial),
+    impressions: sum('impressions'),
+    adRevenue: sum('ad_revenue'), adSpend: sum('ad_spend'), adImpressions: sum('ad_impressions'),
+  };
+}
+
+function ratio(numerator, denominator) {
+  return numerator == null || !denominator ? '—' : fmt(numerator / denominator * 100, 1) + '%';
+}
+
+function delta(current, previous, cost = false) {
+  if (current == null || previous == null || previous === 0) return '';
+  const change = (current - previous) / Math.abs(previous) * 100;
+  const direction = change === 0 ? '' : (change > 0) !== cost ? ' up' : ' down';
+  const label = (change > 0 ? '+' : '') + fmt(change, 1) + '%';
+  return ` <span class="mc-delta${direction} small" title="К предыдущему сопоставимому периоду">${label}</span>`;
+}
+
+function renderOrderMetrics(data, status = '') {
+  const current = aggregateMetrics(data?.current);
+  const previous = aggregateMetrics(data?.previous);
+  const amount = value => value == null ? '—' : fmtRub(value);
+  const count = value => value == null ? '—' : fmt(value);
+  const cards = [
+    ['Выручка', amount(current.revenue), delta(current.revenue, previous.revenue),
+      `По рекламе ${amount(current.adRevenue)} · ${ratio(current.adRevenue, current.revenue)}`,
+      'Сумма заказов по данным отчёта'],
+    ['Заказов, шт', count(current.units), delta(current.units, previous.units),
+      `Средний чек ${amount(current.average)}${delta(current.average, previous.average)}`,
+      'Средний чек рассчитан на заказанную единицу товара'],
+    ['Расходы', amount(current.expenses), current.expensesPartial || previous.expensesPartial
+      ? '' : delta(current.expenses, previous.expenses, true),
+      `Реклама ${amount(current.adSpend)} · ДРР ${ratio(current.adSpend, current.revenue)}`
+        + (current.expensesPartial ? '<br>По доступным статьям' : ''), 'Расходы по данным площадки и учтённая себестоимость'],
+    ['Показы', count(current.impressions), delta(current.impressions, previous.impressions),
+      `По рекламе ${count(current.adImpressions)} · ${ratio(current.adImpressions, current.impressions)}`,
+      'Общие показы из аналитики площадки'],
+  ];
+  document.getElementById('ordersMetrics').innerHTML = `
+    <div class="row row-cols-1 row-cols-sm-2 row-cols-xl-4 g-2 mb-2">
+      ${cards.map(([title, value, trend, note, tooltip]) => `
+        <div class="col"><div class="metric-card h-100" title="${tooltip}">
+          <div class="mc-head fw-bold">${title}</div>
+          <div class="d-flex align-items-baseline flex-wrap gap-1"><span class="mc-val">${value}</span>${trend}</div>
+          <div class="mc-sub small">${note}</div>
+        </div></div>`).join('')}
+    </div>
+    ${status ? `<p class="text-secondary small mb-2">${esc(status)}</p>` : ''}`;
+}
+
+async function loadOrderMetrics() {
+  const version = ++metricsVersion;
+  const query = new URLSearchParams({
+    period: periodFilter.value, marketplace: marketplace.value, brand: brandFilter.value,
+  });
+  renderOrderMetrics(null, 'Загружаем показатели…');
+  for (let attempt = 0; attempt < 45 && version === metricsVersion; attempt++) {
+    try {
+      const data = await fetchJSON('/api/dashboard/development/order_metrics?' + query);
+      if (version !== metricsVersion) return;
+      renderOrderMetrics(data, data.pending
+        ? (attempt < 44 ? 'Загружаем расходы и статистику рекламы…' : 'Часть отчётов ещё собирается')
+        : '');
+      if (!data.pending) return;
+    } catch (error) {
+      if (version === metricsVersion) renderOrderMetrics(null, 'Показатели недоступны: ' + error.message);
+      return;
+    }
+    if (attempt < 44) await new Promise(resolve => setTimeout(resolve, 5000));
+  }
 }
 
 function _renderOrdDaysChart(dd, mp) {
@@ -529,27 +593,13 @@ async function initDevelopmentOrders() {
     const savedMode = filters.get('mode');
     periodFilter.value = savedMode === 'days' ? 'day' :
       ['day', 'week', 'month'].includes(savedMode) ? savedMode : 'week';
-    toDate.disabled = periodFilter.value === 'day';
-    setReportDates((toDate.disabled ? filters.get('from') : filters.get('to')) || moscowToday());
-
     marketplace.addEventListener('change', () => {
       saveOrdersFilters();
       renderOrdersTable();
+      loadOrderMetrics();
     });
     brandFilter.addEventListener('change', loadOrders);
-    periodFilter.addEventListener('change', () => {
-      toDate.disabled = periodFilter.value === 'day';
-      setReportDates(moscowToday());
-      loadOrders();
-    });
-    fromDate.addEventListener('change', () => {
-      if (fromDate.value) setReportDates(fromDate.value, true);
-      loadOrders();
-    });
-    toDate.addEventListener('change', () => {
-      if (toDate.value) setReportDates(toDate.value);
-      loadOrders();
-    });
+    periodFilter.addEventListener('change', loadOrders);
     document.getElementById('ordersFilters').hidden = false;
     Chart.defaults.color = CHART_C.tick;
     await loadOrders();

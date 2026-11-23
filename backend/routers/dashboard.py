@@ -1080,6 +1080,25 @@ async def get_orders_matrix(period: str = Query(default="day")):
     return result
 
 
+@router.get("/development/order_metrics", include_in_schema=False)
+async def get_development_order_metrics(
+    request: Request,
+    period: str = Query(pattern="^(day|week|month)$"),
+    marketplace: str = Query(pattern="^(WB|OZON|YM|TOTAL)$"),
+    brand: str = Query(default="", max_length=100),
+):
+    from config import CABINET, CABINET_MARKETPLACES
+    import development_order_metrics
+
+    if CABINET != "biomed" or request.state.user["role"] != "owner":
+        raise HTTPException(status_code=403, detail="Раздел доступен владельцу кабинета Биомеда")
+    platforms = CABINET_MARKETPLACES if marketplace == "TOTAL" else [marketplace]
+    if any(platform not in CABINET_MARKETPLACES for platform in platforms):
+        raise HTTPException(status_code=422, detail="Площадка недоступна")
+    today = (datetime.utcnow() + timedelta(hours=3)).date()
+    return await development_order_metrics.get_metrics(period, platforms, brand.strip(), today)
+
+
 @router.get("/development/orders_matrix", include_in_schema=False)
 async def get_development_orders_matrix(
     request: Request,
