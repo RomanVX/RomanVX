@@ -242,6 +242,53 @@ async def sync_arrivals():
     raise RuntimeError("МПФИТ: достигнут лимит страниц приёмок")
 
 
+SHIPMENT_RECON_KEY = "web_optimism_shipment_recon"
+SHIPMENT_RECON_COMPANY = 14328
+SHIPMENT_RECON_ARTICLES = {
+    "120203", "П069-10", "120531-501", "120531-502", "120531-902",
+    "П040", "П068-5", "П069-5", "120104-2",
+}
+
+
+async def sync_shipment_recon():
+    prev = await asyncio.to_thread(store.kv_get, SHIPMENT_RECON_KEY)
+    if prev and datetime.utcnow() - datetime.fromisoformat(prev["synced_at"]) < timedelta(hours=3):
+        return
+    cursor = 0
+    rows = {}
+    for _ in range(100):
+        response = await mp.call("POST", "/v1/orders/list", {
+            "limit": 200, "last_id": cursor, "filter": {"company_id": SHIPMENT_RECON_COMPANY},
+        })
+        result = response["result"]
+        orders = result["data"]
+        if not isinstance(orders, list):
+            raise ValueError("Неожиданный формат заявок на отгрузку")
+        for order in orders:
+            if order.get("company_id") != SHIPMENT_RECON_COMPANY:
+                continue
+            for item in order["items"]:
+                product = item.get("product") or {}
+                article = (product.get("article") or "").strip().upper()
+                if article not in SHIPMENT_RECON_ARTICLES:
+                    continue
+                key = (order["id"], item["id"])
+                rows[key] = {"article": article, "qty": item["quantity"], "order": order["number"],
+                             "source": order.get("source"), "status": order["status"],
+                             "shipped_at": order.get("shipment_date_actual"),
+                             "type": order.get("order_type")}
+        next_cursor = result["last_id"]
+        if not orders or next_cursor is None:
+            await asyncio.to_thread(store.kv_set, SHIPMENT_RECON_KEY,
+                                    {"synced_at": _now(), "rows": list(rows.values())})
+            _log.info("shipment reconciliation: %d matching order lines", len(rows))
+            return
+        if next_cursor <= cursor:
+            raise ValueError("Курсор заявок на отгрузку не продвинулся")
+        cursor = next_cursor
+    raise RuntimeError("Достигнут предел страниц заявок на отгрузку")
+
+
 async def sync_invoices():
     rows = await mp.paginate("/v1/invoices/list", limit=200, max_pages=50)
     import json
@@ -345,6 +392,10 @@ async def run_once():
             await asyncio.wait_for(sync_arrivals(), timeout=45)
         except Exception as e:
             _log.warning("arrivals: %s", str(e) or type(e).__name__)
+        try:
+            await asyncio.wait_for(sync_shipment_recon(), timeout=40)
+        except Exception as e:
+            _log.warning("shipment reconciliation: %s", str(e) or type(e).__name__)
         await sync_companies()
         await sync_orders()
         await sync_invoices()
