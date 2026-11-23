@@ -24,7 +24,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" />
-  <link rel="stylesheet" href="style.css?v=33" />
+  <link rel="stylesheet" href="style.css?v=34" />
 </head>
 <body>
 
@@ -142,7 +142,7 @@
     </div>
   </nav>
   </div>
-  <div class="d-flex align-items-center gap-2">
+  <div class="d-flex align-items-center gap-2" id="navAccountControls">
     <select id="globalBrand" class="form-select form-select-sm" style="width:auto;max-width:200px;display:none"
             onchange="setGlobalBrand(this.value)" title="Показывать во всех разделах только товары выбранного бренда">
       <option value="">Все бренды</option>
@@ -155,6 +155,12 @@
       <div class="mp-menu-drop mp-drop-right">
         <a href="#" onclick="loadAll();return false">Обновить данные</a>
         <a href="#" id="changeCabBtn" onclick="changeCabinet();return false">Сменить кабинет</a>
+        <div id="developmentCabinets" hidden>
+          <a href="https://main.marketpartners.ru/?open=tl">Филипок</a>
+          <a href="https://main.marketpartners.ru/?open=avr">Аврора</a>
+          <a href="https://main.marketpartners.ru/?open=fk">Миагра</a>
+          <a href="https://main.marketpartners.ru/?open=mpfit">МПФИТ</a>
+        </div>
         <a href="#" id="usersBtn" style="display:none" onclick="openUsers();return false">Доступы</a>
         <div class="mp-drop-sep"></div>
         <a href="#" onclick="doLogout();return false">Выйти</a>
@@ -168,8 +174,7 @@
 <div id="mainContent" style="display:none">
 <div class="container-fluid py-3">
 
-  <section id="pane-development" style="display:none" aria-labelledby="developmentTitle">
-    <h3 id="developmentTitle" class="fw-bold mb-3">Разработка</h3>
+  <section id="pane-development" style="display:none" aria-label="Заказы в разработке">
     <iframe id="developmentOrders" title="Заказы в разделе «Разработка»"
             class="d-block w-100 border-0" style="height:80dvh;min-height:420px"></iframe>
   </section>
@@ -666,6 +671,6 @@
 
 <script src="vendor/bootstrap.bundle.min.js"></script>
 <script src="vendor/chart.umd.min.js"></script>
-<script src="app.js?v=297"></script>
+<script src="app.js?v=298"></script>
 </body>
 </html>

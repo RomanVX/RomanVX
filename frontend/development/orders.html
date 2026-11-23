@@ -12,21 +12,24 @@
   <link rel="stylesheet" href="/vendor/bootstrap.min.css">
   <link rel="stylesheet" href="/vendor/bootstrap-icons.min.css">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
-  <link rel="stylesheet" href="/style.css?v=33">
+  <link rel="stylesheet" href="/style.css?v=34">
 </head>
 <body>
   <main class="container-fluid pb-3 px-0">
   <div id="ordersAccessError" class="alert alert-danger" role="alert" hidden></div>
   <div id="pane-salesan">
-    <div class="d-flex gap-3 mb-3 flex-wrap align-items-center">
-      <h3 class="mb-0 fw-bold">Заказы</h3>
+    <h1 class="h2 fw-bold mb-3">Заказы</h1>
+    <div class="d-flex gap-2 mb-3 flex-wrap align-items-center">
       <div class="mp-seg">
         <button type="button" id="ordMpWB" class="mp-seg-btn active" onclick="setOrdersMp('WB')">Wildberries</button>
         <button type="button" id="ordMpOZON" class="mp-seg-btn" onclick="setOrdersMp('OZON')">Ozon</button>
         <button type="button" id="ordMpYM" class="mp-seg-btn" onclick="setOrdersMp('YM')">YM</button>
         <button type="button" id="ordMpTOTAL" class="mp-seg-btn" onclick="setOrdersMp('TOTAL')">Общий</button>
       </div>
-      <button type="button" id="salesAnalysisBtn" class="mp-ai-link" onclick="loadSalesAnalysis()">AI Анализ</button>
+      <select id="ordersBrand" class="form-select form-select-sm development-brand-filter"
+              aria-label="Бренд магазина" hidden>
+        <option value="">Все бренды</option>
+      </select>
       <div class="ms-auto d-flex align-items-center gap-2">
         <div class="mp-seg">
           <button type="button" id="ordModeDays" class="mp-seg-btn" onclick="setOrdersMode('days')">День</button>
@@ -61,27 +64,8 @@
 
   </div><!-- /pane-salesan -->
 
-  <div class="modal fade" id="salesAnalysisModal" tabindex="-1">
-    <div class="modal-dialog modal-lg modal-dialog-scrollable">
-      <div class="modal-content" style="background:var(--surface-2);color:var(--ink);border:1px solid var(--border-2)">
-        <div class="modal-header" style="border-bottom:1px solid var(--border)">
-          <h5 class="modal-title">✨ Анализ текущих продаж</h5>
-          <div class="ms-auto d-flex align-items-center gap-2">
-            <span id="salesAnalysisAt" class="text-secondary small"></span>
-            <button class="btn btn-sm btn-outline-secondary" onclick="loadSalesAnalysis(true)">🔄 Обновить</button>
-            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-          </div>
-        </div>
-        <div class="modal-body" id="salesAnalysisBody" style="white-space:pre-wrap;font-size:14px;line-height:1.7">
-          <div class="text-center text-secondary py-4"><span class="spinner-border"></span></div>
-        </div>
-      </div>
-    </div>
-  </div>
-
   </main>
-  <script src="/vendor/bootstrap.bundle.min.js"></script>
   <script src="/vendor/chart.umd.min.js"></script>
-  <script src="/development/orders.js?v=1"></script>
+  <script src="/development/orders.js?v=2"></script>
 </body>
 </html>

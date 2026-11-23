@@ -13,7 +13,8 @@ let SUBGROUPS = [
   { name: 'Спреи для минета',  skus: ['BMN-0115', 'BMN-0116', 'BMN-0110'] },
 ];
 let GROUP_ORDER = ['Фисты', 'Aloe', 'Спреи для минета', 'Satisfucktion', 'Джага', 'Прочее'];
-const brand = new URLSearchParams(location.search).get('brand') || '';
+const filters = new URLSearchParams(sessionStorage.getItem('mp_development_orders') || location.search);
+const brand = filters.get('brand') || '';
 
 function articleGroup(r) {
   const sku = r.supplierArticle || r.sku || '';
@@ -21,8 +22,10 @@ function articleGroup(r) {
   return BRAND_ORDER.includes(r.brand) ? r.brand : 'Прочее';
 }
 
-function getGlobalBrand() {
-  return brand;
+function saveOrdersFilters() {
+  filters.set('mp', _ordersMp);
+  filters.set('mode', _ordersMode);
+  sessionStorage.setItem('mp_development_orders', filters.toString());
 }
 
 function fmt(n, dec = 0) {
@@ -59,6 +62,7 @@ async function loadSalesAnalytics() {
 
 function setOrdersMp(mp) {
   _ordersMp = mp;
+  saveOrdersFilters();
   ['WB','OZON','YM','TOTAL'].forEach(m => {
     const el = document.getElementById('ordMp' + m);
     if (el) el.classList.toggle('active', m === mp);
@@ -72,6 +76,7 @@ let _ordersDataBy = { days: null, month: null };   // данные orders_matrix
 
 function setOrdersMode(mode) {
   _ordersMode = mode;
+  saveOrdersFilters();
   [['ordModeDays', 'days'], ['ordModeWeek', 'week'], ['ordModeMonth', 'month']]
     .forEach(([id, m]) => document.getElementById(id)?.classList.toggle('active', m === mode));
   const week = document.getElementById('ordersWeekCard');
@@ -295,22 +300,6 @@ function renderOrdersMonthly() {
 
   html += `</tbody></table></div></div></div>`;
   wrap.innerHTML = html;
-}
-
-async function loadSalesAnalysis(refresh = false) {
-  const modal = new bootstrap.Modal(document.getElementById('salesAnalysisModal'));
-  const body = document.getElementById('salesAnalysisBody');
-  const at = document.getElementById('salesAnalysisAt');
-  body.innerHTML = '<div class="text-center py-4"><span class="spinner-border"></span></div>';
-  modal.show();
-  try {
-    const url = '/api/dashboard/development/sales_analysis' + (refresh ? '?refresh=true' : '');
-    const d = await fetchJSON(url);
-    body.textContent = d.text;
-    if (at) at.textContent = d.generated_at || '';
-  } catch (e) {
-    body.innerHTML = `<div class="text-danger">Ошибка: ${esc(e.message)}</div>`;
-  }
 }
 
 // стрелка динамики week-over-week (как в остатках): ▲ рост / ▼ падение
@@ -646,7 +635,6 @@ function renderOrdersSummary() {
       .finally(() => { _ordDaysLoading = false; if (_ordersDataBy.days) renderOrdersSummary(); });
   }
   const dblk = _ordBlockFrom(dd, mp);
-  const lbl = mp === 'TOTAL' ? 'все площадки' : ({ WB: 'Wildberries', OZON: 'Ozon', YM: 'Яндекс Маркет' }[mp] || mp);
   const card = (head, val, sub) => `<div class="col-6 col-lg-3"><div class="metric-card"><div class="mc-head">${head}</div>
       <div class="mc-val">${val}</div><div class="mc-sub" style="font-size:11px">${sub || ''}</div></div></div>`;
   const cards = [];
@@ -727,7 +715,6 @@ function renderOrdersSummary() {
       <div class="col-12 col-md-6">${mvList(down, '▼ Падение', 'text-danger')}</div></div></div></div>` : '';
 
   box.innerHTML = `
-    <div class="small text-secondary mb-2">Сводка: ${esc(lbl)}${getGlobalBrand() ? ' · бренд ' + esc(getGlobalBrand()) : ''}</div>
     <div class="row g-2 mb-2">${cards.join('')}</div>
     <div class="card border-0 bg-card mb-2"><div class="card-body p-2">
       <div class="d-flex align-items-baseline gap-2 mb-1"><span class="fw-semibold small">Заказы по дням, ₽</span>
@@ -839,7 +826,26 @@ async function initDevelopmentOrders() {
       const available = mp === 'TOTAL' ? marketplaces.length > 1 : marketplaces.includes(mp);
       document.getElementById('ordMp' + mp).hidden = !available;
     }
-    if (!marketplaces.includes('WB') && marketplaces.includes('OZON')) setOrdersMp('OZON');
+    const select = document.getElementById('ordersBrand');
+    const brands = new Set(cabinet.brand_order || cabinet.group_order || BRAND_ORDER);
+    brands.delete('');
+    brands.delete('Прочее');
+    if (brand) brands.add(brand);
+    for (const name of brands) select.add(new Option(name, name));
+    select.value = brand;
+    select.hidden = false;
+    select.addEventListener('change', () => {
+      filters.set('brand', select.value);
+      saveOrdersFilters();
+      location.reload();
+    });
+
+    const requestedMp = filters.get('mp');
+    const mp = marketplaces.includes(requestedMp) || (requestedMp === 'TOTAL' && marketplaces.length > 1)
+      ? requestedMp : marketplaces[0] || 'WB';
+    const requestedMode = filters.get('mode');
+    setOrdersMp(mp);
+    if (['days', 'month'].includes(requestedMode)) setOrdersMode(requestedMode);
     Chart.defaults.color = CHART_C.tick;
     await loadSalesAnalytics();
   } catch (error) {

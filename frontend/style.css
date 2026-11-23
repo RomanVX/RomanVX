@@ -1037,3 +1037,27 @@ html.client-ui .mp-cab-card:hover { box-shadow: 0 12px 36px rgba(79, 70, 229, .3
   #mainNav .cl-mark-sm, #mainNav img[alt="Market Partners"] { width: 30px !important; height: 30px !important; font-size: 11px; }
   #mainNav > .d-flex { gap: .35rem !important; }
 }
+
+/* Biomed development preview */
+.development-nav #navAccountControls {
+  margin-inline-start: auto;
+  align-self: flex-start;
+}
+
+@media (max-width: 991px) {
+  .development-nav #navAccountControls {
+    order: -1;
+  }
+
+  .development-nav > .d-flex:first-child {
+    flex-basis: 100%;
+  }
+}
+
+.development-brand-filter {
+  background-color: var(--surface-2);
+  border-color: var(--border-2);
+  color: var(--ink);
+  width: auto;
+  max-width: 100%;
+}

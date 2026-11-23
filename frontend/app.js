@@ -15,6 +15,9 @@ const CHART_C = _THEME === 'light'
 function toggleTheme() {
   const next = _THEME === 'light' ? 'dark' : 'light';
   localStorage.setItem('mp_theme', next);
+  if (currentTab === 'development') {
+    sessionStorage.setItem('mp_nav', JSON.stringify(_navSnapshot()));
+  }
   location.reload();   // графики на canvas требуют полной перерисовки с новой палитрой
 }
 
@@ -435,7 +438,12 @@ function switchTab(name, linkEl) {
     if (el) el.style.display = t === name ? 'block' : 'none';
   });
   currentTab = name;
-  if (name === 'development') {
+  const development = name === 'development';
+  document.getElementById('mainNav').classList.toggle('development-nav', development);
+  document.getElementById('globalBrand').hidden = development;
+  document.getElementById('changeCabBtn').classList.toggle('d-none', development);
+  document.getElementById('developmentCabinets').hidden = !development;
+  if (development) {
     const frame = document.getElementById('developmentOrders');
     if (!frame.hasAttribute('src')) {
       const params = new URLSearchParams({ brand: getGlobalBrand() });
@@ -5783,6 +5791,7 @@ document.addEventListener('DOMContentLoaded', () => {
       history.replaceState(null, '', location.pathname);
     }
     if (localStorage.getItem('mp_cabinet')) {
+      if (sessionStorage.getItem('mp_nav')) await _cabPromise;
       showOverlay('app');
       initDashboard();
     } else {

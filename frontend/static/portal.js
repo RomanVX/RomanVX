@@ -8,6 +8,9 @@ const boards = document.getElementById("dashboards");
 const account = document.getElementById("account");
 const logout = document.getElementById("logout");
 const status = document.getElementById("status");
+const cabinetButtons = [...boards.querySelectorAll("[data-cabinet]")];
+const requestedCabinet = new URL(location.href).searchParams.get("open");
+let pendingCabinet = cabinetButtons.find(button => button.dataset.cabinet === requestedCabinet);
 
 async function request(path, options = {}) {
   const result = await fetch(api + path, { cache: "no-store", ...options });
@@ -24,6 +27,14 @@ function render(user) {
   boards.hidden = account.hidden = !user;
   document.getElementById("account-name").textContent = user?.login ?? "";
   status.textContent = "";
+  if (user && pendingCabinet) {
+    const button = pendingCabinet;
+    pendingCabinet = null;
+    const url = new URL(location.href);
+    url.searchParams.delete("open");
+    history.replaceState(null, "", url);
+    openCabinet(button);
+  }
 }
 
 async function refresh() {
@@ -66,29 +77,31 @@ logout.addEventListener("click", async () => {
   }
 });
 
-for (const button of boards.querySelectorAll("[data-cabinet]")) {
-  button.addEventListener("click", async () => {
-    button.disabled = true;
-    status.textContent = "Открываем кабинет…";
-    try {
-      const data = await request("launch/" + button.dataset.cabinet, { method: "POST" });
-      const relay = document.createElement("form");
-      relay.method = "POST";
-      relay.action = data.destination;
-      const ticket = document.createElement("input");
-      ticket.type = "hidden";
-      ticket.name = "ticket";
-      ticket.value = data.ticket;
-      relay.append(ticket);
-      document.body.append(relay);
-      relay.submit();
-      relay.remove();
-    } catch (error) {
-      status.textContent = error.message;
-    } finally {
-      button.disabled = false;
-    }
-  });
+async function openCabinet(button) {
+  button.disabled = true;
+  status.textContent = "Открываем кабинет…";
+  try {
+    const data = await request("launch/" + button.dataset.cabinet, { method: "POST" });
+    const relay = document.createElement("form");
+    relay.method = "POST";
+    relay.action = data.destination;
+    const ticket = document.createElement("input");
+    ticket.type = "hidden";
+    ticket.name = "ticket";
+    ticket.value = data.ticket;
+    relay.append(ticket);
+    document.body.append(relay);
+    relay.submit();
+    relay.remove();
+  } catch (error) {
+    status.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+for (const button of cabinetButtons) {
+  button.addEventListener("click", () => openCabinet(button));
 }
 
 window.addEventListener("pageshow", refresh);
