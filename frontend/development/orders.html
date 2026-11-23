@@ -12,7 +12,7 @@
   <link rel="stylesheet" href="/vendor/bootstrap.min.css">
   <link rel="stylesheet" href="/vendor/bootstrap-icons.min.css">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
-  <link rel="stylesheet" href="/style.css?v=35">
+  <link rel="stylesheet" href="/style.css?v=36">
 </head>
 <body>
   <main class="container-fluid pb-3 px-0">
@@ -30,6 +30,7 @@
         <option value="month">Месяц</option>
       </select>
     </div>
+    <p id="ordersMetricsPeriod" class="text-secondary small fw-semibold mb-2" hidden></p>
     <div id="ordersMetrics" aria-live="polite"></div>
     <div id="ordersSummary"></div>
     <div class="d-flex align-items-baseline gap-2 mb-1"><h6 class="mb-0 fw-semibold">Подробно по артикулам</h6></div>
@@ -53,6 +54,6 @@
 
   </main>
   <script src="/vendor/chart.umd.min.js"></script>
-  <script src="/development/orders.js?v=5"></script>
+  <script src="/development/orders.js?v=6"></script>
 </body>
 </html>

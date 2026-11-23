@@ -369,11 +369,8 @@ async def get_stocks() -> list[dict]:
 _funnel_lock = asyncio.Lock()  # одна загрузка воронки одновременно (prefetch vs прямой запрос)
 
 
-async def _nm_report_week_single(date_from: str, date_to: str) -> dict:
-    """Один запрос к /api/analytics/v3/sales-funnel/products за период.
-
-    При 429 повторяет до 3 раз с паузой 21 сек (лимит WB пополняется ~1 токен/20 сек).
-    """
+async def _funnel_pages(date_from: str, date_to: str, *, past=None, strict=False):
+    """Yield Sales Funnel product pages, using the existing 429 retry policy."""
     FUNNEL_URL = f"{ANALYTICS_BASE}/api/analytics/v3/sales-funnel/products"
     body_base = {
         "selectedPeriod": {"start": date_from, "end": date_to},
@@ -382,7 +379,8 @@ async def _nm_report_week_single(date_from: str, date_to: str) -> dict:
         "orderBy": {"field": "orderSum", "mode": "desc"},
         "limit": 1000,
     }
-    orders_rub = orders_qty = buyouts_rub = buyouts_qty = 0
+    if past:
+        body_base["pastPeriod"] = {"start": past[0], "end": past[1]}
     offset = 0
     while True:
         # запрос одной страницы с retry на 429
@@ -398,9 +396,43 @@ async def _nm_report_week_single(date_from: str, date_to: str) -> dict:
             code = resp.status_code if resp is not None else "—"
             _log.error("WB funnel %s–%s → %s %s", date_from, date_to, code,
                        resp.text[:300] if resp is not None else "")
-            break
+            if strict:
+                raise RuntimeError(f"WB Sales Funnel HTTP {code}")
+            return
         data   = resp.json().get("data") or {}
         prods  = data.get("products") or []
+        yield prods
+        if len(prods) < 1000:
+            break
+        offset += 1000
+
+
+async def get_funnel_comparison(current, previous, include_product):
+    """Sales Funnel totals for two periods in a single paginated report."""
+    if USE_MOCK:
+        return {}, {}
+    totals = {"selected": {}, "past": {}}
+    fields = {"orderSum": "revenue", "orderCount": "units", "openCount": "card_opens"}
+    async with _funnel_lock:
+        async for products in _funnel_pages(*current, past=previous, strict=True):
+            for product in products:
+                if not include_product(product.get("product") or {}):
+                    continue
+                statistics = product.get("statistic") or {}
+                for period, dates in (("selected", current), ("past", previous)):
+                    values = statistics.get(period) or {}
+                    bounds = values.get("period") or {}
+                    if bounds and (bounds.get("start"), bounds.get("end")) != dates:
+                        continue
+                    for source, target in fields.items():
+                        if values.get(source) is not None:
+                            totals[period][target] = totals[period].get(target, 0) + values[source]
+    return totals["selected"], totals["past"]
+
+
+async def _nm_report_week_single(date_from: str, date_to: str) -> dict:
+    orders_rub = orders_qty = buyouts_rub = buyouts_qty = 0
+    async for prods in _funnel_pages(date_from, date_to):
         for p in prods:
             stat = p.get("statistic") or {}
             sp   = stat.get("selected") or {}
@@ -408,9 +440,6 @@ async def _nm_report_week_single(date_from: str, date_to: str) -> dict:
             orders_qty  += int(sp.get("orderCount",   0) or 0)
             buyouts_rub += float(sp.get("buyoutSum",  0) or 0)
             buyouts_qty += int(sp.get("buyoutCount",  0) or 0)
-        if len(prods) < 1000:
-            break
-        offset += 1000
     return {"orders_rub": orders_rub, "buyouts_rub": buyouts_rub,
             "orders_qty": orders_qty,  "buyouts_qty": buyouts_qty}
 

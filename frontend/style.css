@@ -1074,3 +1074,16 @@ html.client-ui .mp-cab-card:hover { box-shadow: 0 12px 36px rgba(79, 70, 229, .3
   width: auto;
   max-width: 100%;
 }
+
+#ordersMetrics .metric-card {
+  min-height: 112px;
+  padding: 15px 16px;
+}
+
+#ordersMetrics .mc-val {
+  font-size: clamp(1.35rem, 2.2vw, 1.75rem);
+}
+
+#ordersMetrics .mc-sub {
+  margin-top: 7px;
+}

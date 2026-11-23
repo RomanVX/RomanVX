@@ -33,11 +33,41 @@ def matches(sku, brand):
 
 @lru_cache(maxsize=128)
 def order_totals(platform, brand, start, end, cache_minute):
-    source = "WB_ORDERS" if platform == "WB" else platform
-    rows = sales_history.get_history(start.isoformat(), end.isoformat(), source)
+    if platform == "WB":
+        import db
+        try:
+            rows = db.fetchall(
+                "SELECT dt, nm, sku, orders_rub, orders_cnt, opens FROM wb_funnel "
+                "WHERE dt >= ? AND dt <= ?", (start.isoformat(), end.isoformat()),
+            )
+        except Exception:
+            return {}
+        if len({row[0] for row in rows}) != (end - start).days + 1:
+            return {}
+        selected = [row for row in rows if matches(catalog.resolve_wb(row[1]), brand)
+                    or (row[2] and matches(row[2], brand))]
+        return {"revenue": sum(row[3] or 0 for row in selected),
+                "units": sum(row[4] or 0 for row in selected),
+                "card_opens": sum(row[5] or 0 for row in selected)}
+
+    rows = sales_history.get_history(start.isoformat(), end.isoformat(), platform)
     rows = [row for row in rows if matches(row["sku"], brand)]
     return {"revenue": sum(row["revenue"] for row in rows),
             "units": sum(row["qty"] for row in rows)}
+
+
+async def _wb_funnel_comparison(current, previous, brand):
+    import wb_client
+    import brand_filter
+
+    def include(product):
+        return not brand or brand_filter._brand_of({
+            "nmId": product.get("nmId"), "sku": product.get("vendorCode"),
+            "brand": product.get("brandName"),
+        }).strip().casefold() == brand.casefold()
+
+    selected, past = await wb_client.get_funnel_comparison(current, previous, include)
+    return {"selected": selected, "past": past}
 
 
 async def _wb_ads(start, end, brand):
@@ -202,10 +232,16 @@ async def get_metrics(period, platforms, brand, today):
     periods = ranges(period, today)
     result = []
     pending = False
-    for start, end in periods:
+    funnel = {}
+    if "WB" in platforms:
+        current, previous = (tuple(day.isoformat() for day in period_range) for period_range in periods)
+        funnel, pending = _source_result(_wb_funnel_comparison, current, previous, brand)
+    for index, (start, end) in enumerate(periods):
         blocks = {}
         for platform in platforms:
             metrics = dict(await asyncio.to_thread(order_totals, platform, brand, start, end, int(monotonic() // 60)))
+            if platform == "WB":
+                metrics.update(funnel.get(("selected", "past")[index], {}))
             for source in _SOURCES[platform]:
                 values, loading = _source_result(source, start, end, brand)
                 pending |= loading
@@ -220,4 +256,5 @@ async def get_metrics(period, platforms, brand, today):
                 metrics["expenses_partial"] = True
             blocks[platform] = metrics
         result.append(blocks)
-    return {"current": result[0], "previous": result[1], "pending": pending}
+    return {"current": result[0], "previous": result[1], "pending": pending,
+            "period": {"from": periods[0][0].isoformat(), "to": periods[0][1].isoformat()}}

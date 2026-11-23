@@ -390,9 +390,9 @@ function renderOrdersSummary() {
   }
 
   box.innerHTML = `
-    <div class="card border-0 bg-card mb-3"><div class="card-body p-2">
-      <div class="fw-semibold small mb-1">Динамика заказов, ₽</div>
-      <div style="position:relative;height:190px"><canvas id="ordDaysChart"></canvas></div>
+    <div class="card border-0 bg-card mb-3"><div class="card-body p-3 p-md-4">
+      <div class="fw-semibold mb-3">Динамика заказов, ₽</div>
+      <div style="position:relative;height:380px"><canvas id="ordDaysChart"></canvas></div>
     </div></div>`;
   _renderOrdDaysChart(_ordersData, mp);
 }
@@ -412,7 +412,7 @@ function aggregateMetrics(blocks) {
   return {
     revenue, units, expenses, average: units > 0 && revenue != null ? revenue / units : null,
     expensesPartial: expenses != null && platforms.some(p => p.expenses == null || p.expenses_partial),
-    impressions: sum('impressions'),
+    impressions: sum('impressions'), cardOpens: sum('card_opens'),
     adRevenue: sum('ad_revenue'), adSpend: sum('ad_spend'), adImpressions: sum('ad_impressions'),
   };
 }
@@ -429,25 +429,44 @@ function delta(current, previous, cost = false) {
   return ` <span class="mc-delta${direction} small" title="К предыдущему сопоставимому периоду">${label}</span>`;
 }
 
+const periodDateFormat = new Intl.DateTimeFormat('ru-RU', {
+  day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC',
+});
+
+function renderMetricsPeriod(period) {
+  const label = document.getElementById('ordersMetricsPeriod');
+  label.hidden = !period;
+  if (!period) return;
+  const start = new Date(period.from + 'T00:00:00Z');
+  const end = new Date(period.to + 'T00:00:00Z');
+  label.textContent = period.from === period.to
+    ? periodDateFormat.format(start)
+    : periodDateFormat.formatRange(start, end);
+}
+
 function renderOrderMetrics(data, status = '') {
   const current = aggregateMetrics(data?.current);
   const previous = aggregateMetrics(data?.previous);
   const amount = value => value == null ? '—' : fmtRub(value);
   const count = value => value == null ? '—' : fmt(value);
+  const wb = marketplace.value === 'WB';
+  renderMetricsPeriod(data?.period);
   const cards = [
-    ['Выручка', amount(current.revenue), delta(current.revenue, previous.revenue),
+    ['Заказы, руб.', amount(current.revenue), delta(current.revenue, previous.revenue),
       `По рекламе ${amount(current.adRevenue)} · ${ratio(current.adRevenue, current.revenue)}`,
-      'Сумма заказов по данным отчёта'],
+      wb ? 'Заказали на сумму из воронки продаж Wildberries' : 'Сумма заказов по данным отчёта'],
     ['Заказов, шт', count(current.units), delta(current.units, previous.units),
       `Средний чек ${amount(current.average)}${delta(current.average, previous.average)}`,
-      'Средний чек рассчитан на заказанную единицу товара'],
+      'Средний чек: сумма заказов ÷ количество заказанных товаров'],
     ['Расходы', amount(current.expenses), current.expensesPartial || previous.expensesPartial
       ? '' : delta(current.expenses, previous.expenses, true),
       `Реклама ${amount(current.adSpend)} · ДРР ${ratio(current.adSpend, current.revenue)}`
         + (current.expensesPartial ? '<br>По доступным статьям' : ''), 'Расходы по данным площадки и учтённая себестоимость'],
     ['Показы', count(current.impressions), delta(current.impressions, previous.impressions),
-      `По рекламе ${count(current.adImpressions)} · ${ratio(current.adImpressions, current.impressions)}`,
-      'Общие показы из аналитики площадки'],
+      `По рекламе ${count(current.adImpressions)} · ${ratio(current.adImpressions, current.impressions)}`
+        + (wb ? `<br>Переходы в карточки ${count(current.cardOpens)}${delta(current.cardOpens, previous.cardOpens)}` : ''),
+      wb ? 'Воронка WB отдаёт переходы в карточки. Общие показы в этом отчёте отсутствуют.'
+        : 'Общие показы из аналитики площадки'],
   ];
   document.getElementById('ordersMetrics').innerHTML = `
     <div class="row row-cols-1 row-cols-sm-2 row-cols-xl-4 g-2 mb-2">
@@ -491,17 +510,22 @@ function _renderOrdDaysChart(dd, mp) {
   const n = labels.length;
   const mps = mp === 'TOTAL' ? ['WB', 'OZON', 'YM'].filter(m => dd[m] && (dd[m].total_rub || []).some(v => v)) : [mp];
   const datasets = mps.map(m => {
-    const c = _MP_COLORS[m] || '#6366f1';
+    const c = { WB: '#C026F4', OZON: '#156BFF', YM: '#EA8300' }[m] || '#635BFF';
     return { label: { WB: 'WB', OZON: 'Ozon', YM: 'ЯМ' }[m] || m, data: (dd[m]?.total_rub || Array(n).fill(0)),
-             backgroundColor: labels.map((_, i) => i === _ordPartialIdx ? c + '55' : c), borderRadius: 4, stack: 's' };
+             backgroundColor: c, hoverBackgroundColor: c + '88', borderRadius: 7,
+             maxBarThickness: 66, categoryPercentage: 0.7, stack: 's' };
   });
   charts.ordDays = new Chart(cv.getContext('2d'), {
     type: 'bar', data: { labels, datasets },
     options: { responsive: true, maintainAspectRatio: false, animation: false,
+      layout: { padding: { top: 12, right: 12, bottom: 8 } },
+      interaction: { mode: 'nearest', intersect: true },
       plugins: { legend: { display: mps.length > 1, position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } },
                  tooltip: { callbacks: { label: c => `${c.dataset.label}: ${fmtRub(c.raw)}` } } },
       scales: { x: { stacked: true, grid: { display: false }, ticks: { font: { size: 10 }, maxRotation: 0, autoSkip: true } },
-                y: { stacked: true, ticks: { font: { size: 10 }, callback: v => _fmtShort(v) }, grid: { color: 'rgba(127,127,127,.12)' } } } },
+                y: { stacked: true, beginAtZero: true, grace: '10%',
+                     ticks: { maxTicksLimit: 5, precision: 0, padding: 8, font: { size: 11 }, callback: v => _fmtShort(v) },
+                     grid: { color: 'rgba(127,127,127,.10)' } } } },
   });
 }
 
