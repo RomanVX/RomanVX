@@ -49,7 +49,9 @@ def _cookie_digest(request, name):
 def _configured():
     if not db.IS_PG:
         return False
-    return bool(os.getenv("PORTAL_ADMIN_LOGIN") and os.getenv("PORTAL_ADMIN_PASSWORD_HASH"))
+    return bool(os.getenv("PORTAL_ADMIN_LOGIN") and (
+        os.getenv("PORTAL_ADMIN_PASSWORD") or os.getenv("PORTAL_ADMIN_PASSWORD_HASH")
+    ))
 
 
 def _main_origin(request):
@@ -84,6 +86,13 @@ def _init():
 
 def _password_ok(login, password):
     expected_login = os.environ["PORTAL_ADMIN_LOGIN"]
+    if not hmac.compare_digest(login.encode(), expected_login.encode()):
+        return False
+
+    configured_password = os.getenv("PORTAL_ADMIN_PASSWORD")
+    if configured_password:
+        return hmac.compare_digest(_digest(password), _digest(configured_password))
+
     try:
         salt_hex, digest_hex = os.environ["PORTAL_ADMIN_PASSWORD_HASH"].split(":", 1)
         salt, expected = bytes.fromhex(salt_hex), bytes.fromhex(digest_hex)
@@ -92,7 +101,7 @@ def _password_ok(login, password):
         actual = hashlib.scrypt(password.encode(), salt=salt, n=16384, r=8, p=1, dklen=32)
     except ValueError:
         return False
-    return hmac.compare_digest(actual, expected) and hmac.compare_digest(login.encode(), expected_login.encode())
+    return hmac.compare_digest(actual, expected)
 
 
 def _portal_session(request):
